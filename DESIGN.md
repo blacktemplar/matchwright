@@ -336,6 +336,22 @@ consumer adds new metadata fields.
   offsetting benefit here, since the data is inert (never consulted by
   core).
 
+## Tournament progression as an undoable state machine
+
+Tournament progress over time — player registrations, recorded match
+results, round advances, and so on — is modeled explicitly as a sequence
+of state transitions applied to an initial state, rather than as in-place
+mutation of a single `TournamentState`, so that transitions can be undone.
+
+The undo/redo mechanics themselves are generic and don't belong to this
+crate: they're provided by the separate `undoable-state-machine` crate in
+this workspace (see `undoable-state-machine/DESIGN.md` for its design).
+This crate is that library's (initial) consumer, instantiating it as
+`StateMachine<TournamentState, TransitionError>`, with transitions
+produced by this crate's pluggable axis implementations — e.g. a
+`CompetitionMode` deciding to advance a round becomes a
+`Transition<TournamentState, TransitionError>`.
+
 ## Dependencies this implies
 
 - `intertrait` (and its internal `inventory` dependency) for trait
