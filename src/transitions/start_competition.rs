@@ -11,6 +11,8 @@ pub enum StartCompetitionError {
     CompetitionAlreadyStarted,
     #[error("too few entrants")]
     TooFewEntrants,
+    #[error("no phases")]
+    NoPhases,
 }
 
 impl Transition<Competition> for StartCompetition {
@@ -24,6 +26,9 @@ impl Transition<Competition> for StartCompetition {
         if competition.entrants().len() < 2 {
             return Err(Box::new(StartCompetitionError::TooFewEntrants));
         }
+        if competition.phases().is_empty() {
+            return Err(Box::new(StartCompetitionError::NoPhases));
+        }
         Ok(())
     }
 
@@ -32,6 +37,10 @@ impl Transition<Competition> for StartCompetition {
         competition: &mut Competition,
     ) -> Result<(), undoable_state_machine::TransitionError> {
         competition.start();
+        if competition.phases().len() > 1 {
+            unimplemented!("Multi-phase competition not yet supported");
+        }
+        competition.phases_mut()[0].start();
         Ok(())
     }
 }

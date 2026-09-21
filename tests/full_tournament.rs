@@ -3,7 +3,8 @@ use std::{collections::HashMap, num::NonZeroU32};
 use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
-    entities::competition::{Competition, Entrant, Player},
+    entities::competition::{Competition, Entrant, Match, MatchResult, Player},
+    plugins::phase_format::single_elimination::SingleElimination,
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
@@ -54,6 +55,7 @@ fn full_tournament() {
     let mut sm = CompetitionStateMachine::default();
     let seed = rng().random();
     let phase_id = Uuid::new_v4();
+    let phase_format = Box::new(SingleElimination);
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
@@ -62,7 +64,7 @@ fn full_tournament() {
     apply(&mut sm, AddEntrant::new(entrant_d.clone())).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_e.clone())).unwrap();
     apply(&mut sm, RemoveEntrant::new(entrant_c.clone())).unwrap();
-    apply(&mut sm, AddPhase::new(phase_id)).unwrap();
+    apply(&mut sm, AddPhase::new(phase_id, phase_format)).unwrap();
     apply(&mut sm, StartCompetition).unwrap();
 
     assert!(is_attending(sm.current(), &entrant_a));
@@ -91,7 +93,19 @@ fn full_tournament() {
     );
     assert!(phase.rankings().iter().enumerate().all(|(i, r)| {
         r.unique_rank() == NonZeroU32::new(i as u32 + 1).unwrap()
+            && r.initial_unique_rank() == r.unique_rank()
             && r.rank() == NonZeroU32::new(1).unwrap()
             && &*r.entrants()[0] == expected_entrants_by_id[&r.entrants()[0].id()]
     }));
+    let rankings = phase.rankings();
+    let matches = phase.matches();
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].team_a(), &[rankings[0].id()]);
+    assert_eq!(matches[0].team_b(), &[rankings[3].id()]);
+    assert_eq!(matches[0].round(), 0);
+    assert_eq!(matches[0].result(), MatchResult::NotFinished);
+    assert_eq!(matches[1].team_a(), &[rankings[1].id()]);
+    assert_eq!(matches[1].team_b(), &[rankings[2].id()]);
+    assert_eq!(matches[1].round(), 0);
+    assert_eq!(matches[1].result(), MatchResult::NotFinished);
 }
