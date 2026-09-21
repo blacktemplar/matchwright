@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+rand = "0.10.2"
+rand_seeder = "0.5.0"
 thiserror = "2.0.20"
 undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine" }
 uuid = "1.26.1"
 vec1 = "1.12.1"
 
 [dev-dependencies]
+itertools = "0.15.0"
 rand = "0.10.2"

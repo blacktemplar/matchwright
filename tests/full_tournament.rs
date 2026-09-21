@@ -1,9 +1,12 @@
+use std::{collections::HashMap, num::NonZeroU32};
+
+use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
     entities::competition::{Competition, Entrant, Player},
     transitions::{
-        add_entrant::AddEntrant, remove_entrant::RemoveEntrant,
-        set_competition_seed::SetCompetitionSeed,
+        add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
+        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
 };
 use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
@@ -50,6 +53,7 @@ fn full_tournament() {
 
     let mut sm = CompetitionStateMachine::default();
     let seed = rng().random();
+    let phase_id = Uuid::new_v4();
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
@@ -58,6 +62,8 @@ fn full_tournament() {
     apply(&mut sm, AddEntrant::new(entrant_d.clone())).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_e.clone())).unwrap();
     apply(&mut sm, RemoveEntrant::new(entrant_c.clone())).unwrap();
+    apply(&mut sm, AddPhase::new(phase_id)).unwrap();
+    apply(&mut sm, StartCompetition).unwrap();
 
     assert!(is_attending(sm.current(), &entrant_a));
     assert!(is_attending(sm.current(), &entrant_b));
@@ -65,5 +71,27 @@ fn full_tournament() {
     assert!(is_attending(sm.current(), &entrant_d));
     assert!(is_attending(sm.current(), &entrant_e));
     assert_eq!(sm.current().seed(), seed);
-    assert_eq!(sm.log().len(), 7);
+    assert_eq!(sm.log().len(), 9);
+    assert!(sm.current().is_started());
+    let phase = &sm.current().phases()[0];
+    assert_eq!(phase.id(), phase_id);
+    assert_eq!(phase.rankings().len(), 4);
+    let expected_entrants_by_id: HashMap<_, _> = [&entrant_a, &entrant_b, &entrant_d, &entrant_e]
+        .into_iter()
+        .map(|e| (e.id(), e))
+        .collect();
+    assert!(phase.rankings().iter().all(|r| r.entrants().len() == 1));
+    assert_eq!(
+        phase
+            .rankings()
+            .iter()
+            .map(|r| r.entrants()[0].id())
+            .counts(),
+        expected_entrants_by_id.keys().copied().counts()
+    );
+    assert!(phase.rankings().iter().enumerate().all(|(i, r)| {
+        r.unique_rank() == NonZeroU32::new(i as u32 + 1).unwrap()
+            && r.rank() == NonZeroU32::new(1).unwrap()
+            && &*r.entrants()[0] == expected_entrants_by_id[&r.entrants()[0].id()]
+    }));
 }
