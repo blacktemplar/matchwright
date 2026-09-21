@@ -104,6 +104,7 @@ pub struct PhaseGroup {
 }
 
 #[derive(Debug)]
+#[expect(dead_code)]
 pub struct Phase {
     id: Uuid,
     outgoing_phase_transitions: Vec<Rc<PhaseTransition>>,
