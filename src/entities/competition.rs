@@ -166,7 +166,7 @@ impl Phase {
     }
 
     pub(crate) fn start(&mut self) {
-        self.matches = self.phase_format.create_new_matches(&self);
+        self.matches = self.phase_format.create_new_matches(self);
     }
 }
 

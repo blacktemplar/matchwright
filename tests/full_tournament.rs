@@ -3,7 +3,7 @@ use std::{collections::HashMap, num::NonZeroU32};
 use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
-    entities::competition::{Competition, Entrant, Match, MatchResult, Player},
+    entities::competition::{Competition, Entrant, MatchResult, Player},
     plugins::phase_format::single_elimination::SingleElimination,
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
