@@ -13,4 +13,3 @@ vec1 = "1.12.1"
 
 [dev-dependencies]
 itertools = "0.15.0"
-rand = "0.10.2"
