@@ -1,0 +1,13 @@
+[package]
+name = "tournament-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.20"
+undoable-state-machine = { path = "../undoable-state-machine" }
+uuid = "1.26.1"
+vec1 = "1.12.1"
+
+[dev-dependencies]
+rand = "0.10.2"
