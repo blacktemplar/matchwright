@@ -1,16 +1,12 @@
-use std::{
-    cmp::Ordering::{Equal, Greater, Less},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use uuid::Uuid;
-use vec1::{Vec1, vec1};
+use vec1::Vec1;
 
 #[derive(Default)]
 pub struct Competition {
     entrants: Vec<Rc<Entrant>>,
-    phase_groups: Vec<PhaseGroup>,
+    phases: Vec<Rc<Phase>>,
     started: bool,
     seed: [u8; 12],
     players_to_entrants: HashMap<Player, Rc<Entrant>>,
@@ -49,28 +45,17 @@ impl Competition {
         self.seed
     }
 
-    pub(crate) fn add_phase(&mut self, phase_group_index: usize, id: Uuid) {
+    pub(crate) fn add_phase(&mut self, id: Uuid) {
         let phase = Rc::new(Phase {
             id,
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
         });
-        match self.phase_groups.len().cmp(&phase_group_index) {
-            Greater => self.phase_groups[phase_group_index].phases.push(phase),
-            Equal => self.phase_groups.push(PhaseGroup {
-                phases: vec1![phase],
-            }),
-            Less => {
-                panic!(
-                    "Phase group index can be at most one more than the highest phase group index \
-                    existing before the call. Make sure to add phases in order of increasing index"
-                )
-            }
-        }
+        self.phases.push(phase);
     }
 
-    pub fn phase_groups(&self) -> &[PhaseGroup] {
-        &self.phase_groups
+    pub fn phases(&self) -> &[Rc<Phase>] {
+        &self.phases
     }
 }
 
@@ -96,11 +81,6 @@ impl Player {
     pub fn new(id: Uuid) -> Self {
         Self(id)
     }
-}
-
-#[derive(Debug)]
-pub struct PhaseGroup {
-    phases: Vec1<Rc<Phase>>,
 }
 
 #[derive(Debug)]
