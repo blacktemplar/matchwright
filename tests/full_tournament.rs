@@ -17,7 +17,10 @@ fn player() -> Player {
 }
 
 fn entrant_with_players(count: usize) -> Entrant {
-    Entrant::new(Vec1::try_from_vec((0..count).map(|_| player()).collect()).unwrap())
+    Entrant::new(
+        Uuid::new_v4(),
+        Vec1::try_from_vec((0..count).map(|_| player()).collect()).unwrap(),
+    )
 }
 
 fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {

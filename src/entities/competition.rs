@@ -61,12 +61,17 @@ impl Competition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entrant {
+    id: Uuid,
     players: Vec1<Player>,
 }
 
 impl Entrant {
-    pub fn new(players: Vec1<Player>) -> Self {
-        Self { players }
+    pub fn new(id: Uuid, players: Vec1<Player>) -> Self {
+        Self { id, players }
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.id
     }
 
     pub fn players(&self) -> &Vec1<Player> {
