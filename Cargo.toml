@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 thiserror = "2.0.20"
-undoable-state-machine = { path = "../undoable-state-machine" }
+undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine" }
 uuid = "1.26.1"
 vec1 = "1.12.1"
 
