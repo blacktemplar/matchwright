@@ -30,10 +30,7 @@ impl Transition<Competition> for RemoveEntrant {
             return Err(Box::new(RemoveEntrantError::CompetitionAlreadyStarted));
         }
 
-        if competition
-            .entrant_of_player(self.entrant.players().first())
-            .is_some_and(|attending_entrant| **attending_entrant == self.entrant)
-        {
+        if competition.entrants().contains_key(&self.entrant.id()) {
             Ok(())
         } else {
             Err(Box::new(RemoveEntrantError::EntrantIsNotAttending))

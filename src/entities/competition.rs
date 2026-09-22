@@ -13,11 +13,10 @@ const NAMESPACE_MATCH: Uuid = uuid!("d4098937-85f4-49ce-945a-be8ae74da780");
 
 #[derive(Default)]
 pub struct Competition {
-    entrants: Vec<Rc<Entrant>>,
+    entrants: HashMap<EntrantId, Entrant>,
     phases: Vec<Phase>,
     started: bool,
     seed: [u8; 12],
-    players_to_entrants: HashMap<Player, Rc<Entrant>>,
 }
 
 impl Competition {
@@ -25,28 +24,16 @@ impl Competition {
         self.started
     }
 
-    pub fn entrants(&self) -> &[Rc<Entrant>] {
+    pub fn entrants(&self) -> &HashMap<EntrantId, Entrant> {
         &self.entrants
     }
 
     pub(crate) fn add_entrant(&mut self, entrant: Entrant) {
-        let entrant = Rc::new(entrant);
-        for player in &entrant.players {
-            self.players_to_entrants
-                .insert(player.clone(), entrant.clone());
-        }
-        self.entrants.push(entrant);
-    }
-
-    pub fn entrant_of_player(&self, player: &Player) -> Option<&Rc<Entrant>> {
-        self.players_to_entrants.get(player)
+        self.entrants.insert(entrant.id(), entrant);
     }
 
     pub(crate) fn remove_entrant(&mut self, entrant: &Entrant) {
-        for player in &entrant.players {
-            self.players_to_entrants.remove(player);
-        }
-        self.entrants.retain(|t| &**t != entrant);
+        self.entrants.remove(&entrant.id());
     }
 
     pub(crate) fn set_seed(&mut self, seed: [u8; 12]) {
@@ -93,8 +80,7 @@ impl Competition {
     }
 
     pub(crate) fn start(&mut self) {
-        let mut ranking_entrants: Vec<_> =
-            self.entrants().iter().map(|e| vec1![e.clone()]).collect();
+        let mut ranking_entrants: Vec<_> = self.entrants().keys().map(|e| vec1![*e]).collect();
         // 0 represents the start of the competition
         let mut rng = self.new_seeded_std_rng(0);
         ranking_entrants.shuffle(&mut rng);
@@ -109,32 +95,27 @@ impl Competition {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntrantId(Uuid);
+
+impl EntrantId {
+    pub fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entrant {
-    id: Uuid,
-    players: Vec1<Player>,
+    id: EntrantId,
 }
 
 impl Entrant {
-    pub fn new(id: Uuid, players: Vec1<Player>) -> Self {
-        Self { id, players }
+    pub fn new(id: EntrantId) -> Self {
+        Self { id }
     }
 
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> EntrantId {
         self.id
-    }
-
-    pub fn players(&self) -> &Vec1<Player> {
-        &self.players
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Player(Uuid);
-
-impl Player {
-    pub fn new(id: Uuid) -> Self {
-        Self(id)
     }
 }
 
@@ -180,7 +161,7 @@ pub struct PhaseTransition {
 #[derive(Debug)]
 pub struct Ranking {
     id: RankingId,
-    entrants: Vec1<Rc<Entrant>>,
+    entrants: Vec1<EntrantId>,
     initial_unique_rank: NonZeroU32,
     unique_rank: NonZeroU32,
     rank: NonZeroU32,
@@ -191,10 +172,10 @@ pub fn bytes_from_uuids(uuids: impl Iterator<Item = Uuid>) -> Vec<u8> {
 }
 
 impl Ranking {
-    pub fn new(entrants: Vec1<Rc<Entrant>>, unique_rank: NonZeroU32) -> Self {
+    pub fn new(entrants: Vec1<EntrantId>, unique_rank: NonZeroU32) -> Self {
         let id = RankingId(Uuid::new_v5(
             &NAMESPACE_RANKING,
-            &bytes_from_uuids(entrants.iter().map(|e| e.id())),
+            &bytes_from_uuids(entrants.iter().map(|e| e.0)),
         ));
         Self {
             id,
@@ -219,7 +200,7 @@ impl Ranking {
         self.rank
     }
 
-    pub fn entrants(&self) -> &[Rc<Entrant>] {
+    pub fn entrants(&self) -> &[EntrantId] {
         &self.entrants
     }
 

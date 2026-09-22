@@ -3,7 +3,7 @@ use std::{collections::HashMap, num::NonZeroU32};
 use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
-    entities::competition::{Competition, Entrant, MatchResult, Player},
+    entities::competition::{Competition, Entrant, EntrantId, MatchResult},
     plugins::phase_format::single_elimination::SingleElimination,
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
@@ -12,26 +12,15 @@ use tournament_engine::{
 };
 use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
 use uuid::Uuid;
-use vec1::Vec1;
 
 type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
 
-fn player() -> Player {
-    Player::new(Uuid::new_v4())
-}
-
-fn entrant_with_players(count: usize) -> Entrant {
-    Entrant::new(
-        Uuid::new_v4(),
-        Vec1::try_from_vec((0..count).map(|_| player()).collect()).unwrap(),
-    )
+fn entrant() -> Entrant {
+    Entrant::new(EntrantId::new(Uuid::new_v4()))
 }
 
 fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {
-    entrant
-        .players()
-        .iter()
-        .all(|player| matches!(competition.entrant_of_player(player), Some(t) if &**t == entrant))
+    competition.entrants().contains_key(&entrant.id())
 }
 
 fn apply(
@@ -46,11 +35,11 @@ fn apply(
 
 #[test]
 fn full_tournament() {
-    let entrant_a = entrant_with_players(2);
-    let entrant_b = entrant_with_players(3);
-    let entrant_c = entrant_with_players(4);
-    let entrant_d = entrant_with_players(5);
-    let entrant_e = entrant_with_players(4);
+    let entrant_a = entrant();
+    let entrant_b = entrant();
+    let entrant_c = entrant();
+    let entrant_d = entrant();
+    let entrant_e = entrant();
 
     let mut sm = CompetitionStateMachine::default();
     let seed = rng().random();
@@ -84,18 +73,13 @@ fn full_tournament() {
         .collect();
     assert!(phase.rankings().iter().all(|r| r.entrants().len() == 1));
     assert_eq!(
-        phase
-            .rankings()
-            .iter()
-            .map(|r| r.entrants()[0].id())
-            .counts(),
+        phase.rankings().iter().map(|r| r.entrants()[0]).counts(),
         expected_entrants_by_id.keys().copied().counts()
     );
     assert!(phase.rankings().iter().enumerate().all(|(i, r)| {
         r.unique_rank() == NonZeroU32::new(i as u32 + 1).unwrap()
             && r.initial_unique_rank() == r.unique_rank()
             && r.rank() == NonZeroU32::new(1).unwrap()
-            && &*r.entrants()[0] == expected_entrants_by_id[&r.entrants()[0].id()]
     }));
     let rankings = phase.rankings();
     let matches = phase.matches();

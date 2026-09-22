@@ -1,7 +1,7 @@
 use thiserror::Error;
 use undoable_state_machine::Transition;
 
-use crate::entities::competition::{Competition, Entrant, Player};
+use crate::entities::competition::{Competition, Entrant};
 
 pub struct AddEntrant {
     entrant: Entrant,
@@ -19,8 +19,6 @@ enum AddEntrantError {
     CompetitionAlreadyStarted,
     #[error("entrant is already attending")]
     EntrantIsAlreadyAttending,
-    #[error("{0:?} is part of multiple entrants")]
-    PlayerIsPartOfMultipleEntrants(Player),
 }
 
 impl Transition<Competition> for AddEntrant {
@@ -31,16 +29,8 @@ impl Transition<Competition> for AddEntrant {
         if competition.is_started() {
             return Err(Box::new(AddEntrantError::CompetitionAlreadyStarted));
         }
-        for player in self.entrant.players() {
-            if let Some(entrant) = competition.entrant_of_player(player) {
-                if **entrant == self.entrant {
-                    return Err(Box::new(AddEntrantError::EntrantIsAlreadyAttending));
-                } else {
-                    return Err(Box::new(AddEntrantError::PlayerIsPartOfMultipleEntrants(
-                        player.clone(),
-                    )));
-                }
-            }
+        if competition.entrants().contains_key(&self.entrant.id()) {
+            return Err(Box::new(AddEntrantError::EntrantIsAlreadyAttending));
         }
         Ok(())
     }
