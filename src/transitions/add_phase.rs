@@ -3,17 +3,26 @@ use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
     entities::competition::{Competition, PhaseId},
-    plugins::phase_format::PhaseFormat,
+    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
 };
 
 pub struct AddPhase {
     id: PhaseId,
     phase_format: Box<dyn PhaseFormat>,
+    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
 impl AddPhase {
-    pub fn new(id: PhaseId, phase_format: Box<dyn PhaseFormat>) -> Self {
-        Self { id, phase_format }
+    pub fn new(
+        id: PhaseId,
+        phase_format: Box<dyn PhaseFormat>,
+        metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    ) -> Self {
+        Self {
+            id,
+            phase_format,
+            metrics_calculators,
+        }
     }
 }
 
@@ -32,7 +41,11 @@ impl Transition<Competition> for AddPhase {
     }
 
     fn apply(&self, state: &mut Competition) -> Result<(), TransitionError> {
-        state.add_phase(self.id, dyn_clone::clone_box(&*self.phase_format));
+        state.add_phase(
+            self.id,
+            self.phase_format.clone(),
+            self.metrics_calculators.clone(),
+        );
         Ok(())
     }
 }

@@ -114,49 +114,105 @@ than deep inside tournament logic.
 
 ### Proposed Solution
 
-Two complementary mechanisms, chosen based on which requirement applies:
+A single mechanism — marker traits registered with `intertrait` — covers
+both plain yes/no compatibility and compatibility that needs extra
+behavior, because "does this implement marker trait `XYZ`" is already a
+yes/no answer on its own; giving `XYZ` real methods just adds richer
+behavior on top for free. (An earlier version of this section proposed a
+separate closed, core-owned `Capability` enum for the yes/no case —
+rejected, see Alternatives — in favor of this single mechanism.)
 
-**1. Capability tags, for plain yes/no compatibility.** Core defines a
-closed, core-owned vocabulary:
+**Providing a capability is a structural fact, not a self-reported one.**
+A component "provides" capability `XYZ` simply by implementing the marker
+trait and registering the cast:
 
 ```rust
-#[non_exhaustive]
-enum Capability { SupportsDraws, RequiresDeterministicPairing, StatefulMatches, /* ... */ }
+trait XYZ { fn extra_method(&self) -> /* ... */; } // can be empty, for pure yes/no
+
+#[cast_to(XYZ)]
+impl XYZ for BestOfThree { /* ... */ }
 ```
 
-(`#[non_exhaustive]` so core can add variants in a minor version without a
-breaking change.) Every axis trait requires:
+There's no separate `capabilities()` method to keep in sync with what a
+type actually implements. A hand-maintained list is exactly the kind of
+manually-reported fact that can silently drift from reality; making
+"provides" a structural property means the compiler and `intertrait`'s
+registry agree on it by construction, not by convention.
+
+**Requiring a capability is a type-erased predicate, so the central check
+stays generic.** A component that needs some *other* component to support
+`XYZ` declares it as a small `Requirement` value that captures the target
+marker trait once, at the point where it's already named:
 
 ```rust
-fn capabilities(&self) -> HashSet<Capability>; // what it provides
-fn requirements(&self) -> HashSet<Capability>;  // what it needs from other axes
+pub struct Requirement {
+    label: &'static str,               // for error messages
+    satisfied_by: fn(&dyn Any) -> bool,
+}
+
+impl Requirement {
+    pub fn implements<T: ?Sized + 'static>(label: &'static str) -> Self {
+        Self { label, satisfied_by: |any| any.cast::<T>().is_some() }
+    }
+}
+
+trait MatchOutcome: Any {
+    fn as_any(&self) -> &dyn Any;
+    fn requirements(&self) -> Vec<Requirement> { vec![] }
+    /* ... */
+}
 ```
 
-`TournamentConfig::build() -> Result<Tournament, ConfigError>` collects
-capabilities and requirements across all chosen components and checks
-`requirements ⊆ union(capabilities)`. This is generic over concrete types —
-it only ever looks at capability sets, so it treats third-party and core
-implementations identically.
+Every axis trait gets the same minimal `as_any()` (the same pattern
+already used for `RankData` below), so `TournamentConfig::build()` can
+walk *all* configured axis instances homogeneously — regardless of which
+axis trait each one implements — and check each `Requirement` against
+every other instance:
 
-**2. Runtime trait casting, for compatibility needing extra behavior.**
-When one component needs to actually call extra methods on another once
-compatibility is confirmed (e.g. "if the match outcome also exposes
-per-set scores, the ranking system wants to call `get_set_scores()`"),
-use the `intertrait` crate:
+```rust
+fn build(&self) -> Result<Tournament, ConfigError> {
+    let components: Vec<&dyn Any> = /* as_any() of every configured axis instance */;
+    for component in &components {
+        for requirement in /* that component's requirements() */ {
+            if !components.iter().any(|c| (requirement.satisfied_by)(*c)) {
+                return Err(ConfigError::MissingCapability(requirement.label));
+            }
+        }
+    }
+    Ok(/* ... */)
+}
+```
 
-- Define a marker trait `XYZ` for the richer interface.
-- Implementations that support it implement `XYZ` and register the cast
-  with `#[cast_to]` (backed by `inventory` internally).
-- Consuming code calls `outcome.cast::<dyn XYZ>()`, getting `Option<&dyn
-  XYZ>` — `None` means incompatible, `Some` gives a real, compiler-checked
-  interface to call.
-- Crucially, the base trait (`MatchOutcome`) never needs to know `XYZ`
-  exists, so a third party can define a brand-new marker trait and
-  register their own type against it entirely within their own crate —
-  this is what keeps the mechanism open.
+This is the same "requirements ⊆ provided" check as before — now checked
+per-instance via `intertrait` instead of `HashSet<Capability>` equality —
+and it stays uniform for core and third-party implementations, since
+neither `Requirement::implements` nor the `build()` loop ever names a
+concrete axis or marker trait.
 
 ### Alternatives
 
+- **Closed, core-owned `Capability` enum** (what this section previously
+  proposed):
+  ```rust
+  #[non_exhaustive]
+  enum Capability { SupportsDraws, RequiresDeterministicPairing, StatefulMatches, /* ... */ }
+  fn capabilities(&self) -> HashSet<Capability>; // what it provides
+  fn requirements(&self) -> HashSet<Capability>;  // what it needs from other axes
+  ```
+  *Advantage:* cheap `HashSet`-based checks; `#[non_exhaustive]` lets core
+  add variants in a minor version without a breaking change; every known
+  capability is enumerable in one place. *Disadvantage:* the vocabulary is
+  closed to core — two third-party crates wanting to express a
+  compatibility concept core never anticipated have no way to add a
+  variant without a core release, which directly contradicts the "third
+  parties add implementations without modifying this library's source"
+  requirement. It also lets `capabilities()` drift from what a type
+  actually does, since it's a hand-maintained list rather than a
+  structural fact — a general pattern this design otherwise avoids (see
+  the `undoable-state-machine` `Transition` design, which rejected a
+  self-reported boolean for the same reason). Rejected in favor of the
+  marker-trait mechanism above, which is open by construction and ties
+  "provides" directly to the actual `impl`.
 - **Hardcoded match over concrete types** (`match (ranking.type_id(),
   mode.type_id()) { ... }`). *Advantage:* simplest to write for a small,
   fixed set of implementations. *Disadvantage:* directly violates the
@@ -258,10 +314,11 @@ marker-trait-casting pattern already designed for cross-axis
 compatibility, just applied to data extraction instead of a validity
 check — no new machinery. To avoid silently producing a degraded `Rank`
 when the match outcome doesn't support the needed data, this
-`RankingSystem` implementation should also declare the corresponding
-`Capability` (e.g. `Capability::MultiGameOutcome`) in its `requirements()`,
-so an incompatible pairing is caught by `TournamentConfig::build()` rather
-than discovered as missing data at runtime.
+`RankingSystem` implementation should also declare
+`Requirement::implements::<dyn MultiGameOutcome>("MultiGameOutcome")` in
+its `requirements()`, so an incompatible pairing is caught by
+`TournamentConfig::build()` rather than discovered as missing data at
+runtime.
 
 ### Alternatives
 
@@ -336,6 +393,281 @@ consumer adds new metadata fields.
   offsetting benefit here, since the data is inert (never consulted by
   core).
 
+## Serializing pluggable state
+
+`Competition` needs to be persistable as a snapshot — not just
+reconstructable by replaying its transition log from scratch — and that
+snapshot must remain readable by a later build of the program (a
+recompile, a dependency bump, a redeploy), as long as the concrete plugin
+types involved are still linked in.
+
+### Requirements
+
+- `Competition`, its `Phase`s, `Ranking`s, and every axis instance
+  embedded in them (`PhaseFormat`, `MetricCalculator`, the metrics
+  attached to a `Ranking`, and any future axis stored the same way) must
+  be serializable and deserializable as a snapshot.
+- The serialized form must not depend on anything that's only stable
+  within a single process — this rules out raw `std::any::TypeId`, which
+  is not guaranteed stable across compiler versions, dependency versions,
+  or rebuilds of identical source (see prior discussion).
+- Must stay open: a third-party crate providing an axis implementation
+  (or a `Metric`) must be able to make its own types serializable without
+  this crate knowing about the concrete type in advance — the same
+  third-party-openness requirement as every other mechanism in this
+  document.
+- Serialization should be reasonably compact: avoid the overhead of a
+  verbose self-describing text format (JSON) and avoid the identifier
+  defaulting to a full Rust type path when a short, deliberately-chosen
+  one is just as usable.
+- A tag collision between two independently-developed crates (both
+  registering the same identifier for different types) must not silently
+  deserialize into the wrong concrete type.
+
+### Proposed Solution
+
+Use the [`typetag`](https://docs.rs/typetag) crate. Each pluggable
+implementation is annotated on the `impl` block with a short, explicitly
+chosen tag (not the default, which is the bare type name — a namespaced
+name lowers collision odds with an unrelated crate's type of the same
+short name):
+
+```rust
+#[typetag::serde(name = "tournament_engine::game_difference")]
+impl Metric for GameDifferenceMetric { /* ... */ }
+```
+
+and the trait itself opts in once:
+
+```rust
+#[typetag::serde(tag = "type")]
+pub trait Metric: Debug {
+    fn as_any(&self) -> &dyn Any;
+}
+```
+
+This gives `Box<dyn Metric>` (and any other axis trait annotated the same
+way — `PhaseFormat`, `MetricCalculator`, ...) a working `Serialize`/
+`Deserialize` impl, backed by an `inventory`-populated registry mapping
+tag → concrete type, built and consulted entirely inside `typetag` —
+no bespoke registry code needed in this crate.
+
+Verified directly against `typetag`'s source (not just its docs) for two
+things this document previously got wrong or left unconfirmed:
+
+- **It works with non-self-describing binary formats, including
+  Bincode.** Unlike serde's built-in internally/adjacently-tagged enum
+  representations (which do require a self-describing format, because
+  they buffer an unknown shape via `deserialize_any` before knowing the
+  target type), `typetag` reads the tag and content as two ordinary,
+  positionally-decoded fields, then uses a `DeserializeSeed` — chosen
+  *after* the tag is already known — to decode the second field as the
+  right concrete type. No generic buffering, no `deserialize_any`, so
+  non-self-describing formats work fine.
+- **A tag collision fails loudly, not silently.** The generated registry
+  is a `BTreeMap<&'static str, Option<DeserializeFn<T>>>`. The first
+  registration of a tag stores `Some(deserialize_fn)`; a second
+  registration of the *same* tag overwrites that entry with `None`.
+  Deserializing a value whose tag maps to `None` returns an explicit
+  error ("non-unique tag of ...") instead of picking either
+  implementation. Preventing the collision in the first place is still on
+  the implementor (pick a distinctive, namespaced tag), but a collision
+  that does happen can't cause silent misdirection to the wrong type.
+
+The one thing `typetag` doesn't give you is a truly fixed-size binary
+discriminant — the tag is always a string, so wire cost scales with the
+tag's length. The mitigation is the same explicit, short, namespaced tag
+already shown above; a few extra bytes per serialized value is an
+acceptable cost for this crate's actual workload (occasional persistence
+of tournament state, not a high-frequency hot path) against the
+alternative of maintaining custom serialization plumbing ourselves.
+
+### Alternatives
+
+- **`std::any::TypeId`** (the identifier used before this topic was
+  settled). *Advantage:* free, compiler-guaranteed, zero chance of
+  accidental collision between unrelated types, no naming step for
+  implementors. *Disadvantage:* only stable within a single process/build
+  — cannot survive a `Competition` snapshot being read back after a
+  recompile or redeploy. Rejected now that whole-`Competition`
+  serialization is a settled requirement.
+- **A hand-rolled `TypeTag([u8; 8])` + `erased_serde` + `inventory`
+  registry** (an earlier draft of this section). *Advantage:* a genuinely
+  fixed-size binary discriminant instead of a string, shaving a few bytes
+  per serialized value. *Disadvantage:* reimplements, with less testing
+  and no upstream maintenance, substantially the same mechanism `typetag`
+  already provides (including the collision-detection behavior above) —
+  once `typetag` was confirmed to already support non-self-describing
+  formats, the only remaining advantage was the smaller tag, which wasn't
+  worth owning bespoke registry/framing code for. Rejected in favor of
+  reusing `typetag`, consistent with this crate's existing preference for
+  a mature dependency (`intertrait`) over hand-rolling the equivalent
+  open-registry mechanism for cross-axis compatibility.
+- **Auto-derived tag** (e.g. a compile-time hash of the fully-qualified
+  type name, computed by a proc macro, instead of an explicit
+  `#[typetag::serde(name = "...")]`). *Advantage:* implementors can't
+  forget to assign a tag. *Disadvantage:* renaming the type or moving it
+  to a different module silently changes the derived tag, breaking old
+  serialized data with no warning — the same "silently drifting fact"
+  failure shape already rejected for the `Capability` enum's
+  self-reported `capabilities()`, and worse here since there's no
+  explicit place the stability contract is written down. Rejected in
+  favor of an explicit tag that makes "never change this" a visible,
+  deliberate commitment in the source.
+
+## Ranking metrics
+
+A `Phase`'s `Ranking`s need to carry data used to sort/rank entrants —
+things like wins, losses, game difference, Buchholz score, etc. Which of
+these are computed and attached varies per phase (e.g. Swiss wants
+Buchholz, single elimination doesn't), and third parties should be able to
+add entirely new metrics without modifying core.
+
+### Requirements
+
+- For each `Phase`, before the competition starts, a set of
+  `MetricCalculator`s is chosen to be active for that phase. Any number of
+  calculators may be active at once.
+- A single `MetricCalculator` may calculate more than one metric.
+- The metrics produced by the calculators active on a given phase must be
+  disjoint — no two active calculators may both produce the same metric.
+- Third parties must be able to implement new `MetricCalculator`s (open
+  axis, same as `PhaseFormat` and the other axes above), without modifying
+  this crate.
+- When a `Ranking` is (re)computed, every active `MetricCalculator` is
+  invoked and its output metrics are attached to the ranking.
+- Other plugin types (e.g. a `PhaseFormat`) may depend on a specific
+  metric being available among the phase's active calculators — this
+  needs to be checkable, not just discoverable as missing data at
+  runtime.
+- A `MetricCalculator` may also be incompatible with other plugins for
+  reasons unrelated to any specific metric (general plugin-to-plugin
+  incompatibility), not just the metric-disjointness case above.
+
+### Proposed Solution
+
+**Metrics are identified by Rust type, not by name.** Each metric is its
+own small type implementing an object-safe marker trait:
+
+```rust
+#[typetag::serde(tag = "type")]
+trait Metric: Debug {
+    fn as_any(&self) -> &dyn Any;
+}
+type MetricId = TypeId; // TypeId::of::<SomeMetric>()
+```
+
+`MetricId` stays `TypeId` here — deliberately distinct from the
+`typetag`-based identity used to *serialize* a `Box<dyn Metric>` (see
+"Serializing pluggable state" above). Disjointness- and
+requirement-checking (below) never touches serialized data: it's a
+structural comparison run fresh, in-process, every time a `Phase` is
+configured or replayed, on live `Box<dyn MetricCalculator>` values —
+exactly the case where `TypeId` is stable and free. Reusing `TypeId` here
+keeps the set of metrics open — any third party can define a new
+`Metric`-implementing struct without a closed enum — without
+reintroducing the untyped `HashMap<String, Value>` bag already rejected
+elsewhere in this document.
+
+**`MetricCalculator` is another open axis, shaped like `PhaseFormat`:**
+
+```rust
+trait MetricCalculator: Debug + DynClone {
+    /// Declared statically, so disjointness can be validated without
+    /// running any computation.
+    fn produced_metrics(&self) -> HashSet<MetricId>;
+    fn calculate(&self, phase: &Phase) -> HashMap<PhaseTeamId, Vec<Box<dyn Metric>>>;
+
+    // General plugin-to-plugin (in)compatibility unrelated to a specific
+    // metric reuses the same marker-trait mechanism as every other axis.
+    // "Provides" needs no method here — it's just implementing (and
+    // #[cast_to]-registering) whatever marker trait applies.
+    fn as_any(&self) -> &dyn Any;
+    fn requirements(&self) -> Vec<Requirement> { vec![] }
+}
+```
+
+`Phase` gets `metric_calculators: Vec<Box<dyn MetricCalculator>>`, set when
+the phase is added.
+
+**Disjointness and cross-plugin metric dependencies are validated once, in
+the `AddPhase` transition's `check_applicable`** — the same point
+`PhaseFormat` is attached to a `Phase` — rather than on every ranking
+recalculation, so there's no repeated runtime cost once a phase is
+configured:
+
+- Disjointness: fold `produced_metrics()` across all active calculators
+  into a `HashSet`, rejecting on the first collision. This stays a plain
+  `HashSet<MetricId>` check, not a `Requirement` — it's about which
+  *data-shaped types* get produced, not about any instance implementing
+  a behavioral marker trait, so it doesn't fit the compatibility
+  mechanism above.
+- Cross-plugin metric requirements: any axis (e.g. `PhaseFormat`) gains
+  `fn required_metrics(&self) -> HashSet<MetricId> { HashSet::new() }`,
+  checked as a subset of the phase's union of `produced_metrics()` — same
+  "declared set, checked once centrally" shape as disjointness above,
+  just as a subset check instead of a pairwise-disjoint one.
+- General plugin-to-plugin incompatibility not tied to a specific metric:
+  covered by the `Requirement`/marker-trait mechanism from the
+  Compatibility section above, since `MetricCalculator` carries
+  `as_any()`/`requirements()` too.
+
+**`Ranking` carries the computed metrics, with typed access via
+downcast:**
+
+```rust
+struct Ranking {
+    // ...
+    metrics: Vec<Box<dyn Metric>>,
+}
+
+impl Ranking {
+    pub fn metric<M: Metric>(&self) -> Option<&M> {
+        self.metrics.iter().find_map(|m| m.as_any().downcast_ref())
+    }
+}
+```
+
+A `Vec`, not a `HashMap<MetricId, _>`, because `MetricId` is a `TypeId`
+and so can't itself be serialized (see above) — a `Ranking` needs to
+survive a `Competition` snapshot, and each `Box<dyn Metric>` already
+carries its own identity via its `typetag` registration once serialized.
+The number of metrics on a single `Ranking` is small (a handful at most),
+so a linear scan on lookup costs nothing that matters in exchange for not
+needing a second, serializable identifier alongside `MetricId`.
+
+A `Ranking` is populated by calling every active `MetricCalculator` for
+its phase and inserting each metric it produces.
+
+### Alternatives
+
+- **String-keyed metrics** (`HashMap<String, f64>` or similar). *Advantage:*
+  simplest to add a new metric, no new trait needed. *Disadvantage:*
+  reintroduces the untyped-bag anti-pattern already rejected for
+  compatibility and extra-data above — name collisions and wrong-shape
+  values are only caught at runtime. Rejected for the same reason.
+- **Representing metrics as marker traits checked via the `Requirement`
+  mechanism above**, instead of a dedicated `MetricId`/`Metric` pair (e.g.
+  "produces game difference" becomes a marker trait a calculator
+  implements, checked with `.cast()` like any other capability).
+  *Advantage:* one fewer mechanism to maintain. *Disadvantage:* that
+  mechanism answers "does this *instance* implement behavior X", not
+  "what *data* did calculating for *this team* produce" — there's no
+  per-team value to hand back, and no natural way to express "these two
+  active calculators' outputs must be disjoint" through a yes/no
+  instance-capability check. Rejected: a different concern (produced data
+  identity) from what `Requirement` was built to check (instance
+  behavior).
+- **Runtime-discovered `produced_metrics`** (call `calculate()` once and
+  inspect the resulting keys, instead of a static `produced_metrics()`
+  declaration). *Advantage:* one fewer method to keep in sync with
+  `calculate()`. *Disadvantage:* validating disjointness would require
+  either running calculation with real phase data just to check
+  configuration validity, or re-deriving the produced set on every
+  ranking recalculation, adding cost to a path that should be free once a
+  phase is configured. Rejected in favor of a static declaration checked
+  once at `AddPhase` time.
+
 ## Tournament progression as an undoable state machine
 
 Tournament progress over time — player registrations, recorded match
@@ -356,6 +688,9 @@ produced by this crate's pluggable axis implementations — e.g. a
 
 - `intertrait` (and its internal `inventory` dependency) for trait
   casting.
-- No `enum_dispatch`, `inventory`/`linkme` (used directly), or
-  `ambassador` in v1 — each was only needed for an alternative ruled out
-  above.
+- `typetag` (and its internal `inventory` dependency) plus a serde data
+  format of choice for actually writing bytes (not pinned by this
+  document) for serializing/deserializing pluggable trait objects.
+- No `enum_dispatch`, `linkme`, `erased_serde` (directly — `typetag` uses
+  it internally), or `ambassador` in v1 — each was only needed for an
+  alternative ruled out above.
