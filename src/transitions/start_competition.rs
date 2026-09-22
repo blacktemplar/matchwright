@@ -37,10 +37,6 @@ impl Transition<Competition> for StartCompetition {
         competition: &mut Competition,
     ) -> Result<(), undoable_state_machine::TransitionError> {
         competition.start();
-        if competition.phases().len() > 1 {
-            unimplemented!("Multi-phase competition not yet supported");
-        }
-        competition.phases_mut()[0].start();
         Ok(())
     }
 }

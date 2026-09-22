@@ -1,5 +1,6 @@
 use std::{collections::HashMap, num::NonZeroU32};
 
+use itertools::Itertools;
 use uuid::Uuid;
 
 use crate::{
@@ -11,10 +12,10 @@ use crate::{
 pub struct SingleElimination;
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
-        if !phase.matches().iter().all(Match::is_finished) {
+        if !phase.matches().values().all(Match::is_finished) {
             return vec![];
         }
-        let max_round = phase.matches().iter().map(Match::round).max();
+        let max_round = phase.matches().values().map(Match::round).max();
         if let Some(max_round) = max_round {
             // The ordering of this vector will be determined by match winners. If a lower-ranked
             // team wins, it will be swapped with the higher-ranked losing team.
@@ -25,7 +26,8 @@ impl PhaseFormat for SingleElimination {
                 .collect();
             // matches are ordered by round, which is important so that the following works:
             let mut lowest_loser_rank = NonZeroU32::MAX;
-            for r#match in phase.matches() {
+            let matches_odered_by_round = phase.matches().values().sorted_by_key(|m| m.round());
+            for r#match in matches_odered_by_round {
                 let team_a_id = r#match.team_a()[0];
                 let team_b_id = r#match.team_b()[0];
                 let rank_a = ranking_uuid_to_swap_replaced_rank[&team_a_id];
@@ -63,7 +65,7 @@ impl PhaseFormat for SingleElimination {
             let mut ordered_rankings =
                 vec![RankingId::new(Uuid::nil()); num_survived_rankings as usize];
             for (id, rank) in ranking_uuid_to_swap_replaced_rank {
-                if rank.get() < num_survived_rankings {
+                if rank.get() <= num_survived_rankings {
                     ordered_rankings[(rank.get() - 1) as usize] = id;
                 }
             }

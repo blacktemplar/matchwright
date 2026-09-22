@@ -14,7 +14,7 @@ const NAMESPACE_MATCH: Uuid = uuid!("d4098937-85f4-49ce-945a-be8ae74da780");
 #[derive(Default)]
 pub struct Competition {
     entrants: HashMap<EntrantId, Entrant>,
-    phases: Vec<Phase>,
+    phases: HashMap<PhaseId, Phase>,
     started: bool,
     seed: [u8; 12],
 }
@@ -44,24 +44,28 @@ impl Competition {
         self.seed
     }
 
-    pub(crate) fn add_phase(&mut self, id: Uuid, phase_format: Box<dyn PhaseFormat>) {
+    pub(crate) fn add_phase(&mut self, id: PhaseId, phase_format: Box<dyn PhaseFormat>) {
         let phase = Phase {
             id,
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
             rankings: vec![],
-            matches: vec![],
+            matches: HashMap::new(),
             phase_format,
         };
-        self.phases.push(phase);
+        self.phases.insert(id, phase);
     }
 
-    pub fn phases(&self) -> &[Phase] {
+    pub fn phases(&self) -> &HashMap<PhaseId, Phase> {
         &self.phases
     }
 
-    pub(crate) fn phases_mut(&mut self) -> &mut [Phase] {
+    pub(crate) fn phases_mut(&mut self) -> &mut HashMap<PhaseId, Phase> {
         &mut self.phases
+    }
+
+    pub fn phase(&mut self, phase_id: &PhaseId) -> Option<&Phase> {
+        self.phases.get(phase_id)
     }
 
     /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
@@ -84,7 +88,11 @@ impl Competition {
         // 0 represents the start of the competition
         let mut rng = self.new_seeded_std_rng(0);
         ranking_entrants.shuffle(&mut rng);
-        self.phases[0].rankings = ranking_entrants
+        if self.phases().len() != 1 {
+            unimplemented!("Multi-phase competition not yet supported");
+        }
+        let phase = self.phases.values_mut().next().unwrap();
+        phase.rankings = ranking_entrants
             .into_iter()
             .enumerate()
             .map(|(rank, entrants)| {
@@ -92,6 +100,8 @@ impl Competition {
             })
             .collect();
         self.started = true;
+
+        phase.start();
     }
 }
 
@@ -119,22 +129,29 @@ impl Entrant {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PhaseId(Uuid);
+
+impl PhaseId {
+    pub fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
 #[derive(Debug)]
 #[expect(dead_code)]
 pub struct Phase {
-    id: Uuid,
+    id: PhaseId,
     outgoing_phase_transitions: Vec<Rc<PhaseTransition>>,
     incoming_phase_transitions: Vec<Rc<PhaseTransition>>,
     /// Rankings are guaranteed to be ordered by their [`Ranking::unique_rank`] in ascending order.
     rankings: Vec<Ranking>,
-    /// Matches are guaranteed to be ordered in the order the [`PhaseFormat::create_new_matches`]
-    /// returns them.
-    matches: Vec<Match>,
+    matches: HashMap<MatchId, Match>,
     phase_format: Box<dyn PhaseFormat>,
 }
 
 impl Phase {
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> PhaseId {
         self.id
     }
 
@@ -142,12 +159,24 @@ impl Phase {
         &self.rankings
     }
 
-    pub fn matches(&self) -> &[Match] {
+    pub fn matches(&self) -> &HashMap<MatchId, Match> {
         &self.matches
     }
 
     pub(crate) fn start(&mut self) {
-        self.matches = self.phase_format.create_new_matches(self);
+        self.create_new_matches();
+    }
+
+    pub(crate) fn create_new_matches(&mut self) {
+        let new_matches = self.phase_format.create_new_matches(self);
+        self.matches
+            .extend(new_matches.into_iter().map(|m| (m.id, m)))
+    }
+
+    pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
+        let r#match = self.matches.get_mut(&match_id).unwrap();
+        r#match.set_result(match_result);
+        self.create_new_matches();
     }
 }
 
@@ -226,10 +255,18 @@ impl RankingId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MatchId(Uuid);
+
+impl MatchId {
+    pub fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
 #[derive(Debug)]
-#[expect(dead_code)]
 pub struct Match {
-    id: Uuid,
+    id: MatchId,
     team_a: Vec<RankingId>,
     team_b: Vec<RankingId>,
     round: u32,
@@ -238,7 +275,7 @@ pub struct Match {
 
 impl Match {
     pub fn new(team_a: Vec<RankingId>, team_b: Vec<RankingId>, round: u32) -> Self {
-        let id = Uuid::new_v5(
+        let id = MatchId(Uuid::new_v5(
             &NAMESPACE_MATCH,
             &team_a
                 .iter()
@@ -247,7 +284,7 @@ impl Match {
                 .flat_map(|uuid| uuid.0.into_bytes())
                 .chain(round.to_le_bytes())
                 .collect::<Vec<_>>(),
-        );
+        ));
         Self {
             id,
             team_a,
@@ -255,6 +292,10 @@ impl Match {
             round,
             result: MatchResult::NotFinished,
         }
+    }
+
+    pub fn id(&self) -> MatchId {
+        self.id
     }
 
     pub fn team_a(&self) -> &[RankingId] {
@@ -275,5 +316,9 @@ impl Match {
 
     pub fn is_finished(&self) -> bool {
         !matches!(self.result, MatchResult::NotFinished)
+    }
+
+    pub(crate) fn set_result(&mut self, result: MatchResult) {
+        self.result = result;
     }
 }
