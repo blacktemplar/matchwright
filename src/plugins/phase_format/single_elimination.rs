@@ -1,10 +1,9 @@
 use std::{collections::HashMap, num::NonZeroU32};
 
 use itertools::Itertools;
-use uuid::Uuid;
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, PhaseTeamId},
     plugins::phase_format::PhaseFormat,
 };
 
@@ -19,10 +18,10 @@ impl PhaseFormat for SingleElimination {
         if let Some(max_round) = max_round {
             // The ordering of this vector will be determined by match winners. If a lower-ranked
             // team wins, it will be swapped with the higher-ranked losing team.
-            let mut ranking_uuid_to_swap_replaced_rank: HashMap<_, _> = phase
+            let mut ranking_team_id_to_swap_replaced_rank: HashMap<_, _> = phase
                 .rankings()
                 .iter()
-                .map(|r| (r.id(), r.initial_unique_rank()))
+                .map(|r| (r.team_id(), r.initial_unique_rank()))
                 .collect();
             // matches are ordered by round, which is important so that the following works:
             let mut lowest_loser_rank = NonZeroU32::MAX;
@@ -30,8 +29,8 @@ impl PhaseFormat for SingleElimination {
             for r#match in matches_odered_by_round {
                 let team_a_id = r#match.team_a()[0];
                 let team_b_id = r#match.team_b()[0];
-                let rank_a = ranking_uuid_to_swap_replaced_rank[&team_a_id];
-                let rank_b = ranking_uuid_to_swap_replaced_rank[&team_b_id];
+                let rank_a = ranking_team_id_to_swap_replaced_rank[&team_a_id];
+                let rank_b = ranking_team_id_to_swap_replaced_rank[&team_b_id];
                 let max_rank = rank_a.max(rank_b);
                 if max_rank < lowest_loser_rank {
                     lowest_loser_rank = max_rank;
@@ -47,8 +46,8 @@ impl PhaseFormat for SingleElimination {
                     }
                 };
                 if swap {
-                    ranking_uuid_to_swap_replaced_rank.insert(team_a_id, rank_b);
-                    ranking_uuid_to_swap_replaced_rank.insert(team_b_id, rank_a);
+                    ranking_team_id_to_swap_replaced_rank.insert(team_a_id, rank_b);
+                    ranking_team_id_to_swap_replaced_rank.insert(team_b_id, rank_a);
                 }
             }
             assert!(
@@ -62,18 +61,23 @@ impl PhaseFormat for SingleElimination {
             }
             let num_survived_rankings = lowest_loser_rank.get() - 1;
             let num_matches = num_survived_rankings / 2;
-            let mut ordered_rankings =
-                vec![RankingId::new(Uuid::nil()); num_survived_rankings as usize];
-            for (id, rank) in ranking_uuid_to_swap_replaced_rank {
+            let mut ordered_phase_team_ids =
+                vec![PhaseTeamId::nil(); num_survived_rankings as usize];
+            for (id, rank) in ranking_team_id_to_swap_replaced_rank {
                 if rank.get() <= num_survived_rankings {
-                    ordered_rankings[(rank.get() - 1) as usize] = id;
+                    ordered_phase_team_ids[(rank.get() - 1) as usize] = id;
                 }
             }
+            assert!(
+                ordered_phase_team_ids
+                    .iter()
+                    .all(|id| *id != PhaseTeamId::nil())
+            );
             let round = max_round + 1;
             (1..=num_matches)
                 .map(|i| {
-                    let team_a_id = ordered_rankings[(i - 1) as usize];
-                    let team_b_id = ordered_rankings[(num_survived_rankings - i) as usize];
+                    let team_a_id = ordered_phase_team_ids[(i - 1) as usize];
+                    let team_b_id = ordered_phase_team_ids[(num_survived_rankings - i) as usize];
                     Match::new(vec![team_a_id], vec![team_b_id], round)
                 })
                 .collect()
@@ -90,8 +94,8 @@ impl PhaseFormat for SingleElimination {
 
             ((round_of - num_teams + 1)..=fraction_of_final)
                 .map(|i| {
-                    let team_a_id = phase.rankings()[i - 1].id();
-                    let team_b_id = phase.rankings()[round_of - i].id();
+                    let team_a_id = phase.rankings()[i - 1].team_id();
+                    let team_b_id = phase.rankings()[round_of - i].team_id();
                     Match::new(vec![team_a_id], vec![team_b_id], 0)
                 })
                 .collect()

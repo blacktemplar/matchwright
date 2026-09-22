@@ -8,8 +8,8 @@ use vec1::{Vec1, vec1};
 use crate::plugins::phase_format::PhaseFormat;
 
 /// Namespaces for various deterministic ids
-const NAMESPACE_RANKING: Uuid = uuid!("4abb86a7-caf0-4de1-b19b-938c43a86a27");
 const NAMESPACE_MATCH: Uuid = uuid!("d4098937-85f4-49ce-945a-be8ae74da780");
+const NAMESPACE_PHASE_TEAM: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
 
 #[derive(Default)]
 pub struct Competition {
@@ -51,6 +51,7 @@ impl Competition {
             incoming_phase_transitions: vec![],
             rankings: vec![],
             matches: HashMap::new(),
+            teams: HashMap::new(),
             phase_format,
         };
         self.phases.insert(id, phase);
@@ -92,12 +93,18 @@ impl Competition {
             unimplemented!("Multi-phase competition not yet supported");
         }
         let phase = self.phases.values_mut().next().unwrap();
-        phase.rankings = ranking_entrants
+        let (team_ids, teams): (Vec<_>, _) = ranking_entrants
+            .into_iter()
+            .map(|entrants| {
+                let team = PhaseTeam::new(entrants);
+                (team.id(), (team.id(), team))
+            })
+            .unzip();
+        phase.teams = teams;
+        phase.rankings = team_ids
             .into_iter()
             .enumerate()
-            .map(|(rank, entrants)| {
-                Ranking::new(entrants, NonZeroU32::new(rank as u32 + 1).unwrap())
-            })
+            .map(|(rank, team_id)| Ranking::new(team_id, NonZeroU32::new(rank as u32 + 1).unwrap()))
             .collect();
         self.started = true;
 
@@ -146,8 +153,42 @@ pub struct Phase {
     incoming_phase_transitions: Vec<Rc<PhaseTransition>>,
     /// Rankings are guaranteed to be ordered by their [`Ranking::unique_rank`] in ascending order.
     rankings: Vec<Ranking>,
+    teams: HashMap<PhaseTeamId, PhaseTeam>,
     matches: HashMap<MatchId, Match>,
     phase_format: Box<dyn PhaseFormat>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PhaseTeamId(Uuid);
+
+impl PhaseTeamId {
+    pub fn nil() -> Self {
+        Self(Uuid::nil())
+    }
+}
+
+#[derive(Debug)]
+pub struct PhaseTeam {
+    id: PhaseTeamId,
+    entrants: Vec1<EntrantId>,
+}
+
+impl PhaseTeam {
+    pub fn new(entrants: Vec1<EntrantId>) -> Self {
+        let id = PhaseTeamId(Uuid::new_v5(
+            &NAMESPACE_PHASE_TEAM,
+            &bytes_from_uuids(entrants.iter().map(|e| e.0)),
+        ));
+        Self { id, entrants }
+    }
+
+    pub fn id(&self) -> PhaseTeamId {
+        self.id
+    }
+
+    pub fn entrants(&self) -> &[EntrantId] {
+        &self.entrants
+    }
 }
 
 impl Phase {
@@ -157,6 +198,10 @@ impl Phase {
 
     pub fn rankings(&self) -> &[Ranking] {
         &self.rankings
+    }
+
+    pub fn teams(&self) -> &HashMap<PhaseTeamId, PhaseTeam> {
+        &self.teams
     }
 
     pub fn matches(&self) -> &HashMap<MatchId, Match> {
@@ -189,8 +234,7 @@ pub struct PhaseTransition {
 
 #[derive(Debug)]
 pub struct Ranking {
-    id: RankingId,
-    entrants: Vec1<EntrantId>,
+    team_id: PhaseTeamId,
     initial_unique_rank: NonZeroU32,
     unique_rank: NonZeroU32,
     rank: NonZeroU32,
@@ -201,22 +245,17 @@ pub fn bytes_from_uuids(uuids: impl Iterator<Item = Uuid>) -> Vec<u8> {
 }
 
 impl Ranking {
-    pub fn new(entrants: Vec1<EntrantId>, unique_rank: NonZeroU32) -> Self {
-        let id = RankingId(Uuid::new_v5(
-            &NAMESPACE_RANKING,
-            &bytes_from_uuids(entrants.iter().map(|e| e.0)),
-        ));
+    pub fn new(team_id: PhaseTeamId, unique_rank: NonZeroU32) -> Self {
         Self {
-            id,
-            entrants,
+            team_id,
             initial_unique_rank: unique_rank,
             unique_rank,
             rank: NonZeroU32::new(1).unwrap(),
         }
     }
 
-    pub fn id(&self) -> RankingId {
-        self.id
+    pub fn team_id(&self) -> PhaseTeamId {
+        self.team_id
     }
 
     /// The unique rank of the ranking, which is guaranteed to be [`Ranking::rank`] with tie
@@ -227,10 +266,6 @@ impl Ranking {
 
     pub fn rank(&self) -> NonZeroU32 {
         self.rank
-    }
-
-    pub fn entrants(&self) -> &[EntrantId] {
-        &self.entrants
     }
 
     pub fn initial_unique_rank(&self) -> NonZeroU32 {
@@ -267,14 +302,14 @@ impl MatchId {
 #[derive(Debug)]
 pub struct Match {
     id: MatchId,
-    team_a: Vec<RankingId>,
-    team_b: Vec<RankingId>,
+    team_a: Vec<PhaseTeamId>,
+    team_b: Vec<PhaseTeamId>,
     round: u32,
     result: MatchResult,
 }
 
 impl Match {
-    pub fn new(team_a: Vec<RankingId>, team_b: Vec<RankingId>, round: u32) -> Self {
+    pub fn new(team_a: Vec<PhaseTeamId>, team_b: Vec<PhaseTeamId>, round: u32) -> Self {
         let id = MatchId(Uuid::new_v5(
             &NAMESPACE_MATCH,
             &team_a
@@ -298,11 +333,11 @@ impl Match {
         self.id
     }
 
-    pub fn team_a(&self) -> &[RankingId] {
+    pub fn team_a(&self) -> &[PhaseTeamId] {
         &self.team_a
     }
 
-    pub fn team_b(&self) -> &[RankingId] {
+    pub fn team_b(&self) -> &[PhaseTeamId] {
         &self.team_b
     }
 

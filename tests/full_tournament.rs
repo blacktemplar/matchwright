@@ -69,13 +69,13 @@ fn full_tournament() {
     let phase = &sm.current().phases().values().next().unwrap();
     assert_eq!(phase.id(), phase_id);
     assert_eq!(phase.rankings().len(), 4);
-    assert!(phase.rankings().iter().all(|r| r.entrants().len() == 1));
+    assert!(phase.teams().values().all(|t| t.entrants().len() == 1));
     let entrants_by_initial_rank = phase
         .rankings()
         .iter()
-        .map(|r| r.entrants()[0])
+        .map(|r| phase.teams()[&r.team_id()].entrants()[0])
         .collect_vec();
-    let ranking_ids_by_initial_rank = phase.rankings().iter().map(|r| r.id()).collect_vec();
+    let team_id_by_initial_rank = phase.rankings().iter().map(|r| r.team_id()).collect_vec();
     assert_eq!(
         entrants_by_initial_rank.iter().counts(),
         [
@@ -95,18 +95,20 @@ fn full_tournament() {
     let rankings = phase.rankings();
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);
-    let match_0_vs_3_id = Match::new(vec![rankings[0].id()], vec![rankings[3].id()], 0).id();
-    let match_1_vs_2_id = Match::new(vec![rankings[1].id()], vec![rankings[2].id()], 0).id();
+    let match_0_vs_3_id =
+        Match::new(vec![rankings[0].team_id()], vec![rankings[3].team_id()], 0).id();
+    let match_1_vs_2_id =
+        Match::new(vec![rankings[1].team_id()], vec![rankings[2].team_id()], 0).id();
     assert!(matches.contains_key(&match_0_vs_3_id));
     assert!(matches.contains_key(&match_1_vs_2_id));
     let match_0_vs_3 = &matches[&match_0_vs_3_id];
     let match_1_vs_2 = &matches[&match_1_vs_2_id];
-    assert_eq!(match_0_vs_3.team_a(), &[rankings[0].id()]);
-    assert_eq!(match_0_vs_3.team_b(), &[rankings[3].id()]);
+    assert_eq!(match_0_vs_3.team_a(), &[rankings[0].team_id()]);
+    assert_eq!(match_0_vs_3.team_b(), &[rankings[3].team_id()]);
     assert_eq!(match_0_vs_3.round(), 0);
     assert_eq!(match_0_vs_3.result(), MatchResult::NotFinished);
-    assert_eq!(match_1_vs_2.team_a(), &[rankings[1].id()]);
-    assert_eq!(match_1_vs_2.team_b(), &[rankings[2].id()]);
+    assert_eq!(match_1_vs_2.team_a(), &[rankings[1].team_id()]);
+    assert_eq!(match_1_vs_2.team_b(), &[rankings[2].team_id()]);
     assert_eq!(match_1_vs_2.round(), 0);
     assert_eq!(match_1_vs_2.result(), MatchResult::NotFinished);
 
@@ -158,8 +160,8 @@ fn full_tournament() {
     //
     // assert next round matches
     let match_3_vs_1_id = Match::new(
-        vec![ranking_ids_by_initial_rank[3]],
-        vec![ranking_ids_by_initial_rank[1]],
+        vec![team_id_by_initial_rank[3]],
+        vec![team_id_by_initial_rank[1]],
         1,
     )
     .id();
@@ -169,8 +171,8 @@ fn full_tournament() {
     dbg!(matches);
     assert!(matches.contains_key(&match_3_vs_1_id));
     let match_3_vs_1 = &matches[&match_3_vs_1_id];
-    assert_eq!(match_3_vs_1.team_a(), &[ranking_ids_by_initial_rank[3]]);
-    assert_eq!(match_3_vs_1.team_b(), &[ranking_ids_by_initial_rank[1]]);
+    assert_eq!(match_3_vs_1.team_a(), &[team_id_by_initial_rank[3]]);
+    assert_eq!(match_3_vs_1.team_b(), &[team_id_by_initial_rank[1]]);
     assert_eq!(match_3_vs_1.round(), 1);
     assert_eq!(match_3_vs_1.result(), MatchResult::NotFinished);
 }
