@@ -1,10 +1,11 @@
-use std::fmt::Debug;
+use crate::{
+    entities::competition::{Match, Phase},
+    plugins::Plugin,
+};
 
-use dyn_clone::DynClone;
-
-use crate::entities::competition::{Match, Phase};
-
-pub trait PhaseFormat: Debug + DynClone {
+pub trait PhaseFormat: Plugin {
+    // the ranking ids of all produced matches must be part of this phase and match ids must be
+    // unique
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match>;
 }
 

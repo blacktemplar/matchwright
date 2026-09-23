@@ -7,6 +7,7 @@ use tournament_engine::{
     plugins::{
         metrics_calculator::round_of_first_loss::{RoundOfFirstLoss, RoundOfFirstLossCalculator},
         phase_format::single_elimination::SingleElimination,
+        ranker::{HierarchicalRanker, LexicographicalMetrics},
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
@@ -16,6 +17,7 @@ use tournament_engine::{
 };
 use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
 use uuid::Uuid;
+use vec1::vec1;
 
 type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
 
@@ -49,6 +51,9 @@ fn full_tournament() {
     let seed = rng().random();
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination);
+    let ranker = Box::new(HierarchicalRanker::new(vec![Box::new(
+        LexicographicalMetrics::new().add_metric::<RoundOfFirstLoss>(),
+    )]));
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
@@ -62,6 +67,7 @@ fn full_tournament() {
         AddPhase::new(
             phase_id,
             phase_format,
+            ranker,
             vec![Box::new(RoundOfFirstLossCalculator)],
         ),
     )
@@ -113,14 +119,14 @@ fn full_tournament() {
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);
     let match_0_vs_3_id = Match::new(
-        vec![ranking_id_by_initial_rank[0]],
-        vec![ranking_id_by_initial_rank[3]],
+        vec1![ranking_id_by_initial_rank[0]],
+        vec1![ranking_id_by_initial_rank[3]],
         NonZeroU32::new(1).unwrap(),
     )
     .id();
     let match_1_vs_2_id = Match::new(
-        vec![ranking_id_by_initial_rank[1]],
-        vec![ranking_id_by_initial_rank[2]],
+        vec1![ranking_id_by_initial_rank[1]],
+        vec1![ranking_id_by_initial_rank[2]],
         NonZeroU32::new(1).unwrap(),
     )
     .id();
@@ -165,29 +171,29 @@ fn full_tournament() {
     let ranking_2 = &rankings[&ranking_id_by_initial_rank[2]];
     let ranking_3 = &rankings[&ranking_id_by_initial_rank[3]];
 
-    // assert_eq!(ranking_0.rank(), NonZeroU32::new(3).unwrap());
-    // assert_eq!(ranking_0.unique_rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_0.rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_0.unique_rank(), NonZeroU32::new(3).unwrap());
     assert_eq!(ranking_0.initial_unique_rank(), NonZeroU32::new(1).unwrap());
     assert_eq!(
         ranking_0.metric::<RoundOfFirstLoss>(),
         Some(&RoundOfFirstLoss(Some(NonZeroU32::new(1).unwrap())))
     );
-    // assert_eq!(ranking_1.rank(), NonZeroU32::new(1).unwrap());
-    // assert_eq!(ranking_1.unique_rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(ranking_1.rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(ranking_1.unique_rank(), NonZeroU32::new(1).unwrap());
     assert_eq!(ranking_1.initial_unique_rank(), NonZeroU32::new(2).unwrap());
     assert_eq!(
         ranking_1.metric::<RoundOfFirstLoss>(),
         Some(&RoundOfFirstLoss(None))
     );
-    // assert_eq!(ranking_2.rank(), NonZeroU32::new(3).unwrap());
-    // assert_eq!(ranking_2.unique_rank(), NonZeroU32::new(4).unwrap());
+    assert_eq!(ranking_2.rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_2.unique_rank(), NonZeroU32::new(4).unwrap());
     assert_eq!(ranking_2.initial_unique_rank(), NonZeroU32::new(3).unwrap());
     assert_eq!(
         ranking_2.metric::<RoundOfFirstLoss>(),
         Some(&RoundOfFirstLoss(Some(NonZeroU32::new(1).unwrap())))
     );
-    // assert_eq!(ranking_3.rank(), NonZeroU32::new(1).unwrap());
-    // assert_eq!(ranking_3.unique_rank(), NonZeroU32::new(2).unwrap());
+    assert_eq!(ranking_3.rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(ranking_3.unique_rank(), NonZeroU32::new(2).unwrap());
     assert_eq!(ranking_3.initial_unique_rank(), NonZeroU32::new(4).unwrap());
     assert_eq!(
         ranking_3.metric::<RoundOfFirstLoss>(),
@@ -195,8 +201,8 @@ fn full_tournament() {
     );
     // assert next round matches
     let match_3_vs_1_id = Match::new(
-        vec![ranking_id_by_initial_rank[3]],
-        vec![ranking_id_by_initial_rank[1]],
+        vec1![ranking_id_by_initial_rank[3]],
+        vec1![ranking_id_by_initial_rank[1]],
         NonZeroU32::new(2).unwrap(),
     )
     .id();
@@ -209,4 +215,57 @@ fn full_tournament() {
     assert_eq!(match_3_vs_1.team_b(), &[ranking_id_by_initial_rank[1]]);
     assert_eq!(match_3_vs_1.round(), NonZeroU32::new(2).unwrap(),);
     assert_eq!(match_3_vs_1.result(), MatchResult::NotFinished);
+
+    // finish the tournament
+    apply(
+        &mut sm,
+        ReportMatchResult::new(phase_id, match_3_vs_1_id, MatchResult::AWins),
+    )
+    .unwrap();
+
+    // final asserts
+    let phase = &sm.current().phases().values().next().unwrap();
+    let matches = phase.matches();
+    let match_0_vs_3 = &matches[&match_0_vs_3_id];
+    let match_1_vs_2 = &matches[&match_1_vs_2_id];
+    let match_3_vs_1 = &matches[&match_3_vs_1_id];
+    assert_eq!(match_0_vs_3.result(), MatchResult::BWins);
+    assert_eq!(match_1_vs_2.result(), MatchResult::AWins);
+    assert_eq!(match_3_vs_1.result(), MatchResult::AWins);
+
+    // assert ranking data
+    let rankings = phase.rankings();
+    let ranking_0 = &rankings[&ranking_id_by_initial_rank[0]];
+    let ranking_1 = &rankings[&ranking_id_by_initial_rank[1]];
+    let ranking_2 = &rankings[&ranking_id_by_initial_rank[2]];
+    let ranking_3 = &rankings[&ranking_id_by_initial_rank[3]];
+
+    assert_eq!(ranking_0.rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_0.unique_rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_0.initial_unique_rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(
+        ranking_0.metric::<RoundOfFirstLoss>(),
+        Some(&RoundOfFirstLoss(Some(NonZeroU32::new(1).unwrap())))
+    );
+    assert_eq!(ranking_1.rank(), NonZeroU32::new(2).unwrap());
+    assert_eq!(ranking_1.unique_rank(), NonZeroU32::new(2).unwrap());
+    assert_eq!(ranking_1.initial_unique_rank(), NonZeroU32::new(2).unwrap());
+    assert_eq!(
+        ranking_1.metric::<RoundOfFirstLoss>(),
+        Some(&RoundOfFirstLoss(Some(NonZeroU32::new(2).unwrap())))
+    );
+    assert_eq!(ranking_2.rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(ranking_2.unique_rank(), NonZeroU32::new(4).unwrap());
+    assert_eq!(ranking_2.initial_unique_rank(), NonZeroU32::new(3).unwrap());
+    assert_eq!(
+        ranking_2.metric::<RoundOfFirstLoss>(),
+        Some(&RoundOfFirstLoss(Some(NonZeroU32::new(1).unwrap())))
+    );
+    assert_eq!(ranking_3.rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(ranking_3.unique_rank(), NonZeroU32::new(1).unwrap());
+    assert_eq!(ranking_3.initial_unique_rank(), NonZeroU32::new(4).unwrap());
+    assert_eq!(
+        ranking_3.metric::<RoundOfFirstLoss>(),
+        Some(&RoundOfFirstLoss(None))
+    );
 }

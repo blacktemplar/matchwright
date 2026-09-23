@@ -26,11 +26,17 @@ impl TypeMap {
     }
 
     pub fn get<T: 'static>(&self) -> Option<&T> {
-        self.0.get(&TypeId::of::<T>()).map(|boxed| {
-            let any: &dyn Any = boxed.as_ref();
+        self.get_any::<T>().map(|any| {
             // SAFETY: We ensure in [`Self::insert`] that at key `TypeId::of::<T>()` an object
             // of type `T` is stored.
             unsafe { any.downcast_ref::<T>().unwrap_unchecked() }
+        })
+    }
+
+    pub fn get_any<T: 'static>(&self) -> Option<&dyn Any> {
+        self.0.get(&TypeId::of::<T>()).map(|b| {
+            let any: &dyn Any = b.as_ref();
+            any
         })
     }
 

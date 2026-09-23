@@ -1,6 +1,7 @@
 use std::{collections::HashMap, num::NonZeroU32};
 
 use itertools::Itertools;
+use vec1::vec1;
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -77,7 +78,7 @@ impl PhaseFormat for SingleElimination {
                 .map(|i| {
                     let team_a_id = ordered_phase_team_ids[(i - 1) as usize];
                     let team_b_id = ordered_phase_team_ids[(num_survived_rankings - i) as usize];
-                    Match::new(vec![team_a_id], vec![team_b_id], round)
+                    Match::new(vec1![team_a_id], vec1![team_b_id], round)
                 })
                 .collect()
         } else {
@@ -96,8 +97,8 @@ impl PhaseFormat for SingleElimination {
                     let team_a_id = phase.ranking_ids_ordered_by_unique_rank()[i - 1];
                     let team_b_id = phase.ranking_ids_ordered_by_unique_rank()[round_of - i];
                     Match::new(
-                        vec![team_a_id],
-                        vec![team_b_id],
+                        vec1![team_a_id],
+                        vec1![team_b_id],
                         NonZeroU32::new(1).unwrap(),
                     )
                 })

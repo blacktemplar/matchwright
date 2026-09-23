@@ -1,12 +1,19 @@
-use std::{collections::HashMap, hash::Hash, num::NonZeroU32, rc::Rc};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    num::NonZeroU32,
+    rc::Rc,
+};
 
+use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
 use crate::{
-    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
+    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::Ranker},
     type_map::TypeMap,
 };
 
@@ -51,6 +58,7 @@ impl Competition {
         &mut self,
         id: PhaseId,
         phase_format: Box<dyn PhaseFormat>,
+        ranker: Box<dyn Ranker>,
         metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     ) {
         let phase = Phase {
@@ -61,6 +69,7 @@ impl Competition {
             ranking_ids_ordered_by_unique_rank: vec![],
             matches: HashMap::new(),
             phase_format,
+            ranker,
             metrics_calculators,
         };
         self.phases.insert(id, phase);
@@ -150,6 +159,7 @@ pub struct Phase {
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: HashMap<MatchId, Match>,
     phase_format: Box<dyn PhaseFormat>,
+    ranker: Box<dyn Ranker>,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
@@ -183,6 +193,22 @@ impl Phase {
         self.ranking_ids_ordered_by_unique_rank = ordered_ranking_ids;
         for metrics_calculator in &self.metrics_calculators {
             let metrics = metrics_calculator.initialize_metrics(self);
+            // check requirements of initialize_metrics
+            debug_assert!(
+                metrics.len() == self.rankings.len() * metrics_calculator.produced_metrics().len()
+                    && {
+                        let mut expected_pairs: HashSet<_> = metrics_calculator
+                            .produced_metrics()
+                            .iter()
+                            .flat_map(|m| self.rankings.keys().map(|id| (*id, *m)))
+                            .collect();
+                        for (ranking_id, metric) in &metrics {
+                            let metric: &dyn Any = &**metric;
+                            expected_pairs.remove(&(*ranking_id, metric.type_id()));
+                        }
+                        expected_pairs.is_empty()
+                    }
+            );
             for (ranking_id, metric) in metrics {
                 self.rankings
                     .get_mut(&ranking_id)
@@ -196,8 +222,20 @@ impl Phase {
 
     pub(crate) fn create_new_matches(&mut self) {
         let new_matches = self.phase_format.create_new_matches(self);
+        // check requirements of create_new_matches
+        debug_assert!(new_matches.iter().all(|m| {
+            m.team_a()
+                .iter()
+                .chain(m.team_b())
+                .all(|r| self.rankings.contains_key(r))
+        }));
+        let num_matches_before = self.matches.len();
+        let num_new_matches = new_matches.len();
         self.matches
-            .extend(new_matches.into_iter().map(|m| (m.id, m)))
+            .extend(new_matches.into_iter().map(|m| (m.id, m)));
+        // This guarantees that all new match ids were unique (at least relative to the existing
+        // match ids in this phase).
+        debug_assert_eq!(self.matches.len(), num_matches_before + num_new_matches);
     }
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
@@ -208,6 +246,15 @@ impl Phase {
         for metrics_calculator in &self.metrics_calculators {
             let updates =
                 metrics_calculator.update_after_match_result_changed(self, match_id, old_result);
+            // check requirements of initialize_metrics
+            debug_assert!(updates.iter().all(|(ranking_id, metric)| {
+                let metric: &dyn Any = &**metric;
+                self.rankings.contains_key(ranking_id)
+                    && metrics_calculator
+                        .produced_metrics()
+                        .contains(&metric.type_id())
+            }));
+
             for (ranking_id, metric) in updates {
                 self.rankings
                     .get_mut(&ranking_id)
@@ -216,13 +263,35 @@ impl Phase {
                     .insert_boxed(metric);
             }
         }
+        // update rankings
+        let new_ranks = self.ranker.update_ranks(self);
+        for (rank_id, new_rank) in new_ranks {
+            self.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
+        }
+        self.update_ranking_ordering_and_unique_ranks();
         self.create_new_matches();
     }
 
-    #[expect(unused)]
-    fn update_ranking_ids_ordered_by_unique_rank(&mut self) {
-        self.ranking_ids_ordered_by_unique_rank
-            .sort_by_key(|id| self.rankings[id].unique_rank());
+    fn update_ranking_ordering_and_unique_ranks(&mut self) {
+        self.ranking_ids_ordered_by_unique_rank.sort_by_key(|id| {
+            let ranking = &self.rankings[id];
+            (ranking.rank(), ranking.initial_unique_rank())
+        });
+        // set unique ranks
+        for (index, ranking_id) in self.ranking_ids_ordered_by_unique_rank.iter().enumerate() {
+            self.rankings.get_mut(ranking_id).unwrap().unique_rank =
+                NonZeroU32::new(index as u32 + 1).unwrap()
+        }
+        // check requirements of [`Ranker::update_ranks`]
+        debug_assert!(
+            self.rankings[&self.ranking_ids_ordered_by_unique_rank[0]].rank.get() == 1 &&
+            self.ranking_ids_ordered_by_unique_rank
+                .iter()
+                .map(|id| &self.rankings[id])
+                .enumerate()
+                .array_windows()
+                .all(|[(_, r1), (i2, r2)]| r1.rank == r2.rank || r2.rank.get() == i2 as u32 + 1)
+        );
     }
 }
 
@@ -288,6 +357,10 @@ impl Ranking {
     pub fn metric<T: 'static>(&self) -> Option<&T> {
         self.metrics.get::<T>()
     }
+
+    pub fn metrics(&self) -> &TypeMap {
+        &self.metrics
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -319,14 +392,15 @@ impl MatchId {
 #[derive(Debug)]
 pub struct Match {
     id: MatchId,
-    team_a: Vec<RankingId>,
-    team_b: Vec<RankingId>,
+    team_a: Vec1<RankingId>,
+    team_b: Vec1<RankingId>,
     round: NonZeroU32,
     result: MatchResult,
 }
 
 impl Match {
-    pub fn new(team_a: Vec<RankingId>, team_b: Vec<RankingId>, round: NonZeroU32) -> Self {
+    pub fn new(team_a: Vec1<RankingId>, team_b: Vec1<RankingId>, round: NonZeroU32) -> Self {
+        assert!(team_a.iter().all(|id| !team_b.contains(id)));
         let id = MatchId(Uuid::new_v5(
             &NAMESPACE_MATCH,
             &team_a
@@ -350,11 +424,11 @@ impl Match {
         self.id
     }
 
-    pub fn team_a(&self) -> &[RankingId] {
+    pub fn team_a(&self) -> &Vec1<RankingId> {
         &self.team_a
     }
 
-    pub fn team_b(&self) -> &[RankingId] {
+    pub fn team_b(&self) -> &Vec1<RankingId> {
         &self.team_b
     }
 
