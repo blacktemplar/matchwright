@@ -1,14 +1,14 @@
-use std::{any::TypeId, collections::HashSet, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use crate::{
     entities::competition::{MatchId, MatchResult, Phase, RankingId},
     plugins::{
-        metrics_calculator::{Metric, MetricId, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison},
     },
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub struct RoundOfFirstLoss(pub Option<NonZeroU32>);
 
 // Higher values are better, None is best.
@@ -27,8 +27,8 @@ impl Compare for RoundOfFirstLoss {
 pub struct RoundOfFirstLossCalculator;
 
 impl MetricsCalculator for RoundOfFirstLossCalculator {
-    fn produced_metrics(&self) -> HashSet<MetricId> {
-        [TypeId::of::<RoundOfFirstLoss>()].into_iter().collect()
+    fn default_metric_value(&self) -> Metric {
+        Box::new(RoundOfFirstLoss::default())
     }
 
     fn update_after_match_result_changed(
@@ -49,13 +49,5 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         };
         let metric = RoundOfFirstLoss(Some(r#match.round()));
         vec![(losing_team_id, Box::new(metric))]
-    }
-
-    fn initialize_metrics(&self, phase: &Phase) -> Vec<(RankingId, Metric)> {
-        phase
-            .rankings()
-            .keys()
-            .map(|ranking_id| (*ranking_id, Box::new(RoundOfFirstLoss(None)) as Metric))
-            .collect()
     }
 }

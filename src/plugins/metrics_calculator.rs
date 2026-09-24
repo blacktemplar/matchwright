@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::HashSet};
+use std::any::TypeId;
 
 use crate::{
     entities::competition::{MatchId, MatchResult, Phase, RankingId},
@@ -17,21 +17,16 @@ pub type MetricId = TypeId;
 pub type Metric = Box<dyn DebugAny>;
 
 pub trait MetricsCalculator: Plugin {
-    /// Declared statically, so disjointness can be validated without
-    /// running any computation.
-    fn produced_metrics(&self) -> HashSet<MetricId>;
-    /// The metrics in the result vec must all have a type id that is present in
-    /// [`Self::produced_metrics`].
+    fn default_metric_value(&self) -> Metric;
+
+    /// The metrics in the result vec must all have the type id returned by
+    /// [`Self::produced_metric`].
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
         match_id: MatchId,
         old_match_result: MatchResult,
     ) -> Vec<(RankingId, Metric)>;
-    /// The metrics in the result vec must all have a type id that is present in
-    /// [`Self::produced_metrics`]. Furhtermore for each ranking in `phase` and each metric in
-    /// [`Self::produced_metrics`] there must be exactly one entry in the result vec.
-    fn initialize_metrics(&self, phase: &Phase) -> Vec<(RankingId, Metric)>;
 }
 
 impl Clone for Box<dyn MetricsCalculator> {

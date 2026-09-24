@@ -1,5 +1,3 @@
-use std::any::TypeId;
-
 use super::Metric;
 use crate::{
     entities::competition::{MatchId, MatchResult, Phase, RankingId},
@@ -26,8 +24,8 @@ pub struct PointsCalculator {
 }
 
 impl MetricsCalculator for PointsCalculator {
-    fn produced_metrics(&self) -> std::collections::HashSet<super::MetricId> {
-        [TypeId::of::<Points>()].into_iter().collect()
+    fn default_metric_value(&self) -> Metric {
+        Box::new(Points::default())
     }
 
     fn update_after_match_result_changed(
@@ -45,14 +43,6 @@ impl MetricsCalculator for PointsCalculator {
                     Points(self.points_for_win * wins as f32 + self.points_for_draw * draws as f32);
                 (*r_id, Box::new(points) as Metric)
             })
-            .collect()
-    }
-
-    fn initialize_metrics(&self, phase: &Phase) -> Vec<(RankingId, Metric)> {
-        phase
-            .rankings()
-            .keys()
-            .map(|ranking_id| (*ranking_id, Box::new(Points::default()) as Metric))
             .collect()
     }
 }
@@ -123,14 +113,6 @@ mod tests {
             phase.report_match_result(match_id, result);
         }
         phase
-    }
-
-    #[test]
-    fn produces_exactly_the_points_metric() {
-        assert_eq!(
-            THREE_ONE.produced_metrics(),
-            [TypeId::of::<Points>()].into_iter().collect()
-        );
     }
 
     #[test]

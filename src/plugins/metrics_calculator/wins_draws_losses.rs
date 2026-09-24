@@ -1,8 +1,6 @@
-use std::{any::TypeId, collections::HashSet};
-
 use crate::{
     entities::competition::{MatchId, MatchResult, Phase, RankingId},
-    plugins::metrics_calculator::{Metric, MetricId, MetricsCalculator},
+    plugins::metrics_calculator::{Metric, MetricsCalculator},
 };
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -16,8 +14,8 @@ pub struct WinsDrawsLosses {
 pub struct WinsDrawsLossesCalculator;
 
 impl MetricsCalculator for WinsDrawsLossesCalculator {
-    fn produced_metrics(&self) -> HashSet<MetricId> {
-        [TypeId::of::<WinsDrawsLosses>()].into_iter().collect()
+    fn default_metric_value(&self) -> Metric {
+        Box::new(WinsDrawsLosses::default())
     }
 
     fn update_after_match_result_changed(
@@ -61,18 +59,11 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
             }))
             .collect()
     }
-
-    fn initialize_metrics(&self, phase: &Phase) -> Vec<(RankingId, Metric)> {
-        phase
-            .rankings()
-            .keys()
-            .map(|ranking_id| (*ranking_id, Box::new(WinsDrawsLosses::default()) as Metric))
-            .collect()
-    }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id};
 
@@ -96,14 +87,6 @@ mod tests {
             draws,
             losses,
         }
-    }
-
-    #[test]
-    fn produces_exactly_the_wins_draws_losses_metric() {
-        assert_eq!(
-            WinsDrawsLossesCalculator.produced_metrics(),
-            [TypeId::of::<WinsDrawsLosses>()].into_iter().collect()
-        );
     }
 
     #[test]

@@ -1,10 +1,4 @@
-use std::{
-    any::Any,
-    collections::{HashMap, HashSet},
-    hash::Hash,
-    num::NonZeroU32,
-    rc::Rc,
-};
+use std::{any::Any, collections::HashMap, hash::Hash, num::NonZeroU32, rc::Rc};
 
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -197,33 +191,25 @@ impl Phase {
         self.create_new_matches();
     }
 
-    /// Lets every metrics calculator of this phase populate its metrics for all rankings.
+    /// Gives every ranking of this phase the default value of every metric calculated for this
+    /// phase.
     fn initialize_metrics(&mut self) {
-        for metrics_calculator in &self.metrics_calculators {
-            let metrics = metrics_calculator.initialize_metrics(self);
-            // check requirements of initialize_metrics
-            debug_assert!(
-                metrics.len() == self.rankings.len() * metrics_calculator.produced_metrics().len()
-                    && {
-                        let mut expected_pairs: HashSet<_> = metrics_calculator
-                            .produced_metrics()
-                            .iter()
-                            .flat_map(|m| self.rankings.keys().map(|id| (*id, *m)))
-                            .collect();
-                        for (ranking_id, metric) in &metrics {
-                            let metric: &dyn Any = &**metric;
-                            expected_pairs.remove(&(*ranking_id, metric.type_id()));
-                        }
-                        expected_pairs.is_empty()
-                    }
-            );
-            for (ranking_id, metric) in metrics {
-                self.rankings
-                    .get_mut(&ranking_id)
-                    .expect("Ranking must exist")
-                    .metrics
-                    .insert_boxed(metric);
-            }
+        let ranking_ids: Vec<_> = self.rankings.keys().copied().collect();
+        let metrics: Vec<_> = self
+            .metrics_calculators
+            .iter()
+            .flat_map(|metrics_calculator| {
+                ranking_ids
+                    .iter()
+                    .map(move |ranking_id| (*ranking_id, metrics_calculator.default_metric_value()))
+            })
+            .collect();
+        for (ranking_id, metric) in metrics {
+            self.rankings
+                .get_mut(&ranking_id)
+                .expect("Ranking must exist")
+                .metrics
+                .insert_boxed(metric);
         }
     }
 
@@ -259,13 +245,12 @@ impl Phase {
         for metrics_calculator in &self.metrics_calculators {
             let updates =
                 metrics_calculator.update_after_match_result_changed(self, match_id, old_result);
-            // check requirements of initialize_metrics
+            // check requirements of update_after_match_result_changed
             debug_assert!(updates.iter().all(|(ranking_id, metric)| {
                 let metric: &dyn Any = &**metric;
                 self.rankings.contains_key(ranking_id)
-                    && metrics_calculator
-                        .produced_metrics()
-                        .contains(&metric.type_id())
+                    && (&*metrics_calculator.default_metric_value() as &dyn Any).type_id()
+                        == metric.type_id()
             }));
 
             for (ranking_id, metric) in updates {
