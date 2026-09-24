@@ -6,7 +6,11 @@ use crate::{
     type_map::DebugAny,
 };
 
+pub mod points;
 pub mod round_of_first_loss;
+#[cfg(test)]
+pub(crate) mod test_utils;
+pub mod wins_draws_losses;
 
 pub type MetricId = TypeId;
 

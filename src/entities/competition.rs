@@ -193,6 +193,12 @@ impl Phase {
             .unzip();
         self.rankings = rankings;
         self.ranking_ids_ordered_by_unique_rank = ordered_ranking_ids;
+        self.initialize_metrics();
+        self.create_new_matches();
+    }
+
+    /// Lets every metrics calculator of this phase populate its metrics for all rankings.
+    fn initialize_metrics(&mut self) {
         for metrics_calculator in &self.metrics_calculators {
             let metrics = metrics_calculator.initialize_metrics(self);
             // check requirements of initialize_metrics
@@ -219,18 +225,16 @@ impl Phase {
                     .insert_boxed(metric);
             }
         }
-        self.create_new_matches();
     }
 
     pub(crate) fn create_new_matches(&mut self) {
         let new_matches = self.phase_format.create_new_matches(self);
         // check requirements of create_new_matches
-        debug_assert!(new_matches.iter().all(|m| {
-            m.team_a()
+        debug_assert!(
+            new_matches
                 .iter()
-                .chain(m.team_b())
-                .all(|r| self.rankings.contains_key(r))
-        }));
+                .all(|m| { m.rankings().all(|r| self.rankings.contains_key(r)) })
+        );
         let num_matches_before = self.matches.len();
         let num_new_matches = new_matches.len();
         self.matches
@@ -242,7 +246,7 @@ impl Phase {
         debug_assert!(
             self.matches()
                 .values()
-                .flat_map(|m| m.team_a.iter().chain(m.team_b.iter()).map(|r| (m.round, r)))
+                .flat_map(|m| m.rankings().map(|r| (m.round, r)))
                 .all_unique()
         );
     }
@@ -462,6 +466,10 @@ impl Match {
         &self.team_b
     }
 
+    pub fn rankings(&self) -> impl Iterator<Item = &RankingId> {
+        self.team_a.iter().chain(self.team_b.iter())
+    }
+
     pub fn round(&self) -> NonZeroU32 {
         self.round
     }
@@ -509,6 +517,15 @@ impl PhaseBuilder {
         self
     }
 
+    /// Adds a metrics calculator whose metrics get initialized in [`PhaseBuilder::build`].
+    pub(crate) fn metrics_calculator(
+        mut self,
+        metrics_calculator: Box<dyn MetricsCalculator>,
+    ) -> Self {
+        self.metrics_calculators.push(metrics_calculator);
+        self
+    }
+
     /// Adds `num_players` more rankings, each a single entrant, ranked after the rankings
     /// already added.
     pub(crate) fn with_players(mut self, num_players: u32) -> Self {
@@ -524,7 +541,7 @@ impl PhaseBuilder {
     pub(crate) fn build(self) -> Phase {
         let ranking_ids_ordered_by_unique_rank = self.rankings.iter().map(Ranking::id).collect();
         let rankings = self.rankings.into_iter().map(|r| (r.id(), r)).collect();
-        Phase {
+        let mut phase = Phase {
             id: PhaseId::new(Uuid::nil()),
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
@@ -535,6 +552,8 @@ impl PhaseBuilder {
             seed: [0; 12],
             ranker: self.ranker,
             metrics_calculators: self.metrics_calculators,
-        }
+        };
+        phase.initialize_metrics();
+        phase
     }
 }
