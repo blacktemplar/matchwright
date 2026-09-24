@@ -236,6 +236,13 @@ impl Phase {
         // This guarantees that all new match ids were unique (at least relative to the existing
         // match ids in this phase).
         debug_assert_eq!(self.matches.len(), num_matches_before + num_new_matches);
+        // check that ranking ids are unique within a round
+        debug_assert!(
+            self.matches()
+                .values()
+                .flat_map(|m| m.team_a.iter().chain(m.team_b.iter()).map(|r| (m.round, r)))
+                .all_unique()
+        );
     }
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
@@ -446,5 +453,64 @@ impl Match {
 
     pub(crate) fn set_result(&mut self, result: MatchResult) {
         self.result = result;
+    }
+}
+
+/// Builds a standalone [`Phase`] with prepopulated rankings, without needing a [`Competition`]
+/// around it. Intended for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat)
+/// and [`Ranker`] implementations that only care about a single phase in isolation.
+#[cfg(test)]
+pub(crate) struct PhaseBuilder {
+    phase_format: Box<dyn PhaseFormat>,
+    ranker: Box<dyn Ranker>,
+    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    rankings: Vec<Ranking>,
+}
+
+#[cfg(test)]
+impl PhaseBuilder {
+    /// Creates a builder with no rankings yet and a ranker that leaves all ranks at 1 (use
+    /// [`PhaseBuilder::ranker`] to override it if the test cares about ranks).
+    pub(crate) fn new(phase_format: Box<dyn PhaseFormat>) -> Self {
+        Self {
+            phase_format,
+            ranker: Box::new(crate::plugins::ranker::HierarchicalRanker::new(Vec::new())),
+            metrics_calculators: Vec::new(),
+            rankings: Vec::new(),
+        }
+    }
+
+    #[expect(dead_code)]
+    pub(crate) fn ranker(mut self, ranker: Box<dyn Ranker>) -> Self {
+        self.ranker = ranker;
+        self
+    }
+
+    /// Adds `num_players` more rankings, each a single entrant, ranked after the rankings
+    /// already added.
+    pub(crate) fn with_players(mut self, num_players: u32) -> Self {
+        for _ in 0..num_players {
+            let entrant_id = EntrantId::new(Uuid::from_u128(self.rankings.len() as u128));
+            let unique_rank = NonZeroU32::new(self.rankings.len() as u32 + 1).unwrap();
+            self.rankings
+                .push(Ranking::new(vec1![entrant_id], unique_rank));
+        }
+        self
+    }
+
+    pub(crate) fn build(self) -> Phase {
+        let ranking_ids_ordered_by_unique_rank = self.rankings.iter().map(Ranking::id).collect();
+        let rankings = self.rankings.into_iter().map(|r| (r.id(), r)).collect();
+        Phase {
+            id: PhaseId::new(Uuid::nil()),
+            outgoing_phase_transitions: vec![],
+            incoming_phase_transitions: vec![],
+            rankings,
+            ranking_ids_ordered_by_unique_rank,
+            matches: HashMap::new(),
+            phase_format: self.phase_format,
+            ranker: self.ranker,
+            metrics_calculators: self.metrics_calculators,
+        }
     }
 }
