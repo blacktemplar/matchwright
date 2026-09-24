@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{any::TypeId, collections::HashMap, num::NonZeroU32};
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -33,20 +33,30 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
 
     fn update_after_match_result_changed(
         &self,
-        _: &Phase,
+        phase: &Phase,
         r#match: &Match,
         old_match_result: MatchResult,
+        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
 
         assert!(r#match.is_finished());
-        let losing_team_id = match r#match.result() {
-            MatchResult::AWins => r#match.team_b()[0],
-            MatchResult::BWins => r#match.team_a()[0],
+        let losing_ranking_ids = match r#match.result() {
+            MatchResult::AWins => r#match.team_b(),
+            MatchResult::BWins => r#match.team_a(),
             _ => return vec![], // nothing to update
         };
-        let metric = RoundOfFirstLoss(Some(r#match.round()));
-        vec![(losing_team_id, Box::new(metric))]
+        losing_ranking_ids
+            .iter()
+            .map(|r_id| {
+                let old_value = phase.rankings()[r_id].metric::<RoundOfFirstLoss>().unwrap();
+                let new_value = RoundOfFirstLoss(Some(match old_value.0 {
+                    None => r#match.round(),
+                    Some(x) => x.min(r#match.round()),
+                }));
+                (*r_id, Box::new(new_value) as Metric)
+            })
+            .collect()
     }
 }

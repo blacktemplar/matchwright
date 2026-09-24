@@ -1,3 +1,5 @@
+use std::{any::TypeId, collections::HashMap};
+
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -23,6 +25,17 @@ pub struct PointsCalculator {
     points_for_draw: f32,
 }
 
+impl PointsCalculator {
+    /// Scores every win with `points_for_win` and every draw with `points_for_draw` points, a
+    /// loss is always worth no points.
+    pub const fn new(points_for_win: f32, points_for_draw: f32) -> Self {
+        Self {
+            points_for_win,
+            points_for_draw,
+        }
+    }
+}
+
 impl MetricsCalculator for PointsCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Points::default())
@@ -33,9 +46,10 @@ impl MetricsCalculator for PointsCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
+        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         r#match
-            .rankings()
+            .non_losing_rankings()
             .map(|r_id| {
                 let WinsDrawsLosses { wins, draws, .. } =
                     *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
@@ -56,10 +70,7 @@ mod tests {
     };
 
     const fn calculator(points_for_win: Points, points_for_draw: Points) -> PointsCalculator {
-        PointsCalculator {
-            points_for_win: points_for_win.0,
-            points_for_draw: points_for_draw.0,
-        }
+        PointsCalculator::new(points_for_win.0, points_for_draw.0)
     }
 
     /// The scoring system of most association football leagues.

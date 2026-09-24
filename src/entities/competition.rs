@@ -1,13 +1,23 @@
-use std::{any::Any, collections::HashMap, hash::Hash, num::NonZeroU32, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    hash::Hash,
+    num::NonZeroU32,
+    rc::Rc,
+};
 
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
 use crate::{
-    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::Ranker},
+    plugins::{
+        metrics_calculator::{Metric, MetricsCalculator},
+        phase_format::PhaseFormat,
+        ranker::Ranker,
+    },
     type_map::TypeMap,
 };
 
@@ -243,9 +253,14 @@ impl Phase {
         assert!(old_result == MatchResult::NotFinished);
         r#match.set_result(match_result);
         let r#match = &self.matches[&match_id];
+        let mut old_metrics: HashMap<TypeId, Vec<(RankingId, Metric)>> = HashMap::new();
         for metrics_calculator in &self.metrics_calculators {
-            let updates =
-                metrics_calculator.update_after_match_result_changed(self, r#match, old_result);
+            let updates = metrics_calculator.update_after_match_result_changed(
+                self,
+                r#match,
+                old_result,
+                &old_metrics,
+            );
             // check requirements of update_after_match_result_changed
             debug_assert!(updates.iter().all(|(ranking_id, metric)| {
                 let metric: &dyn Any = &**metric;
@@ -255,11 +270,17 @@ impl Phase {
             }));
 
             for (ranking_id, metric) in updates {
-                self.rankings
+                let old_metric = self
+                    .rankings
                     .get_mut(&ranking_id)
                     .expect("Ranking must exist")
                     .metrics
-                    .insert_boxed(metric);
+                    .insert_boxed(metric)
+                    .unwrap();
+                old_metrics
+                    .entry((&*old_metric as &dyn Any).type_id())
+                    .or_default()
+                    .push((ranking_id, old_metric))
             }
         }
         // update rankings
@@ -454,6 +475,16 @@ impl Match {
 
     pub fn rankings(&self) -> impl Iterator<Item = &RankingId> {
         self.team_a.iter().chain(self.team_b.iter())
+    }
+
+    pub fn non_losing_rankings(&self) -> impl Iterator<Item = &RankingId> {
+        match self.result {
+            MatchResult::AWins => Either::Left(self.team_a.iter()),
+            MatchResult::BWins => Either::Left(self.team_b.iter()),
+            MatchResult::Draw => Either::Right(self.rankings()),
+            // technically no team is losing yet if result is not finished
+            MatchResult::NotFinished => Either::Right(self.rankings()),
+        }
     }
 
     pub fn round(&self) -> NonZeroU32 {

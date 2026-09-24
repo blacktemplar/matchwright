@@ -20,9 +20,9 @@ impl TypeMap {
         self.0.insert(TypeId::of::<T>(), Box::new(value));
     }
 
-    pub fn insert_boxed(&mut self, value: Box<dyn DebugAny>) {
+    pub fn insert_boxed(&mut self, value: Box<dyn DebugAny>) -> Option<Box<dyn DebugAny>> {
         let type_id = (*value).type_id();
-        self.0.insert(type_id, value);
+        self.0.insert(type_id, value)
     }
 
     pub fn get<T: 'static>(&self) -> Option<&T> {

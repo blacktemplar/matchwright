@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, collections::HashMap};
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -6,6 +6,7 @@ use crate::{
     type_map::DebugAny,
 };
 
+pub mod buchholz;
 pub mod matches;
 pub mod points;
 pub mod round_of_first_loss;
@@ -27,6 +28,7 @@ pub trait MetricsCalculator: Plugin {
         phase: &Phase,
         r#match: &Match,
         old_match_result: MatchResult,
+        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)>;
 }
 

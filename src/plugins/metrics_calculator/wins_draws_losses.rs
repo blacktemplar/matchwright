@@ -1,3 +1,5 @@
+use std::{any::TypeId, collections::HashMap};
+
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::metrics_calculator::{Metric, MetricsCalculator},
@@ -23,6 +25,7 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         phase: &Phase,
         r#match: &Match,
         old_match_result: MatchResult,
+        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
@@ -187,6 +190,7 @@ mod tests {
             &phase,
             &phase.matches()[&match_id],
             MatchResult::AWins,
+            &HashMap::new(),
         );
     }
 }
