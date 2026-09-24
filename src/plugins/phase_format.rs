@@ -15,5 +15,6 @@ impl Clone for Box<dyn PhaseFormat> {
     }
 }
 
+pub mod random_rounds;
 pub mod round_robin;
 pub mod single_elimination;

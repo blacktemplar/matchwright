@@ -7,7 +7,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
@@ -61,6 +61,7 @@ impl Competition {
         ranker: Box<dyn Ranker>,
         metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     ) {
+        let seed = self.new_seeded_std_rng(id).random();
         let phase = Phase {
             id,
             outgoing_phase_transitions: vec![],
@@ -70,6 +71,7 @@ impl Competition {
             matches: HashMap::new(),
             phase_format,
             ranker,
+            seed,
             metrics_calculators,
         };
         self.phases.insert(id, phase);
@@ -104,8 +106,7 @@ impl Competition {
 
     pub(crate) fn start(&mut self) {
         let mut ranking_entrants: Vec<_> = self.entrants().keys().map(|e| vec1![*e]).collect();
-        // 0 represents the start of the competition
-        let mut rng = self.new_seeded_std_rng(0);
+        let mut rng = self.new_seeded_std_rng(EntropyTypes::CompetitionStart);
         ranking_entrants.shuffle(&mut rng);
         if self.phases().len() != 1 {
             unimplemented!("Multi-phase competition not yet supported");
@@ -160,6 +161,7 @@ pub struct Phase {
     matches: HashMap<MatchId, Match>,
     phase_format: Box<dyn PhaseFormat>,
     ranker: Box<dyn Ranker>,
+    seed: [u8; 12],
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
@@ -300,6 +302,27 @@ impl Phase {
                 .all(|[(_, r1), (i2, r2)]| r1.rank == r2.rank || r2.rank.get() == i2 as u32 + 1)
         );
     }
+
+    /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
+    ///
+    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as
+    /// `entropy` so that different operations produce independent random streams while
+    /// remaining fully deterministic given the same update log.
+    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
+        Seeder::from((self.seed, entropy)).into_rng()
+    }
+
+    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
+    /// returns a [`StdRng`].
+    pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
+        self.new_seeded_rng(entropy)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum EntropyTypes {
+    CompetitionStart,
+    PhaseFormat,
 }
 
 #[derive(Debug)]
@@ -509,6 +532,7 @@ impl PhaseBuilder {
             ranking_ids_ordered_by_unique_rank,
             matches: HashMap::new(),
             phase_format: self.phase_format,
+            seed: [0; 12],
             ranker: self.ranker,
             metrics_calculators: self.metrics_calculators,
         }
