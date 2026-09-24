@@ -6,6 +6,7 @@ use crate::{
     type_map::DebugAny,
 };
 
+pub mod matches;
 pub mod points;
 pub mod round_of_first_loss;
 #[cfg(test)]
