@@ -242,9 +242,10 @@ impl Phase {
         let old_result = r#match.result();
         assert!(old_result == MatchResult::NotFinished);
         r#match.set_result(match_result);
+        let r#match = &self.matches[&match_id];
         for metrics_calculator in &self.metrics_calculators {
             let updates =
-                metrics_calculator.update_after_match_result_changed(self, match_id, old_result);
+                metrics_calculator.update_after_match_result_changed(self, r#match, old_result);
             // check requirements of update_after_match_result_changed
             debug_assert!(updates.iter().all(|(ranking_id, metric)| {
                 let metric: &dyn Any = &**metric;

@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use crate::{
-    entities::competition::{MatchId, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::Plugin,
     type_map::DebugAny,
 };
@@ -24,7 +24,7 @@ pub trait MetricsCalculator: Plugin {
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
-        match_id: MatchId,
+        r#match: &Match,
         old_match_result: MatchResult,
     ) -> Vec<(RankingId, Metric)>;
 }

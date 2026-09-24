@@ -1,5 +1,5 @@
 use crate::{
-    entities::competition::{MatchId, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::metrics_calculator::{Metric, MetricsCalculator},
 };
 
@@ -21,13 +21,12 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
-        match_id: MatchId,
+        r#match: &Match,
         old_match_result: MatchResult,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
 
-        let r#match = phase.matches().get(&match_id).unwrap();
         assert!(r#match.is_finished());
         let (winning_team, losing_team) = match r#match.result() {
             MatchResult::AWins => (r#match.team_a(), r#match.team_b()),
@@ -186,7 +185,7 @@ mod tests {
 
         WinsDrawsLossesCalculator.update_after_match_result_changed(
             &phase,
-            match_id,
+            &phase.matches()[&match_id],
             MatchResult::AWins,
         );
     }

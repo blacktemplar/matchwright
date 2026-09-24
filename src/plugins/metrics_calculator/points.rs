@@ -1,6 +1,6 @@
 use super::Metric;
 use crate::{
-    entities::competition::{MatchId, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Compare, Comparison},
@@ -31,10 +31,10 @@ impl MetricsCalculator for PointsCalculator {
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
-        match_id: MatchId,
+        r#match: &Match,
         _: MatchResult,
     ) -> Vec<(RankingId, Metric)> {
-        phase.matches()[&match_id]
+        r#match
             .rankings()
             .map(|r_id| {
                 let WinsDrawsLosses { wins, draws, .. } =

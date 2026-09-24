@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use crate::{
-    entities::competition::{MatchId, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison},
@@ -33,14 +33,13 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
 
     fn update_after_match_result_changed(
         &self,
-        phase: &Phase,
-        match_id: MatchId,
+        _: &Phase,
+        r#match: &Match,
         old_match_result: MatchResult,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
 
-        let r#match = phase.matches().get(&match_id).unwrap();
         assert!(r#match.is_finished());
         let losing_team_id = match r#match.result() {
             MatchResult::AWins => r#match.team_b()[0],
