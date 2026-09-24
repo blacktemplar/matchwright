@@ -14,51 +14,48 @@ impl PhaseFormat for RoundRobin {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method
-        if phase.matches().values().any(|m| !m.is_finished()) {
-            // we only create a new round once all matches are finished
+        if !phase.matches().is_empty() {
+            // we generate all matches at once, so as soon as one match exists nothing is to be done
             return vec![];
         }
-        let next_round = phase
-            .matches()
-            .values()
-            .map(|m| m.round())
-            .max()
-            .map(|r| r.saturating_add(1))
-            .unwrap_or(NonZeroU32::new(1).unwrap());
+        let num_teams = phase.rankings().len();
+        let num_teams_is_odd = num_teams % 2 == 1;
+        // We always fix the last element, but if we have an odd number of players the last element
+        // is the by which is not part of the ranking_ids_by_initial_unique_rank vec.
+        let num_teams_with_bye = if num_teams_is_odd {
+            num_teams + 1
+        } else {
+            num_teams
+        };
+        assert!(num_teams_with_bye > 1);
         let mut ranking_ids = phase
             .rankings()
             .values()
             .sorted_by_key(|r| r.initial_unique_rank())
             .map(|r| r.id())
             .collect_vec();
-        let num_players = ranking_ids.len();
-        let odd_num_players = num_players % 2 == 1;
-        // We always fix the last element, but if we have an odd number of players the last element
-        // is the by which is not part of the ranking_ids_by_initial_unique_rank vec.
-        let num_players_with_bye = if odd_num_players {
-            num_players + 1
-        } else {
-            num_players
-        };
-        assert!(num_players_with_bye > 0);
-        // Every player plays every other player exactly once after `num_players_with_bye - 1`
-        // rounds (the circle method's rotation period), so we stop generating further rounds then.
-        if next_round.get() as usize > num_players_with_bye - 1 {
-            return vec![];
-        }
-        // We rotate everything except the last (maybe not existing element)
-        ranking_ids[..(num_players_with_bye - 1)].rotate_right((next_round.get() - 1) as usize);
+        let first_playing_index = if num_teams_is_odd { 1 } else { 0 };
+        let mut matches = Vec::with_capacity(num_teams * (num_teams - 1) / 2);
+        for round in
+            NonZeroU32::new(1).unwrap()..NonZeroU32::new(num_teams_with_bye as u32).unwrap()
+        {
+            if round != NonZeroU32::new(1).unwrap() {
+                // We rotate everything except the last element. Note that if num teams is odd
+                // the last element is the bye which is not part of the vector, so in this case
+                // we rotate the whole vector.
+                ranking_ids[..(num_teams_with_bye - 1)].rotate_right(1);
+            }
 
-        // now index 0 plays against index num_players_with_bye - 1 (if existing), index 1 against
-        // num_players_with_bye - 2, and in general index `i` against `num_players_with_bye - i - 1`
-        let first_index = if odd_num_players { 1 } else { 0 };
-        (first_index..(num_players_with_bye / 2))
-            .map(|i| {
+            // now index 0 plays against index num_players_with_bye - 1 (if existing), index 1
+            // against num_players_with_bye - 2, and in general index `i` against
+            // `num_players_with_bye - i - 1`
+            matches.extend((first_playing_index..(num_teams_with_bye / 2)).map(|i| {
                 let team_a = vec1![ranking_ids[i]];
-                let team_b = vec1![ranking_ids[num_players_with_bye - 1 - i]];
-                Match::new(team_a, team_b, next_round)
-            })
-            .collect()
+                let team_b = vec1![ranking_ids[num_teams_with_bye - i - 1]];
+                Match::new(team_a, team_b, round)
+            }));
+        }
+        matches
     }
 }
 
@@ -67,33 +64,7 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::entities::competition::{MatchResult, PhaseBuilder};
-
-    /// Plays out all rounds of a round robin phase with `num_players` players by repeatedly
-    /// calling `create_new_matches` and then finishing all newly created matches, until no more
-    /// matches get scheduled.
-    fn play_out_all_rounds(num_players: u32) -> Phase {
-        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
-            .with_players(num_players)
-            .build();
-        loop {
-            phase.create_new_matches();
-            let unfinished_match_ids = phase
-                .matches()
-                .values()
-                .filter(|m| !m.is_finished())
-                .map(|m| m.id())
-                .collect_vec();
-            if unfinished_match_ids.is_empty() {
-                // no new matches got scheduled, the phase is done
-                break;
-            }
-            for match_id in unfinished_match_ids {
-                phase.report_match_result(match_id, MatchResult::Draw);
-            }
-        }
-        phase
-    }
+    use crate::entities::competition::PhaseBuilder;
 
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.
@@ -123,7 +94,12 @@ mod tests {
 
     #[test]
     fn round_robin_schedules_every_pair_exactly_once_for_even_number_of_players() {
-        let phase = play_out_all_rounds(6);
+        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
+            .with_players(6)
+            .build();
+
+        phase.create_new_matches();
+
         assert_every_pair_played_exactly_once(&phase);
         assert_eq!(
             phase.matches().values().map(Match::round).max(),
@@ -133,7 +109,12 @@ mod tests {
 
     #[test]
     fn round_robin_schedules_every_pair_exactly_once_for_odd_number_of_players() {
-        let phase = play_out_all_rounds(7);
+        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
+            .with_players(7)
+            .build();
+
+        phase.create_new_matches();
+
         assert_every_pair_played_exactly_once(&phase);
         assert_eq!(
             phase.matches().values().map(Match::round).max(),
