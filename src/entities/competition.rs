@@ -8,6 +8,7 @@ use std::{
 use itertools::{Either, Itertools};
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
+use serde::{Deserialize, Serialize};
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
@@ -427,7 +428,7 @@ impl RankingId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MatchId(Uuid);
 
 impl MatchId {

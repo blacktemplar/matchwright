@@ -3,6 +3,8 @@ use std::{
     fmt::Debug,
 };
 
+use serde::{Deserialize, Serialize};
+
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -11,10 +13,14 @@ use crate::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison},
     },
+    type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Buchholz(pub f32);
+
+#[typetag::serde]
+impl TypeMapValue for Buchholz {}
 
 // Higher values are better
 impl Compare for Buchholz {
@@ -63,7 +69,7 @@ fn buchholz_changes_based_on<M, B>(
 ) -> Vec<(RankingId, Metric)>
 where
     M: 'static + AsRef<f32>,
-    B: 'static + Debug + AsRef<f32> + From<f32>,
+    B: TypeMapValue + AsRef<f32> + From<f32>,
 {
     let mut buchholz_changes: HashMap<_, f32> = HashMap::new();
     for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
@@ -112,8 +118,11 @@ where
         .collect()
 }
 
-#[derive(Default, Debug, PartialEq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct BuchholzOfBuchholz(pub f32);
+
+#[typetag::serde]
+impl TypeMapValue for BuchholzOfBuchholz {}
 
 // Higher values are better
 impl Compare for BuchholzOfBuchholz {

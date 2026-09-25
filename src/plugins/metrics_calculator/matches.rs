@@ -1,14 +1,20 @@
 use std::any::TypeId;
 
+use serde::{Deserialize, Serialize};
+
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchId, MatchResult, Phase, RankingId},
     hash_map::HashMap,
     plugins::metrics_calculator::MetricsCalculator,
+    type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Matches(pub Vec<MatchId>);
+
+#[typetag::serde]
+impl TypeMapValue for Matches {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct MatchesCalculator;

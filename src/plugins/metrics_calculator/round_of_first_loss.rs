@@ -1,5 +1,7 @@
 use std::{any::TypeId, num::NonZeroU32};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     hash_map::HashMap,
@@ -7,10 +9,14 @@ use crate::{
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison},
     },
+    type_map::TypeMapValue,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct RoundOfFirstLoss(pub Option<NonZeroU32>);
+
+#[typetag::serde]
+impl TypeMapValue for RoundOfFirstLoss {}
 
 // Higher values are better, None is best.
 impl Compare for RoundOfFirstLoss {

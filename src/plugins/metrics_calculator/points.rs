@@ -1,5 +1,7 @@
 use std::any::TypeId;
 
+use serde::{Deserialize, Serialize};
+
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
@@ -8,10 +10,14 @@ use crate::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Compare, Comparison},
     },
+    type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Points(pub f32);
+
+#[typetag::serde]
+impl TypeMapValue for Points {}
 
 // Higher values are better
 impl Compare for Points {

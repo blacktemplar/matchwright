@@ -1,17 +1,23 @@
 use std::any::TypeId;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     hash_map::HashMap,
     plugins::metrics_calculator::{Metric, MetricsCalculator},
+    type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLosses {
     pub wins: u32,
     pub draws: u32,
     pub losses: u32,
 }
+
+#[typetag::serde]
+impl TypeMapValue for WinsDrawsLosses {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct WinsDrawsLossesCalculator;

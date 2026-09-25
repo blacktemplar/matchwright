@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::{
     entities::competition::{Phase, Ranking, RankingId},
     plugins::Plugin,
-    type_map::{DebugAny, TypeMap},
+    type_map::{TypeMap, TypeMapValue},
 };
 
 pub trait Ranker: Plugin {
@@ -142,7 +142,7 @@ pub trait Compare {
     fn compare(&self, other: &Self) -> Comparison;
 }
 
-impl<M: DebugAny + Compare> MetricComparator for Comparator<M> {
+impl<M: TypeMapValue + Compare> MetricComparator for Comparator<M> {
     fn extract_column<'a>(&self, metrics: &[&'a TypeMap]) -> Option<Box<dyn MetricColumn + 'a>> {
         let values: Vec<&M> = metrics
             .iter()
@@ -170,7 +170,7 @@ impl LexicographicalMetrics {
         Self::default()
     }
 
-    pub fn add_metric<M: DebugAny + Compare>(mut self) -> Self {
+    pub fn add_metric<M: TypeMapValue + Compare>(mut self) -> Self {
         self.0.push(Box::new(Comparator::<M>(PhantomData)));
         self
     }

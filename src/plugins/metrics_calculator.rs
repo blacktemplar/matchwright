@@ -4,7 +4,7 @@ use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     hash_map::HashMap,
     plugins::Plugin,
-    type_map::DebugAny,
+    type_map::TypeMapValue,
 };
 
 pub mod buchholz;
@@ -18,7 +18,7 @@ pub mod wins_draws_losses;
 
 pub type MetricId = TypeId;
 
-pub type Metric = Box<dyn DebugAny>;
+pub type Metric = Box<dyn TypeMapValue>;
 
 pub trait MetricsCalculator: Plugin {
     fn default_metric_value(&self) -> Metric;

@@ -1,5 +1,7 @@
 use std::any::{Any, TypeId};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId, ResultOfTeam},
     hash_map::HashMap,
@@ -7,10 +9,14 @@ use crate::{
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison},
     },
+    type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct SonnebornBerger(pub f32);
+
+#[typetag::serde]
+impl TypeMapValue for SonnebornBerger {}
 
 // Higher values are better
 impl Compare for SonnebornBerger {
