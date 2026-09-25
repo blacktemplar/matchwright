@@ -8,11 +8,7 @@ use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     plugins::{
-        metrics_calculator::{
-            MetricsCalculator,
-            matches::{Matches, Team},
-            points::Points,
-        },
+        metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison},
     },
 };
@@ -78,17 +74,15 @@ where
         if m_diff != 0. {
             // buchholz of all opponents of this ranking change
             let matches = ranking.metric::<Matches>().unwrap();
-            for (match_id, team) in &matches.0 {
+            for match_id in &matches.0 {
                 if match_id == &r#match.id() {
                     // we don't consider the newly reported match here as we will account for it
                     // later separately
                     continue;
                 }
                 let match_of_r = &phase.matches()[match_id];
-                let opponents = match team {
-                    Team::A => match_of_r.team_b(),
-                    Team::B => match_of_r.team_a(),
-                };
+                let opponents =
+                    match_of_r.rankings_of(match_of_r.team_of(r_id).unwrap().opponent());
                 for opponent in opponents {
                     *buchholz_changes.entry(*opponent).or_default() += m_diff;
                 }

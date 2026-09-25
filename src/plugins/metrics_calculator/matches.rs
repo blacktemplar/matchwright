@@ -6,14 +6,8 @@ use crate::{
     plugins::metrics_calculator::MetricsCalculator,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Team {
-    A,
-    B,
-}
-
 #[derive(Default, Debug, PartialEq, Clone)]
-pub struct Matches(pub Vec<(MatchId, Team)>);
+pub struct Matches(pub Vec<MatchId>);
 
 #[derive(Debug, Clone, Copy)]
 pub struct MatchesCalculator;
@@ -31,14 +25,11 @@ impl MetricsCalculator for MatchesCalculator {
         _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         r#match
-            .team_a()
-            .iter()
-            .map(|r_id| (r_id, Team::A))
-            .chain(r#match.team_b().iter().map(|r_id| (r_id, Team::B)))
-            .map(|(r_id, team)| {
+            .rankings()
+            .map(|r_id| {
                 let old_matches = phase.rankings()[r_id].metric::<Matches>().unwrap();
                 let mut new_matches = Matches(old_matches.0.clone());
-                new_matches.0.push((r#match.id(), team));
+                new_matches.0.push(r#match.id());
                 (*r_id, Box::new(new_matches) as Metric)
             })
             .collect()
@@ -76,8 +67,8 @@ mod tests {
 
         phase.report_match_result(match_id, MatchResult::AWins);
 
-        assert_eq!(metric_of(&phase, 0), &Matches(vec![(match_id, Team::A)]));
-        assert_eq!(metric_of(&phase, 1), &Matches(vec![(match_id, Team::B)]));
+        assert_eq!(metric_of(&phase, 0), &Matches(vec![match_id]));
+        assert_eq!(metric_of(&phase, 1), &Matches(vec![match_id]));
         // the rankings of the other, still unreported match are untouched
         assert_eq!(metric_of(&phase, 2), &Matches(vec![]));
         assert_eq!(metric_of(&phase, 3), &Matches(vec![]));
@@ -90,11 +81,8 @@ mod tests {
 
         phase.report_match_result(match_id, MatchResult::BWins);
 
-        for (ranking_index, team) in [(0, Team::A), (1, Team::A), (2, Team::B), (3, Team::B)] {
-            assert_eq!(
-                metric_of(&phase, ranking_index),
-                &Matches(vec![(match_id, team)])
-            );
+        for ranking_index in 0..4 {
+            assert_eq!(metric_of(&phase, ranking_index), &Matches(vec![match_id]));
         }
     }
 
@@ -118,9 +106,9 @@ mod tests {
             match_ids.push(match_id);
         }
 
-        let recorded = |team| Matches(match_ids.iter().map(|id| (*id, team)).collect());
-        assert_eq!(metric_of(&phase, 0), &recorded(Team::A));
-        assert_eq!(metric_of(&phase, 1), &recorded(Team::B));
+        let recorded = Matches(match_ids);
+        assert_eq!(metric_of(&phase, 0), &recorded);
+        assert_eq!(metric_of(&phase, 1), &recorded);
     }
 
     #[test]
@@ -146,21 +134,9 @@ mod tests {
             phase.report_match_result(*match_id, MatchResult::AWins);
         }
 
-        assert_eq!(
-            metric_of(&phase, 0),
-            &Matches(vec![(m_0_2, Team::A), (m_0_1, Team::A)])
-        );
-        assert_eq!(
-            metric_of(&phase, 1),
-            &Matches(vec![(m_1_2, Team::A), (m_1_3, Team::A), (m_0_1, Team::B)])
-        );
-        assert_eq!(
-            metric_of(&phase, 2),
-            &Matches(vec![(m_1_2, Team::B), (m_0_2, Team::B), (m_2_3, Team::A)])
-        );
-        assert_eq!(
-            metric_of(&phase, 3),
-            &Matches(vec![(m_1_3, Team::B), (m_2_3, Team::B)])
-        );
+        assert_eq!(metric_of(&phase, 0), &Matches(vec![m_0_2, m_0_1]));
+        assert_eq!(metric_of(&phase, 1), &Matches(vec![m_1_2, m_1_3, m_0_1]));
+        assert_eq!(metric_of(&phase, 2), &Matches(vec![m_1_2, m_0_2, m_2_3]));
+        assert_eq!(metric_of(&phase, 3), &Matches(vec![m_1_3, m_2_3]));
     }
 }

@@ -4,13 +4,9 @@ use std::{
 };
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, Phase, RankingId, ResultOfTeam},
     plugins::{
-        metrics_calculator::{
-            Metric, MetricsCalculator,
-            matches::{Matches, Team},
-            points::Points,
-        },
+        metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison},
     },
 };
@@ -65,28 +61,22 @@ impl MetricsCalculator for SonnebornBergerCalculator {
                 // sonneborn_berger_changes of all opponents of this ranking that scored at least a
                 // draw against this ranking change
                 let matches = ranking.metric::<Matches>().unwrap();
-                for (match_id, team) in &matches.0 {
+                for match_id in &matches.0 {
                     if match_id == &r#match.id() {
                         // we don't consider the newly reported match here as we will account for it
                         // later separately
                         continue;
                     }
                     let match_of_r = &phase.matches()[match_id];
-                    let opponents_score_weight = match (team, match_of_r.result()) {
-                        (Team::A, MatchResult::AWins)
-                        | (Team::B, MatchResult::BWins)
-                        | (_, MatchResult::NotFinished) => 0.,
-                        (_, MatchResult::Draw) => self.weight_for_draw,
-                        (Team::A, MatchResult::BWins) | (Team::B, MatchResult::AWins) => {
-                            self.weight_for_win
-                        }
+                    let opponent_team = match_of_r.team_of(r_id).unwrap().opponent();
+                    let opponent_score_weight = match match_of_r.result_of_team(opponent_team) {
+                        ResultOfTeam::Win => self.weight_for_win,
+                        ResultOfTeam::Draw => self.weight_for_draw,
+                        ResultOfTeam::Loss | ResultOfTeam::NotFinished => 0.,
                     };
-                    if opponents_score_weight != 0. {
-                        let opponents = match team {
-                            Team::A => match_of_r.team_b(),
-                            Team::B => match_of_r.team_a(),
-                        };
-                        let score_change = opponents_score_weight * points_diff;
+                    if opponent_score_weight != 0. {
+                        let opponents = match_of_r.rankings_of(opponent_team);
+                        let score_change = opponent_score_weight * points_diff;
                         for opponent in opponents {
                             *sonneborn_berger_changes.entry(*opponent).or_default() += score_change;
                         }

@@ -439,6 +439,29 @@ pub struct Match {
     result: MatchResult,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Team {
+    A,
+    B,
+}
+
+impl Team {
+    pub fn opponent(self) -> Self {
+        match self {
+            Team::A => Team::B,
+            Team::B => Team::A,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ResultOfTeam {
+    Win,
+    Draw,
+    Loss,
+    NotFinished,
+}
+
 impl Match {
     pub fn new(team_a: Vec1<RankingId>, team_b: Vec1<RankingId>, round: NonZeroU32) -> Self {
         assert!(team_a.iter().all(|id| !team_b.contains(id)));
@@ -461,6 +484,16 @@ impl Match {
         }
     }
 
+    pub fn team_of(&self, ranking_id: &RankingId) -> Option<Team> {
+        if self.team_a().contains(ranking_id) {
+            Some(Team::A)
+        } else if self.team_b().contains(ranking_id) {
+            Some(Team::B)
+        } else {
+            None
+        }
+    }
+
     pub fn id(&self) -> MatchId {
         self.id
     }
@@ -471,6 +504,22 @@ impl Match {
 
     pub fn team_b(&self) -> &Vec1<RankingId> {
         &self.team_b
+    }
+
+    pub fn rankings_of(&self, team: Team) -> &Vec1<RankingId> {
+        match team {
+            Team::A => self.team_a(),
+            Team::B => self.team_b(),
+        }
+    }
+
+    pub fn result_of_team(&self, team: Team) -> ResultOfTeam {
+        match (team, self.result) {
+            (Team::A, MatchResult::AWins) | (Team::B, MatchResult::BWins) => ResultOfTeam::Win,
+            (_, MatchResult::Draw) => ResultOfTeam::Draw,
+            (Team::A, MatchResult::BWins) | (Team::B, MatchResult::AWins) => ResultOfTeam::Loss,
+            (_, MatchResult::NotFinished) => ResultOfTeam::NotFinished,
+        }
     }
 
     pub fn rankings(&self) -> impl Iterator<Item = &RankingId> {

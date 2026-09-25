@@ -11,7 +11,7 @@ use tournament_engine::{
             buchholz::{
                 Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
             },
-            matches::{Matches, MatchesCalculator, Team},
+            matches::{Matches, MatchesCalculator},
             points::{Points, PointsCalculator},
             round_of_first_loss::{RoundOfFirstLoss, RoundOfFirstLossCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
@@ -62,7 +62,7 @@ fn assert_metrics(
     round_of_first_loss: Option<u32>,
     wins_draws_losses: (u32, u32, u32),
     points: f32,
-    matches: &[(MatchId, Team)],
+    matches: &[MatchId],
     buchholz: f32,
     buchholz_of_buchholz: f32,
 ) {
@@ -257,7 +257,7 @@ fn full_tournament() {
         Some(1),
         (0, 0, 1),
         0.0,
-        &[(match_0_vs_3_id, Team::A)],
+        &[match_0_vs_3_id],
         3.0,
         0.0,
     );
@@ -266,7 +266,7 @@ fn full_tournament() {
         None,
         (1, 0, 0),
         3.0,
-        &[(match_1_vs_2_id, Team::A)],
+        &[match_1_vs_2_id],
         0.0,
         3.0,
     );
@@ -275,7 +275,7 @@ fn full_tournament() {
         Some(1),
         (0, 0, 1),
         0.0,
-        &[(match_1_vs_2_id, Team::B)],
+        &[match_1_vs_2_id],
         3.0,
         0.0,
     );
@@ -284,7 +284,7 @@ fn full_tournament() {
         None,
         (1, 0, 0),
         3.0,
-        &[(match_0_vs_3_id, Team::B)],
+        &[match_0_vs_3_id],
         0.0,
         3.0,
     );
@@ -348,7 +348,7 @@ fn full_tournament() {
         Some(1),
         (0, 0, 1),
         0.0,
-        &[(match_0_vs_3_id, Team::A)],
+        &[match_0_vs_3_id],
         6.0,
         3.0,
     );
@@ -358,7 +358,7 @@ fn full_tournament() {
         Some(2),
         (1, 0, 1),
         3.0,
-        &[(match_1_vs_2_id, Team::A), (match_3_vs_1_id, Team::B)],
+        &[match_1_vs_2_id, match_3_vs_1_id],
         6.0,
         6.0,
     );
@@ -368,7 +368,7 @@ fn full_tournament() {
         Some(1),
         (0, 0, 1),
         0.0,
-        &[(match_1_vs_2_id, Team::B)],
+        &[match_1_vs_2_id],
         3.0,
         6.0,
     );
@@ -378,7 +378,7 @@ fn full_tournament() {
         None,
         (2, 0, 0),
         6.0,
-        &[(match_0_vs_3_id, Team::B), (match_3_vs_1_id, Team::A)],
+        &[match_0_vs_3_id, match_3_vs_1_id],
         3.0,
         12.0,
     );
