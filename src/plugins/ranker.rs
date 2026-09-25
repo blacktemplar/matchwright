@@ -44,9 +44,9 @@ impl HierarchicalRanker {
 impl Ranker for HierarchicalRanker {
     fn update_ranks(&self, phase: &Phase) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase
-            .rankings()
-            .values()
-            .map(|ranking| (ranking, NonZeroU32::new(1).unwrap()))
+            .ranking_ids_ordered_by_unique_rank()
+            .iter()
+            .map(|id| (&phase.rankings()[id], NonZeroU32::new(1).unwrap()))
             .collect();
 
         let mut slices = vec![rankings_with_new_ranks.as_mut_slice()];
@@ -140,11 +140,13 @@ impl<M: DebugAny + Compare> MetricComparator for Comparator<M> {
 
     unsafe fn compare(&self, v1: &dyn Any, v2: &dyn Any) -> Comparison {
         // Safety: due to the safety guarantee of compare + the guarantee of TypeMap that
-        // `get_any::<M>` returns a dyn Any that has concrete type `M`.
+        // `get_any::<M>` returns a dyn Any that has concrete type `M`. We cast instead of going
+        // through `downcast_ref`, because that would compare the 128 bit `TypeId` on every single
+        // comparison of a sort, which dominates the actual comparison of the metric.
         let (v1, v2) = unsafe {
             (
-                v1.downcast_ref::<M>().unwrap_unchecked(),
-                v2.downcast_ref::<M>().unwrap_unchecked(),
+                &*(v1 as *const dyn Any).cast::<M>(),
+                &*(v2 as *const dyn Any).cast::<M>(),
             )
         };
         v1.compare(v2)
@@ -168,50 +170,55 @@ impl LexicographicalMetrics {
 impl SliceRanker for LexicographicalMetrics {
     fn update_ranks(&self, _: &Phase, slice: &mut [(&Ranking, NonZeroU32)]) {
         let num_metrics = self.0.len();
-        if num_metrics == 0 {
+        if num_metrics == 0 || slice.len() < 2 {
             // this becomes basically a no-op
             return;
         }
-        let mut metrics = slice
-            .iter_mut()
-            .map(|(ranking, rank)| {
-                (
-                    self.0
-                        .iter()
-                        .map(|comparator| {
-                            comparator
-                                .extract_metric(ranking.metrics())
-                                .expect("All queried metrics must exist")
-                        })
-                        .collect_vec(),
-                    rank,
-                )
+        // The metrics of all rankings as a single flat table, where row `i` holds the metrics of
+        // `slice[i]`. This runs for every single reported match result, so it is worth avoiding
+        // the one allocation per ranking that a `Vec` of rows would need.
+        let metrics: Vec<&dyn Any> = slice
+            .iter()
+            .flat_map(|&(ranking, _)| {
+                self.0.iter().map(move |comparator| {
+                    comparator
+                        .extract_metric(ranking.metrics())
+                        .expect("All queried metrics must exist")
+                })
             })
-            .collect_vec();
-        let comparator = |metrics1: &Vec<&dyn Any>, metrics2: &Vec<&dyn Any>| {
-            for i in 0..num_metrics {
-                // SAFETY: metrics1[i] and metrics2[i] are guaranteed to be both outputs from
-                // `self.0[i].extract_metric` by the way we created them above
-                let result = unsafe { self.0[i].compare(metrics1[i], metrics2[i]) };
+            .collect();
+        let comparator = |row1: usize, row2: usize| {
+            let (row1, row2) = (row1 * num_metrics, row2 * num_metrics);
+            for (i, comparator) in self.0.iter().enumerate() {
+                // SAFETY: both metrics are guaranteed to be outputs from
+                // `self.0[i].extract_metric` by the way we filled the table above
+                let result = unsafe { comparator.compare(metrics[row1 + i], metrics[row2 + i]) };
                 if result != Comparison::Equal {
                     return result;
                 }
             }
             Comparison::Equal
         };
-        metrics.sort_by(|(metrics1, _), (metrics2, _)| {
-            comparator(metrics1, metrics2).to_ordering_for_sorting()
+        // sorting indices instead of the slice itself keeps the elements that the sort moves
+        // around small and leaves the rows of the table in place
+        let mut order = (0..slice.len() as u32).collect_vec();
+        order.sort_by(|&row1, &row2| {
+            comparator(row1 as usize, row2 as usize).to_ordering_for_sorting()
         });
-        // assign new ranks
-        let start_rank = *metrics[0].1;
-        for i in 1..metrics.len() {
-            if comparator(&metrics[i - 1].0, &metrics[i].0) == Comparison::Equal {
-                *metrics[i].1 = *metrics[i - 1].1;
+        // assign new ranks and reorder the slice accordingly; all rankings of the slice start out
+        // with the same rank, so any of them serves as the rank the first one keeps
+        let start_rank = slice[0].1;
+        let mut reordered = Vec::with_capacity(slice.len());
+        reordered.push((slice[order[0] as usize].0, start_rank));
+        for i in 1..order.len() {
+            let rank = if comparator(order[i - 1] as usize, order[i] as usize) == Comparison::Equal
+            {
+                reordered[i - 1].1
             } else {
-                *metrics[i].1 = start_rank.saturating_add(i as u32);
-            }
+                start_rank.saturating_add(i as u32)
+            };
+            reordered.push((slice[order[i] as usize].0, rank));
         }
-        // reorder slice according to the new ranks
-        slice.sort_by_key(|(_, rank)| *rank);
+        slice.copy_from_slice(&reordered);
     }
 }

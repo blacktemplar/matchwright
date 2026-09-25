@@ -9,6 +9,7 @@ use std::{
 use itertools::{Either, Itertools};
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
+use rustc_hash::FxHashMap;
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
@@ -70,7 +71,7 @@ impl Competition {
             id,
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
-            rankings: HashMap::new(),
+            rankings: FxHashMap::default(),
             ranking_ids_ordered_by_unique_rank: vec![],
             matches: HashMap::new(),
             phase_format,
@@ -160,7 +161,7 @@ pub struct Phase {
     id: PhaseId,
     outgoing_phase_transitions: Vec<Rc<PhaseTransition>>,
     incoming_phase_transitions: Vec<Rc<PhaseTransition>>,
-    rankings: HashMap<RankingId, Ranking>,
+    rankings: FxHashMap<RankingId, Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: HashMap<MatchId, Match>,
     phase_format: Box<dyn PhaseFormat>,
@@ -174,7 +175,7 @@ impl Phase {
         self.id
     }
 
-    pub fn rankings(&self) -> &HashMap<RankingId, Ranking> {
+    pub fn rankings(&self) -> &FxHashMap<RankingId, Ranking> {
         &self.rankings
     }
 
