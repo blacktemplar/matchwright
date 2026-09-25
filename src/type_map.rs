@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
 };
 
-use rustc_hash::FxHashMap;
+use crate::hash_map::HashMap;
 
 pub trait DebugAny: Any + Debug {}
 impl<T: Any + Debug> DebugAny for T {}
@@ -45,7 +45,7 @@ unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
 }
 
 #[derive(Debug, Default)]
-pub struct TypeMap(FxHashMap<TypeId, Box<dyn DebugAny>>);
+pub struct TypeMap(HashMap<TypeId, Box<dyn DebugAny>>);
 
 impl TypeMap {
     pub fn new() -> Self {

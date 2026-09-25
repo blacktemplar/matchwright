@@ -1,10 +1,11 @@
-use std::{collections::HashMap, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use itertools::Itertools;
 use vec1::vec1;
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
+    hash_map::HashMap,
     plugins::phase_format::PhaseFormat,
 };
 

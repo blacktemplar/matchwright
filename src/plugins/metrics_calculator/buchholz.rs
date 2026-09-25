@@ -1,12 +1,12 @@
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
     fmt::Debug,
 };
 
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
+    hash_map::HashMap,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison},

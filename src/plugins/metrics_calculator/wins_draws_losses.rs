@@ -1,7 +1,8 @@
-use std::{any::TypeId, collections::HashMap};
+use std::any::TypeId;
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
+    hash_map::HashMap,
     plugins::metrics_calculator::{Metric, MetricsCalculator},
 };
 
