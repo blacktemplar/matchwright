@@ -294,10 +294,13 @@ impl Phase {
     }
 
     fn update_ranking_ordering_and_unique_ranks(&mut self) {
-        self.ranking_ids_ordered_by_unique_rank.sort_by_key(|id| {
-            let ranking = &self.rankings[id];
-            (ranking.rank(), ranking.initial_unique_rank())
-        });
+        // `sort_by_key` would look every ranking up twice per comparison, whereas the cached
+        // variant looks every ranking up exactly once
+        self.ranking_ids_ordered_by_unique_rank
+            .sort_by_cached_key(|id| {
+                let ranking = &self.rankings[id];
+                (ranking.rank(), ranking.initial_unique_rank())
+            });
         // set unique ranks
         for (index, ranking_id) in self.ranking_ids_ordered_by_unique_rank.iter().enumerate() {
             self.rankings.get_mut(ranking_id).unwrap().unique_rank =
