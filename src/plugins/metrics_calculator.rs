@@ -10,6 +10,7 @@ pub mod buchholz;
 pub mod matches;
 pub mod points;
 pub mod round_of_first_loss;
+pub mod sonneborn_berger;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod wins_draws_losses;

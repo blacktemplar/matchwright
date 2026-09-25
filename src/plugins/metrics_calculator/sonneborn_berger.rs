@@ -1,0 +1,428 @@
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
+
+use crate::{
+    entities::competition::{Match, MatchResult, Phase, RankingId},
+    plugins::{
+        metrics_calculator::{
+            Metric, MetricsCalculator,
+            matches::{Matches, Team},
+            points::Points,
+        },
+        ranker::{Compare, Comparison},
+    },
+};
+
+#[derive(Default, Debug, PartialEq, Clone, Copy)]
+pub struct SonnebornBerger(pub f32);
+
+// Higher values are better
+impl Compare for SonnebornBerger {
+    fn compare(&self, other: &Self) -> Comparison {
+        Comparison::greater_is_better(self.0.total_cmp(&other.0))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SonnebornBergerCalculator {
+    weight_for_win: f32,
+    weight_for_draw: f32,
+}
+
+impl SonnebornBergerCalculator {
+    /// Counts the points of every beaten opponent with `weight_for_win` and the points of every
+    /// opponent that was played to a draw with `weight_for_draw`, the points of an opponent that
+    /// won are never counted.
+    pub const fn new(weight_for_win: f32, weight_for_draw: f32) -> Self {
+        Self {
+            weight_for_win,
+            weight_for_draw,
+        }
+    }
+}
+
+impl MetricsCalculator for SonnebornBergerCalculator {
+    fn default_metric_value(&self) -> Metric {
+        Box::new(SonnebornBerger::default())
+    }
+
+    fn update_after_match_result_changed(
+        &self,
+        phase: &Phase,
+        r#match: &Match,
+        _: MatchResult,
+        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        let mut sonneborn_berger_changes: HashMap<_, f32> = HashMap::new();
+        for (r_id, old_metric) in &old_metrics[&TypeId::of::<Points>()] {
+            let old_metric: &Points = (&**old_metric as &dyn Any).downcast_ref().unwrap();
+            let ranking = &phase.rankings()[r_id];
+            let new_metric = ranking.metric::<Points>().unwrap();
+            let points_diff = new_metric.0 - old_metric.0;
+            if points_diff != 0. {
+                // sonneborn_berger_changes of all opponents of this ranking that scored at least a
+                // draw against this ranking change
+                let matches = ranking.metric::<Matches>().unwrap();
+                for (match_id, team) in &matches.0 {
+                    if match_id == &r#match.id() {
+                        // we don't consider the newly reported match here as we will account for it
+                        // later separately
+                        continue;
+                    }
+                    let match_of_r = &phase.matches()[match_id];
+                    let opponents_score_weight = match (team, match_of_r.result()) {
+                        (Team::A, MatchResult::AWins)
+                        | (Team::B, MatchResult::BWins)
+                        | (_, MatchResult::NotFinished) => 0.,
+                        (_, MatchResult::Draw) => self.weight_for_draw,
+                        (Team::A, MatchResult::BWins) | (Team::B, MatchResult::AWins) => {
+                            self.weight_for_win
+                        }
+                    };
+                    if opponents_score_weight != 0. {
+                        let opponents = match team {
+                            Team::A => match_of_r.team_b(),
+                            Team::B => match_of_r.team_a(),
+                        };
+                        let score_change = opponents_score_weight * points_diff;
+                        for opponent in opponents {
+                            *sonneborn_berger_changes.entry(*opponent).or_default() += score_change;
+                        }
+                    }
+                }
+            }
+        }
+        // now also account for the new match
+        for (team1, team2, score_weight) in [
+            (
+                r#match.team_a(),
+                r#match.team_b(),
+                match r#match.result() {
+                    MatchResult::AWins => self.weight_for_win,
+                    MatchResult::Draw => self.weight_for_draw,
+                    MatchResult::BWins | MatchResult::NotFinished => 0.,
+                },
+            ),
+            (
+                r#match.team_b(),
+                r#match.team_a(),
+                match r#match.result() {
+                    MatchResult::BWins => self.weight_for_win,
+                    MatchResult::Draw => self.weight_for_draw,
+                    MatchResult::AWins | MatchResult::NotFinished => 0.,
+                },
+            ),
+        ] {
+            if score_weight == 0. {
+                // no sonneborn-berger for team1
+                continue;
+            }
+            // add points of team2 * score_weight to Sonneborn-Berger of team1
+            let points: f32 = team2
+                .iter()
+                .map(|r_id| phase.rankings()[r_id].metric::<Points>().unwrap().0)
+                .sum();
+            let score_change = score_weight * points;
+            for r_id in team1 {
+                *sonneborn_berger_changes.entry(*r_id).or_default() += score_change;
+            }
+        }
+        sonneborn_berger_changes
+            .into_iter()
+            .map(|(r_id, change)| {
+                (
+                    r_id,
+                    Box::new(SonnebornBerger(
+                        phase.rankings()[&r_id]
+                            .metric::<SonnebornBerger>()
+                            .unwrap()
+                            .0
+                            + change,
+                    )) as Metric,
+                )
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::metrics_calculator::{
+        matches::MatchesCalculator,
+        points::PointsCalculator,
+        test_utils::{self, MatchSpec, match_id},
+        wins_draws_losses::WinsDrawsLossesCalculator,
+    };
+
+    /// The scoring system of most association football leagues, used by every test here.
+    const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+    /// The classic Sonneborn-Berger weights: a beaten opponent counts fully, an opponent played to
+    /// a draw counts half.
+    const FULL_HALF: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+
+    /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
+    /// scoring finished matches with [`THREE_ONE`] and weighting them with `calculator`.
+    ///
+    /// [`SonnebornBergerCalculator`] derives its metric from [`Points`] and [`Matches`], so the
+    /// phase has to update both of them first, and [`Points`] in turn derives from
+    /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses).
+    fn phase_with(
+        num_players: u32,
+        matches: Vec<MatchSpec>,
+        calculator: SonnebornBergerCalculator,
+    ) -> Phase {
+        test_utils::phase_with(
+            num_players,
+            matches,
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(calculator),
+            ],
+        )
+    }
+
+    fn metric_of(phase: &Phase, ranking_index: usize) -> SonnebornBerger {
+        test_utils::metric_of(phase, ranking_index)
+    }
+
+    /// The schedule of [`play_scenario`], as (round, team a, team b, result).
+    const SCENARIO: [(u32, &[usize], &[usize], MatchResult); 5] = [
+        (1, &[0], &[1], MatchResult::AWins),
+        (1, &[2], &[3], MatchResult::Draw),
+        (2, &[0], &[2], MatchResult::BWins),
+        (2, &[1], &[3], MatchResult::AWins),
+        (3, &[1], &[2], MatchResult::BWins),
+    ];
+
+    /// Plays [`SCENARIO`] between four players, reporting its matches in the given order, which
+    /// leaves them with the following points: `0`: 3, `1`: 3, `2`: 7, `3`: 1.
+    fn play_scenario(
+        calculator: SonnebornBergerCalculator,
+        report_order: impl Iterator<Item = usize>,
+    ) -> Phase {
+        let matches = SCENARIO
+            .iter()
+            .map(|(round, team_a, team_b, _)| (*round, team_a.to_vec(), team_b.to_vec()))
+            .collect();
+        let mut phase = phase_with(4, matches, calculator);
+        for index in report_order {
+            let (round, team_a, team_b, result) = SCENARIO[index];
+            let match_id = match_id(&phase, round, team_a, team_b);
+            phase.report_match_result(match_id, result);
+        }
+        phase
+    }
+
+    #[test]
+    fn initialize_metrics_starts_every_ranking_at_zero() {
+        let phase = phase_with(4, vec![], FULL_HALF);
+
+        for ranking_index in 0..4 {
+            assert_eq!(metric_of(&phase, ranking_index), SonnebornBerger(0.0));
+        }
+    }
+
+    #[test]
+    fn beaten_opponents_count_fully_and_opponents_of_a_draw_count_half() {
+        let phase = play_scenario(FULL_HALF, 0..SCENARIO.len());
+
+        // `0` beat `1` (3 points) and lost against `2`
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(3.0));
+        // `1` beat `3` (1 point) and lost against `0` and `2`
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(1.0));
+        // `2` beat `0` (3) and `1` (3) and drew against `3` (1)
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(6.5));
+        // `3` drew against `2` (7) and lost against `1`
+        assert_eq!(metric_of(&phase, 3), SonnebornBerger(3.5));
+    }
+
+    #[test]
+    fn the_order_in_which_results_are_reported_does_not_change_the_sonneborn_berger() {
+        let phase = play_scenario(FULL_HALF, (0..SCENARIO.len()).rev());
+
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(1.0));
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(6.5));
+        assert_eq!(metric_of(&phase, 3), SonnebornBerger(3.5));
+    }
+
+    #[test]
+    fn points_a_beaten_opponent_wins_later_are_added_retroactively() {
+        let mut phase = phase_with(
+            3,
+            vec![(1, vec![0], vec![1]), (2, vec![1], vec![2])],
+            FULL_HALF,
+        );
+
+        let first_match = match_id(&phase, 1, &[0], &[1]);
+        phase.report_match_result(first_match, MatchResult::AWins);
+        // `1` has no points yet, so beating it is worth nothing so far
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(0.0));
+
+        let second_match = match_id(&phase, 2, &[1], &[2]);
+        phase.report_match_result(second_match, MatchResult::AWins);
+
+        // the three points `1` won in its second match count for `0` as well
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(3.0));
+        // `1` beat `2`, which is still without points
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(0.0));
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(0.0));
+    }
+
+    #[test]
+    fn points_an_opponent_of_a_draw_wins_later_are_added_retroactively_by_half() {
+        let mut phase = phase_with(
+            3,
+            vec![(1, vec![0], vec![1]), (2, vec![1], vec![2])],
+            FULL_HALF,
+        );
+
+        let first_match = match_id(&phase, 1, &[0], &[1]);
+        phase.report_match_result(first_match, MatchResult::Draw);
+        // the draw gave `1` a single point, half of which counts for `0`
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(0.5));
+
+        let second_match = match_id(&phase, 2, &[1], &[2]);
+        phase.report_match_result(second_match, MatchResult::AWins);
+
+        // `1` is now at four points, still counted half by `0`
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(2.0));
+        // `1` drew against `0` (1 point) and beat `2` (no points)
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(0.5));
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(0.0));
+    }
+
+    #[test]
+    fn the_points_of_an_opponent_that_won_are_never_counted() {
+        let matches = vec![
+            (1, vec![0], vec![1]),
+            (2, vec![0], vec![1]),
+            (3, vec![0], vec![1]),
+        ];
+        let mut phase = phase_with(2, matches, FULL_HALF);
+
+        for (round, result) in [
+            (1, MatchResult::AWins),
+            (2, MatchResult::AWins),
+            (3, MatchResult::BWins),
+        ] {
+            let match_id = match_id(&phase, round, &[0], &[1]);
+            phase.report_match_result(match_id, result);
+        }
+
+        // `0` won twice against `1` (3 points), its loss adds nothing
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(6.0));
+        // `1` won once against `0` (6 points), its two losses add nothing
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(6.0));
+    }
+
+    #[test]
+    fn the_weights_scale_the_points_of_the_opponents() {
+        let phase = play_scenario(SonnebornBergerCalculator::new(2.0, 1.0), 0..SCENARIO.len());
+
+        // `0` beat `1` (3 points)
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(6.0));
+        // `1` beat `3` (1)
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(2.0));
+        // `2` beat `0` (3) and `1` (3) and drew against `3` (1)
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(13.0));
+        // `3` drew against `2` (7)
+        assert_eq!(metric_of(&phase, 3), SonnebornBerger(7.0));
+    }
+
+    #[test]
+    fn a_draw_weight_of_zero_counts_beaten_opponents_only() {
+        let phase = play_scenario(SonnebornBergerCalculator::new(1.0, 0.0), 0..SCENARIO.len());
+
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(1.0));
+        // the draw of `2` against `3` no longer contributes
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(6.0));
+        // `3` only ever drew, so it stays at zero
+        assert_eq!(metric_of(&phase, 3), SonnebornBerger(0.0));
+    }
+
+    #[test]
+    fn only_opponents_of_reported_matches_count() {
+        let matches = vec![
+            (1, vec![0], vec![1]),
+            (1, vec![2], vec![3]),
+            (2, vec![0], vec![2]),
+            (2, vec![1], vec![3]),
+        ];
+        let mut phase = phase_with(4, matches, FULL_HALF);
+
+        for (round, team_a, team_b) in [(1, [0], [1]), (1, [2], [3]), (2, [1], [3])] {
+            let match_id = match_id(&phase, round, &team_a, &team_b);
+            phase.report_match_result(match_id, MatchResult::AWins);
+        }
+
+        // `0` beat `1`, which is at three points by now
+        assert_eq!(metric_of(&phase, 0), SonnebornBerger(3.0));
+        // `1` beat `3`, which is without points
+        assert_eq!(metric_of(&phase, 1), SonnebornBerger(0.0));
+        // the scheduled but unreported match of `0` against `2` contributes nothing, even though
+        // `2` won its first match and `0` has three points
+        assert_eq!(metric_of(&phase, 2), SonnebornBerger(0.0));
+        assert_eq!(metric_of(&phase, 3), SonnebornBerger(0.0));
+    }
+
+    #[test]
+    fn every_ranking_of_a_team_counts_the_points_of_every_opponent_ranking() {
+        let matches = vec![(1, vec![0, 1], vec![2, 3]), (2, vec![0, 1], vec![2, 3])];
+        let mut phase = phase_with(4, matches, FULL_HALF);
+
+        for (round, result) in [(1, MatchResult::AWins), (2, MatchResult::Draw)] {
+            let match_id = match_id(&phase, round, &[0, 1], &[2, 3]);
+            phase.report_match_result(match_id, result);
+        }
+
+        // `2` and `3` end up with one point each, counted fully for the won match and half for the
+        // drawn one
+        for ranking_index in [0, 1] {
+            assert_eq!(metric_of(&phase, ranking_index), SonnebornBerger(3.0));
+        }
+        // `0` and `1` end up with four points each, of which only the drawn match counts, by half
+        for ranking_index in [2, 3] {
+            assert_eq!(metric_of(&phase, ranking_index), SonnebornBerger(4.0));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no entry found for key")]
+    fn calculating_the_sonneborn_berger_without_the_points_metric_panics() {
+        let mut phase = test_utils::phase_with(
+            2,
+            vec![(1, vec![0], vec![1])],
+            vec![Box::new(MatchesCalculator), Box::new(FULL_HALF)],
+        );
+        let match_id = match_id(&phase, 1, &[0], &[1]);
+
+        phase.report_match_result(match_id, MatchResult::AWins);
+    }
+
+    #[test]
+    fn a_higher_sonneborn_berger_is_better() {
+        assert_eq!(
+            SonnebornBerger(7.0).compare(&SonnebornBerger(3.0)),
+            Comparison::Better
+        );
+        assert_eq!(
+            SonnebornBerger(3.0).compare(&SonnebornBerger(7.0)),
+            Comparison::Worse
+        );
+        assert_eq!(
+            SonnebornBerger(0.5).compare(&SonnebornBerger(0.0)),
+            Comparison::Better
+        );
+        assert_eq!(
+            SonnebornBerger(3.0).compare(&SonnebornBerger(3.0)),
+            Comparison::Equal
+        );
+    }
+}
