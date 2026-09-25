@@ -1,11 +1,11 @@
-use std::{any::Any, cmp::Ordering, fmt::Debug, marker::PhantomData, num::NonZeroU32};
+use std::{cmp::Ordering, fmt::Debug, marker::PhantomData, num::NonZeroU32};
 
 use itertools::Itertools;
 
 use crate::{
     entities::competition::{Phase, Ranking, RankingId},
     plugins::Plugin,
-    type_map::{DebugAny, TypeMap, downcast_unchecked_ref},
+    type_map::{DebugAny, TypeMap},
 };
 
 pub trait Ranker: Plugin {
@@ -82,12 +82,21 @@ impl<M> Clone for Comparator<M> {
 }
 
 trait MetricComparator: Plugin {
-    fn extract_metric<'a>(&'a self, map: &'a TypeMap) -> Option<&'a dyn Any>;
+    /// Reads this comparator's metric out of every map of `metrics`, returning [`None`] if any of
+    /// them does not hold that metric.
+    ///
+    /// Extracting all values up front rather than one pair at a time is what lets the returned
+    /// column keep them typed: a comparison then indexes into values that are already known to be
+    /// of this comparator's metric type, instead of downcasting a `dyn Any` it has to be told the
+    /// provenance of.
+    fn extract_column<'a>(&self, metrics: &[&'a TypeMap]) -> Option<Box<dyn MetricColumn + 'a>>;
+}
 
-    /// # Safety
-    /// `v1` and `v2` must be values that got extracted earlier by calling
-    /// [`Self::extract_metric`].
-    unsafe fn compare(&self, v1: &dyn Any, v2: &dyn Any) -> Comparison;
+/// The values of one metric, one per ranking, already read out of their [`TypeMap`].
+trait MetricColumn {
+    /// Compares the values of the rankings at `index1` and `index2`, in terms of the order they
+    /// were extracted in.
+    fn compare(&self, index1: usize, index2: usize) -> Comparison;
 }
 
 impl Clone for Box<dyn MetricComparator> {
@@ -134,22 +143,22 @@ pub trait Compare {
 }
 
 impl<M: DebugAny + Compare> MetricComparator for Comparator<M> {
-    fn extract_metric<'a>(&'a self, map: &'a TypeMap) -> Option<&'a dyn Any> {
-        map.get_any::<M>()
+    fn extract_column<'a>(&self, metrics: &[&'a TypeMap]) -> Option<Box<dyn MetricColumn + 'a>> {
+        let values: Vec<&M> = metrics
+            .iter()
+            .map(|map| map.get::<M>())
+            .collect::<Option<_>>()?;
+        Some(Box::new(MetricValues(values)))
     }
+}
 
-    unsafe fn compare(&self, v1: &dyn Any, v2: &dyn Any) -> Comparison {
-        // Safety: due to the safety guarantee of compare + the guarantee of TypeMap that
-        // `get_any::<M>` returns a dyn Any that has concrete type `M`. This runs for every single
-        // comparison of a sort, so the virtual `Any::type_id` calls that a checked downcast would
-        // not be able to optimize away dominate the actual comparison of the metric.
-        let (v1, v2) = unsafe {
-            (
-                downcast_unchecked_ref::<M>(v1),
-                downcast_unchecked_ref::<M>(v2),
-            )
-        };
-        v1.compare(v2)
+/// The values of metric `M` of a list of rankings, which compare without any downcast because
+/// [`TypeMap::get`] already resolved them to `&M`.
+struct MetricValues<'a, M>(Vec<&'a M>);
+
+impl<M: Compare> MetricColumn for MetricValues<'_, M> {
+    fn compare(&self, index1: usize, index2: usize) -> Comparison {
+        self.0[index1].compare(self.0[index2])
     }
 }
 
@@ -169,30 +178,29 @@ impl LexicographicalMetrics {
 
 impl SliceRanker for LexicographicalMetrics {
     fn update_ranks(&self, _: &Phase, slice: &mut [(&Ranking, NonZeroU32)]) {
-        let num_metrics = self.0.len();
-        if num_metrics == 0 || slice.len() < 2 {
+        if self.0.is_empty() || slice.len() < 2 {
             // this becomes basically a no-op
             return;
         }
-        // The metrics of all rankings as a single flat table, where row `i` holds the metrics of
-        // `slice[i]`. This runs for every single reported match result, so it is worth avoiding
-        // the one allocation per ranking that a `Vec` of rows would need.
-        let metrics: Vec<&dyn Any> = slice
+        // The metrics of all rankings, one dense column per metric. This runs for every single
+        // reported match result, so it is worth resolving every value once here rather than on
+        // every comparison of the sort below.
+        let metrics = slice
             .iter()
-            .flat_map(|&(ranking, _)| {
-                self.0.iter().map(move |comparator| {
-                    comparator
-                        .extract_metric(ranking.metrics())
-                        .expect("All queried metrics must exist")
-                })
+            .map(|&(ranking, _)| ranking.metrics())
+            .collect_vec();
+        let columns = self
+            .0
+            .iter()
+            .map(|comparator| {
+                comparator
+                    .extract_column(&metrics)
+                    .expect("All queried metrics must exist")
             })
-            .collect();
+            .collect_vec();
         let comparator = |row1: usize, row2: usize| {
-            let (row1, row2) = (row1 * num_metrics, row2 * num_metrics);
-            for (i, comparator) in self.0.iter().enumerate() {
-                // SAFETY: both metrics are guaranteed to be outputs from
-                // `self.0[i].extract_metric` by the way we filled the table above
-                let result = unsafe { comparator.compare(metrics[row1 + i], metrics[row2 + i]) };
+            for column in &columns {
+                let result = column.compare(row1, row2);
                 if result != Comparison::Equal {
                     return result;
                 }

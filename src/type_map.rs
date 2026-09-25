@@ -21,7 +21,7 @@ impl<T: Any + Debug> DebugAny for T {}
 ///
 /// # Safety
 /// The concrete type of `value` must be `T`.
-pub(crate) unsafe fn downcast_unchecked_ref<T: 'static>(value: &dyn Any) -> &T {
+unsafe fn downcast_unchecked_ref<T: 'static>(value: &dyn Any) -> &T {
     debug_assert!(value.is::<T>());
     // SAFETY: the caller guarantees that `value` has concrete type `T`, so the data pointer of the
     // fat pointer points to a valid and properly aligned `T`. Casting to a thin pointer discards
@@ -37,7 +37,7 @@ pub(crate) unsafe fn downcast_unchecked_ref<T: 'static>(value: &dyn Any) -> &T {
 ///
 /// # Safety
 /// The concrete type of `value` must be `T`.
-pub(crate) unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
+unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
     debug_assert!(value.is::<T>());
     // SAFETY: as in `downcast_unchecked_ref`, and `value` is a unique borrow, so the resulting
     // `&mut T` is the only reference to the value.
