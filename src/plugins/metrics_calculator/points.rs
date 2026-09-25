@@ -19,6 +19,12 @@ impl Compare for Points {
     }
 }
 
+impl AsRef<f32> for Points {
+    fn as_ref(&self) -> &f32 {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PointsCalculator {
     points_for_win: f32,

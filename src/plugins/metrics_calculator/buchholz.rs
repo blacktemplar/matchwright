@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
+    fmt::Debug,
 };
 
 use super::Metric;
@@ -26,6 +27,18 @@ impl Compare for Buchholz {
     }
 }
 
+impl AsRef<f32> for Buchholz {
+    fn as_ref(&self) -> &f32 {
+        &self.0
+    }
+}
+
+impl From<f32> for Buchholz {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BuchholzCalculator;
 
@@ -41,57 +54,108 @@ impl MetricsCalculator for BuchholzCalculator {
         _: MatchResult,
         old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        let mut buchholz_changes: HashMap<_, f32> = HashMap::new();
-        for (r_id, old_metric) in &old_metrics[&TypeId::of::<Points>()] {
-            let old_metric: &Points = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-            let ranking = &phase.rankings()[r_id];
-            let new_metric = ranking.metric::<Points>().unwrap();
-            let points_diff = new_metric.0 - old_metric.0;
-            if points_diff != 0. {
-                // buchholz of all opponents of this ranking change
-                let matches = ranking.metric::<Matches>().unwrap();
-                for (match_id, team) in &matches.0 {
-                    if match_id == &r#match.id() {
-                        // we don't consider the newly reported match here as we will account for it
-                        // later separately
-                        continue;
-                    }
-                    let match_of_r = &phase.matches()[match_id];
-                    let opponents = match team {
-                        Team::A => match_of_r.team_b(),
-                        Team::B => match_of_r.team_a(),
-                    };
-                    for opponent in opponents {
-                        *buchholz_changes.entry(*opponent).or_default() += points_diff;
-                    }
+        buchholz_changes_based_on::<Points, Buchholz>(phase, r#match, old_metrics)
+    }
+}
+
+/// The updates of the buchholz like metric `B`, which sums the metric `M` of all opponents of a
+/// ranking, after the result of `match` changed.
+fn buchholz_changes_based_on<M, B>(
+    phase: &Phase,
+    r#match: &Match,
+    old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+) -> Vec<(RankingId, Metric)>
+where
+    M: 'static + AsRef<f32>,
+    B: 'static + Debug + AsRef<f32> + From<f32>,
+{
+    let mut buchholz_changes: HashMap<_, f32> = HashMap::new();
+    for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
+        let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
+        let ranking = &phase.rankings()[r_id];
+        let new_metric = ranking.metric::<M>().unwrap();
+        let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
+        if m_diff != 0. {
+            // buchholz of all opponents of this ranking change
+            let matches = ranking.metric::<Matches>().unwrap();
+            for (match_id, team) in &matches.0 {
+                if match_id == &r#match.id() {
+                    // we don't consider the newly reported match here as we will account for it
+                    // later separately
+                    continue;
+                }
+                let match_of_r = &phase.matches()[match_id];
+                let opponents = match team {
+                    Team::A => match_of_r.team_b(),
+                    Team::B => match_of_r.team_a(),
+                };
+                for opponent in opponents {
+                    *buchholz_changes.entry(*opponent).or_default() += m_diff;
                 }
             }
         }
-        // now also account for the new match
-        for (team1, team2) in [
-            (r#match.team_a(), r#match.team_b()),
-            (r#match.team_b(), r#match.team_a()),
-        ] {
-            // add points of team2 to buchholz of team1
-            let points: f32 = team2
-                .iter()
-                .map(|r_id| phase.rankings()[r_id].metric::<Points>().unwrap().0)
-                .sum();
-            for r_id in team1 {
-                *buchholz_changes.entry(*r_id).or_default() += points;
-            }
+    }
+    // now also account for the new match
+    for (team1, team2) in [
+        (r#match.team_a(), r#match.team_b()),
+        (r#match.team_b(), r#match.team_a()),
+    ] {
+        // add metric M of team2 to buchholz of team1
+        let m_sum: f32 = team2
+            .iter()
+            .map(|r_id| *phase.rankings()[r_id].metric::<M>().unwrap().as_ref())
+            .sum();
+        for r_id in team1 {
+            *buchholz_changes.entry(*r_id).or_default() += m_sum;
         }
-        buchholz_changes
-            .into_iter()
-            .map(|(r_id, change)| {
-                (
-                    r_id,
-                    Box::new(Buchholz(
-                        phase.rankings()[&r_id].metric::<Buchholz>().unwrap().0 + change,
-                    )) as Metric,
-                )
-            })
-            .collect()
+    }
+    buchholz_changes
+        .into_iter()
+        .map(|(r_id, change)| {
+            let old_buchholz = *phase.rankings()[&r_id].metric::<B>().unwrap().as_ref();
+            (r_id, Box::new(B::from(old_buchholz + change)) as Metric)
+        })
+        .collect()
+}
+
+#[derive(Default, Debug, PartialEq, Clone, Copy)]
+pub struct BuchholzOfBuchholz(pub f32);
+
+// Higher values are better
+impl Compare for BuchholzOfBuchholz {
+    fn compare(&self, other: &Self) -> Comparison {
+        Comparison::greater_is_better(self.0.total_cmp(&other.0))
+    }
+}
+
+impl AsRef<f32> for BuchholzOfBuchholz {
+    fn as_ref(&self) -> &f32 {
+        &self.0
+    }
+}
+
+impl From<f32> for BuchholzOfBuchholz {
+    fn from(value: f32) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BuchholzOfBuchholzCalculator;
+
+impl MetricsCalculator for BuchholzOfBuchholzCalculator {
+    fn default_metric_value(&self) -> Metric {
+        Box::new(BuchholzOfBuchholz::default())
+    }
+
+    fn update_after_match_result_changed(
+        &self,
+        phase: &Phase,
+        r#match: &Match,
+        _: MatchResult,
+        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase, r#match, old_metrics)
     }
 }
 
@@ -114,6 +178,7 @@ mod tests {
     /// [`BuchholzCalculator`] derives its metric from [`Points`] and [`Matches`], so the phase has
     /// to update both of them first, and [`Points`] in turn derives from
     /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses).
+    /// [`BuchholzOfBuchholzCalculator`] builds on [`Buchholz`] and therefore comes last.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
             num_players,
@@ -123,11 +188,16 @@ mod tests {
                 Box::new(THREE_ONE),
                 Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
+                Box::new(BuchholzOfBuchholzCalculator),
             ],
         )
     }
 
-    fn metric_of(phase: &Phase, ranking_index: usize) -> Buchholz {
+    fn buchholz_of(phase: &Phase, ranking_index: usize) -> Buchholz {
+        test_utils::metric_of(phase, ranking_index)
+    }
+
+    fn buchholz_of_buchholz_of(phase: &Phase, ranking_index: usize) -> BuchholzOfBuchholz {
         test_utils::metric_of(phase, ranking_index)
     }
 
@@ -161,7 +231,7 @@ mod tests {
         let phase = phase_with(4, vec![]);
 
         for ranking_index in 0..4 {
-            assert_eq!(metric_of(&phase, ranking_index), Buchholz(0.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(0.0));
         }
     }
 
@@ -170,23 +240,23 @@ mod tests {
         let phase = play_scenario(0..SCENARIO.len());
 
         // opponents of `0` are `1` (3 points) and `2` (7 points)
-        assert_eq!(metric_of(&phase, 0), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
         // opponents of `1` are `0` (3), `3` (1) and `2` (7)
-        assert_eq!(metric_of(&phase, 1), Buchholz(11.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(11.0));
         // opponents of `2` are `3` (1), `0` (3) and `1` (3)
-        assert_eq!(metric_of(&phase, 2), Buchholz(7.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(7.0));
         // opponents of `3` are `2` (7) and `1` (3)
-        assert_eq!(metric_of(&phase, 3), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(10.0));
     }
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_buchholz() {
         let phase = play_scenario((0..SCENARIO.len()).rev());
 
-        assert_eq!(metric_of(&phase, 0), Buchholz(10.0));
-        assert_eq!(metric_of(&phase, 1), Buchholz(11.0));
-        assert_eq!(metric_of(&phase, 2), Buchholz(7.0));
-        assert_eq!(metric_of(&phase, 3), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(11.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(7.0));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(10.0));
     }
 
     #[test]
@@ -196,15 +266,15 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
         // `1` has no points yet, so beating it is worth nothing so far
-        assert_eq!(metric_of(&phase, 0), Buchholz(0.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(0.0));
 
         let second_match = match_id(&phase, 2, &[1], &[2]);
         phase.report_match_result(second_match, MatchResult::AWins);
 
         // the three points `1` won in its second match count for `0` as well
-        assert_eq!(metric_of(&phase, 0), Buchholz(3.0));
-        assert_eq!(metric_of(&phase, 1), Buchholz(3.0));
-        assert_eq!(metric_of(&phase, 2), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(3.0));
     }
 
     #[test]
@@ -223,10 +293,10 @@ mod tests {
 
         // the scheduled but unreported match of `0` against `2` contributes nothing, even though
         // `2` won its first match
-        assert_eq!(metric_of(&phase, 0), Buchholz(0.0));
-        assert_eq!(metric_of(&phase, 1), Buchholz(3.0));
-        assert_eq!(metric_of(&phase, 2), Buchholz(0.0));
-        assert_eq!(metric_of(&phase, 3), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(0.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(0.0));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(3.0));
     }
 
     #[test]
@@ -241,11 +311,11 @@ mod tests {
 
         // `2` and `3` end up with one point each, counted once for each of the two matches
         for ranking_index in [0, 1] {
-            assert_eq!(metric_of(&phase, ranking_index), Buchholz(4.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(4.0));
         }
         // `0` and `1` end up with four points each, again counted for both matches
         for ranking_index in [2, 3] {
-            assert_eq!(metric_of(&phase, ranking_index), Buchholz(16.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(16.0));
         }
     }
 
@@ -268,5 +338,173 @@ mod tests {
         assert_eq!(Buchholz(3.0).compare(&Buchholz(7.0)), Comparison::Worse);
         assert_eq!(Buchholz(0.5).compare(&Buchholz(0.0)), Comparison::Better);
         assert_eq!(Buchholz(3.0).compare(&Buchholz(3.0)), Comparison::Equal);
+    }
+
+    #[test]
+    fn initialize_metrics_starts_every_buchholz_of_buchholz_at_zero() {
+        let phase = phase_with(4, vec![]);
+
+        for ranking_index in 0..4 {
+            assert_eq!(
+                buchholz_of_buchholz_of(&phase, ranking_index),
+                BuchholzOfBuchholz::default()
+            );
+        }
+    }
+
+    #[test]
+    fn the_buchholz_of_buchholz_of_a_ranking_is_the_sum_of_the_buchholz_of_its_opponents() {
+        let phase = play_scenario(0..SCENARIO.len());
+
+        // the buchholz of the scenario are `0`: 10, `1`: 11, `2`: 7, `3`: 10
+
+        // opponents of `0` are `1` (11) and `2` (7)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(18.0));
+        // opponents of `1` are `0` (10), `3` (10) and `2` (7)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(27.0));
+        // opponents of `2` are `3` (10), `0` (10) and `1` (11)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(31.0));
+        // opponents of `3` are `2` (7) and `1` (11)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(18.0));
+    }
+
+    #[test]
+    fn the_order_in_which_results_are_reported_does_not_change_the_buchholz_of_buchholz() {
+        let phase = play_scenario((0..SCENARIO.len()).rev());
+
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(18.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(27.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(31.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(18.0));
+    }
+
+    #[test]
+    fn buchholz_an_opponent_gains_later_is_added_retroactively() {
+        let mut phase = phase_with(3, vec![(1, vec![0], vec![1]), (2, vec![1], vec![2])]);
+
+        let first_match = match_id(&phase, 1, &[0], &[1]);
+        phase.report_match_result(first_match, MatchResult::AWins);
+        // `1` lost against `0`, so its buchholz is already 3 and counts for `0`, whereas the
+        // buchholz of `0` itself is still 0, as `1` has no points
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(0.0));
+
+        let second_match = match_id(&phase, 2, &[1], &[2]);
+        phase.report_match_result(second_match, MatchResult::AWins);
+
+        // every ranking now faced exactly one opponent with a buchholz of 3, except `1`, which
+        // faced two of them
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(6.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(3.0));
+    }
+
+    #[test]
+    fn a_match_changes_the_buchholz_of_buchholz_of_rankings_two_matches_away() {
+        let matches = vec![
+            (1, vec![0], vec![1]),
+            (2, vec![1], vec![2]),
+            (3, vec![2], vec![3]),
+        ];
+        let mut phase = phase_with(4, matches);
+
+        for (round, team_a, team_b) in [(1, [0], [1]), (2, [1], [2]), (3, [2], [3])] {
+            let match_id = match_id(&phase, round, &team_a, &team_b);
+            phase.report_match_result(match_id, MatchResult::AWins);
+        }
+
+        // the last match gave `2` its three points, which raised the buchholz of `1` from 3 to 6
+        // and with it the buchholz of buchholz of `0`, even though `0` never faced `2`
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(6.0));
+        // opponents of `1` are `0` (buchholz 3) and `2` (buchholz 3)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(6.0));
+        // opponents of `2` are `1` (buchholz 6) and `3` (buchholz 3)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(9.0));
+        // the only opponent of `3` is `2` (buchholz 3)
+        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(3.0));
+    }
+
+    #[test]
+    fn only_opponents_of_reported_matches_count_for_the_buchholz_of_buchholz() {
+        let matches = vec![
+            (1, vec![0], vec![1]),
+            (1, vec![2], vec![3]),
+            (2, vec![0], vec![2]),
+        ];
+        let mut phase = phase_with(4, matches);
+
+        for (round, team_a, team_b) in [(1, [0], [1]), (1, [2], [3])] {
+            let match_id = match_id(&phase, round, &team_a, &team_b);
+            phase.report_match_result(match_id, MatchResult::AWins);
+        }
+
+        // the scheduled but unreported match of `0` against `2` contributes nothing, even though
+        // `2` has a buchholz of 3 by now
+        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(0.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(3.0));
+        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(0.0));
+    }
+
+    #[test]
+    fn every_ranking_of_a_team_counts_the_buchholz_of_every_opponent_ranking() {
+        let matches = vec![(1, vec![0, 1], vec![2, 3]), (2, vec![0, 1], vec![2, 3])];
+        let mut phase = phase_with(4, matches);
+
+        for (round, result) in [(1, MatchResult::AWins), (2, MatchResult::Draw)] {
+            let match_id = match_id(&phase, round, &[0, 1], &[2, 3]);
+            phase.report_match_result(match_id, result);
+        }
+
+        // `2` and `3` end up with a buchholz of 16 each, counted once for each of the two matches
+        for ranking_index in [0, 1] {
+            assert_eq!(
+                buchholz_of_buchholz_of(&phase, ranking_index),
+                BuchholzOfBuchholz(64.0)
+            );
+        }
+        // `0` and `1` end up with a buchholz of 4 each, again counted for both matches
+        for ranking_index in [2, 3] {
+            assert_eq!(
+                buchholz_of_buchholz_of(&phase, ranking_index),
+                BuchholzOfBuchholz(16.0)
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no entry found for key")]
+    fn calculating_the_buchholz_of_buchholz_without_the_buchholz_metric_panics() {
+        let mut phase = test_utils::phase_with(
+            2,
+            vec![(1, vec![0], vec![1])],
+            vec![
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzOfBuchholzCalculator),
+            ],
+        );
+        let match_id = match_id(&phase, 1, &[0], &[1]);
+
+        phase.report_match_result(match_id, MatchResult::AWins);
+    }
+
+    #[test]
+    fn a_higher_buchholz_of_buchholz_is_better() {
+        assert_eq!(
+            BuchholzOfBuchholz(7.0).compare(&BuchholzOfBuchholz(3.0)),
+            Comparison::Better
+        );
+        assert_eq!(
+            BuchholzOfBuchholz(3.0).compare(&BuchholzOfBuchholz(7.0)),
+            Comparison::Worse
+        );
+        assert_eq!(
+            BuchholzOfBuchholz(0.5).compare(&BuchholzOfBuchholz(0.0)),
+            Comparison::Better
+        );
+        assert_eq!(
+            BuchholzOfBuchholz(3.0).compare(&BuchholzOfBuchholz(3.0)),
+            Comparison::Equal
+        );
     }
 }
