@@ -157,21 +157,34 @@ mod tests {
         wins_draws_losses::WinsDrawsLossesCalculator,
     };
 
-    /// The scoring system of most association football leagues, used by every test here.
+    /// The scoring system of most association football leagues, used by every test here but
+    /// [`the_neustadtl_scores_of_a_published_cross_table_are_reproduced`].
     const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+    /// The scoring system of chess: a win is worth a point, a draw half of one.
+    const ONE_HALF: PointsCalculator = PointsCalculator::new(1.0, 0.5);
     /// The classic Sonneborn-Berger weights: a beaten opponent counts fully, an opponent played to
     /// a draw counts half.
     const FULL_HALF: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
 
+    /// Like [`phase_with_points`], scoring finished matches with [`THREE_ONE`].
+    fn phase_with(
+        num_players: u32,
+        matches: Vec<MatchSpec>,
+        calculator: SonnebornBergerCalculator,
+    ) -> Phase {
+        phase_with_points(num_players, matches, THREE_ONE, calculator)
+    }
+
     /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
-    /// scoring finished matches with [`THREE_ONE`] and weighting them with `calculator`.
+    /// scoring finished matches with `points` and weighting them with `calculator`.
     ///
     /// [`SonnebornBergerCalculator`] derives its metric from [`Points`] and [`Matches`], so the
     /// phase has to update both of them first, and [`Points`] in turn derives from
     /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses).
-    fn phase_with(
+    fn phase_with_points(
         num_players: u32,
         matches: Vec<MatchSpec>,
+        points: PointsCalculator,
         calculator: SonnebornBergerCalculator,
     ) -> Phase {
         test_utils::phase_with(
@@ -179,7 +192,7 @@ mod tests {
             matches,
             vec![
                 Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
+                Box::new(points),
                 Box::new(MatchesCalculator),
                 Box::new(calculator),
             ],
@@ -390,6 +403,94 @@ mod tests {
         // `0` and `1` end up with four points each, of which only the drawn match counts, by half
         for ranking_index in [2, 3] {
             assert_eq!(metric_of(&phase, ranking_index), SonnebornBerger(4.0));
+        }
+    }
+
+    /// The cross table of the 8th World Correspondence Chess Championship that the Wikipedia
+    /// article on the Neustadtl score uses as its example, where row `i` lists the results of
+    /// player `i` against every other player: `1` a win, `=` a draw, `0` a loss and `-` the
+    /// player itself.
+    const CROSS_TABLE: [&str; 15] = [
+        "-==1==11=1=1111", //  1 Sloth
+        "=-0=1=111=11111", //  2 Zagorovsky
+        "=1-=====11=1111", //  3 Kosenkov
+        "0==-=1=011=1=1=", //  4 Khasin
+        "=0==-====011=11", //  5 Kletsel
+        "===0=-==01==011", //  6 De Carbonnel
+        "00====-=10==11=", //  7 Arnlind
+        "00=1===-0=101=1", //  8 Dunhaupt
+        "=000=101-1====1", //  9 Maedler
+        "0=00101=0-11101", // 10 Estrin
+        "=0==0==0=0-01=1", // 11 Walther
+        "00000==1=01-==1", // 12 Boey
+        "000==100=00=-=1", // 13 Abramov
+        "0000000==1===-1", // 14 Siklos
+        "000=00=0000000-", // 15 Nun
+    ];
+
+    /// The points and the Neustadtl scores that the article lists for [`CROSS_TABLE`], in the
+    /// order of its rows.
+    const PUBLISHED_SCORES: [(f32, f32); 15] = [
+        (11.0, 69.5),
+        (11.0, 66.75),
+        (10.5, 67.5),
+        (8.5, 54.75),
+        (8.0, 47.75),
+        (7.0, 45.25),
+        (7.0, 42.5),
+        (7.0, 41.5),
+        (7.0, 41.5),
+        (7.0, 40.5),
+        (5.5, 33.25),
+        (5.5, 28.5),
+        (4.5, 24.75),
+        (4.5, 22.75),
+        (1.0, 7.75),
+    ];
+
+    /// The Neustadtl score of chess is the Sonneborn-Berger of [`FULL_HALF`] over the points of
+    /// [`ONE_HALF`], so a full round robin has to reproduce the published scores exactly.
+    #[test]
+    fn the_neustadtl_scores_of_a_published_cross_table_are_reproduced() {
+        let players = CROSS_TABLE.len();
+        // the circle method for an odd number of players: player `a` meets player `b` in round
+        // `a + b` modulo the number of players, which pairs every two players exactly once and
+        // gives the player with `2 * a == a + b` a bye in that round
+        let round = |a: usize, b: usize| ((a + b) % players) as u32 + 1;
+        let matches = (0..players)
+            .flat_map(|a| (a + 1..players).map(move |b| (round(a, b), vec![a], vec![b])))
+            .collect();
+        let mut phase = phase_with_points(players as u32, matches, ONE_HALF, FULL_HALF);
+
+        for (a, row) in CROSS_TABLE.iter().enumerate() {
+            for (b, result) in row.chars().enumerate().skip(a + 1) {
+                let mirrored = CROSS_TABLE[b].as_bytes()[a] as char;
+                let (result, expected_mirrored) = match result {
+                    '1' => (MatchResult::AWins, '0'),
+                    '=' => (MatchResult::Draw, '='),
+                    '0' => (MatchResult::BWins, '1'),
+                    other => panic!("unexpected result {other} of player {a} against player {b}"),
+                };
+                assert_eq!(
+                    mirrored, expected_mirrored,
+                    "the two halves of the cross table disagree about player {a} against player {b}"
+                );
+                let match_id = match_id(&phase, round(a, b), &[a], &[b]);
+                phase.report_match_result(match_id, result);
+            }
+        }
+
+        for (index, (points, neustadtl)) in PUBLISHED_SCORES.into_iter().enumerate() {
+            assert_eq!(
+                test_utils::metric_of::<Points>(&phase, index),
+                Points(points),
+                "player {index} ended up with the wrong number of points"
+            );
+            assert_eq!(
+                metric_of(&phase, index),
+                SonnebornBerger(neustadtl),
+                "player {index} ended up with the wrong Neustadtl score"
+            );
         }
     }
 
