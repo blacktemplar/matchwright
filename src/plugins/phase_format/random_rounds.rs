@@ -13,6 +13,17 @@ use crate::{
 pub struct RandomRounds {
     rounds: u32,
 }
+
+impl RandomRounds {
+    /// Schedules `rounds` randomly chosen rounds of a round robin.
+    ///
+    /// If `rounds` is larger than the number of rounds a full round robin has, a full round robin
+    /// is scheduled instead.
+    pub const fn new(rounds: u32) -> Self {
+        Self { rounds }
+    }
+}
+
 impl PhaseFormat for RandomRounds {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
         // we use the circle method to generate rounds, see
