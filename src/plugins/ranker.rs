@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::{
     entities::competition::{Phase, Ranking, RankingId},
     plugins::Plugin,
-    type_map::{DebugAny, TypeMap},
+    type_map::{DebugAny, TypeMap, downcast_unchecked_ref},
 };
 
 pub trait Ranker: Plugin {
@@ -140,13 +140,13 @@ impl<M: DebugAny + Compare> MetricComparator for Comparator<M> {
 
     unsafe fn compare(&self, v1: &dyn Any, v2: &dyn Any) -> Comparison {
         // Safety: due to the safety guarantee of compare + the guarantee of TypeMap that
-        // `get_any::<M>` returns a dyn Any that has concrete type `M`. We cast instead of going
-        // through `downcast_ref`, because that would compare the 128 bit `TypeId` on every single
-        // comparison of a sort, which dominates the actual comparison of the metric.
+        // `get_any::<M>` returns a dyn Any that has concrete type `M`. This runs for every single
+        // comparison of a sort, so the virtual `Any::type_id` calls that a checked downcast would
+        // not be able to optimize away dominate the actual comparison of the metric.
         let (v1, v2) = unsafe {
             (
-                &*(v1 as *const dyn Any).cast::<M>(),
-                &*(v2 as *const dyn Any).cast::<M>(),
+                downcast_unchecked_ref::<M>(v1),
+                downcast_unchecked_ref::<M>(v2),
             )
         };
         v1.compare(v2)
