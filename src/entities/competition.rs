@@ -12,7 +12,7 @@ use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
 use crate::{
-    hash_map::HashMap,
+    hash_map::{HashMap, IdAble, IdMap},
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::PhaseFormat,
@@ -27,8 +27,8 @@ const NAMESPACE_RANKING: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Competition {
-    entrants: HashMap<EntrantId, Entrant>,
-    phases: HashMap<PhaseId, Phase>,
+    entrants: IdMap<Entrant>,
+    phases: IdMap<Phase>,
     phase_transitions: Vec<PhaseTransition>,
     started: bool,
     seed: [u8; 12],
@@ -39,12 +39,12 @@ impl Competition {
         self.started
     }
 
-    pub fn entrants(&self) -> &HashMap<EntrantId, Entrant> {
+    pub fn entrants(&self) -> &IdMap<Entrant> {
         &self.entrants
     }
 
     pub(crate) fn add_entrant(&mut self, entrant: Entrant) {
-        self.entrants.insert(entrant.id(), entrant);
+        self.entrants.insert(entrant);
     }
 
     pub(crate) fn remove_entrant(&mut self, entrant: &Entrant) {
@@ -71,22 +71,22 @@ impl Competition {
             id,
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
-            rankings: HashMap::default(),
+            rankings: IdMap::default(),
             ranking_ids_ordered_by_unique_rank: vec![],
-            matches: HashMap::new(),
+            matches: IdMap::new(),
             phase_format,
             ranker,
             seed,
             metrics_calculators,
         };
-        self.phases.insert(id, phase);
+        self.phases.insert(phase);
     }
 
-    pub fn phases(&self) -> &HashMap<PhaseId, Phase> {
+    pub fn phases(&self) -> &IdMap<Phase> {
         &self.phases
     }
 
-    pub(crate) fn phases_mut(&mut self) -> &mut HashMap<PhaseId, Phase> {
+    pub(crate) fn phases_mut(&mut self) -> &mut IdMap<Phase> {
         &mut self.phases
     }
 
@@ -139,6 +139,14 @@ pub struct Entrant {
     id: EntrantId,
 }
 
+impl IdAble for Entrant {
+    type Id = EntrantId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+}
+
 impl Entrant {
     pub fn new(id: EntrantId) -> Self {
         Self { id }
@@ -163,13 +171,21 @@ pub struct Phase {
     id: PhaseId,
     outgoing_phase_transitions: Vec<PhaseTransitionId>,
     incoming_phase_transitions: Vec<PhaseTransitionId>,
-    rankings: HashMap<RankingId, Ranking>,
+    rankings: IdMap<Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
-    matches: HashMap<MatchId, Match>,
+    matches: IdMap<Match>,
     phase_format: Box<dyn PhaseFormat>,
     ranker: Box<dyn Ranker>,
     seed: [u8; 12],
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+}
+
+impl IdAble for Phase {
+    type Id = PhaseId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
 }
 
 impl Phase {
@@ -177,7 +193,7 @@ impl Phase {
         self.id
     }
 
-    pub fn rankings(&self) -> &HashMap<RankingId, Ranking> {
+    pub fn rankings(&self) -> &IdMap<Ranking> {
         &self.rankings
     }
 
@@ -185,7 +201,7 @@ impl Phase {
         &self.ranking_ids_ordered_by_unique_rank
     }
 
-    pub fn matches(&self) -> &HashMap<MatchId, Match> {
+    pub fn matches(&self) -> &IdMap<Match> {
         &self.matches
     }
 
@@ -195,7 +211,7 @@ impl Phase {
             .enumerate()
             .map(|(index, entrants)| {
                 let ranking = Ranking::new(entrants, NonZeroU32::new(index as u32 + 1).unwrap());
-                (ranking.id(), (ranking.id(), ranking))
+                (ranking.id(), ranking)
             })
             .unzip();
         self.rankings = rankings;
@@ -236,8 +252,7 @@ impl Phase {
         );
         let num_matches_before = self.matches.len();
         let num_new_matches = new_matches.len();
-        self.matches
-            .extend(new_matches.into_iter().map(|m| (m.id, m)));
+        self.matches.extend(new_matches);
         // This guarantees that all new match ids were unique (at least relative to the existing
         // match ids in this phase).
         debug_assert_eq!(self.matches.len(), num_matches_before + num_new_matches);
@@ -368,6 +383,14 @@ pub struct Ranking {
     metrics: TypeMap,
 }
 
+impl IdAble for Ranking {
+    type Id = RankingId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+}
+
 pub fn bytes_from_uuids(uuids: impl Iterator<Item = Uuid>) -> Vec<u8> {
     uuids.flat_map(|uuid| uuid.into_bytes()).collect()
 }
@@ -452,6 +475,14 @@ pub struct Match {
     team_b: Vec1<RankingId>,
     round: NonZeroU32,
     result: MatchResult,
+}
+
+impl IdAble for Match {
+    type Id = MatchId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -621,14 +652,14 @@ impl PhaseBuilder {
 
     pub(crate) fn build(self) -> Phase {
         let ranking_ids_ordered_by_unique_rank = self.rankings.iter().map(Ranking::id).collect();
-        let rankings = self.rankings.into_iter().map(|r| (r.id(), r)).collect();
+        let rankings = self.rankings.into_iter().collect();
         let mut phase = Phase {
             id: PhaseId::new(Uuid::nil()),
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
             rankings,
             ranking_ids_ordered_by_unique_rank,
-            matches: HashMap::new(),
+            matches: IdMap::new(),
             phase_format: self.phase_format,
             seed: [0; 12],
             ranker: self.ranker,

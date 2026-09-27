@@ -155,30 +155,41 @@ fn binary_round_trip(competition: &Competition) -> Competition {
     postcard::from_bytes(&bytes).expect("a serialized competition must deserialize again")
 }
 
-/// The serialized form of `competition`, with the metrics of every ranking sorted.
+/// The serialized form of `competition`, in a canonical order: every
+/// [`IdMap`](tournament_engine::hash_map::IdMap) sorted by id and the metrics of every ranking
+/// sorted by their serialized form.
 ///
-/// A [`TypeMap`](tournament_engine::type_map::TypeMap) serializes its values in the arbitrary
-/// iteration order of a hash map, so that order is an implementation detail and must not be part
-/// of a comparison. Everything else is either a sequence whose order matters or a map, and
+/// Both an [`IdMap`](tournament_engine::hash_map::IdMap) and a
+/// [`TypeMap`](tournament_engine::type_map::TypeMap) serialize to a sequence in the arbitrary
+/// iteration order of a hash map, so neither order is part of the state a competition holds and
+/// both have to be sorted away before two serialized forms can be compared. That order really does
+/// differ between two equal competitions: a map that was filled entry by entry and one that was
+/// filled from a serialized sequence iterate differently as soon as they hold more than a handful
+/// of entries. Everything else is either a sequence whose order matters or a map, and
 /// [`serde_json`] keeps map keys sorted.
 fn normalized(competition: &Competition) -> Value {
     let mut value =
         serde_json::to_value(competition).expect("serializing a competition must not fail");
-    let phases = value["phases"]
-        .as_object_mut()
-        .expect("the phases must serialize to a map");
-    for phase in phases.values_mut() {
-        let rankings = phase["rankings"]
-            .as_object_mut()
-            .expect("the rankings must serialize to a map");
-        for ranking in rankings.values_mut() {
+    sorted_by_id(&mut value, "entrants");
+    for phase in sorted_by_id(&mut value, "phases") {
+        for ranking in sorted_by_id(phase, "rankings") {
             ranking["metrics"]
                 .as_array_mut()
                 .expect("the metrics must serialize to a sequence")
                 .sort_by_key(ToString::to_string);
         }
+        sorted_by_id(phase, "matches");
     }
     value
+}
+
+/// Sorts the sequence stored at `field` of `value` by the id of its elements and returns it.
+fn sorted_by_id<'a>(value: &'a mut Value, field: &str) -> &'a mut Vec<Value> {
+    let elements = value[field]
+        .as_array_mut()
+        .unwrap_or_else(|| panic!("the {field} must serialize to a sequence"));
+    elements.sort_by_key(|element| element["id"].to_string());
+    elements
 }
 
 /// Asserts that both rankings hold the same value of every metric calculated by the phase.
@@ -213,12 +224,15 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
     assert_eq!(left.is_started(), right.is_started());
     assert_eq!(left.seed(), right.seed());
     assert_eq!(left.entrants().len(), right.entrants().len());
-    for (id, entrant) in left.entrants() {
-        assert_eq!(Some(entrant), right.entrants().get(id));
+    for entrant in left.entrants() {
+        assert_eq!(Some(entrant), right.entrants().get(&entrant.id()));
     }
     assert_eq!(left.phases().len(), right.phases().len());
-    for (id, phase) in left.phases() {
-        let other = right.phases().get(id).expect("the phase must exist");
+    for phase in left.phases() {
+        let other = right
+            .phases()
+            .get(&phase.id())
+            .expect("the phase must exist");
         assert_eq!(phase.id(), other.id());
         assert_eq!(
             phase.ranking_ids_ordered_by_unique_rank(),
@@ -237,8 +251,11 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             assert_same_metrics(ranking, other_ranking);
         }
         assert_eq!(phase.matches().len(), other.matches().len());
-        for (match_id, r#match) in phase.matches() {
-            let other_match = other.matches().get(match_id).expect("the match must exist");
+        for r#match in phase.matches() {
+            let other_match = other
+                .matches()
+                .get(&r#match.id())
+                .expect("the match must exist");
             assert_eq!(r#match.team_a(), other_match.team_a());
             assert_eq!(r#match.team_b(), other_match.team_b());
             assert_eq!(r#match.round(), other_match.round());
@@ -410,7 +427,7 @@ fn the_competition_seed_survives_a_round_trip() {
 fn deserializing_a_competition_with_an_unknown_phase_format_fails() {
     let sm = started_competition();
     let mut value = serde_json::to_value(sm.current()).unwrap();
-    for phase in value["phases"].as_object_mut().unwrap().values_mut() {
+    for phase in value["phases"].as_array_mut().unwrap() {
         phase["phase_format"]["type"] = Value::String("NotAPhaseFormat".to_owned());
     }
 
@@ -428,8 +445,8 @@ fn deserializing_a_competition_with_an_unknown_phase_format_fails() {
 fn deserializing_a_competition_with_an_unknown_metric_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
-    for phase in value["phases"].as_object_mut().unwrap().values_mut() {
-        for ranking in phase["rankings"].as_object_mut().unwrap().values_mut() {
+    for phase in value["phases"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"].as_array_mut().unwrap() {
             ranking["metrics"][0]["type"] = Value::String("NotAMetric".to_owned());
         }
     }
