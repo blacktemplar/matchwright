@@ -3,7 +3,7 @@ use crate::{
     plugins::Plugin,
 };
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait PhaseFormat: Plugin {
     // The ranking ids of all produced matches must be part of this phase and match ids must be
     // unique. Furthermore, it is not allowed to have two matchesf

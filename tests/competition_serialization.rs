@@ -148,6 +148,13 @@ fn round_trip(competition: &Competition) -> Competition {
     serde_json::from_str(&json).expect("a serialized competition must deserialize again")
 }
 
+/// A round trip through [`postcard`], a compact binary format that is not self-describing and, more
+/// importantly here, not human readable.
+fn binary_round_trip(competition: &Competition) -> Competition {
+    let bytes = postcard::to_stdvec(competition).expect("serializing a competition must not fail");
+    postcard::from_bytes(&bytes).expect("a serialized competition must deserialize again")
+}
+
 /// The serialized form of `competition`, with the metrics of every ranking sorted.
 ///
 /// A [`TypeMap`](tournament_engine::type_map::TypeMap) serializes its values in the arbitrary
@@ -317,6 +324,31 @@ fn a_partially_played_competition_round_trips() {
         .filter(|ranking| ranking.metric::<Points>() == Some(&Points(3.0)))
         .count();
     assert_eq!(winners, 2);
+    assert_same_competition(sm.current(), &competition);
+}
+
+/// A competition must survive a format whose values look nothing like those of a human readable
+/// one, which is what everything inside the plugin trait objects is easy to get wrong: `typetag`
+/// serializes the content of an internally tagged trait object through an adapter that reports
+/// itself as human readable no matter what the real format says, so an id below that content — like
+/// the [`MatchId`]s of a [`Matches`] metric — would be written as a string and read back as raw
+/// bytes. All plugin traits are therefore adjacently tagged, which keeps the content out of that
+/// adapter.
+#[test]
+fn a_played_competition_round_trips_through_a_binary_format() {
+    let sm = competition_in_the_final();
+    // the match ids that a plain round trip would silently write in the wrong representation
+    assert!(
+        sm.current().phases()[&phase_id()]
+            .rankings()
+            .values()
+            .any(|ranking| ranking
+                .metric::<Matches>()
+                .is_some_and(|matches| !matches.0.is_empty()))
+    );
+
+    let competition = binary_round_trip(sm.current());
+
     assert_same_competition(sm.current(), &competition);
 }
 

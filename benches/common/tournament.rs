@@ -4,6 +4,8 @@
 //! This module is shared between the `large_tournament` benchmark and the `run_tournament`
 //! example, which both include it through `#[path = "..."] mod tournament;`.
 
+use std::sync::LazyLock;
+
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
@@ -39,7 +41,8 @@ pub const DEFAULT_ENTRANTS: usize = 1000;
 /// The number of rounds the phase schedules.
 const ROUNDS: u32 = 10;
 
-/// Everything random here is seeded, so that all runs use the exact same tournament.
+/// The competition seed, the pairings and the reported results are seeded, so that a run only
+/// differs from another one in its randomly generated ids.
 const SEED: [u8; 12] = *b"bench-seed!!";
 
 /// The scoring system of most association football leagues.
@@ -49,8 +52,12 @@ const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
 /// an opponent that was played to a draw count half.
 const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
 
+/// The id of the single phase every tournament of this module consists of.
+///
+/// It is generated once per process, so that all tournaments a single run plays share it.
 pub fn phase_id() -> PhaseId {
-    PhaseId::new(Uuid::from_u128(0xfa5e))
+    static PHASE_ID: LazyLock<PhaseId> = LazyLock::new(|| PhaseId::new(Uuid::new_v4()));
+    *PHASE_ID
 }
 
 fn apply(sm: &mut CompetitionStateMachine, transition: impl Transition<Competition> + 'static) {
@@ -95,8 +102,8 @@ fn reporting_schedule(sm: &CompetitionStateMachine) -> Vec<(MatchId, MatchResult
 pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
     let mut sm = CompetitionStateMachine::default();
     apply(&mut sm, SetCompetitionSeed::new(SEED));
-    for entrant in 0..entrants {
-        let id = EntrantId::new(Uuid::from_u128(entrant as u128));
+    for _ in 0..entrants {
+        let id = EntrantId::new(Uuid::new_v4());
         apply(&mut sm, AddEntrant::new(Entrant::new(id)));
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(

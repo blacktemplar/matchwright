@@ -440,7 +440,7 @@ impl Metric for GameDifferenceMetric { /* ... */ }
 and the trait itself opts in once:
 
 ```rust
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait Metric: Debug {
     fn as_any(&self) -> &dyn Any;
 }
@@ -456,14 +456,29 @@ Verified directly against `typetag`'s source (not just its docs) for two
 things this document previously got wrong or left unconfirmed:
 
 - **It works with non-self-describing binary formats, including
-  Bincode.** Unlike serde's built-in internally/adjacently-tagged enum
-  representations (which do require a self-describing format, because
-  they buffer an unknown shape via `deserialize_any` before knowing the
-  target type), `typetag` reads the tag and content as two ordinary,
-  positionally-decoded fields, then uses a `DeserializeSeed` — chosen
-  *after* the tag is already known — to decode the second field as the
-  right concrete type. No generic buffering, no `deserialize_any`, so
-  non-self-describing formats work fine.
+  Bincode** — but only when the trait is *adjacently* tagged, which is
+  why the annotation above carries a `content` as well. Unlike serde's
+  built-in internally/adjacently-tagged enum representations (which do
+  require a self-describing format, because they buffer an unknown shape
+  via `deserialize_any` before knowing the target type), `typetag` reads
+  the tag and content as two ordinary, positionally-decoded fields, then
+  uses a `DeserializeSeed` — chosen *after* the tag is already known — to
+  decode the second field as the right concrete type. No generic
+  buffering, no `deserialize_any`, so non-self-describing formats work
+  fine.
+
+  Internal tagging (`tag` without `content`) does *not* work, because
+  `typetag` serializes the content through an adapter that reports
+  `Serializer::is_human_readable() == true` whatever the real format
+  says, while deserialization sees the real format. A value below that
+  content whose representation depends on the flag — the `Uuid` of any id
+  in this crate, for instance — is then written as a string and read back
+  as raw bytes, which fails. Adjacent tagging keeps the content out of
+  that adapter; the cost in JSON is one nesting level
+  (`{"type": "...", "value": {...}}` instead of a flat object), and it
+  halves the postcard payload compared to working around the defect by
+  giving ids a format-independent string representation. Upstream bug,
+  reported against `typetag` 0.2.23.
 - **A tag collision fails loudly, not silently.** The generated registry
   is a `BTreeMap<&'static str, Option<DeserializeFn<T>>>`. The first
   registration of a tag stores `Some(deserialize_fn)`; a second

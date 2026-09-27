@@ -20,7 +20,7 @@ pub type MetricId = TypeId;
 
 pub type Metric = Box<dyn TypeMapValue>;
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait MetricsCalculator: Plugin {
     fn default_metric_value(&self) -> Metric;
 

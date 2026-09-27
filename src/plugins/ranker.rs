@@ -9,7 +9,7 @@ use crate::{
     type_map::{TypeMap, TypeMapValue},
 };
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait Ranker: Plugin {
     /// After every rank update the following invariant must uphold: If we would order rankings by
     /// rank we would get: First ranking has rank 1, every following ranking has either the rank of
@@ -23,7 +23,7 @@ impl Clone for Box<dyn Ranker> {
     }
 }
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait SliceRanker: Plugin {
     /// Assigns new ranks to the given slice and reorders them according to the new ranks.
     fn update_ranks(&self, phase: &Phase, slice: &mut [(&Ranking, NonZeroU32)]);
@@ -97,7 +97,7 @@ impl<'a, 'b> MetricStorage<'a, 'b> {
     }
 }
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait MetricGetter: Plugin {
     fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>);
 }
@@ -108,7 +108,7 @@ impl Clone for Box<dyn MetricGetter> {
     }
 }
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 #[doc(hidden)]
 pub trait MetricComparator: Plugin {
     /// Reads this comparator's metric out of every map of `metrics`, returning [`None`] if any of

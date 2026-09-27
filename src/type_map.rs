@@ -11,7 +11,7 @@ use serde::{
 
 use crate::hash_map::HashMap;
 
-#[typetag::serde(tag = "type")]
+#[typetag::serde(tag = "type", content = "value")]
 pub trait TypeMapValue: Any + Debug {}
 
 /// Downcasts `value` to `&T` without checking that its concrete type really is `T`.
@@ -210,12 +210,14 @@ mod tests {
     #[test]
     fn every_value_is_serialized_as_one_tagged_element() {
         let mut expected = vec![
-            json!({ "type": "Count", "count": 7 }),
-            json!({ "type": "Label", "text": "buchholz", "weight": -0.5 }),
+            json!({ "type": "Count", "value": { "count": 7 } }),
+            json!({ "type": "Label", "value": { "text": "buchholz", "weight": -0.5 } }),
             json!({
                 "type": "History",
-                "entries": [{ "count": 1 }, { "count": 2 }],
-                "finished": true,
+                "value": {
+                    "entries": [{ "count": 1 }, { "count": 2 }],
+                    "finished": true,
+                },
             }),
         ];
         expected.sort_by_key(ToString::to_string);
@@ -300,7 +302,10 @@ mod tests {
 
     #[test]
     fn deserializing_the_same_type_twice_keeps_the_last_value() {
-        let json = r#"[{ "type": "Count", "count": 1 }, { "type": "Count", "count": 2 }]"#;
+        let json = r#"[
+            { "type": "Count", "value": { "count": 1 } },
+            { "type": "Count", "value": { "count": 2 } }
+        ]"#;
 
         let map: TypeMap = serde_json::from_str(json).unwrap();
 
@@ -329,7 +334,7 @@ mod tests {
 
     #[test]
     fn deserializing_a_value_with_a_missing_field_fails() {
-        let json = r#"[{ "type": "Label", "text": "buchholz" }]"#;
+        let json = r#"[{ "type": "Label", "value": { "text": "buchholz" } }]"#;
 
         let error = serde_json::from_str::<TypeMap>(json).unwrap_err();
 
