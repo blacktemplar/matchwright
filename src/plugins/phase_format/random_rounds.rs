@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 
 use itertools::Itertools;
 use rand::seq::{IteratorRandom, SliceRandom};
+use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
@@ -9,7 +10,7 @@ use crate::{
     plugins::phase_format::PhaseFormat,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RandomRounds {
     rounds: u32,
 }
@@ -24,6 +25,7 @@ impl RandomRounds {
     }
 }
 
+#[typetag::serde]
 impl PhaseFormat for RandomRounds {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
         // we use the circle method to generate rounds, see

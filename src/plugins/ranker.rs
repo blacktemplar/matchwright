@@ -1,6 +1,7 @@
-use std::{cmp::Ordering, fmt::Debug, marker::PhantomData, num::NonZeroU32};
+use std::{cmp::Ordering, fmt::Debug, num::NonZeroU32};
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Phase, Ranking, RankingId},
@@ -8,6 +9,7 @@ use crate::{
     type_map::{TypeMap, TypeMapValue},
 };
 
+#[typetag::serde(tag = "type")]
 pub trait Ranker: Plugin {
     /// After every rank update the following invariant must uphold: If we would order rankings by
     /// rank we would get: First ranking has rank 1, every following ranking has either the rank of
@@ -21,6 +23,7 @@ impl Clone for Box<dyn Ranker> {
     }
 }
 
+#[typetag::serde(tag = "type")]
 pub trait SliceRanker: Plugin {
     /// Assigns new ranks to the given slice and reorders them according to the new ranks.
     fn update_ranks(&self, phase: &Phase, slice: &mut [(&Ranking, NonZeroU32)]);
@@ -32,7 +35,7 @@ impl Clone for Box<dyn SliceRanker> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HierarchicalRanker(Vec<Box<dyn SliceRanker>>);
 
 impl HierarchicalRanker {
@@ -41,6 +44,7 @@ impl HierarchicalRanker {
     }
 }
 
+#[typetag::serde]
 impl Ranker for HierarchicalRanker {
     fn update_ranks(&self, phase: &Phase) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase
@@ -72,16 +76,41 @@ impl Ranker for HierarchicalRanker {
     }
 }
 
-#[derive(Debug, Copy, Default)]
-struct Comparator<M>(PhantomData<M>);
+#[must_use]
+pub struct MetricStorage<'a, 'b> {
+    metrics: &'b [&'a TypeMap],
+    output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
+}
 
-impl<M> Clone for Comparator<M> {
-    fn clone(&self) -> Self {
-        Self(PhantomData)
+impl<'a, 'b> MetricStorage<'a, 'b> {
+    pub fn set_metric<M: TypeMapValue + Compare>(self) {
+        *self.output = self.get_metric_values::<M>()
+    }
+
+    fn get_metric_values<M: TypeMapValue + Compare>(&self) -> Option<Box<dyn MetricColumn + 'a>> {
+        let values: Vec<&M> = self
+            .metrics
+            .iter()
+            .map(|map| map.get::<M>())
+            .collect::<Option<_>>()?;
+        Some(Box::new(MetricValues(values)))
     }
 }
 
-trait MetricComparator: Plugin {
+#[typetag::serde(tag = "type")]
+pub trait MetricGetter: Plugin {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>);
+}
+
+impl Clone for Box<dyn MetricGetter> {
+    fn clone(&self) -> Self {
+        dyn_clone::clone_box(&**self)
+    }
+}
+
+#[typetag::serde(tag = "type")]
+#[doc(hidden)]
+pub trait MetricComparator: Plugin {
     /// Reads this comparator's metric out of every map of `metrics`, returning [`None`] if any of
     /// them does not hold that metric.
     ///
@@ -93,7 +122,8 @@ trait MetricComparator: Plugin {
 }
 
 /// The values of one metric, one per ranking, already read out of their [`TypeMap`].
-trait MetricColumn {
+#[doc(hidden)]
+pub trait MetricColumn {
     /// Compares the values of the rankings at `index1` and `index2`, in terms of the order they
     /// were extracted in.
     fn compare(&self, index1: usize, index2: usize) -> Comparison;
@@ -142,19 +172,10 @@ pub trait Compare {
     fn compare(&self, other: &Self) -> Comparison;
 }
 
-impl<M: TypeMapValue + Compare> MetricComparator for Comparator<M> {
-    fn extract_column<'a>(&self, metrics: &[&'a TypeMap]) -> Option<Box<dyn MetricColumn + 'a>> {
-        let values: Vec<&M> = metrics
-            .iter()
-            .map(|map| map.get::<M>())
-            .collect::<Option<_>>()?;
-        Some(Box::new(MetricValues(values)))
-    }
-}
-
 /// The values of metric `M` of a list of rankings, which compare without any downcast because
 /// [`TypeMap::get`] already resolved them to `&M`.
-struct MetricValues<'a, M>(Vec<&'a M>);
+#[doc(hidden)]
+pub struct MetricValues<'a, M>(pub Vec<&'a M>);
 
 impl<M: Compare> MetricColumn for MetricValues<'_, M> {
     fn compare(&self, index1: usize, index2: usize) -> Comparison {
@@ -162,20 +183,21 @@ impl<M: Compare> MetricColumn for MetricValues<'_, M> {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct LexicographicalMetrics(Vec<Box<dyn MetricComparator>>);
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct LexicographicalMetrics(Vec<Box<dyn MetricGetter>>);
 
 impl LexicographicalMetrics {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn add_metric<M: TypeMapValue + Compare>(mut self) -> Self {
-        self.0.push(Box::new(Comparator::<M>(PhantomData)));
+    pub fn add_metric(mut self, metric_getter: impl MetricGetter + 'static) -> Self {
+        self.0.push(Box::new(metric_getter));
         self
     }
 }
 
+#[typetag::serde]
 impl SliceRanker for LexicographicalMetrics {
     fn update_ranks(&self, _: &Phase, slice: &mut [(&Ranking, NonZeroU32)]) {
         if self.0.is_empty() || slice.len() < 2 {
@@ -192,10 +214,14 @@ impl SliceRanker for LexicographicalMetrics {
         let columns = self
             .0
             .iter()
-            .map(|comparator| {
-                comparator
-                    .extract_column(&metrics)
-                    .expect("All queried metrics must exist")
+            .map(|metric_getter| {
+                let mut metric_values = None;
+                let metric_storage = MetricStorage {
+                    metrics: &metrics,
+                    output: &mut metric_values,
+                };
+                metric_getter.store_metric(metric_storage);
+                metric_values.expect("All queried metrics must exist")
             })
             .collect_vec();
         let comparator = |row1: usize, row2: usize| {

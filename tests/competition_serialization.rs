@@ -1,0 +1,413 @@
+//! Round trip tests for [`Competition`]: every state a competition can be in has to survive being
+//! serialized and deserialized again, including everything hidden behind the trait objects of its
+//! plugins (phase format, ranker, metrics calculators) and the metrics of its rankings.
+
+use itertools::Itertools;
+use rand::RngExt;
+use serde_json::Value;
+use tournament_engine::{
+    entities::competition::{
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
+    },
+    plugins::{
+        metrics_calculator::{
+            buchholz::{
+                Buchholz, BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholz,
+                BuchholzOfBuchholzCalculator, BuchholzOfBuchholzGetter,
+            },
+            matches::{Matches, MatchesCalculator},
+            points::{Points, PointsCalculator, PointsGetter},
+            round_of_first_loss::{
+                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
+            },
+            sonneborn_berger::{SonnebornBerger, SonnebornBergerCalculator, SonnebornBergerGetter},
+            wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
+        },
+        phase_format::single_elimination::SingleElimination,
+        ranker::{HierarchicalRanker, LexicographicalMetrics},
+    },
+    transitions::{
+        add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
+        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
+    },
+};
+use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
+use uuid::Uuid;
+
+type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
+
+/// Everything random here is seeded, so that all runs use the exact same tournament.
+const SEED: [u8; 12] = *b"round-trip!!";
+
+/// The scoring system of most association football leagues.
+const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+
+/// The classical Sonneborn-Berger weights.
+const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+
+fn phase_id() -> PhaseId {
+    PhaseId::new(Uuid::from_u128(0xfa5e))
+}
+
+#[track_caller]
+fn apply(sm: &mut CompetitionStateMachine, transition: impl Transition<Competition> + 'static) {
+    sm.apply(LogEntry::new(
+        TransitionId::new(),
+        LogEntryKind::Apply(Box::new(transition)),
+    ))
+    .expect("transition must be applicable");
+}
+
+/// Applies `transition` to a competition that is not held by a [`StateMachine`], exactly like
+/// [`StateMachine::apply`] would.
+#[track_caller]
+fn apply_directly(competition: &mut Competition, transition: &impl Transition<Competition>) {
+    transition
+        .check_applicable(competition)
+        .expect("transition must be applicable");
+    transition
+        .apply(competition)
+        .expect("applying the transition must not fail");
+}
+
+/// A competition with four entrants and a single elimination phase that calculates every metric
+/// this crate offers, not started yet.
+fn competition_with_a_phase() -> CompetitionStateMachine {
+    let mut sm = CompetitionStateMachine::default();
+    apply(&mut sm, SetCompetitionSeed::new(SEED));
+    for entrant in 0..4 {
+        let id = EntrantId::new(Uuid::from_u128(entrant));
+        apply(&mut sm, AddEntrant::new(Entrant::new(id)));
+    }
+    let ranker = HierarchicalRanker::new(vec![Box::new(
+        LexicographicalMetrics::new()
+            .add_metric(RoundOfFirstLossGetter)
+            .add_metric(PointsGetter)
+            .add_metric(BuchholzGetter)
+            .add_metric(SonnebornBergerGetter)
+            .add_metric(BuchholzOfBuchholzGetter),
+    )]);
+    apply(
+        &mut sm,
+        AddPhase::new(
+            phase_id(),
+            Box::new(SingleElimination),
+            Box::new(ranker),
+            // the calculators run in this order, so every one of them that reads the metric of
+            // another one has to be listed after it
+            vec![
+                Box::new(RoundOfFirstLossCalculator),
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+                Box::new(SONNEBORN_BERGER),
+                Box::new(BuchholzOfBuchholzCalculator),
+            ],
+        ),
+    );
+    sm
+}
+
+/// [`competition_with_a_phase`] started, so that its rankings, metrics and the matches of the
+/// first round exist.
+fn started_competition() -> CompetitionStateMachine {
+    let mut sm = competition_with_a_phase();
+    apply(&mut sm, StartCompetition);
+    sm
+}
+
+/// [`started_competition`] with both matches of the first round won by their team A, so that the
+/// phase holds updated metrics, reranked rankings and the freshly scheduled final.
+fn competition_in_the_final() -> CompetitionStateMachine {
+    let mut sm = started_competition();
+    for match_id in matches_of_round(&sm.current().phases()[&phase_id()], 1) {
+        apply(
+            &mut sm,
+            ReportMatchResult::new(phase_id(), match_id, MatchResult::AWins),
+        );
+    }
+    sm
+}
+
+/// The matches of `round`, ordered by the initial unique rank of the first ranking of their team
+/// A, which is unique within a round and unaffected by any reported result, so that the order does
+/// not depend on the iteration order of the match map.
+fn matches_of_round(phase: &Phase, round: u32) -> Vec<MatchId> {
+    phase
+        .matches()
+        .values()
+        .filter(|r#match| r#match.round().get() == round)
+        .sorted_by_key(|r#match| phase.rankings()[&r#match.team_a()[0]].initial_unique_rank())
+        .map(Match::id)
+        .collect()
+}
+
+fn round_trip(competition: &Competition) -> Competition {
+    let json = serde_json::to_string(competition).expect("serializing a competition must not fail");
+    serde_json::from_str(&json).expect("a serialized competition must deserialize again")
+}
+
+/// The serialized form of `competition`, with the metrics of every ranking sorted.
+///
+/// A [`TypeMap`](tournament_engine::type_map::TypeMap) serializes its values in the arbitrary
+/// iteration order of a hash map, so that order is an implementation detail and must not be part
+/// of a comparison. Everything else is either a sequence whose order matters or a map, and
+/// [`serde_json`] keeps map keys sorted.
+fn normalized(competition: &Competition) -> Value {
+    let mut value =
+        serde_json::to_value(competition).expect("serializing a competition must not fail");
+    let phases = value["phases"]
+        .as_object_mut()
+        .expect("the phases must serialize to a map");
+    for phase in phases.values_mut() {
+        let rankings = phase["rankings"]
+            .as_object_mut()
+            .expect("the rankings must serialize to a map");
+        for ranking in rankings.values_mut() {
+            ranking["metrics"]
+                .as_array_mut()
+                .expect("the metrics must serialize to a sequence")
+                .sort_by_key(ToString::to_string);
+        }
+    }
+    value
+}
+
+/// Asserts that both rankings hold the same value of every metric calculated by the phase.
+#[track_caller]
+fn assert_same_metrics(left: &Ranking, right: &Ranking) {
+    assert_eq!(
+        left.metric::<RoundOfFirstLoss>(),
+        right.metric::<RoundOfFirstLoss>()
+    );
+    assert_eq!(
+        left.metric::<WinsDrawsLosses>(),
+        right.metric::<WinsDrawsLosses>()
+    );
+    assert_eq!(left.metric::<Points>(), right.metric::<Points>());
+    assert_eq!(left.metric::<Matches>(), right.metric::<Matches>());
+    assert_eq!(left.metric::<Buchholz>(), right.metric::<Buchholz>());
+    assert_eq!(
+        left.metric::<SonnebornBerger>(),
+        right.metric::<SonnebornBerger>()
+    );
+    assert_eq!(
+        left.metric::<BuchholzOfBuchholz>(),
+        right.metric::<BuchholzOfBuchholz>()
+    );
+}
+
+/// Asserts that both competitions hold the same state, first through the public getters, so that a
+/// failure points at the part that differs, and then through their whole serialized form, which
+/// also covers the private fields and the plugins.
+#[track_caller]
+fn assert_same_competition(left: &Competition, right: &Competition) {
+    assert_eq!(left.is_started(), right.is_started());
+    assert_eq!(left.seed(), right.seed());
+    assert_eq!(left.entrants().len(), right.entrants().len());
+    for (id, entrant) in left.entrants() {
+        assert_eq!(Some(entrant), right.entrants().get(id));
+    }
+    assert_eq!(left.phases().len(), right.phases().len());
+    for (id, phase) in left.phases() {
+        let other = right.phases().get(id).expect("the phase must exist");
+        assert_eq!(phase.id(), other.id());
+        assert_eq!(
+            phase.ranking_ids_ordered_by_unique_rank(),
+            other.ranking_ids_ordered_by_unique_rank()
+        );
+        for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
+            let ranking = &phase.rankings()[ranking_id];
+            let other_ranking = &other.rankings()[ranking_id];
+            assert_eq!(ranking.entrants(), other_ranking.entrants());
+            assert_eq!(ranking.rank(), other_ranking.rank());
+            assert_eq!(ranking.unique_rank(), other_ranking.unique_rank());
+            assert_eq!(
+                ranking.initial_unique_rank(),
+                other_ranking.initial_unique_rank()
+            );
+            assert_same_metrics(ranking, other_ranking);
+        }
+        assert_eq!(phase.matches().len(), other.matches().len());
+        for (match_id, r#match) in phase.matches() {
+            let other_match = other.matches().get(match_id).expect("the match must exist");
+            assert_eq!(r#match.team_a(), other_match.team_a());
+            assert_eq!(r#match.team_b(), other_match.team_b());
+            assert_eq!(r#match.round(), other_match.round());
+            assert_eq!(r#match.result(), other_match.result());
+        }
+        // the phase seed is private and only observable through the random streams it produces
+        assert_eq!(
+            phase.new_seeded_std_rng("entropy").random::<u64>(),
+            other.new_seeded_std_rng("entropy").random::<u64>()
+        );
+    }
+    assert_eq!(normalized(left), normalized(right));
+}
+
+#[test]
+fn an_empty_competition_round_trips() {
+    let competition = round_trip(&Competition::default());
+
+    assert!(!competition.is_started());
+    assert!(competition.entrants().is_empty());
+    assert!(competition.phases().is_empty());
+    assert_eq!(competition.seed(), [0; 12]);
+    assert_same_competition(&Competition::default(), &competition);
+}
+
+#[test]
+fn a_competition_that_has_not_started_round_trips() {
+    let sm = competition_with_a_phase();
+
+    let competition = round_trip(sm.current());
+
+    assert!(!competition.is_started());
+    assert_eq!(competition.seed(), SEED);
+    assert_eq!(competition.entrants().len(), 4);
+    let phase = &competition.phases()[&phase_id()];
+    assert!(phase.rankings().is_empty());
+    assert!(phase.matches().is_empty());
+    assert_same_competition(sm.current(), &competition);
+}
+
+#[test]
+fn a_started_competition_round_trips() {
+    let sm = started_competition();
+
+    let competition = round_trip(sm.current());
+
+    assert!(competition.is_started());
+    let phase = &competition.phases()[&phase_id()];
+    assert_eq!(phase.rankings().len(), 4);
+    assert_eq!(phase.matches().len(), 2);
+    // the metrics of a started competition are all at their default value, so this only shows
+    // that they exist at all
+    for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
+        assert_eq!(
+            phase.rankings()[ranking_id].metric::<Points>(),
+            Some(&Points(0.0))
+        );
+    }
+    assert_same_competition(sm.current(), &competition);
+}
+
+#[test]
+fn a_partially_played_competition_round_trips() {
+    let sm = competition_in_the_final();
+
+    let competition = round_trip(sm.current());
+
+    let phase = &competition.phases()[&phase_id()];
+    // the two first round matches plus the final that reporting them scheduled
+    assert_eq!(phase.matches().len(), 3);
+    assert_eq!(
+        phase
+            .matches()
+            .values()
+            .filter(|r#match| r#match.is_finished())
+            .count(),
+        2
+    );
+    // the two winners hold the points of their win, and the losers the round they lost in
+    let winners = phase
+        .rankings()
+        .values()
+        .filter(|ranking| ranking.metric::<Points>() == Some(&Points(3.0)))
+        .count();
+    assert_eq!(winners, 2);
+    assert_same_competition(sm.current(), &competition);
+}
+
+#[test]
+fn a_round_tripped_competition_can_be_started() {
+    let mut sm = competition_with_a_phase();
+    let mut competition = round_trip(sm.current());
+
+    // the phase format, the ranker and all metrics calculators are only used from here on, so
+    // this is what shows that they survived the round trip as their concrete types
+    apply(&mut sm, StartCompetition);
+    apply_directly(&mut competition, &StartCompetition);
+
+    assert_eq!(competition.phases()[&phase_id()].matches().len(), 2);
+    assert_same_competition(sm.current(), &competition);
+}
+
+#[test]
+fn a_round_tripped_competition_can_continue_the_tournament() {
+    let mut sm = competition_in_the_final();
+    let mut competition = round_trip(sm.current());
+    let final_match = matches_of_round(&competition.phases()[&phase_id()], 2)[0];
+    let report = ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins);
+
+    apply(
+        &mut sm,
+        ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins),
+    );
+    apply_directly(&mut competition, &report);
+
+    let phase = &competition.phases()[&phase_id()];
+    assert!(phase.matches().values().all(Match::is_finished));
+    assert_same_competition(sm.current(), &competition);
+}
+
+#[test]
+fn a_round_trip_does_not_change_the_serialized_form() {
+    let sm = competition_in_the_final();
+
+    let competition = round_trip(&round_trip(sm.current()));
+
+    assert_eq!(normalized(&competition), normalized(sm.current()));
+}
+
+#[test]
+fn the_competition_seed_survives_a_round_trip() {
+    let sm = started_competition();
+
+    let competition = round_trip(sm.current());
+
+    assert_eq!(competition.seed(), SEED);
+    assert_eq!(
+        competition.new_seeded_std_rng("entropy").random::<u64>(),
+        sm.current().new_seeded_std_rng("entropy").random::<u64>()
+    );
+}
+
+#[test]
+fn deserializing_a_competition_with_an_unknown_phase_format_fails() {
+    let sm = started_competition();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for phase in value["phases"].as_object_mut().unwrap().values_mut() {
+        phase["phase_format"]["type"] = Value::String("NotAPhaseFormat".to_owned());
+    }
+
+    let Err(error) = serde_json::from_value::<Competition>(value) else {
+        panic!("an unknown phase format must not deserialize");
+    };
+
+    assert!(
+        error.to_string().contains("NotAPhaseFormat"),
+        "the error must name the unknown phase format, but was: {error}"
+    );
+}
+
+#[test]
+fn deserializing_a_competition_with_an_unknown_metric_fails() {
+    let sm = competition_in_the_final();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for phase in value["phases"].as_object_mut().unwrap().values_mut() {
+        for ranking in phase["rankings"].as_object_mut().unwrap().values_mut() {
+            ranking["metrics"][0]["type"] = Value::String("NotAMetric".to_owned());
+        }
+    }
+
+    let Err(error) = serde_json::from_value::<Competition>(value) else {
+        panic!("an unknown metric must not deserialize");
+    };
+
+    assert!(
+        error.to_string().contains("NotAMetric"),
+        "the error must name the unknown metric, but was: {error}"
+    );
+}

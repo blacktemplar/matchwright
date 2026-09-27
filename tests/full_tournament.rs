@@ -13,7 +13,9 @@ use tournament_engine::{
             },
             matches::{Matches, MatchesCalculator},
             points::{Points, PointsCalculator},
-            round_of_first_loss::{RoundOfFirstLoss, RoundOfFirstLossCalculator},
+            round_of_first_loss::{
+                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
+            },
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::SingleElimination,
@@ -105,7 +107,7 @@ fn full_tournament() {
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination);
     let ranker = Box::new(HierarchicalRanker::new(vec![Box::new(
-        LexicographicalMetrics::new().add_metric::<RoundOfFirstLoss>(),
+        LexicographicalMetrics::new().add_metric(RoundOfFirstLossGetter),
     )]));
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();

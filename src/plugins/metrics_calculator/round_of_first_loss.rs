@@ -7,7 +7,7 @@ use crate::{
     hash_map::HashMap,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
-        ranker::{Compare, Comparison},
+        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
     },
     type_map::TypeMapValue,
 };
@@ -30,9 +30,20 @@ impl Compare for RoundOfFirstLoss {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundOfFirstLossGetter;
+
+#[typetag::serde]
+impl MetricGetter for RoundOfFirstLossGetter {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+        storage.set_metric::<RoundOfFirstLoss>();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RoundOfFirstLossCalculator;
 
+#[typetag::serde]
 impl MetricsCalculator for RoundOfFirstLossCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(RoundOfFirstLoss::default())

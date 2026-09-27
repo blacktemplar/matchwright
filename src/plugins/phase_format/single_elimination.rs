@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
@@ -9,8 +10,10 @@ use crate::{
     plugins::phase_format::PhaseFormat,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SingleElimination;
+
+#[typetag::serde]
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
         if !phase.matches().values().all(Match::is_finished) {

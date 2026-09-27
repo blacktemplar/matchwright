@@ -4,6 +4,7 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
@@ -16,9 +17,10 @@ use crate::{
 pub(crate) type MatchSpec = (u32, Vec<usize>, Vec<usize>);
 
 /// Test-only [`PhaseFormat`] that schedules a fixed list of matches, all at once.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FixedMatches(Vec<MatchSpec>);
 
+#[typetag::serde]
 impl PhaseFormat for FixedMatches {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
         if !phase.matches().is_empty() {

@@ -18,6 +18,7 @@ use std::{
 };
 
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone)]
 pub struct HashMap<K, V>(FxHashMap<K, V>);
@@ -150,6 +151,27 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for HashMap<K, V> {
 }
 
 impl<K: Eq + Hash, V: Eq> Eq for HashMap<K, V> {}
+
+/// Serializes as a plain map, exactly like [`std::collections::HashMap`] does; the wrapper adds
+/// nothing to the serialized form.
+///
+/// # Important
+/// The order in which the entries are serialized is the arbitrary iteration order of the map, so
+/// the serialized form of two equal maps may differ. Do not rely on it for determinism.
+impl<K: Serialize, V: Serialize> Serialize for HashMap<K, V> {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+/// Deserializes from a plain map, exactly like [`std::collections::HashMap`] does.
+impl<'de, K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>> Deserialize<'de> for HashMap<K, V> {
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        FxHashMap::deserialize(deserializer).map(Self)
+    }
+}
 
 impl<K: Eq + Hash, V> Index<&K> for HashMap<K, V> {
     type Output = V;

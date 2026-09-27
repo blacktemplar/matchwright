@@ -2,7 +2,6 @@ use std::{
     any::{Any, TypeId},
     hash::Hash,
     num::NonZeroU32,
-    rc::Rc,
 };
 
 use itertools::{Either, Itertools};
@@ -26,10 +25,11 @@ use crate::{
 const NAMESPACE_MATCH: Uuid = uuid!("d4098937-85f4-49ce-945a-be8ae74da780");
 const NAMESPACE_RANKING: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Competition {
     entrants: HashMap<EntrantId, Entrant>,
     phases: HashMap<PhaseId, Phase>,
+    phase_transitions: Vec<PhaseTransition>,
     started: bool,
     seed: [u8; 12],
 }
@@ -125,7 +125,7 @@ impl Competition {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntrantId(Uuid);
 
 impl EntrantId {
@@ -134,7 +134,7 @@ impl EntrantId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entrant {
     id: EntrantId,
 }
@@ -149,7 +149,7 @@ impl Entrant {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PhaseId(Uuid);
 
 impl PhaseId {
@@ -158,12 +158,11 @@ impl PhaseId {
     }
 }
 
-#[derive(Debug)]
-#[expect(dead_code)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Phase {
     id: PhaseId,
-    outgoing_phase_transitions: Vec<Rc<PhaseTransition>>,
-    incoming_phase_transitions: Vec<Rc<PhaseTransition>>,
+    outgoing_phase_transitions: Vec<PhaseTransitionId>,
+    incoming_phase_transitions: Vec<PhaseTransitionId>,
     rankings: HashMap<RankingId, Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: HashMap<MatchId, Match>,
@@ -343,14 +342,23 @@ pub enum EntropyTypes {
     PhaseFormat,
 }
 
-#[derive(Debug)]
-#[expect(dead_code)]
-pub struct PhaseTransition {
-    source_phase_ids: Vec1<Uuid>,
-    target_phase_ids: Vec1<Uuid>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PhaseTransitionId(Uuid);
+
+impl PhaseTransitionId {
+    pub fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PhaseTransition {
+    id: PhaseTransitionId,
+    source_phase_ids: Vec1<PhaseId>,
+    target_phase_ids: Vec1<PhaseId>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Ranking {
     id: RankingId,
     entrants: Vec1<EntrantId>,
@@ -411,7 +419,7 @@ impl Ranking {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatchResult {
     AWins,
     BWins,
@@ -419,7 +427,7 @@ pub enum MatchResult {
     NotFinished,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RankingId(Uuid);
 
 impl RankingId {
@@ -437,7 +445,7 @@ impl MatchId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Match {
     id: MatchId,
     team_a: Vec1<RankingId>,

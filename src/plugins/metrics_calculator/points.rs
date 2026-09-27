@@ -8,7 +8,7 @@ use crate::{
     hash_map::HashMap,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
-        ranker::{Compare, Comparison},
+        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
     },
     type_map::TypeMapValue,
 };
@@ -32,7 +32,17 @@ impl AsRef<f32> for Points {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PointsGetter;
+
+#[typetag::serde]
+impl MetricGetter for PointsGetter {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+        storage.set_metric::<Points>();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PointsCalculator {
     points_for_win: f32,
     points_for_draw: f32,
@@ -49,6 +59,7 @@ impl PointsCalculator {
     }
 }
 
+#[typetag::serde]
 impl MetricsCalculator for PointsCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Points::default())

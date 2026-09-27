@@ -11,12 +11,13 @@ use tournament_engine::{
     plugins::{
         metrics_calculator::{
             buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
+                BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholzCalculator,
+                BuchholzOfBuchholzGetter,
             },
             matches::MatchesCalculator,
-            points::{Points, PointsCalculator},
+            points::{PointsCalculator, PointsGetter},
             round_of_first_loss::RoundOfFirstLossCalculator,
-            sonneborn_berger::{SonnebornBerger, SonnebornBergerCalculator},
+            sonneborn_berger::{SonnebornBergerCalculator, SonnebornBergerGetter},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::random_rounds::RandomRounds,
@@ -100,10 +101,10 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
         LexicographicalMetrics::new()
-            .add_metric::<Points>()
-            .add_metric::<Buchholz>()
-            .add_metric::<SonnebornBerger>()
-            .add_metric::<BuchholzOfBuchholz>(),
+            .add_metric(PointsGetter)
+            .add_metric(BuchholzGetter)
+            .add_metric(SonnebornBergerGetter)
+            .add_metric(BuchholzOfBuchholzGetter),
     )]);
     apply(
         &mut sm,

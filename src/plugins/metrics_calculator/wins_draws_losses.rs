@@ -19,9 +19,10 @@ pub struct WinsDrawsLosses {
 #[typetag::serde]
 impl TypeMapValue for WinsDrawsLosses {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLossesCalculator;
 
+#[typetag::serde]
 impl MetricsCalculator for WinsDrawsLossesCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(WinsDrawsLosses::default())

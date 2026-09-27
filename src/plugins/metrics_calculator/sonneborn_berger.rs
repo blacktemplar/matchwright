@@ -7,7 +7,7 @@ use crate::{
     hash_map::HashMap,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison},
+        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
     },
     type_map::TypeMapValue,
 };
@@ -25,7 +25,17 @@ impl Compare for SonnebornBerger {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SonnebornBergerGetter;
+
+#[typetag::serde]
+impl MetricGetter for SonnebornBergerGetter {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+        storage.set_metric::<SonnebornBerger>();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SonnebornBergerCalculator {
     weight_for_win: f32,
     weight_for_draw: f32,
@@ -43,6 +53,7 @@ impl SonnebornBergerCalculator {
     }
 }
 
+#[typetag::serde]
 impl MetricsCalculator for SonnebornBergerCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(SonnebornBerger::default())

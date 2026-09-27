@@ -11,7 +11,7 @@ use crate::{
     hash_map::HashMap,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison},
+        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
     },
     type_map::TypeMapValue,
 };
@@ -41,9 +41,20 @@ impl From<f32> for Buchholz {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuchholzGetter;
+
+#[typetag::serde]
+impl MetricGetter for BuchholzGetter {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+        storage.set_metric::<Buchholz>();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BuchholzCalculator;
 
+#[typetag::serde]
 impl MetricsCalculator for BuchholzCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Buchholz::default())
@@ -143,9 +154,20 @@ impl From<f32> for BuchholzOfBuchholz {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuchholzOfBuchholzGetter;
+
+#[typetag::serde]
+impl MetricGetter for BuchholzOfBuchholzGetter {
+    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+        storage.set_metric::<BuchholzOfBuchholz>();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BuchholzOfBuchholzCalculator;
 
+#[typetag::serde]
 impl MetricsCalculator for BuchholzOfBuchholzCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(BuchholzOfBuchholz::default())

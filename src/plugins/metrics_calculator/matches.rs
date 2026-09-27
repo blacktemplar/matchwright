@@ -16,9 +16,10 @@ pub struct Matches(pub Vec<MatchId>);
 #[typetag::serde]
 impl TypeMapValue for Matches {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MatchesCalculator;
 
+#[typetag::serde]
 impl MetricsCalculator for MatchesCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Matches::default())
