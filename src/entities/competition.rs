@@ -12,7 +12,7 @@ use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
 use crate::{
-    hash_map::{HashMap, IdAble, IdMap},
+    map::{IdAble, IdMap, Map},
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::PhaseFormat,
@@ -271,7 +271,7 @@ impl Phase {
         assert!(old_result == MatchResult::NotFinished);
         r#match.set_result(match_result);
         let r#match = &self.matches[&match_id];
-        let mut old_metrics: HashMap<TypeId, Vec<(RankingId, Metric)>> = HashMap::new();
+        let mut old_metrics: Map<TypeId, Vec<(RankingId, Metric)>> = Map::default();
         for metrics_calculator in &self.metrics_calculators {
             let updates = metrics_calculator.update_after_match_result_changed(
                 self,

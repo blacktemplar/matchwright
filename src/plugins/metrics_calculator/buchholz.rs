@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, MetricGetter, MetricStorage},
@@ -65,7 +65,7 @@ impl MetricsCalculator for BuchholzCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         buchholz_changes_based_on::<Points, Buchholz>(phase, r#match, old_metrics)
     }
@@ -76,13 +76,13 @@ impl MetricsCalculator for BuchholzCalculator {
 fn buchholz_changes_based_on<M, B>(
     phase: &Phase,
     r#match: &Match,
-    old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+    old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
 ) -> Vec<(RankingId, Metric)>
 where
     M: 'static + AsRef<f32>,
     B: TypeMapValue + AsRef<f32> + From<f32>,
 {
-    let mut buchholz_changes: HashMap<_, f32> = HashMap::new();
+    let mut buchholz_changes: Map<_, f32> = Map::default();
     for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
         let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
         let ranking = &phase.rankings()[r_id];
@@ -178,7 +178,7 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase, r#match, old_metrics)
     }

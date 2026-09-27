@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Compare, Comparison, MetricGetter, MetricStorage},
@@ -70,7 +70,7 @@ impl MetricsCalculator for PointsCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
-        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         r#match
             .non_losing_rankings()

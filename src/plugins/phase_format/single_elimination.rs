@@ -6,7 +6,7 @@ use vec1::vec1;
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::phase_format::PhaseFormat,
 };
 
@@ -23,7 +23,7 @@ impl PhaseFormat for SingleElimination {
         if let Some(max_round) = max_round {
             // The ordering of this vector will be determined by match winners. If a lower-ranked
             // team wins, it will be swapped with the higher-ranked losing team.
-            let mut ranking_id_to_swap_replaced_rank: HashMap<_, _> = phase
+            let mut ranking_id_to_swap_replaced_rank: Map<_, _> = phase
                 .rankings()
                 .iter()
                 .map(|(id, r)| (*id, r.initial_unique_rank()))

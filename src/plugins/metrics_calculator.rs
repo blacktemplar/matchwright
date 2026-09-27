@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::Plugin,
     type_map::TypeMapValue,
 };
@@ -31,7 +31,7 @@ pub trait MetricsCalculator: Plugin {
         phase: &Phase,
         r#match: &Match,
         old_match_result: MatchResult,
-        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)>;
 }
 

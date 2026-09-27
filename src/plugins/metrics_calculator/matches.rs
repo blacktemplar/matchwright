@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Metric;
 use crate::{
     entities::competition::{Match, MatchId, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::metrics_calculator::MetricsCalculator,
     type_map::TypeMapValue,
 };
@@ -30,7 +30,7 @@ impl MetricsCalculator for MatchesCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
-        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         r#match
             .rankings()

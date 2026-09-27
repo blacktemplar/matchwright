@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
-    hash_map::HashMap,
+    map::Map,
     plugins::metrics_calculator::{Metric, MetricsCalculator},
     type_map::TypeMapValue,
 };
@@ -33,7 +33,7 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         phase: &Phase,
         r#match: &Match,
         old_match_result: MatchResult,
-        _: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
@@ -198,7 +198,7 @@ mod tests {
             &phase,
             &phase.matches()[&match_id],
             MatchResult::AWins,
-            &HashMap::new(),
+            &Map::default(),
         );
     }
 }

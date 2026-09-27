@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId, ResultOfTeam},
-    hash_map::HashMap,
+    map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, MetricGetter, MetricStorage},
@@ -64,9 +64,9 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         phase: &Phase,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &HashMap<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        let mut sonneborn_berger_changes: HashMap<_, f32> = HashMap::new();
+        let mut sonneborn_berger_changes: Map<_, f32> = Map::default();
         for (r_id, old_metric) in &old_metrics[&TypeId::of::<Points>()] {
             let old_metric: &Points = (&**old_metric as &dyn Any).downcast_ref().unwrap();
             let ranking = &phase.rankings()[r_id];

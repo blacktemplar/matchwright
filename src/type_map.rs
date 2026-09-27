@@ -9,7 +9,7 @@ use serde::{
     ser::SerializeSeq,
 };
 
-use crate::hash_map::HashMap;
+use crate::map::{Map, map_with_capacity};
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait TypeMapValue: Any + Debug {}
@@ -51,7 +51,7 @@ unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
 }
 
 #[derive(Debug, Default)]
-pub struct TypeMap(HashMap<TypeId, Box<dyn TypeMapValue>>);
+pub struct TypeMap(Map<TypeId, Box<dyn TypeMapValue>>);
 
 impl Serialize for TypeMap {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -79,7 +79,7 @@ impl<'de> Visitor<'de> for TypeMapVisitor {
     where
         A: SeqAccess<'de>,
     {
-        let mut map = TypeMap(HashMap::with_capacity(seq.size_hint().unwrap_or(0)));
+        let mut map = TypeMap(map_with_capacity(seq.size_hint().unwrap_or(0)));
 
         while let Some(value) = seq.next_element::<Box<dyn TypeMapValue>>()? {
             map.insert_boxed(value);

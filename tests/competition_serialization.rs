@@ -155,41 +155,19 @@ fn binary_round_trip(competition: &Competition) -> Competition {
     postcard::from_bytes(&bytes).expect("a serialized competition must deserialize again")
 }
 
-/// The serialized form of `competition`, in a canonical order: every
-/// [`IdMap`](tournament_engine::hash_map::IdMap) sorted by id and the metrics of every ranking
-/// sorted by their serialized form.
+/// The serialized form of `competition`, compared as is.
 ///
-/// Both an [`IdMap`](tournament_engine::hash_map::IdMap) and a
-/// [`TypeMap`](tournament_engine::type_map::TypeMap) serialize to a sequence in the arbitrary
-/// iteration order of a hash map, so neither order is part of the state a competition holds and
-/// both have to be sorted away before two serialized forms can be compared. That order really does
-/// differ between two equal competitions: a map that was filled entry by entry and one that was
-/// filled from a serialized sequence iterate differently as soon as they hold more than a handful
-/// of entries. Everything else is either a sequence whose order matters or a map, and
-/// [`serde_json`] keeps map keys sorted.
-fn normalized(competition: &Competition) -> Value {
-    let mut value =
-        serde_json::to_value(competition).expect("serializing a competition must not fail");
-    sorted_by_id(&mut value, "entrants");
-    for phase in sorted_by_id(&mut value, "phases") {
-        for ranking in sorted_by_id(phase, "rankings") {
-            ranking["metrics"]
-                .as_array_mut()
-                .expect("the metrics must serialize to a sequence")
-                .sort_by_key(ToString::to_string);
-        }
-        sorted_by_id(phase, "matches");
-    }
-    value
-}
-
-/// Sorts the sequence stored at `field` of `value` by the id of its elements and returns it.
-fn sorted_by_id<'a>(value: &'a mut Value, field: &str) -> &'a mut Vec<Value> {
-    let elements = value[field]
-        .as_array_mut()
-        .unwrap_or_else(|| panic!("the {field} must serialize to a sequence"));
-    elements.sort_by_key(|element| element["id"].to_string());
-    elements
+/// Nothing about it needs normalizing first, which is worth being explicit about: an
+/// [`IdMap`](tournament_engine::map::IdMap) and a
+/// [`TypeMap`](tournament_engine::type_map::TypeMap) both serialize to a sequence in the iteration
+/// order of a [`Map`](tournament_engine::map::Map), and that order is insertion order, so
+/// serializing writes the values in the order they were inserted and deserializing inserts them in
+/// the same one. Two competitions that hold the same state therefore serialize identically, however
+/// each of them was built. A hash map would not manage that: its iteration order depends on how it
+/// was filled and really does differ between a map that was filled entry by entry and one that was
+/// filled from a serialized sequence, which is what makes the comparisons below possible at all.
+fn serialized(competition: &Competition) -> Value {
+    serde_json::to_value(competition).expect("serializing a competition must not fail")
 }
 
 /// Asserts that both rankings hold the same value of every metric calculated by the phase.
@@ -267,7 +245,7 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             other.new_seeded_std_rng("entropy").random::<u64>()
         );
     }
-    assert_eq!(normalized(left), normalized(right));
+    assert_eq!(serialized(left), serialized(right));
 }
 
 #[test]
@@ -407,7 +385,7 @@ fn a_round_trip_does_not_change_the_serialized_form() {
 
     let competition = round_trip(&round_trip(sm.current()));
 
-    assert_eq!(normalized(&competition), normalized(sm.current()));
+    assert_eq!(serialized(&competition), serialized(sm.current()));
 }
 
 #[test]
