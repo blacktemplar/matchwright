@@ -3,7 +3,7 @@ use std::{any::TypeId, ops::Deref};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{Match, MatchResult, Phase, RankingId},
     map::Map,
     plugins::Plugin,
     type_map::TypeMapValue,
@@ -72,7 +72,7 @@ impl MetricsCalculators {
     ///
     /// This is what everything that reads a metric by its position rather than by its type relies
     /// on, [`index_of`](Self::index_of) and hence
-    /// [`Metrics`](crate::entities::competition::Metrics) above all. It can only fail for a
+    /// [`Metrics`](crate::entities::phase::Metrics) above all. It can only fail for a
     /// [`MetricsCalculator`] that breaks one of two rules that nothing else enforces: that
     /// [`default_metric_value`](MetricsCalculator::default_metric_value) returns a metric of the
     /// same type on every call, since the layout is built from one call of it and the metrics of a
@@ -194,7 +194,7 @@ mod tests {
     }
 
     /// The metrics of a ranking of a phase with these calculators, as
-    /// [`Phase::initialize_metrics`](crate::entities::competition::Phase) builds them.
+    /// [`Phase::initialize_metrics`](crate::entities::phase::Phase) builds them.
     fn metrics(calculators: &MetricsCalculators) -> Vec<Metric> {
         calculators
             .iter()

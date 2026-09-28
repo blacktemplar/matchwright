@@ -1,5 +1,5 @@
 use crate::{
-    entities::competition::{Match, Phase},
+    entities::phase::{Match, Phase},
     plugins::Plugin,
 };
 

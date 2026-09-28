@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, Phase},
+    entities::phase::{Match, Phase},
     plugins::phase_format::PhaseFormat,
 };
 
@@ -67,7 +67,7 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::entities::competition::PhaseBuilder;
+    use crate::entities::phase::PhaseBuilder;
 
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.

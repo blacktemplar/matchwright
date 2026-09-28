@@ -9,7 +9,10 @@ use std::sync::LazyLock;
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
-    entities::competition::{Competition, Entrant, EntrantId, MatchId, MatchResult, PhaseId},
+    entities::{
+        competition::{Competition, Entrant, EntrantId},
+        phase::{MatchId, MatchResult, PhaseId},
+    },
     plugins::{
         metrics_calculator::{
             buchholz::{

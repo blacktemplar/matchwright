@@ -2,7 +2,7 @@ use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
-    entities::competition::{Competition, PhaseId},
+    entities::{competition::Competition, phase::PhaseId},
     plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::Ranker},
 };
 

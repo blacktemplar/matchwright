@@ -6,8 +6,9 @@ use itertools::Itertools;
 use rand::RngExt;
 use serde_json::{Value, json};
 use tournament_engine::{
-    entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Metrics, Phase, PhaseId,
+    entities::{
+        competition::{Competition, Entrant, EntrantId},
+        phase::{Match, MatchId, MatchResult, Metrics, Phase, PhaseId},
     },
     plugins::{
         metrics_calculator::{

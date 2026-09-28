@@ -3,8 +3,9 @@ use std::num::NonZeroU32;
 use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
-    entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Metrics, PhaseId,
+    entities::{
+        competition::{Competition, Entrant, EntrantId},
+        phase::{Match, MatchId, MatchResult, Metrics, PhaseId},
     },
     plugins::{
         metrics_calculator::{

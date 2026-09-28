@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{EntropyTypes, Match, Phase},
+    entities::{
+        competition::EntropyTypes,
+        phase::{Match, Phase},
+    },
     plugins::phase_format::PhaseFormat,
 };
 
@@ -83,7 +86,7 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::entities::competition::PhaseBuilder;
+    use crate::entities::phase::PhaseBuilder;
 
     fn assert_every_pair_played_at_most_once(phase: &Phase) {
         assert!(phase.matches().values().all(|m| m.team_a().len() == 1));

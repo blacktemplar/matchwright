@@ -1,7 +1,10 @@
 use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
-use crate::entities::competition::{Competition, MatchId, MatchResult, PhaseId};
+use crate::entities::{
+    competition::Competition,
+    phase::{MatchId, MatchResult, PhaseId},
+};
 
 #[derive(Debug)]
 pub struct ReportMatchResult {

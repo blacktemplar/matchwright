@@ -3,7 +3,7 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{Match, MatchResult, Phase, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},

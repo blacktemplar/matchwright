@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{Match, MatchResult, Phase, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},

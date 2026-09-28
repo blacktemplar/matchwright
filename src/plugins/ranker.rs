@@ -4,7 +4,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Metrics, Phase, Ranking, RankingId},
+    entities::phase::{Metrics, Phase, Ranking, RankingId},
     plugins::{Plugin, metrics_calculator::Metric},
     type_map::{TypeMapValue, downcast_unchecked_ref},
 };
