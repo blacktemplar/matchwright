@@ -87,9 +87,12 @@ impl<'phase, 'slice> RankingSlice<'phase, 'slice> {
         };
         let phase = self.phase;
         let mut compare_rankings = move |ranking1: &'phase Ranking, ranking2: &'phase Ranking| {
+            // SAFETY we ensure that this closure gets only called with rankings that were
+            // extracted from `self.rankings` which are guaranteed to be part of the rankings of
+            // `phase == self.phase` below when we use the closure.
             compare(
-                (ranking1, phase.metrics_of_ranking(ranking1)),
-                (ranking2, phase.metrics_of_ranking(ranking2)),
+                (ranking1, unsafe { phase.metrics_of_ranking(ranking1) }),
+                (ranking2, unsafe { phase.metrics_of_ranking(ranking2) }),
             )
         };
         // The rankings come in in the order of the last ranking, which only the few rankings whose
@@ -205,10 +208,10 @@ struct MetricColumn {
 impl MetricColumn {
     /// Compares this column's metric of two rankings.
     ///
-    /// # Invariant
+    /// # Safety
     /// Both metrics must be those of a ranking of the phase this column was resolved against, which
     /// is what makes the value at [`Self::index`] the type [`Self::compare_values`] expects.
-    fn compare(&self, metrics1: Metrics<'_>, metrics2: Metrics<'_>) -> Comparison {
+    unsafe fn compare(&self, metrics1: Metrics<'_>, metrics2: Metrics<'_>) -> Comparison {
         // SAFETY: the metrics of a ranking of the phase this column was resolved against hold one
         // value per metrics calculator of that phase, so the position `set_metric` resolved the
         // metric type to is in bounds and holds a value of that very type.
@@ -341,7 +344,10 @@ impl SliceRanker for LexicographicalMetrics {
             .collect_vec();
         slice.rank_by(|(_, metrics1), (_, metrics2)| {
             for column in &columns {
-                let comparison = column.compare(metrics1, metrics2);
+                // SAFETY: slice guarantees that metrics1 and metrics2 are metrics from a ranking of
+                // slice.phase, furthermore, MetricStorage guarantees that the output is a Column
+                // based on its input phase which is again slice.phase
+                let comparison = unsafe { column.compare(metrics1, metrics2) };
                 if comparison != Comparison::Equal {
                     return comparison;
                 }

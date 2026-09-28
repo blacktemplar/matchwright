@@ -4,7 +4,7 @@
 
 use itertools::Itertools;
 use rand::RngExt;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tournament_engine::{
     entities::competition::{
         Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Metrics, Phase, PhaseId,
@@ -431,5 +431,52 @@ fn deserializing_a_competition_with_an_unknown_metric_fails() {
     assert!(
         error.to_string().contains("NotAMetric"),
         "the error must name the unknown metric, but was: {error}"
+    );
+}
+
+/// A phase reads its metrics back by the position the layout of its calculators gives them, and
+/// casts them to the type that layout says they have without checking. A serialized competition
+/// whose metrics sit anywhere else therefore must not become a [`Competition`] at all — if it did,
+/// reading any metric of it would be undefined behaviour.
+#[test]
+fn deserializing_a_competition_whose_metrics_are_out_of_order_fails() {
+    let sm = competition_in_the_final();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for phase in value["phases"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"].as_array_mut().unwrap() {
+            ranking["metrics"].as_array_mut().unwrap().reverse();
+        }
+    }
+
+    let Err(error) = serde_json::from_value::<Competition>(value) else {
+        panic!("metrics that do not follow the layout of the calculators must not deserialize");
+    };
+
+    assert!(
+        error.to_string().contains("do not follow the layout"),
+        "the error must say that the metrics do not follow the layout, but was: {error}"
+    );
+}
+
+/// Like [`deserializing_a_competition_whose_metrics_are_out_of_order_fails`], but for metrics that
+/// are in the right order and of a known type, only not of the type the calculator at that
+/// position produces.
+#[test]
+fn deserializing_a_competition_with_a_metric_of_another_type_fails() {
+    let sm = competition_in_the_final();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for phase in value["phases"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"].as_array_mut().unwrap() {
+            ranking["metrics"][0] = json!({ "type": "Points", "value": 0.0 });
+        }
+    }
+
+    let Err(error) = serde_json::from_value::<Competition>(value) else {
+        panic!("a metric of another type than its calculator produces must not deserialize");
+    };
+
+    assert!(
+        error.to_string().contains("do not follow the layout"),
+        "the error must say that the metrics do not follow the layout, but was: {error}"
     );
 }

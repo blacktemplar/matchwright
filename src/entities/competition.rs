@@ -8,6 +8,7 @@ use itertools::{Either, Itertools};
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
@@ -167,6 +168,7 @@ impl PhaseId {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(try_from = "SerializedPhase")]
 pub struct Phase {
     id: PhaseId,
     outgoing_phase_transitions: Vec<PhaseTransitionId>,
@@ -178,6 +180,73 @@ pub struct Phase {
     ranker: Box<dyn Ranker>,
     seed: [u8; 12],
     metrics_calculators: MetricsCalculators,
+}
+
+/// The fields of a [`Phase`] as they were serialized, before anything about them is checked.
+///
+/// A phase deserializes through this rather than directly, so that [`TryFrom`] gets to reject one
+/// whose metrics do not follow the layout of its calculators before it exists as a [`Phase`].
+/// Nothing else establishes that invariant for a deserialized phase: it is
+/// [`initialize_metrics`](Phase::initialize_metrics) that does so for a phase that is played rather
+/// than read, and deserializing never goes through it.
+///
+/// # Invariant
+/// The fields must stay those of [`Phase`], in name and in order: a format that is not self
+/// describing, like [`postcard`](https://docs.rs/postcard), writes nothing but the values in
+/// declaration order, so a phase would silently read back as something else. The round trip tests
+/// through both formats are what keeps the two in sync.
+#[derive(Deserialize)]
+struct SerializedPhase {
+    id: PhaseId,
+    outgoing_phase_transitions: Vec<PhaseTransitionId>,
+    incoming_phase_transitions: Vec<PhaseTransitionId>,
+    rankings: IdMap<Ranking>,
+    ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
+    matches: IdMap<Match>,
+    phase_format: Box<dyn PhaseFormat>,
+    ranker: Box<dyn Ranker>,
+    seed: [u8; 12],
+    metrics_calculators: MetricsCalculators,
+}
+
+/// Why a serialized [`Phase`] cannot be read back as one.
+#[derive(Error, Debug)]
+pub enum InvalidPhase {
+    #[error(
+        "the metrics of ranking {0:?} do not follow the layout of the metrics calculators of \
+         the phase"
+    )]
+    MetricsDoNotFollowLayout(RankingId),
+}
+
+impl TryFrom<SerializedPhase> for Phase {
+    type Error = InvalidPhase;
+
+    fn try_from(phase: SerializedPhase) -> Result<Self, Self::Error> {
+        let phase = Self {
+            id: phase.id,
+            outgoing_phase_transitions: phase.outgoing_phase_transitions,
+            incoming_phase_transitions: phase.incoming_phase_transitions,
+            rankings: phase.rankings,
+            ranking_ids_ordered_by_unique_rank: phase.ranking_ids_ordered_by_unique_rank,
+            matches: phase.matches,
+            phase_format: phase.phase_format,
+            ranker: phase.ranker,
+            seed: phase.seed,
+            metrics_calculators: phase.metrics_calculators,
+        };
+        // Reading a metric by its position casts it without checking, so a serialized phase whose
+        // metrics are in another order than its calculators, or hold another type than they
+        // produce, must not become a `Phase` at all. The metrics are part of the serialized form
+        // and the calculators are the deserialized plugins, so nothing but this check ties the two
+        // together.
+        for ranking in phase.rankings.values() {
+            if !phase.metrics_calculators.is_layout_of(&ranking.metrics) {
+                return Err(InvalidPhase::MetricsDoNotFollowLayout(ranking.id()));
+            }
+        }
+        Ok(phase)
+    }
 }
 
 impl IdAble for Phase {
@@ -222,6 +291,10 @@ impl Phase {
 
     /// Gives every ranking of this phase the default value of every metric calculated for this
     /// phase.
+    ///
+    /// # Panics
+    /// Panics if those metrics do not follow the layout of the calculators, see
+    /// [`MetricsCalculators::is_layout_of`].
     fn initialize_metrics(&mut self) {
         for ranking in self.rankings.values_mut() {
             ranking.metrics = self
@@ -229,6 +302,18 @@ impl Phase {
                 .iter()
                 .map(|c| c.default_metric_value())
                 .collect();
+            // The layout was built from one call of `default_metric_value` per calculator and the
+            // metrics just now from another, so this is where the two are checked against each
+            // other: reading a metric by its position casts it without checking, and the two
+            // agreeing is what keeps that sound. Every later write puts a metric at the position
+            // of its own type, which cannot break the agreement again, so this one check covers
+            // the whole lifetime of the phase. It runs once per phase start, which is cheap enough
+            // to be a real assertion rather than a debug one.
+            assert!(
+                self.metrics_calculators.is_layout_of(&ranking.metrics),
+                "every metrics calculator of a phase must produce a metric of the same type on \
+                 every call, and no two of them the same type"
+            );
         }
     }
 
@@ -269,15 +354,9 @@ impl Phase {
                 old_result,
                 &old_metrics,
             );
-            // check requirements of update_after_match_result_changed
-            debug_assert!(updates.iter().all(|(ranking_id, metric)| {
-                let metric: &dyn Any = &**metric;
-                self.rankings.contains_key(ranking_id)
-                    && (&*metrics_calculator.default_metric_value() as &dyn Any).type_id()
-                        == metric.type_id()
-            }));
 
             for (ranking_id, metric) in updates {
+                let new_type = (*metric).type_id();
                 let old_metric = std::mem::replace(
                     &mut self
                         .rankings
@@ -286,6 +365,10 @@ impl Phase {
                         .metrics[self.metrics_calculators.index_of_box(&metric)],
                     metric,
                 );
+                // the type of metrics should never change which is important to uphold
+                // the invariant that metrics of rankings adhere to the layout. Note the
+                // dereference: `old_metric.type_id()` would be the type id of the box.
+                assert!(new_type == (*old_metric).type_id());
                 old_metrics
                     .entry((&*old_metric as &dyn Any).type_id())
                     .or_default()
@@ -346,18 +429,17 @@ impl Phase {
     }
 
     pub fn metrics_of(&self, ranking_id: &RankingId) -> Metrics<'_> {
-        self.metrics_of_ranking(&self.rankings[ranking_id])
+        let ranking = &self.rankings[ranking_id];
+        // SAFETY: We just got ranking from `self.rankings` above.
+        unsafe { self.metrics_of_ranking(ranking) }
     }
 
     /// The metrics of `ranking`, without looking it up by its id.
     ///
-    /// # Invariant
-    /// `ranking` must be a ranking of this phase, since that is what makes its metrics follow
-    /// this phase's [layout](MetricsCalculators) and hence what [`Metrics`] relies on. Nothing
-    /// checks it, so this stays crate internal; the one caller that pairs a ranking with a phase
-    /// itself is [`RankingSlice`](crate::plugins::ranker::RankingSlice), which only ever holds
-    /// rankings of the phase it carries.
-    pub(crate) fn metrics_of_ranking<'a>(&'a self, ranking: &'a Ranking) -> Metrics<'a> {
+    /// # Safety
+    /// `ranking` must exist in `self.rankings`, since that is what makes its metrics follow
+    /// this phase's [layout](MetricsCalculators) and hence what [`Metrics`] relies on.
+    pub(crate) unsafe fn metrics_of_ranking<'a>(&'a self, ranking: &'a Ranking) -> Metrics<'a> {
         Metrics(self, &ranking.metrics)
     }
 
