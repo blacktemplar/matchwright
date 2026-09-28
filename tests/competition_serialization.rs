@@ -7,7 +7,7 @@ use rand::RngExt;
 use serde_json::Value;
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Metrics, Phase, PhaseId,
     },
     plugins::{
         metrics_calculator::{
@@ -172,7 +172,7 @@ fn serialized(competition: &Competition) -> Value {
 
 /// Asserts that both rankings hold the same value of every metric calculated by the phase.
 #[track_caller]
-fn assert_same_metrics(left: &Ranking, right: &Ranking) {
+fn assert_same_metrics(left: Metrics<'_>, right: Metrics<'_>) {
     assert_eq!(
         left.metric::<RoundOfFirstLoss>(),
         right.metric::<RoundOfFirstLoss>()
@@ -226,7 +226,7 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
                 ranking.initial_unique_rank(),
                 other_ranking.initial_unique_rank()
             );
-            assert_same_metrics(ranking, other_ranking);
+            assert_same_metrics(phase.metrics_of(ranking_id), other.metrics_of(ranking_id));
         }
         assert_eq!(phase.matches().len(), other.matches().len());
         for r#match in phase.matches() {
@@ -287,10 +287,7 @@ fn a_started_competition_round_trips() {
     // the metrics of a started competition are all at their default value, so this only shows
     // that they exist at all
     for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
-        assert_eq!(
-            phase.rankings()[ranking_id].metric::<Points>(),
-            Some(&Points(0.0))
-        );
+        assert_eq!(phase.metric_of::<Points>(ranking_id), Some(&Points(0.0)));
     }
     assert_same_competition(sm.current(), &competition);
 }
@@ -315,8 +312,8 @@ fn a_partially_played_competition_round_trips() {
     // the two winners hold the points of their win, and the losers the round they lost in
     let winners = phase
         .rankings()
-        .values()
-        .filter(|ranking| ranking.metric::<Points>() == Some(&Points(3.0)))
+        .keys()
+        .filter(|ranking_id| phase.metric_of::<Points>(ranking_id) == Some(&Points(3.0)))
         .count();
     assert_eq!(winners, 2);
     assert_same_competition(sm.current(), &competition);
@@ -333,14 +330,12 @@ fn a_partially_played_competition_round_trips() {
 fn a_played_competition_round_trips_through_a_binary_format() {
     let sm = competition_in_the_final();
     // the match ids that a plain round trip would silently write in the wrong representation
-    assert!(
-        sm.current().phases()[&phase_id()]
-            .rankings()
-            .values()
-            .any(|ranking| ranking
-                .metric::<Matches>()
-                .is_some_and(|matches| !matches.0.is_empty()))
-    );
+    let phase = &sm.current().phases()[&phase_id()];
+    assert!(phase.rankings().keys().any(|ranking_id| {
+        phase
+            .metric_of::<Matches>(ranking_id)
+            .is_some_and(|matches| !matches.0.is_empty())
+    }));
 
     let competition = binary_round_trip(sm.current());
 

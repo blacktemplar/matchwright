@@ -30,7 +30,7 @@ pub struct SonnebornBergerGetter;
 
 #[typetag::serde]
 impl MetricGetter for SonnebornBergerGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+    fn store_metric(&self, storage: MetricStorage<'_>) {
         storage.set_metric::<SonnebornBerger>();
     }
 }

@@ -37,7 +37,7 @@ pub struct PointsGetter;
 
 #[typetag::serde]
 impl MetricGetter for PointsGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+    fn store_metric(&self, storage: MetricStorage<'_>) {
         storage.set_metric::<Points>();
     }
 }

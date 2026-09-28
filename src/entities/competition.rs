@@ -18,7 +18,7 @@ use crate::{
         phase_format::PhaseFormat,
         ranker::Ranker,
     },
-    type_map::{TypeMap, downcast_unchecked_ref},
+    type_map::downcast_unchecked_ref,
 };
 
 /// Namespaces for various deterministic ids
@@ -345,12 +345,28 @@ impl Phase {
         self.metrics_of(ranking_id).metric()
     }
 
-    pub fn metrics_of(&self, ranking_id: &RankingId) -> Metrics {
-        Metrics(self, &self.rankings[ranking_id].metrics)
+    pub fn metrics_of(&self, ranking_id: &RankingId) -> Metrics<'_> {
+        self.metrics_of_ranking(&self.rankings[ranking_id])
+    }
+
+    /// The metrics of `ranking`, without looking it up by its id.
+    ///
+    /// # Invariant
+    /// `ranking` must be a ranking of this phase, since that is what makes its metrics follow
+    /// this phase's [layout](MetricsCalculators) and hence what [`Metrics`] relies on. Nothing
+    /// checks it, so this stays crate internal; the one caller that pairs a ranking with a phase
+    /// itself is [`RankingSlice`](crate::plugins::ranker::RankingSlice), which only ever holds
+    /// rankings of the phase it carries.
+    pub(crate) fn metrics_of_ranking<'a>(&'a self, ranking: &'a Ranking) -> Metrics<'a> {
+        Metrics(self, &ranking.metrics)
+    }
+
+    /// The position the metric `T` has in the metrics of every ranking of this phase, or
+    /// [`None`] if this phase does not calculate it.
+    pub(crate) fn metric_index<T: 'static>(&self) -> Option<usize> {
+        self.metrics_calculators.index_of::<T>()
     }
 }
-
-pub struct RankingMetrics<'a>(&'a Phase, &'a Ranking);
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum EntropyTypes {
@@ -435,18 +451,34 @@ impl Ranking {
     }
 }
 
-// Upholds the invariant that the vector of metrics comes from a ranking inside the phase
-pub struct Metrics<'a>(&'a Phase, &'a Vec<Metric>);
+/// The metrics of one ranking of a phase, which is what makes them readable: the metrics themselves
+/// are nothing but a list of type erased values, and only the phase they belong to knows which
+/// position holds which metric.
+///
+/// # Invariant
+/// The metrics must be those of a ranking of the phase, so that they follow the phase's
+/// [layout](MetricsCalculators). Only this module constructs a [`Metrics`], which is why
+/// [`Self::metric`] may cast without checking.
+#[derive(Debug, Clone, Copy)]
+pub struct Metrics<'a>(&'a Phase, &'a [Metric]);
 
 impl<'a> Metrics<'a> {
+    /// The value of the metric `T`, or [`None`] if the phase does not calculate it.
     pub fn metric<T: 'static>(&self) -> Option<&'a T> {
-        let b = &self.1[self.0.metrics_calculators.index_of::<T>()?];
-        Some(
-            // This is safe because we uphold the invariant that the metrics of every ranking in
-            // this phase follow the ordering of the metrics_calculators which guarantees that
-            // the value at `index_of::<T>` is of type `T`.
-            unsafe { downcast_unchecked_ref(&**b) },
-        )
+        let metric = &self.1[self.0.metric_index::<T>()?];
+        // SAFETY: the metrics of every ranking of a phase hold one value per metrics calculator of
+        // that phase, in the order of the calculators, which is the order `metric_index` indexes;
+        // the value at the position of `T` is therefore a `T`.
+        Some(unsafe { downcast_unchecked_ref(&**metric) })
+    }
+
+    /// The metrics as the bare list of type erased values they are stored as, positioned by the
+    /// [layout](Phase::metric_index) of the phase.
+    ///
+    /// This is what lets a ranker read a metric by the position it resolved once up front
+    /// instead of looking its type up per ranking, which [`Self::metric`] has to do.
+    pub(crate) fn values(&self) -> &'a [Metric] {
+        self.1
     }
 }
 

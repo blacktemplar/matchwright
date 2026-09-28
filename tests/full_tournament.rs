@@ -4,7 +4,7 @@ use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, Ranking,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Metrics, PhaseId,
     },
     plugins::{
         metrics_calculator::{
@@ -60,7 +60,7 @@ const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
 /// wins/draws/losses.
 #[track_caller]
 fn assert_metrics(
-    ranking: &Ranking,
+    metrics: Metrics<'_>,
     round_of_first_loss: Option<u32>,
     wins_draws_losses: (u32, u32, u32),
     points: f32,
@@ -70,26 +70,26 @@ fn assert_metrics(
 ) {
     let round_of_first_loss = round_of_first_loss.map(|r| NonZeroU32::new(r).unwrap());
     assert_eq!(
-        ranking.metric::<RoundOfFirstLoss>(),
+        metrics.metric::<RoundOfFirstLoss>(),
         Some(&RoundOfFirstLoss(round_of_first_loss))
     );
     let (wins, draws, losses) = wins_draws_losses;
     assert_eq!(
-        ranking.metric::<WinsDrawsLosses>(),
+        metrics.metric::<WinsDrawsLosses>(),
         Some(&WinsDrawsLosses {
             wins,
             draws,
             losses
         })
     );
-    assert_eq!(ranking.metric::<Points>(), Some(&Points(points)));
+    assert_eq!(metrics.metric::<Points>(), Some(&Points(points)));
     assert_eq!(
-        ranking.metric::<Matches>(),
+        metrics.metric::<Matches>(),
         Some(&Matches(matches.to_vec()))
     );
-    assert_eq!(ranking.metric::<Buchholz>(), Some(&Buchholz(buchholz)));
+    assert_eq!(metrics.metric::<Buchholz>(), Some(&Buchholz(buchholz)));
     assert_eq!(
-        ranking.metric::<BuchholzOfBuchholz>(),
+        metrics.metric::<BuchholzOfBuchholz>(),
         Some(&BuchholzOfBuchholz(buchholz_of_buchholz))
     );
 }
@@ -182,7 +182,7 @@ fn full_tournament() {
     );
     // every metric starts out at its default value
     for id in &ranking_id_by_initial_rank {
-        assert_metrics(&phase.rankings()[id], None, (0, 0, 0), 0.0, &[], 0.0, 0.0);
+        assert_metrics(phase.metrics_of(id), None, (0, 0, 0), 0.0, &[], 0.0, 0.0);
     }
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);
@@ -255,7 +255,7 @@ fn full_tournament() {
     // is the three points of the winner that knocked them out, whereas the two winners beat
     // opponents without any points. The buchholz of buchholz mirrors that.
     assert_metrics(
-        ranking_0,
+        phase.metrics_of(&ranking_0.id()),
         Some(1),
         (0, 0, 1),
         0.0,
@@ -264,7 +264,7 @@ fn full_tournament() {
         0.0,
     );
     assert_metrics(
-        ranking_1,
+        phase.metrics_of(&ranking_1.id()),
         None,
         (1, 0, 0),
         3.0,
@@ -273,7 +273,7 @@ fn full_tournament() {
         3.0,
     );
     assert_metrics(
-        ranking_2,
+        phase.metrics_of(&ranking_2.id()),
         Some(1),
         (0, 0, 1),
         0.0,
@@ -282,7 +282,7 @@ fn full_tournament() {
         0.0,
     );
     assert_metrics(
-        ranking_3,
+        phase.metrics_of(&ranking_3.id()),
         None,
         (1, 0, 0),
         3.0,
@@ -346,7 +346,7 @@ fn full_tournament() {
     // assert metrics
     // the only opponent of `0` is the winner `3` (6 points), whose own buchholz is 3
     assert_metrics(
-        ranking_0,
+        phase.metrics_of(&ranking_0.id()),
         Some(1),
         (0, 0, 1),
         0.0,
@@ -356,7 +356,7 @@ fn full_tournament() {
     );
     // `1` faced `2` (0 points, buchholz 3) and `3` (6 points, buchholz 3)
     assert_metrics(
-        ranking_1,
+        phase.metrics_of(&ranking_1.id()),
         Some(2),
         (1, 0, 1),
         3.0,
@@ -366,7 +366,7 @@ fn full_tournament() {
     );
     // the only opponent of `2` is `1` (3 points, buchholz 6)
     assert_metrics(
-        ranking_2,
+        phase.metrics_of(&ranking_2.id()),
         Some(1),
         (0, 0, 1),
         0.0,
@@ -376,7 +376,7 @@ fn full_tournament() {
     );
     // the winner `3` faced `0` (0 points, buchholz 6) and `1` (3 points, buchholz 6)
     assert_metrics(
-        ranking_3,
+        phase.metrics_of(&ranking_3.id()),
         None,
         (2, 0, 0),
         6.0,

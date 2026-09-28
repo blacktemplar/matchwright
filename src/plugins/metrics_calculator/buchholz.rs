@@ -46,7 +46,7 @@ pub struct BuchholzGetter;
 
 #[typetag::serde]
 impl MetricGetter for BuchholzGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+    fn store_metric(&self, storage: MetricStorage<'_>) {
         storage.set_metric::<Buchholz>();
     }
 }
@@ -159,7 +159,7 @@ pub struct BuchholzOfBuchholzGetter;
 
 #[typetag::serde]
 impl MetricGetter for BuchholzOfBuchholzGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+    fn store_metric(&self, storage: MetricStorage<'_>) {
         storage.set_metric::<BuchholzOfBuchholz>();
     }
 }

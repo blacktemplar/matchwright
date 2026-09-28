@@ -35,7 +35,7 @@ pub struct RoundOfFirstLossGetter;
 
 #[typetag::serde]
 impl MetricGetter for RoundOfFirstLossGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
+    fn store_metric(&self, storage: MetricStorage<'_>) {
         storage.set_metric::<RoundOfFirstLoss>();
     }
 }
