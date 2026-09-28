@@ -26,8 +26,8 @@ pub type Metric = Box<dyn TypeMapValue>;
 pub trait MetricsCalculator: Plugin {
     fn default_metric_value(&self) -> Metric;
 
-    /// The metrics in the result vec must all have the type id returned by
-    /// [`Self::produced_metric`].
+    /// The metrics in the result vec must all have the same underlying type as
+    /// [`Self::default_metric_value`]
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
@@ -72,8 +72,9 @@ impl MetricsCalculators {
     ///
     /// This is what everything that reads a metric by its position rather than by its type relies
     /// on, [`index_of`](Self::index_of) and hence
-    /// [`Metrics`](crate::entities::phase::Metrics) above all. It can only fail for a
-    /// [`MetricsCalculator`] that breaks one of two rules that nothing else enforces: that
+    /// [`RankingView`](crate::entities::phase::RankingView) and
+    /// [`MetricComparator`](crate::entities::phase::MetricComparator) above all. It can only fail
+    /// for a [`MetricsCalculator`] that breaks one of two rules that nothing else enforces: that
     /// [`default_metric_value`](MetricsCalculator::default_metric_value) returns a metric of the
     /// same type on every call, since the layout is built from one call of it and the metrics of a
     /// ranking from another, and that no two calculators of a phase produce the same metric type,
@@ -101,9 +102,7 @@ impl From<Vec<Box<dyn MetricsCalculator>>> for MetricsCalculators {
     }
 }
 
-/// Gives access to the calculators themselves; the layout is read-only by way of
-/// [`layout`](MetricsCalculators::layout), since nothing may set it but the calculators it is
-/// derived from.
+/// Gives access to the calculators
 impl Deref for MetricsCalculators {
     type Target = [Box<dyn MetricsCalculator>];
 

@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::phase::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{
+        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    },
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::MetricComparatorProvider,
     },
     type_map::TypeMapValue,
 };
@@ -42,12 +44,12 @@ impl From<f32> for Buchholz {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuchholzGetter;
+pub struct BuchholzComparatorProvider;
 
 #[typetag::serde]
-impl MetricGetter for BuchholzGetter {
-    fn store_metric(&self, storage: MetricStorage<'_>) {
-        storage.set_metric::<Buchholz>();
+impl MetricComparatorProvider for BuchholzComparatorProvider {
+    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
+        MetricComparator::new::<Buchholz>(phase)
     }
 }
 
@@ -85,12 +87,12 @@ where
     let mut buchholz_changes: Map<_, f32> = Map::default();
     for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
         let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-        let metrics = phase.metrics_of(r_id);
-        let new_metric = metrics.metric::<M>().unwrap();
+        let ranking = phase.ranking_view(r_id);
+        let new_metric = ranking.metric::<M>();
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
         if m_diff != 0. {
             // buchholz of all opponents of this ranking change
-            let matches = metrics.metric::<Matches>().unwrap();
+            let matches = ranking.metric::<Matches>();
             for match_id in &matches.0 {
                 if match_id == &r#match.id() {
                     // we don't consider the newly reported match here as we will account for it
@@ -114,7 +116,7 @@ where
         // add metric M of team2 to buchholz of team1
         let m_sum: f32 = team2
             .iter()
-            .map(|r_id| *phase.metric_of::<M>(r_id).unwrap().as_ref())
+            .map(|r_id| *phase.metric_of::<M>(r_id).as_ref())
             .sum();
         for r_id in team1 {
             *buchholz_changes.entry(*r_id).or_default() += m_sum;
@@ -123,7 +125,7 @@ where
     buchholz_changes
         .into_iter()
         .map(|(r_id, change)| {
-            let old_buchholz = *phase.metric_of::<B>(&r_id).unwrap().as_ref();
+            let old_buchholz = *phase.metric_of::<B>(&r_id).as_ref();
             (r_id, Box::new(B::from(old_buchholz + change)) as Metric)
         })
         .collect()
@@ -155,12 +157,12 @@ impl From<f32> for BuchholzOfBuchholz {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuchholzOfBuchholzGetter;
+pub struct BuchholzOfBuchholzComparatorProvider;
 
 #[typetag::serde]
-impl MetricGetter for BuchholzOfBuchholzGetter {
-    fn store_metric(&self, storage: MetricStorage<'_>) {
-        storage.set_metric::<BuchholzOfBuchholz>();
+impl MetricComparatorProvider for BuchholzOfBuchholzComparatorProvider {
+    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
+        MetricComparator::new::<BuchholzOfBuchholz>(phase)
     }
 }
 

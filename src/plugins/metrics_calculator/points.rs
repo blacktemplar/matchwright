@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::phase::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{
+        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    },
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::MetricComparatorProvider,
     },
     type_map::TypeMapValue,
 };
@@ -33,12 +35,12 @@ impl AsRef<f32> for Points {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PointsGetter;
+pub struct PointsComparatorProvider;
 
 #[typetag::serde]
-impl MetricGetter for PointsGetter {
-    fn store_metric(&self, storage: MetricStorage<'_>) {
-        storage.set_metric::<Points>();
+impl MetricComparatorProvider for PointsComparatorProvider {
+    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
+        MetricComparator::new::<Points>(phase)
     }
 }
 
@@ -75,8 +77,7 @@ impl MetricsCalculator for PointsCalculator {
         r#match
             .non_losing_rankings()
             .map(|r_id| {
-                let WinsDrawsLosses { wins, draws, .. } =
-                    *phase.metric_of::<WinsDrawsLosses>(r_id).unwrap();
+                let WinsDrawsLosses { wins, draws, .. } = *phase.metric_of::<WinsDrawsLosses>(r_id);
                 let points =
                     Points(self.points_for_win * wins as f32 + self.points_for_draw * draws as f32);
                 (*r_id, Box::new(points) as Metric)

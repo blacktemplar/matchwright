@@ -24,9 +24,8 @@ impl PhaseFormat for SingleElimination {
             // The ordering of this vector will be determined by match winners. If a lower-ranked
             // team wins, it will be swapped with the higher-ranked losing team.
             let mut ranking_id_to_swap_replaced_rank: Map<_, _> = phase
-                .rankings()
-                .iter()
-                .map(|(id, r)| (*id, r.initial_unique_rank()))
+                .ranking_views()
+                .map(|r| (r.id(), r.initial_unique_rank()))
                 .collect();
             // matches are ordered by round, which is important so that the following works:
             let mut lowest_loser_rank = NonZeroU32::MAX;
@@ -87,7 +86,7 @@ impl PhaseFormat for SingleElimination {
                 .collect()
         } else {
             // first round
-            let num_teams = phase.rankings().len();
+            let num_teams = phase.ranking_views().len();
             // find smallest power of 2 greater or equal than num_teams
             let mut round_of = 2;
             while round_of < num_teams {

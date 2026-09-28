@@ -21,7 +21,7 @@ impl PhaseFormat for RoundRobin {
             // we generate all matches at once, so as soon as one match exists nothing is to be done
             return vec![];
         }
-        let num_teams = phase.rankings().len();
+        let num_teams = phase.ranking_views().len();
         let num_teams_is_odd = num_teams % 2 == 1;
         // We always fix the last element, but if we have an odd number of players the last element
         // is the by which is not part of the ranking_ids_by_initial_unique_rank vec.
@@ -32,8 +32,7 @@ impl PhaseFormat for RoundRobin {
         };
         assert!(num_teams_with_bye > 1);
         let mut ranking_ids = phase
-            .rankings()
-            .values()
+            .ranking_views()
             .sorted_by_key(|r| r.initial_unique_rank())
             .map(|r| r.id())
             .collect_vec();
@@ -73,9 +72,8 @@ mod tests {
     /// in exactly one scheduled match.
     fn assert_every_pair_played_exactly_once(phase: &Phase) {
         let mut expected_pairs = phase
-            .rankings()
-            .keys()
-            .copied()
+            .ranking_views()
+            .map(|r| r.id())
             .array_combinations::<2>()
             .collect_vec();
         for r#match in phase.matches().values() {

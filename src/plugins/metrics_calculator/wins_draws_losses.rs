@@ -46,7 +46,7 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
                 return r#match
                     .rankings()
                     .map(|r_id| {
-                        let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id).unwrap();
+                        let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id);
                         metric.draws += 1;
                         (*r_id, Box::new(metric) as Metric)
                     })
@@ -57,12 +57,12 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         winning_team
             .iter()
             .map(|r_id| {
-                let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id).unwrap();
+                let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id);
                 metric.wins += 1;
                 (*r_id, Box::new(metric) as Metric)
             })
             .chain(losing_team.iter().map(|r_id| {
-                let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id).unwrap();
+                let mut metric = *phase.metric_of::<WinsDrawsLosses>(r_id);
                 metric.losses += 1;
                 (*r_id, Box::new(metric) as Metric)
             }))

@@ -1,7 +1,9 @@
 use std::{
     any::{Any, TypeId},
+    cmp::Ordering,
     hash::Hash,
     num::NonZeroU32,
+    ptr,
 };
 
 use itertools::{Either, Itertools};
@@ -154,8 +156,12 @@ impl Phase {
         self.id
     }
 
-    pub fn rankings(&self) -> &IdMap<Ranking> {
-        &self.rankings
+    pub fn ranking_view(&self, ranking_id: &RankingId) -> RankingView<'_> {
+        RankingView(self, &self.rankings[ranking_id])
+    }
+
+    pub fn ranking_views(&self) -> impl ExactSizeIterator<Item = RankingView<'_>> {
+        self.rankings.values().map(|r| RankingView(self, r))
     }
 
     pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
@@ -316,23 +322,8 @@ impl Phase {
         self.new_seeded_rng(entropy)
     }
 
-    pub fn metric_of<T: 'static>(&self, ranking_id: &RankingId) -> Option<&T> {
-        self.metrics_of(ranking_id).metric()
-    }
-
-    pub fn metrics_of(&self, ranking_id: &RankingId) -> Metrics<'_> {
-        let ranking = &self.rankings[ranking_id];
-        // SAFETY: We just got ranking from `self.rankings` above.
-        unsafe { self.metrics_of_ranking(ranking) }
-    }
-
-    /// The metrics of `ranking`, without looking it up by its id.
-    ///
-    /// # Safety
-    /// `ranking` must exist in `self.rankings`, since that is what makes its metrics follow
-    /// this phase's [layout](MetricsCalculators) and hence what [`Metrics`] relies on.
-    pub(crate) unsafe fn metrics_of_ranking<'a>(&'a self, ranking: &'a Ranking) -> Metrics<'a> {
-        Metrics(self, &ranking.metrics)
+    pub fn metric_of<T: 'static>(&self, ranking_id: &RankingId) -> &T {
+        self.ranking_view(ranking_id).metric()
     }
 
     /// The position the metric `T` has in the metrics of every ranking of this phase, or
@@ -419,34 +410,149 @@ impl Ranking {
     }
 }
 
-/// The metrics of one ranking of a phase, which is what makes them readable: the metrics themselves
-/// are nothing but a list of type erased values, and only the phase they belong to knows which
-/// position holds which metric.
+/// One ranking of a phase, together with that phase, which is what makes the ranking readable from
+/// outside this crate: a [`Ranking`] on its own knows neither which phase it belongs to nor which
+/// of its type erased metrics is which.
 ///
 /// # Invariant
-/// The metrics must be those of a ranking of the phase, so that they follow the phase's
-/// [layout](MetricsCalculators). Only this module constructs a [`Metrics`], which is why
-/// [`Self::metric`] may cast without checking.
+/// The ranking must be a ranking of the phase. Only this module constructs a view, and the two
+/// places that do take the ranking out of the very phase they pair it with. That is what makes the
+/// metrics of the ranking follow the [layout](MetricsCalculators) of the phase, which
+/// [`MetricComparator::compare_rankings`] relies on to read a metric by its position without
+/// checking its type.
 #[derive(Debug, Clone, Copy)]
-pub struct Metrics<'a>(&'a Phase, &'a [Metric]);
+pub struct RankingView<'a>(&'a Phase, &'a Ranking);
 
-impl<'a> Metrics<'a> {
-    /// The value of the metric `T`, or [`None`] if the phase does not calculate it.
-    pub fn metric<T: 'static>(&self) -> Option<&'a T> {
-        let metric = &self.1[self.0.metric_index::<T>()?];
-        // SAFETY: the metrics of every ranking of a phase hold one value per metrics calculator of
-        // that phase, in the order of the calculators, which is the order `metric_index` indexes;
-        // the value at the position of `T` is therefore a `T`.
-        Some(unsafe { downcast_unchecked_ref(&**metric) })
+impl<'a> RankingView<'a> {
+    pub fn id(&self) -> RankingId {
+        self.1.id
     }
 
-    /// The metrics as the bare list of type erased values they are stored as, positioned by the
-    /// [layout](Phase::metric_index) of the phase.
-    ///
-    /// This is what lets a ranker read a metric by the position it resolved once up front
-    /// instead of looking its type up per ranking, which [`Self::metric`] has to do.
-    pub(crate) fn values(&self) -> &'a [Metric] {
-        self.1
+    pub fn entrants(&self) -> &'a Vec1<EntrantId> {
+        &self.1.entrants
+    }
+
+    pub fn initial_unique_rank(&self) -> NonZeroU32 {
+        self.1.initial_unique_rank
+    }
+
+    /// The unique rank of the ranking, which is guaranteed to be [`Self::rank`] with ties broken by
+    /// [`Self::initial_unique_rank`].
+    pub fn unique_rank(&self) -> NonZeroU32 {
+        self.1.unique_rank
+    }
+
+    pub fn rank(&self) -> NonZeroU32 {
+        self.1.rank
+    }
+
+    /// The metrics of this ranking.
+    pub fn metric<T: 'static>(&self) -> &'a T {
+        let metric = &self.1.metrics[self.0.metric_index::<T>().unwrap()];
+        // SAFETY: We guarantee that `self.1` is part of `self.0.rankings` and `Phase`
+        // guarantees that accessing the metrics of any of its rankings at index
+        // `Phase::metric_index::<T>` returns a box with underlying type `T`.
+        unsafe { downcast_unchecked_ref(&**metric) }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Comparison {
+    Better,
+    Worse,
+    Equal,
+}
+
+impl Comparison {
+    pub fn to_ordering_for_sorting(self) -> Ordering {
+        match self {
+            Comparison::Better => Ordering::Less,
+            Comparison::Worse => Ordering::Greater,
+            Comparison::Equal => Ordering::Equal,
+        }
+    }
+
+    pub fn less_is_better(ord: Ordering) -> Self {
+        match ord {
+            Ordering::Less => Comparison::Better,
+            Ordering::Greater => Comparison::Worse,
+            Ordering::Equal => Comparison::Equal,
+        }
+    }
+
+    pub fn greater_is_better(ord: Ordering) -> Self {
+        match ord {
+            Ordering::Greater => Comparison::Better,
+            Ordering::Less => Comparison::Worse,
+            Ordering::Equal => Comparison::Equal,
+        }
+    }
+}
+
+pub trait Compare {
+    fn compare(&self, other: &Self) -> Comparison;
+}
+
+pub struct MetricComparator<'a> {
+    /// Kept only to ensure that the phase will not change while this is alive
+    phase: &'a Phase,
+    /// The index of the metric according to the layout
+    index: usize,
+    /// Compares two values of the metric.
+    /// # Safety
+    /// The two passed in `Metric` values need to be metrics extracted from `self.index` of a
+    /// ranking in `self.phase.rankings`.
+    compare_values: unsafe fn(&Metric, &Metric) -> Comparison,
+}
+
+/// Compares two type erased values of the metric `M`.
+///
+/// # Safety
+/// Both values must have the concrete type `M`.
+unsafe fn compare_values<M: Compare + 'static>(value1: &Metric, value2: &Metric) -> Comparison {
+    // SAFETY: the caller guarantees that both values are of type `M`.
+    unsafe { downcast_unchecked_ref::<M>(&**value1).compare(downcast_unchecked_ref(&**value2)) }
+}
+
+impl<'a> MetricComparator<'a> {
+    pub fn new<M: Compare + 'static>(phase: &'a Phase) -> Self {
+        let index = phase
+            .metrics_calculators
+            .index_of::<M>()
+            .expect("metric exists");
+        // compare_values::<M> is safe if both input metrics have the concrete type M which is
+        // given if the safety requirement of `Self.compare_values` is satisfied that says that
+        // both values must be values from rankings inside `self.phase.rankings` at index
+        // `self.index` which is guaranteed to be of type `M` due to the guarantee that all metrics
+        // in all rankings of a phase adhere to the phase layout.
+        let compare_values = compare_values::<M>;
+        Self {
+            phase,
+            index,
+            compare_values,
+        }
+    }
+
+    pub fn compare_rankings(&self, ranking1: RankingView, ranking2: RankingView) -> Comparison {
+        // the asserts are needed to make this function safe
+        assert!(ptr::eq(ranking1.0, self.phase));
+        assert!(ptr::eq(ranking2.0, self.phase));
+
+        // Safety: `RankingView` guarantees that .1 is a ranking in `.0.rankings` which we asserted
+        // above is equal to `self.phase.rankings`. Furthermore, `Self` guarantees that
+        // `index` is within bounds of `self.phase.metrics_calculators.layout` and
+        // `Phase` guarantees that any ranking inside `Phase::rankings` has the same
+        // metrics layout as `Phase::metrics_calculators::layout`.
+        let (metric1, metric2) = unsafe {
+            (
+                ranking1.1.metrics.get_unchecked(self.index),
+                ranking2.1.metrics.get_unchecked(self.index),
+            )
+        };
+
+        // Safety: both metrics came from index `self.index` from `ranking1` and `ranking2`
+        // which are guaranteed to be part of `self.phase.rankings` (see above argumentation).
+        unsafe { (self.compare_values)(metric1, metric2) }
     }
 }
 

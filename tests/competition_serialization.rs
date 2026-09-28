@@ -8,20 +8,22 @@ use serde_json::{Value, json};
 use tournament_engine::{
     entities::{
         competition::{Competition, Entrant, EntrantId},
-        phase::{Match, MatchId, MatchResult, Metrics, Phase, PhaseId},
+        phase::{Match, MatchId, MatchResult, Phase, PhaseId, RankingView},
     },
     plugins::{
         metrics_calculator::{
             buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholz,
-                BuchholzOfBuchholzCalculator, BuchholzOfBuchholzGetter,
+                Buchholz, BuchholzCalculator, BuchholzComparatorProvider, BuchholzOfBuchholz,
+                BuchholzOfBuchholzCalculator, BuchholzOfBuchholzComparatorProvider,
             },
             matches::{Matches, MatchesCalculator},
-            points::{Points, PointsCalculator, PointsGetter},
+            points::{Points, PointsCalculator, PointsComparatorProvider},
             round_of_first_loss::{
-                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
+                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossComparatorProvider,
             },
-            sonneborn_berger::{SonnebornBerger, SonnebornBergerCalculator, SonnebornBergerGetter},
+            sonneborn_berger::{
+                SonnebornBerger, SonnebornBergerCalculator, SonnebornBergerComparatorProvider,
+            },
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::SingleElimination,
@@ -82,11 +84,11 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
         LexicographicalMetrics::new()
-            .add_metric(RoundOfFirstLossGetter)
-            .add_metric(PointsGetter)
-            .add_metric(BuchholzGetter)
-            .add_metric(SonnebornBergerGetter)
-            .add_metric(BuchholzOfBuchholzGetter),
+            .add_metric(RoundOfFirstLossComparatorProvider)
+            .add_metric(PointsComparatorProvider)
+            .add_metric(BuchholzComparatorProvider)
+            .add_metric(SonnebornBergerComparatorProvider)
+            .add_metric(BuchholzOfBuchholzComparatorProvider),
     )]);
     apply(
         &mut sm,
@@ -139,7 +141,11 @@ fn matches_of_round(phase: &Phase, round: u32) -> Vec<MatchId> {
         .matches()
         .values()
         .filter(|r#match| r#match.round().get() == round)
-        .sorted_by_key(|r#match| phase.rankings()[&r#match.team_a()[0]].initial_unique_rank())
+        .sorted_by_key(|r#match| {
+            phase
+                .ranking_view(&r#match.team_a()[0])
+                .initial_unique_rank()
+        })
         .map(Match::id)
         .collect()
 }
@@ -173,7 +179,7 @@ fn serialized(competition: &Competition) -> Value {
 
 /// Asserts that both rankings hold the same value of every metric calculated by the phase.
 #[track_caller]
-fn assert_same_metrics(left: Metrics<'_>, right: Metrics<'_>) {
+fn assert_same_metrics(left: RankingView<'_>, right: RankingView<'_>) {
     assert_eq!(
         left.metric::<RoundOfFirstLoss>(),
         right.metric::<RoundOfFirstLoss>()
@@ -218,8 +224,8 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             other.ranking_ids_ordered_by_unique_rank()
         );
         for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
-            let ranking = &phase.rankings()[ranking_id];
-            let other_ranking = &other.rankings()[ranking_id];
+            let ranking = phase.ranking_view(ranking_id);
+            let other_ranking = other.ranking_view(ranking_id);
             assert_eq!(ranking.entrants(), other_ranking.entrants());
             assert_eq!(ranking.rank(), other_ranking.rank());
             assert_eq!(ranking.unique_rank(), other_ranking.unique_rank());
@@ -227,7 +233,7 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
                 ranking.initial_unique_rank(),
                 other_ranking.initial_unique_rank()
             );
-            assert_same_metrics(phase.metrics_of(ranking_id), other.metrics_of(ranking_id));
+            assert_same_metrics(ranking, other_ranking);
         }
         assert_eq!(phase.matches().len(), other.matches().len());
         for r#match in phase.matches() {
@@ -270,7 +276,7 @@ fn a_competition_that_has_not_started_round_trips() {
     assert_eq!(competition.seed(), SEED);
     assert_eq!(competition.entrants().len(), 4);
     let phase = &competition.phases()[&phase_id()];
-    assert!(phase.rankings().is_empty());
+    assert_eq!(phase.ranking_views().len(), 0);
     assert!(phase.matches().is_empty());
     assert_same_competition(sm.current(), &competition);
 }
@@ -283,12 +289,12 @@ fn a_started_competition_round_trips() {
 
     assert!(competition.is_started());
     let phase = &competition.phases()[&phase_id()];
-    assert_eq!(phase.rankings().len(), 4);
+    assert_eq!(phase.ranking_views().len(), 4);
     assert_eq!(phase.matches().len(), 2);
     // the metrics of a started competition are all at their default value, so this only shows
     // that they exist at all
     for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
-        assert_eq!(phase.metric_of::<Points>(ranking_id), Some(&Points(0.0)));
+        assert_eq!(phase.metric_of::<Points>(ranking_id), &Points(0.0));
     }
     assert_same_competition(sm.current(), &competition);
 }
@@ -312,9 +318,8 @@ fn a_partially_played_competition_round_trips() {
     );
     // the two winners hold the points of their win, and the losers the round they lost in
     let winners = phase
-        .rankings()
-        .keys()
-        .filter(|ranking_id| phase.metric_of::<Points>(ranking_id) == Some(&Points(3.0)))
+        .ranking_views()
+        .filter(|ranking| ranking.metric::<Points>() == &Points(3.0))
         .count();
     assert_eq!(winners, 2);
     assert_same_competition(sm.current(), &competition);
@@ -332,11 +337,11 @@ fn a_played_competition_round_trips_through_a_binary_format() {
     let sm = competition_in_the_final();
     // the match ids that a plain round trip would silently write in the wrong representation
     let phase = &sm.current().phases()[&phase_id()];
-    assert!(phase.rankings().keys().any(|ranking_id| {
+    assert!(
         phase
-            .metric_of::<Matches>(ranking_id)
-            .is_some_and(|matches| !matches.0.is_empty())
-    }));
+            .ranking_views()
+            .any(|ranking| !ranking.metric::<Matches>().0.is_empty())
+    );
 
     let competition = binary_round_trip(sm.current());
 

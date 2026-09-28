@@ -16,13 +16,13 @@ use tournament_engine::{
     plugins::{
         metrics_calculator::{
             buchholz::{
-                BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholzCalculator,
-                BuchholzOfBuchholzGetter,
+                BuchholzCalculator, BuchholzComparatorProvider, BuchholzOfBuchholzCalculator,
+                BuchholzOfBuchholzComparatorProvider,
             },
             matches::MatchesCalculator,
-            points::{PointsCalculator, PointsGetter},
+            points::{PointsCalculator, PointsComparatorProvider},
             round_of_first_loss::RoundOfFirstLossCalculator,
-            sonneborn_berger::{SonnebornBergerCalculator, SonnebornBergerGetter},
+            sonneborn_berger::{SonnebornBergerCalculator, SonnebornBergerComparatorProvider},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::random_rounds::RandomRounds,
@@ -83,7 +83,7 @@ fn reporting_schedule(sm: &CompetitionStateMachine) -> Vec<(MatchId, MatchResult
         .matches()
         .values()
         .sorted_by_key(|r#match| {
-            let first_ranking = &phase.rankings()[&r#match.team_a()[0]];
+            let first_ranking = phase.ranking_view(&r#match.team_a()[0]);
             (r#match.round(), first_ranking.initial_unique_rank())
         })
         .map(|r#match| {
@@ -111,10 +111,10 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
         LexicographicalMetrics::new()
-            .add_metric(PointsGetter)
-            .add_metric(BuchholzGetter)
-            .add_metric(SonnebornBergerGetter)
-            .add_metric(BuchholzOfBuchholzGetter),
+            .add_metric(PointsComparatorProvider)
+            .add_metric(BuchholzComparatorProvider)
+            .add_metric(SonnebornBergerComparatorProvider)
+            .add_metric(BuchholzOfBuchholzComparatorProvider),
     )]);
     apply(
         &mut sm,

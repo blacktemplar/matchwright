@@ -62,8 +62,7 @@ pub(crate) fn phase_with(
 
 fn ranking_ids(phase: &Phase) -> Vec<RankingId> {
     phase
-        .rankings()
-        .values()
+        .ranking_views()
         .sorted_by_key(|r| r.initial_unique_rank())
         .map(|r| r.id())
         .collect()
@@ -96,7 +95,5 @@ pub(crate) fn metric_of<M: Copy + 'static>(phase: &Phase, ranking_index: usize) 
 
 /// Like [`metric_of`], but for metrics that are not [`Copy`].
 pub(crate) fn metric_ref_of<M: 'static>(phase: &Phase, ranking_index: usize) -> &M {
-    phase
-        .metric_of::<M>(&ranking_ids(phase)[ranking_index])
-        .expect("the metric must be initialized")
+    phase.metric_of::<M>(&ranking_ids(phase)[ranking_index])
 }

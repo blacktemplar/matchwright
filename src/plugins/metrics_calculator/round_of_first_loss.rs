@@ -3,11 +3,13 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::phase::{Match, MatchResult, Phase, RankingId},
+    entities::phase::{
+        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    },
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::MetricComparatorProvider,
     },
     type_map::TypeMapValue,
 };
@@ -31,12 +33,12 @@ impl Compare for RoundOfFirstLoss {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoundOfFirstLossGetter;
+pub struct RoundOfFirstLossComparatorProvider;
 
 #[typetag::serde]
-impl MetricGetter for RoundOfFirstLossGetter {
-    fn store_metric(&self, storage: MetricStorage<'_>) {
-        storage.set_metric::<RoundOfFirstLoss>();
+impl MetricComparatorProvider for RoundOfFirstLossComparatorProvider {
+    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
+        MetricComparator::new::<RoundOfFirstLoss>(phase)
     }
 }
 
@@ -68,7 +70,7 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         losing_ranking_ids
             .iter()
             .map(|r_id| {
-                let old_value = phase.metric_of::<RoundOfFirstLoss>(r_id).unwrap();
+                let old_value = phase.metric_of::<RoundOfFirstLoss>(r_id);
                 let new_value = RoundOfFirstLoss(Some(match old_value.0 {
                     None => r#match.round(),
                     Some(x) => x.min(r#match.round()),
