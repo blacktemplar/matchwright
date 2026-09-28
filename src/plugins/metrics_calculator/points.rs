@@ -76,7 +76,7 @@ impl MetricsCalculator for PointsCalculator {
             .non_losing_rankings()
             .map(|r_id| {
                 let WinsDrawsLosses { wins, draws, .. } =
-                    *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
+                    *phase.metric_of::<WinsDrawsLosses>(r_id).unwrap();
                 let points =
                     Points(self.points_for_win * wins as f32 + self.points_for_draw * draws as f32);
                 (*r_id, Box::new(points) as Metric)

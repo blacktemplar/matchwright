@@ -85,12 +85,12 @@ where
     let mut buchholz_changes: Map<_, f32> = Map::default();
     for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
         let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-        let ranking = &phase.rankings()[r_id];
-        let new_metric = ranking.metric::<M>().unwrap();
+        let metrics = phase.metrics_of(r_id);
+        let new_metric = metrics.metric::<M>().unwrap();
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
         if m_diff != 0. {
             // buchholz of all opponents of this ranking change
-            let matches = ranking.metric::<Matches>().unwrap();
+            let matches = metrics.metric::<Matches>().unwrap();
             for match_id in &matches.0 {
                 if match_id == &r#match.id() {
                     // we don't consider the newly reported match here as we will account for it
@@ -114,7 +114,7 @@ where
         // add metric M of team2 to buchholz of team1
         let m_sum: f32 = team2
             .iter()
-            .map(|r_id| *phase.rankings()[r_id].metric::<M>().unwrap().as_ref())
+            .map(|r_id| *phase.metric_of::<M>(r_id).unwrap().as_ref())
             .sum();
         for r_id in team1 {
             *buchholz_changes.entry(*r_id).or_default() += m_sum;
@@ -123,7 +123,7 @@ where
     buchholz_changes
         .into_iter()
         .map(|(r_id, change)| {
-            let old_buchholz = *phase.rankings()[&r_id].metric::<B>().unwrap().as_ref();
+            let old_buchholz = *phase.metric_of::<B>(&r_id).unwrap().as_ref();
             (r_id, Box::new(B::from(old_buchholz + change)) as Metric)
         })
         .collect()

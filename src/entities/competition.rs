@@ -14,11 +14,11 @@ use vec1::{Vec1, vec1};
 use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculators},
         phase_format::PhaseFormat,
         ranker::Ranker,
     },
-    type_map::TypeMap,
+    type_map::{TypeMap, downcast_unchecked_ref},
 };
 
 /// Namespaces for various deterministic ids
@@ -77,7 +77,7 @@ impl Competition {
             phase_format,
             ranker,
             seed,
-            metrics_calculators,
+            metrics_calculators: metrics_calculators.into(),
         };
         self.phases.insert(phase);
     }
@@ -177,7 +177,7 @@ pub struct Phase {
     phase_format: Box<dyn PhaseFormat>,
     ranker: Box<dyn Ranker>,
     seed: [u8; 12],
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    metrics_calculators: MetricsCalculators,
 }
 
 impl IdAble for Phase {
@@ -223,22 +223,12 @@ impl Phase {
     /// Gives every ranking of this phase the default value of every metric calculated for this
     /// phase.
     fn initialize_metrics(&mut self) {
-        let ranking_ids: Vec<_> = self.rankings.keys().copied().collect();
-        let metrics: Vec<_> = self
-            .metrics_calculators
-            .iter()
-            .flat_map(|metrics_calculator| {
-                ranking_ids
-                    .iter()
-                    .map(move |ranking_id| (*ranking_id, metrics_calculator.default_metric_value()))
-            })
-            .collect();
-        for (ranking_id, metric) in metrics {
-            self.rankings
-                .get_mut(&ranking_id)
-                .expect("Ranking must exist")
-                .metrics
-                .insert_boxed(metric);
+        for ranking in self.rankings.values_mut() {
+            ranking.metrics = self
+                .metrics_calculators
+                .iter()
+                .map(|c| c.default_metric_value())
+                .collect();
         }
     }
 
@@ -288,13 +278,14 @@ impl Phase {
             }));
 
             for (ranking_id, metric) in updates {
-                let old_metric = self
-                    .rankings
-                    .get_mut(&ranking_id)
-                    .expect("Ranking must exist")
-                    .metrics
-                    .insert_boxed(metric)
-                    .unwrap();
+                let old_metric = std::mem::replace(
+                    &mut self
+                        .rankings
+                        .get_mut(&ranking_id)
+                        .expect("Ranking must exist")
+                        .metrics[self.metrics_calculators.index_of_box(&metric)],
+                    metric,
+                );
                 old_metrics
                     .entry((&*old_metric as &dyn Any).type_id())
                     .or_default()
@@ -349,7 +340,17 @@ impl Phase {
     pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
         self.new_seeded_rng(entropy)
     }
+
+    pub fn metric_of<T: 'static>(&self, ranking_id: &RankingId) -> Option<&T> {
+        self.metrics_of(ranking_id).metric()
+    }
+
+    pub fn metrics_of(&self, ranking_id: &RankingId) -> Metrics {
+        Metrics(self, &self.rankings[ranking_id].metrics)
+    }
 }
+
+pub struct RankingMetrics<'a>(&'a Phase, &'a Ranking);
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum EntropyTypes {
@@ -380,7 +381,7 @@ pub struct Ranking {
     initial_unique_rank: NonZeroU32,
     unique_rank: NonZeroU32,
     rank: NonZeroU32,
-    metrics: TypeMap,
+    metrics: Vec<Metric>,
 }
 
 impl IdAble for Ranking {
@@ -407,7 +408,7 @@ impl Ranking {
             initial_unique_rank: unique_rank,
             unique_rank,
             rank: NonZeroU32::new(1).unwrap(),
-            metrics: TypeMap::new(),
+            metrics: Vec::new(),
         }
     }
 
@@ -432,13 +433,20 @@ impl Ranking {
     pub fn initial_unique_rank(&self) -> NonZeroU32 {
         self.initial_unique_rank
     }
+}
 
-    pub fn metric<T: 'static>(&self) -> Option<&T> {
-        self.metrics.get::<T>()
-    }
+// Upholds the invariant that the vector of metrics comes from a ranking inside the phase
+pub struct Metrics<'a>(&'a Phase, &'a Vec<Metric>);
 
-    pub fn metrics(&self) -> &TypeMap {
-        &self.metrics
+impl<'a> Metrics<'a> {
+    pub fn metric<T: 'static>(&self) -> Option<&'a T> {
+        let b = &self.1[self.0.metrics_calculators.index_of::<T>()?];
+        Some(
+            // This is safe because we uphold the invariant that the metrics of every ranking in
+            // this phase follow the ordering of the metrics_calculators which guarantees that
+            // the value at `index_of::<T>` is of type `T`.
+            unsafe { downcast_unchecked_ref(&**b) },
+        )
     }
 }
 
@@ -663,7 +671,7 @@ impl PhaseBuilder {
             phase_format: self.phase_format,
             seed: [0; 12],
             ranker: self.ranker,
-            metrics_calculators: self.metrics_calculators,
+            metrics_calculators: self.metrics_calculators.into(),
         };
         phase.initialize_metrics();
         phase

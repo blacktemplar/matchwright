@@ -69,13 +69,13 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         let mut sonneborn_berger_changes: Map<_, f32> = Map::default();
         for (r_id, old_metric) in &old_metrics[&TypeId::of::<Points>()] {
             let old_metric: &Points = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-            let ranking = &phase.rankings()[r_id];
-            let new_metric = ranking.metric::<Points>().unwrap();
+            let metrics = phase.metrics_of(r_id);
+            let new_metric = metrics.metric::<Points>().unwrap();
             let points_diff = new_metric.0 - old_metric.0;
             if points_diff != 0. {
                 // sonneborn_berger_changes of all opponents of this ranking that scored at least a
                 // draw against this ranking change
-                let matches = ranking.metric::<Matches>().unwrap();
+                let matches = metrics.metric::<Matches>().unwrap();
                 for match_id in &matches.0 {
                     if match_id == &r#match.id() {
                         // we don't consider the newly reported match here as we will account for it
@@ -127,7 +127,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
             // add points of team2 * score_weight to Sonneborn-Berger of team1
             let points: f32 = team2
                 .iter()
-                .map(|r_id| phase.rankings()[r_id].metric::<Points>().unwrap().0)
+                .map(|r_id| phase.metric_of::<Points>(r_id).unwrap().0)
                 .sum();
             let score_change = score_weight * points;
             for r_id in team1 {
@@ -140,11 +140,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
                 (
                     r_id,
                     Box::new(SonnebornBerger(
-                        phase.rankings()[&r_id]
-                            .metric::<SonnebornBerger>()
-                            .unwrap()
-                            .0
-                            + change,
+                        phase.metric_of::<SonnebornBerger>(&r_id).unwrap().0 + change,
                     )) as Metric,
                 )
             })

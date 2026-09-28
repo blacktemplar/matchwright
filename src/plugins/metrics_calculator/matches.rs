@@ -35,7 +35,7 @@ impl MetricsCalculator for MatchesCalculator {
         r#match
             .rankings()
             .map(|r_id| {
-                let old_matches = phase.rankings()[r_id].metric::<Matches>().unwrap();
+                let old_matches = phase.metric_of::<Matches>(r_id).unwrap();
                 let mut new_matches = Matches(old_matches.0.clone());
                 new_matches.0.push(r#match.id());
                 (*r_id, Box::new(new_matches) as Metric)

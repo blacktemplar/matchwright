@@ -68,7 +68,7 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         losing_ranking_ids
             .iter()
             .map(|r_id| {
-                let old_value = phase.rankings()[r_id].metric::<RoundOfFirstLoss>().unwrap();
+                let old_value = phase.metric_of::<RoundOfFirstLoss>(r_id).unwrap();
                 let new_value = RoundOfFirstLoss(Some(match old_value.0 {
                     None => r#match.round(),
                     Some(x) => x.min(r#match.round()),

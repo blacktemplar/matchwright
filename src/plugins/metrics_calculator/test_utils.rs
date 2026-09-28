@@ -96,7 +96,7 @@ pub(crate) fn metric_of<M: Copy + 'static>(phase: &Phase, ranking_index: usize) 
 
 /// Like [`metric_of`], but for metrics that are not [`Copy`].
 pub(crate) fn metric_ref_of<M: 'static>(phase: &Phase, ranking_index: usize) -> &M {
-    phase.rankings()[&ranking_ids(phase)[ranking_index]]
-        .metric::<M>()
+    phase
+        .metric_of::<M>(&ranking_ids(phase)[ranking_index])
         .expect("the metric must be initialized")
 }
