@@ -204,7 +204,7 @@ impl Rankings {
 
     pub(super) fn apply_new_ranks(&mut self, new_ranks: Vec<(RankingId, NonZeroU32)>) {
         for (rank_id, new_rank) in new_ranks {
-            self.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
+            self.rankings.get_mut(&rank_id).unwrap().inner.rank = new_rank;
         }
         self.update_ranking_ordering_and_unique_ranks();
     }
@@ -222,19 +222,20 @@ impl Rankings {
             });
         // set unique ranks
         for (index, ranking_id) in self.ranking_ids_ordered_by_unique_rank.iter().enumerate() {
-            self.rankings.get_mut(ranking_id).unwrap().unique_rank =
+            self.rankings.get_mut(ranking_id).unwrap().inner.unique_rank =
                 NonZeroU32::new(index as u32 + 1).unwrap()
         }
         // check requirements of [`Ranker::update_ranks`]
         debug_assert!(
             self.rankings[&self.ranking_ids_ordered_by_unique_rank[0]]
+                .inner
                 .rank
                 .get()
                 == 1
                 && self
                     .ranking_ids_ordered_by_unique_rank
                     .iter()
-                    .map(|id| &self.rankings[id])
+                    .map(|id| &self.rankings[id].inner)
                     .enumerate()
                     .array_windows()
                     .all(|[(_, r1), (i2, r2)]| r1.rank == r2.rank || r2.rank.get() == i2 as u32 + 1)
@@ -273,23 +274,20 @@ impl Rankings {
 const RANKINGS: &str = "Rankings";
 const RANKINGS_ELEMENTS: usize = 3;
 
-/// The name and the fields [`Ranking`] is serialized under.
+/// The name and the fields [`Ranking`] is serialized under, and the position of each of them.
 ///
 /// # Invariant
 /// These must stay the fields of [`Ranking`], in name and in order, and `SerializedRanking` and
 /// `RankingVisitor` must both write and read exactly these, in this order: a format that is not
 /// self describing, like [`postcard`](https://docs.rs/postcard), writes nothing but the values in
-/// that order, so a ranking would otherwise silently read back as something else. The round trip
-/// tests through both formats are what keeps the three in sync.
+/// that order, so a ranking would otherwise silently read back as something else. This is why
+/// everything but the metrics lives in [`RankingInner`], which derives both impls and therefore
+/// cannot drift apart at all: it leaves only these two fields to keep in sync, which the round trip
+/// tests through both formats do.
 const RANKING: &str = "Ranking";
-const RANKING_FIELDS: &[&str] = &[
-    "id",
-    "entrants",
-    "initial_unique_rank",
-    "unique_rank",
-    "rank",
-    "metrics",
-];
+const RANKING_FIELDS: &[&str] = &["inner", "metrics"];
+const RANKING_INNER: usize = 0;
+const RANKING_METRICS: usize = 1;
 
 /// Serializes as a tuple of the metrics calculators, the rankings and their order, rather than as
 /// a struct of those three.
@@ -337,9 +335,9 @@ impl Serialize for SerializedRankings<'_> {
     }
 }
 
-/// A [`Ranking`] as it is serialized: its fields, with the metrics written as the types the
-/// calculators say they are. [`Ranking`] has no [`Serialize`] impl of its own, since it cannot be
-/// written without those kinds.
+/// A [`Ranking`] as it is serialized: its [inner part](RankingInner), which writes itself, and its
+/// metrics, written as the types the calculators say they are. [`Ranking`] has no [`Serialize`]
+/// impl of its own, since it cannot be written without those kinds.
 struct SerializedRanking<'a> {
     ranking: &'a Ranking,
     metric_kinds: &'a [MetricKind],
@@ -351,13 +349,9 @@ impl Serialize for SerializedRanking<'_> {
         S: Serializer,
     {
         let mut ranking = serializer.serialize_struct(RANKING, RANKING_FIELDS.len())?;
-        ranking.serialize_field(RANKING_FIELDS[0], &self.ranking.id)?;
-        ranking.serialize_field(RANKING_FIELDS[1], &self.ranking.entrants)?;
-        ranking.serialize_field(RANKING_FIELDS[2], &self.ranking.initial_unique_rank)?;
-        ranking.serialize_field(RANKING_FIELDS[3], &self.ranking.unique_rank)?;
-        ranking.serialize_field(RANKING_FIELDS[4], &self.ranking.rank)?;
+        ranking.serialize_field(RANKING_FIELDS[RANKING_INNER], &self.ranking.inner)?;
         ranking.serialize_field(
-            RANKING_FIELDS[5],
+            RANKING_FIELDS[RANKING_METRICS],
             &SerializedMetrics {
                 metrics: &self.ranking.metrics,
                 metric_kinds: self.metric_kinds,
@@ -493,15 +487,20 @@ impl<'de> DeserializeSeed<'de> for RankingSeed<'_> {
 #[derive(Deserialize)]
 #[serde(field_identifier, rename_all = "snake_case")]
 enum RankingField {
-    Id,
-    Entrants,
-    InitialUniqueRank,
-    UniqueRank,
-    Rank,
+    Inner,
     Metrics,
 }
 
 struct RankingVisitor<'a>(RankingSeed<'a>);
+
+impl<'a> RankingVisitor<'a> {
+    /// The seed that reads the metrics of the ranking as the types this visitor's kinds describe.
+    fn metrics_seed(&self) -> MetricsSeed<'a> {
+        MetricsSeed {
+            metric_kinds: self.0.metric_kinds,
+        }
+    }
+}
 
 impl<'de> Visitor<'de> for RankingVisitor<'_> {
     type Value = Ranking;
@@ -514,28 +513,14 @@ impl<'de> Visitor<'de> for RankingVisitor<'_> {
     where
         A: SeqAccess<'de>,
     {
-        let metrics_seed = MetricsSeed {
-            metric_kinds: self.0.metric_kinds,
-        };
+        let metrics_seed = self.metrics_seed();
         Ok(Ranking {
-            id: seq
+            inner: seq
                 .next_element()?
-                .ok_or_else(|| de::Error::invalid_length(0, &self))?,
-            entrants: seq
-                .next_element()?
-                .ok_or_else(|| de::Error::invalid_length(1, &self))?,
-            initial_unique_rank: seq
-                .next_element()?
-                .ok_or_else(|| de::Error::invalid_length(2, &self))?,
-            unique_rank: seq
-                .next_element()?
-                .ok_or_else(|| de::Error::invalid_length(3, &self))?,
-            rank: seq
-                .next_element()?
-                .ok_or_else(|| de::Error::invalid_length(4, &self))?,
+                .ok_or_else(|| de::Error::invalid_length(RANKING_INNER, &self))?,
             metrics: seq
                 .next_element_seed(metrics_seed)?
-                .ok_or_else(|| de::Error::invalid_length(5, &self))?,
+                .ok_or_else(|| de::Error::invalid_length(RANKING_METRICS, &self))?,
         })
     }
 
@@ -543,54 +528,28 @@ impl<'de> Visitor<'de> for RankingVisitor<'_> {
     where
         A: MapAccess<'de>,
     {
-        let mut id = None;
-        let mut entrants = None;
-        let mut initial_unique_rank = None;
-        let mut unique_rank = None;
-        let mut rank = None;
+        let mut inner = None;
         let mut metrics = None;
 
         while let Some(field) = map.next_key()? {
-            /// Reads the value of `field` into `slot`, which no earlier field may have filled.
-            macro_rules! read {
-                ($slot:ident, $index:expr, $value:expr) => {{
-                    if $slot.is_some() {
-                        return Err(de::Error::duplicate_field(RANKING_FIELDS[$index]));
-                    }
-                    $slot = Some($value);
-                }};
-            }
             match field {
-                RankingField::Id => read!(id, 0, map.next_value()?),
-                RankingField::Entrants => read!(entrants, 1, map.next_value()?),
-                RankingField::InitialUniqueRank => {
-                    read!(initial_unique_rank, 2, map.next_value()?)
+                RankingField::Inner if inner.is_some() => {
+                    return Err(de::Error::duplicate_field(RANKING_FIELDS[RANKING_INNER]));
                 }
-                RankingField::UniqueRank => read!(unique_rank, 3, map.next_value()?),
-                RankingField::Rank => read!(rank, 4, map.next_value()?),
-                RankingField::Metrics => read!(
-                    metrics,
-                    5,
-                    map.next_value_seed(MetricsSeed {
-                        metric_kinds: self.0.metric_kinds,
-                    })?
-                ),
+                RankingField::Metrics if metrics.is_some() => {
+                    return Err(de::Error::duplicate_field(RANKING_FIELDS[RANKING_METRICS]));
+                }
+                RankingField::Inner => inner = Some(map.next_value()?),
+                RankingField::Metrics => {
+                    metrics = Some(map.next_value_seed(self.metrics_seed())?);
+                }
             }
         }
 
-        /// The value read into `slot`, or the error that names the field it is missing from.
-        macro_rules! required {
-            ($slot:ident, $index:expr) => {
-                $slot.ok_or_else(|| de::Error::missing_field(RANKING_FIELDS[$index]))?
-            };
-        }
         Ok(Ranking {
-            id: required!(id, 0),
-            entrants: required!(entrants, 1),
-            initial_unique_rank: required!(initial_unique_rank, 2),
-            unique_rank: required!(unique_rank, 3),
-            rank: required!(rank, 4),
-            metrics: required!(metrics, 5),
+            inner: inner.ok_or_else(|| de::Error::missing_field(RANKING_FIELDS[RANKING_INNER]))?,
+            metrics: metrics
+                .ok_or_else(|| de::Error::missing_field(RANKING_FIELDS[RANKING_METRICS]))?,
         })
     }
 }
@@ -673,21 +632,31 @@ const NAMESPACE_RANKING: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
 /// [type erased](TypeMapValue) and written without a type tag, so it can only be read or written
 /// as part of the rankings it belongs to, which knows the [kinds](MetricKind) of those metrics.
 /// See `SerializedRanking` and `RankingSeed`.
+///
+/// Everything that does not depend on those kinds lives in [`RankingInner`], which is what keeps
+/// the two hand written impls down to the two fields below.
 #[derive(Debug)]
 pub struct Ranking {
+    inner: RankingInner,
+    metrics: Vec<Metric>,
+}
+
+/// A [`Ranking`] without its metrics: the part that carries its own types and therefore needs
+/// nothing but the derived [`Serialize`] and [`Deserialize`] impls.
+#[derive(Debug, Serialize, Deserialize)]
+struct RankingInner {
     id: RankingId,
     entrants: Vec1<EntrantId>,
     initial_unique_rank: NonZeroU32,
     unique_rank: NonZeroU32,
     rank: NonZeroU32,
-    metrics: Vec<Metric>,
 }
 
 impl IdAble for Ranking {
     type Id = RankingId;
 
     fn id(&self) -> Self::Id {
-        self.id
+        self.inner.id
     }
 }
 
@@ -702,35 +671,37 @@ impl Ranking {
             &bytes_from_uuids(entrants.iter().map(|e| e.uuid())),
         ));
         Self {
-            id,
-            entrants,
-            initial_unique_rank: unique_rank,
-            unique_rank,
-            rank: NonZeroU32::new(1).unwrap(),
+            inner: RankingInner {
+                id,
+                entrants,
+                initial_unique_rank: unique_rank,
+                unique_rank,
+                rank: NonZeroU32::new(1).unwrap(),
+            },
             metrics: Vec::new(),
         }
     }
 
     pub fn id(&self) -> RankingId {
-        self.id
+        self.inner.id
     }
 
     pub fn entrants(&self) -> &Vec1<EntrantId> {
-        &self.entrants
+        &self.inner.entrants
     }
 
     /// The unique rank of the ranking, which is guaranteed to be [`Ranking::rank`] with tie
     /// breaking equal values by their [`Ranking::initial_unique_rank`].
     pub fn unique_rank(&self) -> NonZeroU32 {
-        self.unique_rank
+        self.inner.unique_rank
     }
 
     pub fn rank(&self) -> NonZeroU32 {
-        self.rank
+        self.inner.rank
     }
 
     pub fn initial_unique_rank(&self) -> NonZeroU32 {
-        self.initial_unique_rank
+        self.inner.initial_unique_rank
     }
 }
 
@@ -749,25 +720,25 @@ pub struct RankingView<'a>(&'a Rankings, &'a Ranking);
 
 impl<'a> RankingView<'a> {
     pub fn id(&self) -> RankingId {
-        self.1.id
+        self.1.inner.id
     }
 
     pub fn entrants(&self) -> &'a Vec1<EntrantId> {
-        &self.1.entrants
+        &self.1.inner.entrants
     }
 
     pub fn initial_unique_rank(&self) -> NonZeroU32 {
-        self.1.initial_unique_rank
+        self.1.inner.initial_unique_rank
     }
 
     /// The unique rank of the ranking, which is guaranteed to be [`Self::rank`] with ties broken by
     /// [`Self::initial_unique_rank`].
     pub fn unique_rank(&self) -> NonZeroU32 {
-        self.1.unique_rank
+        self.1.inner.unique_rank
     }
 
     pub fn rank(&self) -> NonZeroU32 {
-        self.1.rank
+        self.1.inner.rank
     }
 
     /// The metrics of this ranking.
