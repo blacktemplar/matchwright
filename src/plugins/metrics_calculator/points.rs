@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, MetricKind};
 use crate::{
     entities::{
         phase::{Match, MatchResult, Phase},
@@ -64,8 +64,8 @@ impl PointsCalculator {
 
 #[typetag::serde]
 impl MetricsCalculator for PointsCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(Points::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<Points>()
     }
 
     fn update_after_match_result_changed(

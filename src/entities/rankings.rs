@@ -1,15 +1,19 @@
-use std::{any::TypeId, cmp::Ordering, hash::Hash, num::NonZeroU32, ptr};
+use std::{any::TypeId, cmp::Ordering, fmt, hash::Hash, num::NonZeroU32, ptr};
 
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
+    ser::{self, SerializeSeq, SerializeStruct, SerializeTupleStruct},
+};
 use thiserror::Error;
 use uuid::{Bytes, Uuid, uuid};
 use vec1::Vec1;
 
 use crate::{
     entities::competition::EntrantId,
-    map::{IdAble, IdMap, Map},
-    plugins::metrics_calculator::{Metric, MetricId, MetricsCalculator},
+    map::{IdAble, IdMap, IdMapSeed, Map, serialize_id_map_with},
+    plugins::metrics_calculator::{Metric, MetricId, MetricKind, MetricsCalculator},
     type_map::{TypeMapValue, downcast_unchecked_ref},
 };
 
@@ -21,49 +25,31 @@ use crate::{
 /// what says which of them is which: the position the metric of every calculator has in that vec,
 /// keyed by the type of that metric. It is not stored next to the calculators but derived from
 /// them, so the two can never disagree — it is (re)built whenever the calculators are set,
-/// deserializing included, which is also why only the calculators are part of the serialized form.
+/// deserializing included, which is also why the layout itself is not part of the serialized form.
+///
+/// The layout is what lets the metrics be serialized without a type tag of their own: the
+/// [kind](MetricKind) of the calculator at a position says what the metric at that position is, so
+/// the calculators have to be read back before the rankings. See the [`Serialize`] impl for how
+/// that ordering is made part of the serialized form rather than left to chance.
 ///
 /// # Invariant
 /// The metrics of every ranking in `rankings` follow `metrics_layout`, in the sense of
 /// `is_layout_of`. Reading a metric resolves its position through the layout and then casts without
 /// checking it ([`RankingView::metric`] and [`MetricComparator::compare_rankings`]), so this
 /// invariant is what keeps those casts sound. Three places establish it, and nothing else may write
-/// a metric: `initialize_metrics` for rankings that are played, the `TryFrom<SerializedRankings>`
-/// impl for rankings that are read back, and `set_metric`, which can only ever replace a metric by
-/// one of the same type.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(try_from = "SerializedRankings")]
+/// a metric: `initialize_metrics` for rankings that are played, `RankingsVisitor` for rankings that
+/// are read back, and `set_metric`, which can only ever replace a metric by one of the same type.
+#[derive(Debug)]
 pub struct Rankings {
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-    #[serde(skip)]
     metrics_layout: Map<MetricId, usize>,
-    rankings: IdMap<Ranking>,
-    ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
-}
-
-/// The fields of a [`Rankings`] as they were serialized, before anything about them is checked.
-///
-/// A rankings deserializes through this rather than directly, so that [`TryFrom`] gets to reject
-/// one whose metrics do not follow the [layout](Rankings#the-layout) of its calculators before it
-/// exists as a [`Rankings`]. Nothing else establishes that invariant for deserialized rankings: it
-/// is [`initialize_metrics`](Rankings::initialize_metrics) that does so for rankings that are
-/// played rather than read, and deserializing never goes through it.
-///
-/// # Invariant
-/// The fields must stay the serialized fields of [`Rankings`], in name and in order: a format that
-/// is not self describing, like [`postcard`](https://docs.rs/postcard), writes nothing but the
-/// values in declaration order, so rankings would silently read back as something else. The round
-/// trip tests through both formats are what keeps the two in sync.
-#[derive(Serialize, Deserialize)]
-struct SerializedRankings {
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     rankings: IdMap<Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
 }
 
 /// Why a serialized [`Rankings`] cannot be read back as one.
 #[derive(Error, Debug)]
-pub enum InvalidRankings {
+enum InvalidRankings {
     #[error(
         "the metrics of ranking {0:?} do not follow the layout of the metrics calculators of \
          the rankings"
@@ -77,51 +63,42 @@ pub enum InvalidRankings {
 /// This is what everything that reads a metric by its position rather than by its type relies on,
 /// [`Rankings::metric_index`] and hence [`RankingView`] and [`MetricComparator`] above all. It can
 /// only fail for a [`MetricsCalculator`] that breaks one of two rules that nothing else enforces:
-/// that [`default_metric_value`](MetricsCalculator::default_metric_value) returns a metric of the
-/// same type on every call, since the layout is built from one call of it and the metrics of a
-/// ranking from another, and that no two calculators of a phase produce the same metric type, since
-/// the layout can hold only one position per type.
+/// that [`metric_kind`](MetricsCalculator::metric_kind) returns a kind of the same type on every
+/// call, since the layout is built from one call of it and the metrics of a ranking may come from
+/// another, and that no two calculators of a phase produce the same metric type, since the layout
+/// can hold only one position per type.
 fn is_layout_of(
-    calculators: &[Box<dyn MetricsCalculator>],
+    calculator_count: usize,
     layout: &Map<MetricId, usize>,
     metrics: &[Metric],
 ) -> bool {
-    metrics.len() == calculators.len()
+    metrics.len() == calculator_count
         && metrics
             .iter()
             .enumerate()
             .all(|(index, metric)| layout.get(&(**metric).type_id()) == Some(&index))
 }
 
-/// The [layout](Rankings#the-layout) of `metrics_calculators`: the position of every calculator,
-/// keyed by the type of the metric it produces.
-fn layout(metrics_calculators: &Vec<Box<dyn MetricsCalculator + 'static>>) -> Map<MetricId, usize> {
+/// The [kind](MetricKind) of the metric of every calculator, at the position of that calculator.
+///
+/// Everything about the metric types of a rankings comes from one call of this — the layout, the
+/// initial values, the serialized form — so that a calculator whose kind differs from one call of
+/// [`MetricsCalculator::metric_kind`] to the next cannot make two of them disagree.
+fn metric_kinds(metrics_calculators: &[Box<dyn MetricsCalculator>]) -> Vec<MetricKind> {
     metrics_calculators
         .iter()
-        .enumerate()
-        .map(|(i, c)| ((*c.default_metric_value()).type_id(), i))
+        .map(|calculator| calculator.metric_kind())
         .collect()
 }
 
-impl TryFrom<SerializedRankings> for Rankings {
-    type Error = InvalidRankings;
-
-    fn try_from(value: SerializedRankings) -> Result<Self, Self::Error> {
-        let layout = layout(&value.metrics_calculators);
-
-        // Check that all metrics of all rankings follow the layout
-        for ranking in value.rankings.values() {
-            if !is_layout_of(&value.metrics_calculators, &layout, &ranking.metrics) {
-                return Err(InvalidRankings::MetricsDoNotFollowLayout(ranking.id()));
-            }
-        }
-        Ok(Self {
-            metrics_calculators: value.metrics_calculators,
-            metrics_layout: layout,
-            rankings: value.rankings,
-            ranking_ids_ordered_by_unique_rank: value.ranking_ids_ordered_by_unique_rank,
-        })
-    }
+/// The [layout](Rankings#the-layout) of `metric_kinds`: the position of every calculator, keyed by
+/// the type of the metric it produces.
+fn layout(metric_kinds: &[MetricKind]) -> Map<MetricId, usize> {
+    metric_kinds
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| (kind.metric_id(), index))
+        .collect()
 }
 
 impl Rankings {
@@ -138,7 +115,7 @@ impl Rankings {
     }
 
     pub(crate) fn new(metrics_calculators: Vec<Box<dyn MetricsCalculator + 'static>>) -> Self {
-        let metrics_layout = layout(&metrics_calculators);
+        let metrics_layout = layout(&metric_kinds(&metrics_calculators));
         Self {
             metrics_calculators,
             metrics_layout,
@@ -152,7 +129,7 @@ impl Rankings {
         metrics_calculators: Vec<Box<dyn MetricsCalculator + 'static>>,
         rankings: Vec<Ranking>,
     ) -> Self {
-        let metrics_layout = layout(&metrics_calculators);
+        let metrics_layout = layout(&metric_kinds(&metrics_calculators));
         let ranking_ids_ordered_by_unique_rank = rankings.iter().map(Ranking::id).collect();
         let mut rankings = Self {
             metrics_calculators,
@@ -200,18 +177,18 @@ impl Rankings {
             ranking.metrics = self
                 .metrics_calculators
                 .iter()
-                .map(|c| c.default_metric_value())
+                .map(|c| c.metric_kind().into_default())
                 .collect();
-            // The layout was built from one call of `default_metric_value` per calculator and the
-            // metrics just now from another, so this is where the two are checked against each
-            // other: reading a metric by its position casts it without checking, and the two
-            // agreeing is what keeps that sound. Every later write puts a metric at the position
-            // of its own type, which cannot break the agreement again, so this one check covers
-            // the whole lifetime of the rankings. It runs once per rankings initialize, which is
-            // cheap enough to be a real assertion rather than a debug one.
+            // The layout was built from one call of `metric_kind` per calculator and the metrics
+            // just now from another, so this is where the two are checked against each other:
+            // reading a metric by its position casts it without checking, and the two agreeing is
+            // what keeps that sound. Every later write puts a metric at the position of its own
+            // type, which cannot break the agreement again, so this one check covers the whole
+            // lifetime of the rankings. It runs once per rankings initialize, which is cheap
+            // enough to be a real assertion rather than a debug one.
             assert!(
                 is_layout_of(
-                    &self.metrics_calculators,
+                    self.metrics_calculators.len(),
                     &self.metrics_layout,
                     &ranking.metrics
                 ),
@@ -292,9 +269,411 @@ impl Rankings {
     }
 }
 
+/// The name [`Rankings`] is serialized under, and the number of elements it is serialized as.
+const RANKINGS: &str = "Rankings";
+const RANKINGS_ELEMENTS: usize = 3;
+
+/// The name and the fields [`Ranking`] is serialized under.
+///
+/// # Invariant
+/// These must stay the fields of [`Ranking`], in name and in order, and `SerializedRanking` and
+/// `RankingVisitor` must both write and read exactly these, in this order: a format that is not
+/// self describing, like [`postcard`](https://docs.rs/postcard), writes nothing but the values in
+/// that order, so a ranking would otherwise silently read back as something else. The round trip
+/// tests through both formats are what keeps the three in sync.
+const RANKING: &str = "Ranking";
+const RANKING_FIELDS: &[&str] = &[
+    "id",
+    "entrants",
+    "initial_unique_rank",
+    "unique_rank",
+    "rank",
+    "metrics",
+];
+
+/// Serializes as a tuple of the metrics calculators, the rankings and their order, rather than as
+/// a struct of those three.
+///
+/// The metrics of a ranking carry no type tag — what they are follows from the
+/// [layout](Rankings#the-layout) of the calculators — so the calculators have to be read back
+/// before the rankings. A tuple is what makes that hold in every format: the fields of a struct
+/// arrive in whatever order the input happens to have them in, since a self describing format
+/// names them, while the elements of a tuple can only arrive in the order they were written. The
+/// ordering is therefore a property of the serialized form rather than a requirement on whoever
+/// produced it.
+impl Serialize for Rankings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let metric_kinds = metric_kinds(&self.metrics_calculators);
+        let mut rankings = serializer.serialize_tuple_struct(RANKINGS, RANKINGS_ELEMENTS)?;
+        rankings.serialize_field(&self.metrics_calculators)?;
+        rankings.serialize_field(&SerializedRankings {
+            rankings: &self.rankings,
+            metric_kinds: &metric_kinds,
+        })?;
+        rankings.serialize_field(&self.ranking_ids_ordered_by_unique_rank)?;
+        rankings.end()
+    }
+}
+
+/// The rankings of a [`Rankings`] as they are serialized: the form of an [`IdMap`], with every
+/// ranking written against the kinds of the calculators.
+struct SerializedRankings<'a> {
+    rankings: &'a IdMap<Ranking>,
+    metric_kinds: &'a [MetricKind],
+}
+
+impl Serialize for SerializedRankings<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serialize_id_map_with(self.rankings, serializer, |ranking| SerializedRanking {
+            ranking,
+            metric_kinds: self.metric_kinds,
+        })
+    }
+}
+
+/// A [`Ranking`] as it is serialized: its fields, with the metrics written as the types the
+/// calculators say they are. [`Ranking`] has no [`Serialize`] impl of its own, since it cannot be
+/// written without those kinds.
+struct SerializedRanking<'a> {
+    ranking: &'a Ranking,
+    metric_kinds: &'a [MetricKind],
+}
+
+impl Serialize for SerializedRanking<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut ranking = serializer.serialize_struct(RANKING, RANKING_FIELDS.len())?;
+        ranking.serialize_field(RANKING_FIELDS[0], &self.ranking.id)?;
+        ranking.serialize_field(RANKING_FIELDS[1], &self.ranking.entrants)?;
+        ranking.serialize_field(RANKING_FIELDS[2], &self.ranking.initial_unique_rank)?;
+        ranking.serialize_field(RANKING_FIELDS[3], &self.ranking.unique_rank)?;
+        ranking.serialize_field(RANKING_FIELDS[4], &self.ranking.rank)?;
+        ranking.serialize_field(
+            RANKING_FIELDS[5],
+            &SerializedMetrics {
+                metrics: &self.ranking.metrics,
+                metric_kinds: self.metric_kinds,
+            },
+        )?;
+        ranking.end()
+    }
+}
+
+/// The metrics of one ranking, written as a plain sequence of untagged values: which of them is
+/// which follows from their position, so the type each one is written as is the one the kind at
+/// that position describes.
+struct SerializedMetrics<'a> {
+    metrics: &'a [Metric],
+    metric_kinds: &'a [MetricKind],
+}
+
+impl Serialize for SerializedMetrics<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut metrics = serializer.serialize_seq(Some(self.metrics.len()))?;
+        for (metric, kind) in self.metrics.iter().zip(self.metric_kinds) {
+            // the metric is of the type of the kind at its position by the invariant of `Rankings`
+            // — unless a calculator returned a kind of a different type than it did when the
+            // metrics were written, which is the one case the cast can fail in
+            let metric = kind.erase(metric).ok_or_else(|| {
+                ser::Error::custom(
+                    "every metrics calculator of a phase must produce a metric of the same type \
+                     on every call",
+                )
+            })?;
+            metrics.serialize_element(&ErasedMetric(metric))?;
+        }
+        metrics.end()
+    }
+}
+
+/// A metric that has been cast back to its own type, so that it serializes as that type rather
+/// than as a [type erased](TypeMapValue) box, which would carry a type tag.
+struct ErasedMetric<'a>(&'a dyn erased_serde::Serialize);
+
+impl Serialize for ErasedMetric<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        erased_serde::serialize(self.0, serializer)
+    }
+}
+
+/// Reads back what the [`Serialize`] impl writes; see there for why the order of the three
+/// elements is what makes this work.
+impl<'de> Deserialize<'de> for Rankings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_tuple_struct(RANKINGS, RANKINGS_ELEMENTS, RankingsVisitor)
+    }
+}
+
+struct RankingsVisitor;
+
+impl<'de> Visitor<'de> for RankingsVisitor {
+    type Value = Rankings;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("the metrics calculators, the rankings and the order of the rankings")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let metrics_calculators: Vec<Box<dyn MetricsCalculator>> = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        // one call of `metric_kind` per calculator, used both to build the layout and to read the
+        // metrics, so that the metric at a position is of the type the layout gives that position
+        // whatever a later call of `metric_kind` would say
+        let metric_kinds = metric_kinds(&metrics_calculators);
+        let metrics_layout = layout(&metric_kinds);
+        let rankings: IdMap<Ranking> = seq
+            .next_element_seed(IdMapSeed(RankingSeed {
+                metric_kinds: &metric_kinds,
+            }))?
+            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+        let ranking_ids_ordered_by_unique_rank = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+
+        // Establishes the invariant of `Rankings` for rankings that are read rather than played.
+        // The metrics came from the very kinds the layout was built from, so this can only fail
+        // for calculators that produce fewer distinct metric types than there are calculators,
+        // which would leave the layout with no position for one of them.
+        for ranking in rankings.values() {
+            if !is_layout_of(metrics_calculators.len(), &metrics_layout, &ranking.metrics) {
+                return Err(de::Error::custom(
+                    InvalidRankings::MetricsDoNotFollowLayout(ranking.id()),
+                ));
+            }
+        }
+
+        Ok(Rankings {
+            metrics_calculators,
+            metrics_layout,
+            rankings,
+            ranking_ids_ordered_by_unique_rank,
+        })
+    }
+}
+
+/// Reads a [`Ranking`] whose metrics are the ones `metric_kinds` describes. [`Ranking`] has no
+/// [`Deserialize`] impl of its own, since it cannot be read back without those kinds.
+#[derive(Clone, Copy)]
+struct RankingSeed<'a> {
+    metric_kinds: &'a [MetricKind],
+}
+
+impl<'de> DeserializeSeed<'de> for RankingSeed<'_> {
+    type Value = Ranking;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_struct(RANKING, RANKING_FIELDS, RankingVisitor(self))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum RankingField {
+    Id,
+    Entrants,
+    InitialUniqueRank,
+    UniqueRank,
+    Rank,
+    Metrics,
+}
+
+struct RankingVisitor<'a>(RankingSeed<'a>);
+
+impl<'de> Visitor<'de> for RankingVisitor<'_> {
+    type Value = Ranking;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a ranking")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let metrics_seed = MetricsSeed {
+            metric_kinds: self.0.metric_kinds,
+        };
+        Ok(Ranking {
+            id: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(0, &self))?,
+            entrants: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(1, &self))?,
+            initial_unique_rank: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(2, &self))?,
+            unique_rank: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(3, &self))?,
+            rank: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(4, &self))?,
+            metrics: seq
+                .next_element_seed(metrics_seed)?
+                .ok_or_else(|| de::Error::invalid_length(5, &self))?,
+        })
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut id = None;
+        let mut entrants = None;
+        let mut initial_unique_rank = None;
+        let mut unique_rank = None;
+        let mut rank = None;
+        let mut metrics = None;
+
+        while let Some(field) = map.next_key()? {
+            /// Reads the value of `field` into `slot`, which no earlier field may have filled.
+            macro_rules! read {
+                ($slot:ident, $index:expr, $value:expr) => {{
+                    if $slot.is_some() {
+                        return Err(de::Error::duplicate_field(RANKING_FIELDS[$index]));
+                    }
+                    $slot = Some($value);
+                }};
+            }
+            match field {
+                RankingField::Id => read!(id, 0, map.next_value()?),
+                RankingField::Entrants => read!(entrants, 1, map.next_value()?),
+                RankingField::InitialUniqueRank => {
+                    read!(initial_unique_rank, 2, map.next_value()?)
+                }
+                RankingField::UniqueRank => read!(unique_rank, 3, map.next_value()?),
+                RankingField::Rank => read!(rank, 4, map.next_value()?),
+                RankingField::Metrics => read!(
+                    metrics,
+                    5,
+                    map.next_value_seed(MetricsSeed {
+                        metric_kinds: self.0.metric_kinds,
+                    })?
+                ),
+            }
+        }
+
+        /// The value read into `slot`, or the error that names the field it is missing from.
+        macro_rules! required {
+            ($slot:ident, $index:expr) => {
+                $slot.ok_or_else(|| de::Error::missing_field(RANKING_FIELDS[$index]))?
+            };
+        }
+        Ok(Ranking {
+            id: required!(id, 0),
+            entrants: required!(entrants, 1),
+            initial_unique_rank: required!(initial_unique_rank, 2),
+            unique_rank: required!(unique_rank, 3),
+            rank: required!(rank, 4),
+            metrics: required!(metrics, 5),
+        })
+    }
+}
+
+/// Reads the metrics of one ranking: one metric per kind, of the type of the kind at its position.
+#[derive(Clone, Copy)]
+struct MetricsSeed<'a> {
+    metric_kinds: &'a [MetricKind],
+}
+
+impl<'de> DeserializeSeed<'de> for MetricsSeed<'_> {
+    type Value = Vec<Metric>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for MetricsSeed<'_> {
+    type Value = Vec<Metric>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "one metric per metrics calculator, {} of them",
+            self.metric_kinds.len()
+        )
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut metrics = Vec::with_capacity(self.metric_kinds.len());
+        for (index, kind) in self.metric_kinds.iter().enumerate() {
+            metrics.push(
+                seq.next_element_seed(MetricSeed(kind))?
+                    .ok_or_else(|| de::Error::invalid_length(index, &self))?,
+            );
+        }
+        // a ranking with more metrics than the phase has calculators has no position for the
+        // extra ones, and a format that does not check the length of a sequence itself would
+        // otherwise let them pass silently
+        if seq.next_element::<IgnoredAny>()?.is_some() {
+            return Err(de::Error::invalid_length(
+                self.metric_kinds.len() + 1,
+                &self,
+            ));
+        }
+        Ok(metrics)
+    }
+}
+
+/// Reads one metric as the type its [`MetricKind`] describes, which is what the type tag would
+/// have said if the metric carried one.
+struct MetricSeed<'a>(&'a MetricKind);
+
+impl<'de> DeserializeSeed<'de> for MetricSeed<'_> {
+    type Value = Metric;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut deserializer = <dyn erased_serde::Deserializer>::erase(deserializer);
+        self.0
+            .deserialize_metric(&mut deserializer)
+            .map_err(de::Error::custom)
+    }
+}
+
 const NAMESPACE_RANKING: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
 
-#[derive(Debug, Serialize, Deserialize)]
+/// One entrant or team of entrants in the [`Rankings`] of a phase, its rank and its metrics.
+///
+/// A ranking is neither [`Serialize`] nor [`Deserialize`]: its metrics are stored
+/// [type erased](TypeMapValue) and written without a type tag, so it can only be read or written
+/// as part of the rankings it belongs to, which knows the [kinds](MetricKind) of those metrics.
+/// See `SerializedRanking` and `RankingSeed`.
+#[derive(Debug)]
 pub struct Ranking {
     id: RankingId,
     entrants: Vec1<EntrantId>,

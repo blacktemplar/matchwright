@@ -9,7 +9,7 @@ use crate::{
     },
     map::Map,
     plugins::{
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricKind, MetricsCalculator},
         ranker::MetricComparatorProvider,
     },
     type_map::TypeMapValue,
@@ -48,8 +48,8 @@ pub struct RoundOfFirstLossCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for RoundOfFirstLossCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(RoundOfFirstLoss::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<RoundOfFirstLoss>()
     }
 
     fn update_after_match_result_changed(

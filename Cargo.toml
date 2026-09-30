@@ -12,6 +12,7 @@ uuid = { version = "1.26.1", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
 itertools = "0.15.0"
 dyn-clone = "1.0.20"
+erased-serde = "0.4.10"
 rustc-hash = "2.1.3"
 typetag = "0.2.23"
 serde = "1.0.229"

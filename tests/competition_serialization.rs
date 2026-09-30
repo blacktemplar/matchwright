@@ -421,65 +421,152 @@ fn deserializing_a_competition_with_an_unknown_phase_format_fails() {
     );
 }
 
+/// The positions of the three elements a [`Rankings`](tournament_engine::entities::rankings::
+/// Rankings) is serialized as. It is a tuple rather than a struct so that the metrics calculators
+/// can only arrive before the rankings whose metrics are read as the types those calculators
+/// describe.
+const CALCULATORS: usize = 0;
+const RANKINGS: usize = 1;
+
+/// The positions of the metrics of a ranking, which are the positions of the calculators of the
+/// phase in [`competition_with_a_phase`]. A metric is serialized as a bare value, so its position
+/// is all that says which metric it is.
+const WINS_DRAWS_LOSSES: usize = 1;
+const BUCHHOLZ: usize = 4;
+const SONNEBORN_BERGER_METRIC: usize = 5;
+
+/// The serialized rankings of every phase of `competition`.
+fn serialized_rankings(competition: &mut Value) -> impl Iterator<Item = &mut Value> {
+    competition["phases"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|phase| phase["rankings"][RANKINGS].as_array_mut().unwrap())
+}
+
+/// The metrics of a phase are not tagged with their type — the calculator at their position is
+/// what says what they are — so an unknown calculator is what an unknown metric used to be.
 #[test]
-fn deserializing_a_competition_with_an_unknown_metric_fails() {
+fn deserializing_a_competition_with_an_unknown_metrics_calculator_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
     for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
-            ranking["metrics"][0]["type"] = Value::String("NotAMetric".to_owned());
-        }
+        phase["rankings"][CALCULATORS][0]["type"] =
+            Value::String("NotAMetricsCalculator".to_owned());
     }
 
     let Err(error) = serde_json::from_value::<Competition>(value) else {
-        panic!("an unknown metric must not deserialize");
+        panic!("an unknown metrics calculator must not deserialize");
     };
 
     assert!(
-        error.to_string().contains("NotAMetric"),
-        "the error must name the unknown metric, but was: {error}"
+        error.to_string().contains("NotAMetricsCalculator"),
+        "the error must name the unknown metrics calculator, but was: {error}"
     );
 }
 
 /// A phase reads its metrics back by the position the layout of its calculators gives them, and
-/// casts them to the type that layout says they have without checking. A serialized competition
-/// whose metrics sit anywhere else therefore must not become a [`Competition`] at all — if it did,
-/// reading any metric of it would be undefined behaviour.
-#[test]
-fn deserializing_a_competition_whose_metrics_are_out_of_order_fails() {
-    let sm = competition_in_the_final();
-    let mut value = serde_json::to_value(sm.current()).unwrap();
-    for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
-            ranking["metrics"].as_array_mut().unwrap().reverse();
-        }
-    }
-
-    let Err(error) = serde_json::from_value::<Competition>(value) else {
-        panic!("metrics that do not follow the layout of the calculators must not deserialize");
-    };
-
-    assert!(
-        error.to_string().contains("do not follow the layout"),
-        "the error must say that the metrics do not follow the layout, but was: {error}"
-    );
-}
-
-/// Like [`deserializing_a_competition_whose_metrics_are_out_of_order_fails`], but for metrics that
-/// are in the right order and of a known type, only not of the type the calculator at that
-/// position produces.
+/// casts them to the type that layout says they have without checking. Reading a metric as the
+/// type of the calculator at its position is what keeps that sound, so a value that is not of
+/// that type must not become a [`Competition`] at all.
 #[test]
 fn deserializing_a_competition_with_a_metric_of_another_type_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
-    for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
-            ranking["metrics"][0] = json!({ "type": "Points", "value": 0.0 });
-        }
+    for ranking in serialized_rankings(&mut value) {
+        // where the three counts of a `WinsDrawsLosses` belong
+        ranking["metrics"][WINS_DRAWS_LOSSES] = json!(0.0);
     }
 
     let Err(error) = serde_json::from_value::<Competition>(value) else {
         panic!("a metric of another type than its calculator produces must not deserialize");
+    };
+
+    assert!(
+        error.to_string().contains("WinsDrawsLosses"),
+        "the error must name the type the metric was expected to have, but was: {error}"
+    );
+}
+
+/// Like [`deserializing_a_competition_with_a_metric_of_another_type_fails`], but for metrics that
+/// are all of a type some calculator of the phase produces, only not the one at their position.
+#[test]
+fn deserializing_a_competition_whose_metrics_are_out_of_order_fails() {
+    let sm = competition_in_the_final();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for ranking in serialized_rankings(&mut value) {
+        ranking["metrics"].as_array_mut().unwrap().reverse();
+    }
+
+    assert!(
+        serde_json::from_value::<Competition>(value).is_err(),
+        "metrics that do not follow the layout of the calculators must not deserialize"
+    );
+}
+
+/// What leaving the type tag off the metrics costs: two metrics that serialize the same way are
+/// indistinguishable once they are bare values, so swapping them is not an error but silently
+/// gives every ranking the other one's value. Both are still of the type their position says they
+/// are, so nothing that reads them is unsound — the competition is merely wrong.
+///
+/// The tags of the calculators are what bounds this: the set of types and the position of each is
+/// still checked, only not which value was written for which of two positions of the same shape.
+#[test]
+fn swapping_two_metrics_that_serialize_the_same_way_is_not_detected() {
+    let sm = competition_in_the_final();
+    let phase = &sm.current().phases()[&phase_id()];
+    // the two metrics are both a single `f32`, and they differ, so the swap is observable
+    let swapped: Vec<_> = phase
+        .ranking_ids_ordered_by_unique_rank()
+        .iter()
+        .map(|id| {
+            let ranking = phase.ranking_view(id);
+            (
+                *ranking.metric::<Buchholz>(),
+                *ranking.metric::<SonnebornBerger>(),
+            )
+        })
+        .collect();
+    assert!(swapped.iter().any(|(b, s)| b.0 != s.0));
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for ranking in serialized_rankings(&mut value) {
+        ranking["metrics"]
+            .as_array_mut()
+            .unwrap()
+            .swap(BUCHHOLZ, SONNEBORN_BERGER_METRIC);
+    }
+
+    let competition: Competition =
+        serde_json::from_value(value).expect("the swap is not something deserializing can catch");
+
+    let phase = &competition.phases()[&phase_id()];
+    for (id, (buchholz, sonneborn_berger)) in phase
+        .ranking_ids_ordered_by_unique_rank()
+        .iter()
+        .zip(swapped)
+    {
+        let ranking = phase.ranking_view(id);
+        assert_eq!(ranking.metric::<Buchholz>().0, sonneborn_berger.0);
+        assert_eq!(ranking.metric::<SonnebornBerger>().0, buchholz.0);
+    }
+}
+
+/// The layout of a phase holds one position per metric type, so two calculators producing the same
+/// type would leave one of them without a position of its own. Nothing can stop a serialized
+/// competition from listing such a pair, which is why the metrics of every ranking are checked
+/// against the layout before the rankings exist.
+#[test]
+fn deserializing_a_competition_with_two_calculators_of_the_same_metric_fails() {
+    let sm = competition_in_the_final();
+    let mut value = serde_json::to_value(sm.current()).unwrap();
+    for phase in value["phases"].as_array_mut().unwrap() {
+        let calculators = phase["rankings"][CALCULATORS].as_array_mut().unwrap();
+        // both calculate a single `f32`, so every metric still reads back as some known type
+        calculators[BUCHHOLZ] = calculators[SONNEBORN_BERGER_METRIC].clone();
+    }
+
+    let Err(error) = serde_json::from_value::<Competition>(value) else {
+        panic!("two calculators of the same metric must not deserialize");
     };
 
     assert!(

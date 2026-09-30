@@ -8,7 +8,7 @@ use crate::{
         rankings::RankingId,
     },
     map::Map,
-    plugins::metrics_calculator::{Metric, MetricsCalculator},
+    plugins::metrics_calculator::{Metric, MetricKind, MetricsCalculator},
     type_map::TypeMapValue,
 };
 
@@ -27,8 +27,8 @@ pub struct WinsDrawsLossesCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for WinsDrawsLossesCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(WinsDrawsLosses::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<WinsDrawsLosses>()
     }
 
     fn update_after_match_result_changed(

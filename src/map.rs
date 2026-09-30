@@ -16,7 +16,7 @@ use indexmap::{IndexMap, map as index_map};
 use rustc_hash::FxBuildHasher;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{SeqAccess, Visitor},
+    de::{DeserializeSeed, SeqAccess, Visitor},
     ser::SerializeSeq,
 };
 
@@ -124,6 +124,29 @@ where
     }
 }
 
+/// Serializes an [`IdMap`] in its serialized form — a plain sequence of its values, in insertion
+/// order — with every value replaced by `wrap(value)`, for values that cannot serialize on their
+/// own because they need something only their map knows.
+///
+/// This is what the [`Serialize`] impl below is defined in terms of, so that there is only one
+/// place that decides what the serialized form of an [`IdMap`] is.
+pub(crate) fn serialize_id_map_with<'a, V, W, S>(
+    map: &'a IdMap<V>,
+    serializer: S,
+    wrap: impl Fn(&'a V) -> W,
+) -> Result<S::Ok, S::Error>
+where
+    V: IdAble,
+    W: Serialize,
+    S: Serializer,
+{
+    let mut seq = serializer.serialize_seq(Some(map.0.len()))?;
+    for v in map.0.values() {
+        seq.serialize_element(&wrap(v))?;
+    }
+    seq.end()
+}
+
 /// Serializes as a plain sequence of the values, in insertion order; their ids are left out, since
 /// every value carries its own.
 impl<V: IdAble + Serialize> Serialize for IdMap<V> {
@@ -131,21 +154,43 @@ impl<V: IdAble + Serialize> Serialize for IdMap<V> {
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for v in self.0.values() {
-            seq.serialize_element(v)?;
-        }
-        seq.end()
+        serialize_id_map_with(self, serializer, |v| v)
     }
 }
 
-struct IdMapVisitor<V>(PhantomData<V>);
+/// Deserializes an [`IdMap`] from its serialized form with `S` reading every value, for values
+/// that need a seed to be read back.
+///
+/// The seed has to be [`Copy`] because every value of the map is read with it. The [`Deserialize`]
+/// impl below is this seeded with [`PhantomData`], which serde implements as "just deserialize a
+/// `V`", so that seeded and unseeded reading cannot drift apart.
+pub(crate) struct IdMapSeed<S>(pub(crate) S);
 
-impl<'de, V: IdAble + Deserialize<'de>> Visitor<'de> for IdMapVisitor<V>
+impl<'de, S> DeserializeSeed<'de> for IdMapSeed<S>
 where
-    V::Id: Eq + Hash,
+    S: DeserializeSeed<'de> + Copy,
+    S::Value: IdAble,
+    <S::Value as IdAble>::Id: Eq + Hash,
 {
-    type Value = IdMap<V>;
+    type Value = IdMap<S::Value>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(IdMapVisitor(self.0))
+    }
+}
+
+struct IdMapVisitor<S>(S);
+
+impl<'de, S> Visitor<'de> for IdMapVisitor<S>
+where
+    S: DeserializeSeed<'de> + Copy,
+    S::Value: IdAble,
+    <S::Value as IdAble>::Id: Eq + Hash,
+{
+    type Value = IdMap<S::Value>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("a sequence of IdAble values")
@@ -157,7 +202,7 @@ where
     {
         let mut map = IdMap::with_capacity(seq.size_hint().unwrap_or(0));
 
-        while let Some(value) = seq.next_element::<V>()? {
+        while let Some(value) = seq.next_element_seed(self.0)? {
             map.insert(value);
         }
 
@@ -173,7 +218,7 @@ where
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_seq(IdMapVisitor(PhantomData::<V>))
+        IdMapSeed(PhantomData::<V>).deserialize(deserializer)
     }
 }
 

@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, MetricKind};
 use crate::{
     entities::{
         phase::{Match, MatchId, MatchResult, Phase},
@@ -24,8 +24,8 @@ pub struct MatchesCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for MatchesCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(Matches::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<Matches>()
     }
 
     fn update_after_match_result_changed(

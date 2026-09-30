@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, MetricKind};
 use crate::{
     entities::{
         phase::{Match, MatchResult, Phase},
@@ -59,8 +59,8 @@ pub struct BuchholzCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for BuchholzCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(Buchholz::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<Buchholz>()
     }
 
     fn update_after_match_result_changed(
@@ -172,8 +172,8 @@ pub struct BuchholzOfBuchholzCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for BuchholzOfBuchholzCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(BuchholzOfBuchholz::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<BuchholzOfBuchholz>()
     }
 
     fn update_after_match_result_changed(

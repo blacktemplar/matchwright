@@ -787,6 +787,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "dyn-clone",
+ "erased-serde",
  "indexmap",
  "itertools 0.15.0",
  "postcard",

@@ -9,7 +9,9 @@ use crate::{
     },
     map::Map,
     plugins::{
-        metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
+        metrics_calculator::{
+            Metric, MetricKind, MetricsCalculator, matches::Matches, points::Points,
+        },
         ranker::MetricComparatorProvider,
     },
     type_map::TypeMapValue,
@@ -58,8 +60,8 @@ impl SonnebornBergerCalculator {
 
 #[typetag::serde]
 impl MetricsCalculator for SonnebornBergerCalculator {
-    fn default_metric_value(&self) -> Metric {
-        Box::new(SonnebornBerger::default())
+    fn metric_kind(&self) -> MetricKind {
+        MetricKind::of::<SonnebornBerger>()
     }
 
     fn update_after_match_result_changed(
