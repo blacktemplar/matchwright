@@ -3,8 +3,9 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::phase::{
-        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    entities::{
+        phase::{Match, MatchResult, Phase},
+        rankings::{Compare, Comparison, MetricComparator, RankingId, Rankings},
     },
     map::Map,
     plugins::{
@@ -37,8 +38,8 @@ pub struct RoundOfFirstLossComparatorProvider;
 
 #[typetag::serde]
 impl MetricComparatorProvider for RoundOfFirstLossComparatorProvider {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
-        MetricComparator::new::<RoundOfFirstLoss>(phase)
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a> {
+        MetricComparator::new::<RoundOfFirstLoss>(rankings)
     }
 }
 

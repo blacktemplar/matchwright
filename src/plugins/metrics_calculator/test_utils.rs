@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
-    entities::phase::{Match, MatchId, Phase, PhaseBuilder, RankingId},
+    entities::{
+        phase::{Match, MatchId, Phase, PhaseBuilder},
+        rankings::RankingId,
+    },
     plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
 };
 

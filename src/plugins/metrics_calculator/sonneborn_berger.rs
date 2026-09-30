@@ -3,8 +3,9 @@ use std::any::{Any, TypeId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::phase::{
-        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId, ResultOfTeam,
+    entities::{
+        phase::{Match, MatchResult, Phase, ResultOfTeam},
+        rankings::{Compare, Comparison, MetricComparator, RankingId, Rankings},
     },
     map::Map,
     plugins::{
@@ -32,8 +33,8 @@ pub struct SonnebornBergerComparatorProvider;
 
 #[typetag::serde]
 impl MetricComparatorProvider for SonnebornBergerComparatorProvider {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
-        MetricComparator::new::<SonnebornBerger>(phase)
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a> {
+        MetricComparator::new::<SonnebornBerger>(rankings)
     }
 }
 

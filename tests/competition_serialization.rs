@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use tournament_engine::{
     entities::{
         competition::{Competition, Entrant, EntrantId},
-        phase::{Match, MatchId, MatchResult, Phase, PhaseId, RankingView},
+        phase::{Match, MatchId, MatchResult, Phase, PhaseId},
+        rankings::RankingView,
     },
     plugins::{
         metrics_calculator::{
@@ -425,7 +426,7 @@ fn deserializing_a_competition_with_an_unknown_metric_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
     for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
             ranking["metrics"][0]["type"] = Value::String("NotAMetric".to_owned());
         }
     }
@@ -449,7 +450,7 @@ fn deserializing_a_competition_whose_metrics_are_out_of_order_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
     for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
             ranking["metrics"].as_array_mut().unwrap().reverse();
         }
     }
@@ -472,7 +473,7 @@ fn deserializing_a_competition_with_a_metric_of_another_type_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
     for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"].as_array_mut().unwrap() {
+        for ranking in phase["rankings"]["rankings"].as_array_mut().unwrap() {
             ranking["metrics"][0] = json!({ "type": "Points", "value": 0.0 });
         }
     }

@@ -5,7 +5,8 @@ use rand::{RngExt, rng};
 use tournament_engine::{
     entities::{
         competition::{Competition, Entrant, EntrantId},
-        phase::{Match, MatchId, MatchResult, PhaseId, RankingView},
+        phase::{Match, MatchId, MatchResult, PhaseId},
+        rankings::RankingView,
     },
     plugins::{
         metrics_calculator::{

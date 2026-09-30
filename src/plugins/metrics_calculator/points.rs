@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::phase::{
-        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    entities::{
+        phase::{Match, MatchResult, Phase},
+        rankings::{Compare, Comparison, MetricComparator, RankingId, Rankings},
     },
     map::Map,
     plugins::{
@@ -39,8 +40,8 @@ pub struct PointsComparatorProvider;
 
 #[typetag::serde]
 impl MetricComparatorProvider for PointsComparatorProvider {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
-        MetricComparator::new::<Points>(phase)
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a> {
+        MetricComparator::new::<Points>(rankings)
     }
 }
 

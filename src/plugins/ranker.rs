@@ -4,7 +4,10 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::phase::{Comparison, MetricComparator, Phase, RankingId, RankingView},
+    entities::{
+        phase::Phase,
+        rankings::{Comparison, MetricComparator, RankingId, RankingView, Rankings},
+    },
     plugins::Plugin,
 };
 
@@ -100,7 +103,7 @@ impl Ranker for HierarchicalRanker {
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait MetricComparatorProvider: Plugin {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a>;
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a>;
 }
 
 impl Clone for Box<dyn MetricComparatorProvider> {
@@ -140,7 +143,9 @@ impl SliceRanker for LexicographicalMetrics {
         let comparators = self
             .0
             .iter()
-            .map(|metric_comparator_provider| metric_comparator_provider.metric_comparator(phase))
+            .map(|metric_comparator_provider| {
+                metric_comparator_provider.metric_comparator(phase.rankings())
+            })
             .collect_vec();
 
         // all rankings of a slice come in tied at one rank, so any of them holds the rank the best

@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::phase::{
-        Compare, Comparison, Match, MatchResult, MetricComparator, Phase, RankingId,
+    entities::{
+        phase::{Match, MatchResult, Phase},
+        rankings::{Compare, Comparison, MetricComparator, RankingId, Rankings},
     },
     map::Map,
     plugins::{
@@ -48,8 +49,8 @@ pub struct BuchholzComparatorProvider;
 
 #[typetag::serde]
 impl MetricComparatorProvider for BuchholzComparatorProvider {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
-        MetricComparator::new::<Buchholz>(phase)
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a> {
+        MetricComparator::new::<Buchholz>(rankings)
     }
 }
 
@@ -161,8 +162,8 @@ pub struct BuchholzOfBuchholzComparatorProvider;
 
 #[typetag::serde]
 impl MetricComparatorProvider for BuchholzOfBuchholzComparatorProvider {
-    fn metric_comparator<'a>(&self, phase: &'a Phase) -> MetricComparator<'a> {
-        MetricComparator::new::<BuchholzOfBuchholz>(phase)
+    fn metric_comparator<'a>(&self, rankings: &'a Rankings) -> MetricComparator<'a> {
+        MetricComparator::new::<BuchholzOfBuchholz>(rankings)
     }
 }
 

@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::phase::{Match, MatchResult, Phase, RankingId},
+    entities::{
+        phase::{Match, MatchResult, Phase},
+        rankings::RankingId,
+    },
     map::Map,
     plugins::phase_format::PhaseFormat,
 };
