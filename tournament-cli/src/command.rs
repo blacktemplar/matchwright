@@ -46,6 +46,8 @@ pub enum Command {
     Report {
         /// The number of the match, as listed by `matches`
         number: NonZeroUsize,
+        /// Case insensitive, so that the sides can be named the way `matches` shows them
+        #[arg(ignore_case = true)]
         result: ReportedResult,
     },
     /// Show the current ranking
@@ -204,6 +206,31 @@ mod tests {
             parse("report 3 draw"),
             Command::Report {
                 number: NonZeroUsize::new(3).unwrap(),
+                result: ReportedResult::Draw
+            }
+        );
+    }
+
+    #[test]
+    fn a_result_can_be_reported_in_the_case_the_sides_are_shown_in() {
+        assert_eq!(
+            parse("report 1 A"),
+            Command::Report {
+                number: NonZeroUsize::new(1).unwrap(),
+                result: ReportedResult::A
+            }
+        );
+        assert_eq!(
+            parse("report 1 B"),
+            Command::Report {
+                number: NonZeroUsize::new(1).unwrap(),
+                result: ReportedResult::B
+            }
+        );
+        assert_eq!(
+            parse("report 1 Draw"),
+            Command::Report {
+                number: NonZeroUsize::new(1).unwrap(),
                 result: ReportedResult::Draw
             }
         );
