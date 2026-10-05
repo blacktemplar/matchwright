@@ -364,8 +364,8 @@ impl Session {
             .filter(|(_, r#match)| !(only_open && r#match.is_finished()))
             .map(|(index, r#match)| {
                 vec![
-                    format!("#{}", index + 1),
-                    format!("round {}", r#match.round()),
+                    (index + 1).to_string(),
+                    r#match.round().to_string(),
                     self.team_name(phase, r#match.team_a()),
                     "vs".to_owned(),
                     self.team_name(phase, r#match.team_b()),
@@ -376,7 +376,8 @@ impl Session {
         if rows.is_empty() {
             return Ok("there are no open matches".to_owned());
         }
-        Ok(table(&rows))
+        // naming the two sides `A` and `B` is what `report <number> a|b` reports a win for
+        Ok(table(&["#", "round", "A", "vs", "B", "result"], &rows))
     }
 
     fn report(&mut self, number: NonZeroUsize, result: ReportedResult) -> Result<String, Error> {
@@ -420,23 +421,23 @@ impl Session {
             .iter()
             .filter(|(_, cell)| cell(rankings[0]).is_some())
             .collect();
-        let header = ["#", "name"]
+        let header: Vec<_> = ["#", "name"]
             .into_iter()
             .chain(columns.iter().map(|(header, _)| *header))
-            .map(str::to_owned)
             .collect();
-        let rows = rankings.iter().map(|ranking| {
-            [
-                ranking.rank().to_string(),
-                self.team_name(phase, &[ranking.id()]),
-            ]
-            .into_iter()
-            .chain(columns.iter().map(|(_, cell)| cell(ranking).unwrap()))
-            .collect()
-        });
-        Ok(table(
-            &std::iter::once(header).chain(rows).collect::<Vec<_>>(),
-        ))
+        let rows: Vec<_> = rankings
+            .iter()
+            .map(|ranking| {
+                [
+                    ranking.rank().to_string(),
+                    self.team_name(phase, &[ranking.id()]),
+                ]
+                .into_iter()
+                .chain(columns.iter().map(|(_, cell)| cell(ranking).unwrap()))
+                .collect()
+            })
+            .collect();
+        Ok(table(&header, &rows))
     }
 
     /// Undoes the change that is the latest one still in effect.
@@ -591,30 +592,42 @@ const METRIC_COLUMNS: &[MetricColumn] = &[
     }),
 ];
 
-/// Lays `rows` out as left-aligned columns.
-fn table(rows: &[Vec<String>]) -> String {
-    let mut widths = Vec::new();
+/// Lays `header` and `rows` out as left-aligned columns, with the header underlined.
+fn table(header: &[&str], rows: &[Vec<String>]) -> String {
+    let mut widths: Vec<_> = header.iter().map(|cell| cell.chars().count()).collect();
     for row in rows {
         widths.resize(widths.len().max(row.len()), 0);
         for (width, cell) in widths.iter_mut().zip(row) {
             *width = (*width).max(cell.chars().count());
         }
     }
-    rows.iter()
-        .map(|row| {
-            let mut line = String::new();
-            for (cell, width) in row.iter().zip(&widths) {
-                write!(line, "{cell:width$}  ").unwrap();
-            }
-            line.trim_end().to_owned()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let underline: Vec<_> = widths.iter().map(|width| "-".repeat(*width)).collect();
+    let body = rows
+        .iter()
+        .map(|row| row.iter().map(String::as_str).collect());
+    [
+        header.to_vec(),
+        underline.iter().map(String::as_str).collect(),
+    ]
+    .into_iter()
+    .chain(body)
+    .map(|row: Vec<&str>| {
+        let mut line = String::new();
+        for (cell, width) in row.iter().zip(&widths) {
+            write!(line, "{cell:width$}  ").unwrap();
+        }
+        line.trim_end().to_owned()
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The header and its underline, which every table shown by a command starts with.
+    const HEADER_LINES: usize = 2;
 
     #[track_caller]
     fn execute(session: &mut Session, line: &str) -> Result<Outcome, Error> {
@@ -735,8 +748,9 @@ mod tests {
     #[test]
     fn a_round_robin_is_played_to_the_end() {
         let mut session = started("round-robin");
+        let matches = output(&mut session, "matches --open");
         assert_eq!(
-            output(&mut session, "matches --open").lines().count(),
+            matches.lines().skip(HEADER_LINES).count(),
             6,
             "everyone plays everyone"
         );
@@ -757,7 +771,7 @@ mod tests {
             header.split_whitespace().collect::<Vec<_>>(),
             ["#", "name", "W-D-L", "points", "Sonneborn-Berger"]
         );
-        assert_eq!(ranking.lines().count(), 5);
+        assert_eq!(ranking.lines().skip(HEADER_LINES).count(), 4);
     }
 
     #[test]
@@ -799,7 +813,12 @@ mod tests {
         );
         output(&mut session, "report 3 a");
         let ranking = output(&mut session, "ranking");
-        let winner: Vec<_> = ranking.lines().nth(1).unwrap().split_whitespace().collect();
+        let winner: Vec<_> = ranking
+            .lines()
+            .nth(HEADER_LINES)
+            .unwrap()
+            .split_whitespace()
+            .collect();
         assert_eq!(winner[0], "1", "{ranking}");
         assert_eq!(winner[2..], ["-", "2-0-0"], "{ranking}");
     }
@@ -882,6 +901,7 @@ mod tests {
         assert!(
             output(&mut loaded, "matches")
                 .lines()
+                .skip(HEADER_LINES)
                 .all(|line| line.ends_with("open"))
         );
     }
@@ -945,12 +965,15 @@ mod tests {
     }
 
     #[test]
-    fn a_table_aligns_its_columns() {
+    fn a_table_aligns_its_columns_under_an_underlined_header() {
         let rows = [
             vec!["1".to_owned(), "Alice".to_owned(), "3".to_owned()],
             vec!["10".to_owned(), "Bo".to_owned(), "0".to_owned()],
         ];
 
-        assert_eq!(table(&rows), "1   Alice  3\n10  Bo     0");
+        assert_eq!(
+            table(&["#", "name", "points"], &rows),
+            "#   name   points\n--  -----  ------\n1   Alice  3\n10  Bo     0"
+        );
     }
 }
