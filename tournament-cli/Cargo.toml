@@ -1,0 +1,13 @@
+[package]
+name = "tournament-cli"
+description = "A small command line interface for running tournaments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tournament"
+path = "src/main.rs"
+
+[dependencies]
+tournament-engine.workspace = true

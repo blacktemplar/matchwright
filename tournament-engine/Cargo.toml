@@ -1,0 +1,28 @@
+[package]
+name = "tournament-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dyn-clone.workspace = true
+indexmap.workspace = true
+itertools.workspace = true
+rand.workspace = true
+rand_seeder.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+typetag.workspace = true
+undoable-state-machine.workspace = true
+uuid.workspace = true
+vec1.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+postcard.workspace = true
+serde_json.workspace = true
+
+[[bench]]
+name = "large_tournament"
+harness = false

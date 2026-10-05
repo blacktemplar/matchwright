@@ -782,6 +782,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tournament-cli"
+version = "0.1.0"
+dependencies = [
+ "tournament-engine",
+]
+
+[[package]]
 name = "tournament-engine"
 version = "0.1.0"
 dependencies = [

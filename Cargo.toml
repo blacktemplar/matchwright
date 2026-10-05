@@ -1,32 +1,34 @@
-[package]
-name = "tournament-engine"
+[workspace]
+members = ["tournament-cli", "tournament-engine"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
-[dependencies]
+# Dependency versions live here so that every member resolves to the same one, and a bump is a
+# single edit.
+[workspace.dependencies]
+criterion = "0.8.2"
+dyn-clone = "1.0.20"
+indexmap = { version = "2.14.2", features = ["serde"] }
+itertools = "0.15.0"
+postcard = { version = "1.1.3", features = ["use-std"] }
 rand = "0.10.3"
 rand_seeder = "0.5.0"
+rustc-hash = "2.1.3"
+serde = "1.0.229"
+serde_json = "1.0.151"
 thiserror = "2.0.21"
+tournament-engine = { path = "tournament-engine" }
+typetag = "0.2.23"
 undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine" }
 uuid = { version = "1.26.1", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
-itertools = "0.15.0"
-dyn-clone = "1.0.20"
-rustc-hash = "2.1.3"
-typetag = "0.2.23"
-serde = "1.0.229"
-indexmap = { version = "2.14.2", features = ["serde"] }
 
-[dev-dependencies]
-criterion = "0.8.2"
-postcard = { version = "1.1.3", features = ["use-std"] }
-serde_json = "1.0.151"
-
+# Profiles are only honoured in the workspace root, so they stay here rather than in a member.
 [profile.release-checked]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-
-[[bench]]
-name = "large_tournament"
-harness = false

@@ -24,8 +24,8 @@ pub type Metric = Box<dyn TypeMapValue>;
 pub trait MetricsCalculator: Plugin {
     fn default_metric_value(&self) -> Metric;
 
-    /// The metrics in the result vec must all have the type id returned by
-    /// [`Self::produced_metric`].
+    /// The metrics in the result vec must all have the same underlying type as
+    /// the value returned from [`Self::default_metric_value`].
     fn update_after_match_result_changed(
         &self,
         phase: &Phase,
