@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
 };
 
+use dyn_clone::DynClone;
 use serde::{
     Deserialize, Serialize,
     de::{SeqAccess, Visitor},
@@ -11,8 +12,19 @@ use serde::{
 
 use crate::map::{Map, map_with_capacity};
 
+/// A value that can be stored in a [`TypeMap`], keyed by its own concrete type.
+///
+/// [`DynClone`] is required because the entities holding a [`TypeMap`] are cloned on every replay
+/// of the transition log: [`Transition::apply`](undoable_state_machine::Transition::apply) takes
+/// `&self`, so a transition carrying a value of this trait has to clone it rather than move it out.
 #[typetag::serde(tag = "type", content = "value")]
-pub trait TypeMapValue: Any + Debug {}
+pub trait TypeMapValue: Any + Debug + DynClone {}
+
+impl Clone for Box<dyn TypeMapValue> {
+    fn clone(&self) -> Self {
+        dyn_clone::clone_box(&**self)
+    }
+}
 
 /// Downcasts `value` to `&T` without checking that its concrete type really is `T`.
 ///
@@ -50,7 +62,14 @@ unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
     unsafe { &mut *(value as *mut dyn Any).cast::<T>() }
 }
 
-#[derive(Debug, Default)]
+/// A map of values keyed by their own Rust type, holding at most one value per type.
+///
+/// This is how open-ended data enters the engine without an untyped bag of strings: a key is a
+/// [`TypeId`] rather than a name, so a lookup cannot ask for a key that does not exist or get back
+/// a value of an unexpected shape. It carries the metrics of a
+/// [`Ranking`](crate::entities::competition::Ranking) and the consumer annotations of an
+/// [`Entrant`](crate::entities::competition::Entrant).
+#[derive(Debug, Default, Clone)]
 pub struct TypeMap(Map<TypeId, Box<dyn TypeMapValue>>);
 
 impl Serialize for TypeMap {
@@ -144,7 +163,7 @@ mod tests {
     use super::*;
     use crate::plugins::metrics_calculator::{points::Points, wins_draws_losses::WinsDrawsLosses};
 
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Count {
         count: u32,
     }
@@ -152,7 +171,7 @@ mod tests {
     #[typetag::serde]
     impl TypeMapValue for Count {}
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Label {
         text: String,
         weight: f64,
@@ -163,7 +182,7 @@ mod tests {
 
     /// A value whose fields are themselves compound, so that a round trip has to preserve more
     /// than a flat list of scalars.
-    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct History {
         entries: Vec<Count>,
         finished: bool,

@@ -18,7 +18,7 @@ use crate::{
         phase_format::PhaseFormat,
         ranker::Ranker,
     },
-    type_map::TypeMap,
+    type_map::{TypeMap, TypeMapValue},
 };
 
 /// Namespaces for various deterministic ids
@@ -134,9 +134,17 @@ impl EntrantId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Someone taking part in a competition.
+///
+/// Core only needs the [`EntrantId`]; everything a consumer wants to show or store about an entrant
+/// — a display name, a club, a database id — lives in `annotations`, keyed by the consumer's own
+/// type. Since an entrant is consumer-created, its annotations are given once, by the
+/// [`AddEntrant`](crate::transitions::add_entrant::AddEntrant) that creates it, which is what keeps
+/// them part of the transition log and therefore reproducible under replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entrant {
     id: EntrantId,
+    annotations: TypeMap,
 }
 
 impl IdAble for Entrant {
@@ -148,12 +156,48 @@ impl IdAble for Entrant {
 }
 
 impl Entrant {
+    /// Creates an entrant without any annotations.
     pub fn new(id: EntrantId) -> Self {
-        Self { id }
+        Self {
+            id,
+            annotations: TypeMap::new(),
+        }
+    }
+
+    /// Returns this entrant with `annotation` added, replacing an annotation of the same type.
+    ///
+    /// # Examples
+    /// ```
+    /// # use serde::{Deserialize, Serialize};
+    /// # use tournament_engine::entities::competition::{Entrant, EntrantId};
+    /// # use tournament_engine::type_map::TypeMapValue;
+    /// # use uuid::Uuid;
+    /// #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    /// struct DatabaseId(u64);
+    ///
+    /// #[typetag::serde(name = "example::database_id")]
+    /// impl TypeMapValue for DatabaseId {}
+    ///
+    /// let entrant = Entrant::new(EntrantId::new(Uuid::nil())).with_annotation(DatabaseId(17));
+    ///
+    /// assert_eq!(entrant.annotation::<DatabaseId>(), Some(&DatabaseId(17)));
+    /// ```
+    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
+        self.annotations.insert(annotation);
+        self
     }
 
     pub fn id(&self) -> EntrantId {
         self.id
+    }
+
+    /// The annotation of type `T` this entrant was created with, if any.
+    pub fn annotation<T: 'static>(&self) -> Option<&T> {
+        self.annotations.get::<T>()
+    }
+
+    pub fn annotations(&self) -> &TypeMap {
+        &self.annotations
     }
 }
 

@@ -785,7 +785,11 @@ dependencies = [
 name = "tournament-cli"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tournament-engine",
+ "typetag",
+ "uuid",
 ]
 
 [[package]]

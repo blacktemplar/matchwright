@@ -4,6 +4,7 @@
 
 use itertools::Itertools;
 use rand::RngExt;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tournament_engine::{
     entities::competition::{
@@ -30,6 +31,7 @@ use tournament_engine::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
+    type_map::TypeMapValue,
 };
 use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
 use uuid::Uuid;
@@ -48,6 +50,15 @@ const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::n
 fn phase_id() -> PhaseId {
     PhaseId::new(Uuid::from_u128(0xfa5e))
 }
+
+/// A consumer annotation on an [`Entrant`], standing in for whatever a real consumer attaches.
+/// Core never reads it, so all a round trip has to do is hand it back as the same concrete type
+/// holding the same value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Nickname(String);
+
+#[typetag::serde(name = "test::nickname")]
+impl TypeMapValue for Nickname {}
 
 #[track_caller]
 fn apply(sm: &mut CompetitionStateMachine, transition: impl Transition<Competition> + 'static) {
@@ -77,7 +88,8 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
     apply(&mut sm, SetCompetitionSeed::new(SEED));
     for entrant in 0..4 {
         let id = EntrantId::new(Uuid::from_u128(entrant));
-        apply(&mut sm, AddEntrant::new(Entrant::new(id)));
+        let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
+        apply(&mut sm, AddEntrant::new(entrant));
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
         LexicographicalMetrics::new()
@@ -194,6 +206,20 @@ fn assert_same_metrics(left: &Ranking, right: &Ranking) {
     );
 }
 
+/// Asserts that both entrants hold the same id and the same annotations.
+///
+/// [`Entrant`] holds a [`TypeMap`](tournament_engine::type_map::TypeMap), which cannot implement
+/// [`PartialEq`] — a boxed annotation has no way to compare itself to another one — so the
+/// comparison goes field by field, asking for each annotation by its type.
+#[track_caller]
+fn assert_same_entrant(left: &Entrant, right: &Entrant) {
+    assert_eq!(left.id(), right.id());
+    assert_eq!(
+        left.annotation::<Nickname>(),
+        right.annotation::<Nickname>()
+    );
+}
+
 /// Asserts that both competitions hold the same state, first through the public getters, so that a
 /// failure points at the part that differs, and then through their whole serialized form, which
 /// also covers the private fields and the plugins.
@@ -203,7 +229,11 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
     assert_eq!(left.seed(), right.seed());
     assert_eq!(left.entrants().len(), right.entrants().len());
     for entrant in left.entrants() {
-        assert_eq!(Some(entrant), right.entrants().get(&entrant.id()));
+        let other = right
+            .entrants()
+            .get(&entrant.id())
+            .expect("the entrant must exist");
+        assert_same_entrant(entrant, other);
     }
     assert_eq!(left.phases().len(), right.phases().len());
     for phase in left.phases() {

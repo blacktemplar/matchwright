@@ -218,8 +218,10 @@ What differs per entity is only *which transition* writes it, which follows from
 who creates the entity:
 
 - **Entrants** are consumer-created, so the `TypeMap` on `Entrant` is populated by
-  the `AddEntrant` that creates it.
-- **Matches** are core-created inside `report_match_result`, with no consumer in
+  the `AddEntrant` that creates it — an `Entrant` is built with
+  `Entrant::new(id).with_annotation(value)` and read with
+  `entrant.annotation::<DisplayName>()`.
+- **Matches** (*planned*) are core-created inside `report_match_result`, with no consumer in
   the loop, so annotating is necessarily a second step: an `AnnotateMatch`
   transition carrying `Box<dyn TypeMapValue>` (already `typetag`-serializable, so
   the consumer's type tags itself) writes into the `TypeMap` of an existing
