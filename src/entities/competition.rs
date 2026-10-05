@@ -349,6 +349,11 @@ impl Phase {
     pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
         self.new_seeded_rng(entropy)
     }
+
+    /// Match index can be considered a constant match number as matches only ever get appended.
+    pub fn get_match_index(&self, match_id: &MatchId) -> usize {
+        self.matches.get_index_of(match_id).unwrap()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
