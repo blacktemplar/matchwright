@@ -27,7 +27,9 @@ use tournament_engine::{
         start_competition::StartCompetition,
     },
 };
-use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
+use undoable_state_machine::{
+    LogEntry, LogEntryKind, StateMachine, StateMachineError, Transition, TransitionId,
+};
 use uuid::Uuid;
 use vec1::vec1;
 
@@ -44,7 +46,7 @@ fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {
 fn apply(
     sm: &mut CompetitionStateMachine,
     transition: impl Transition<Competition> + 'static,
-) -> Result<(), undoable_state_machine::StateMachineError> {
+) -> Result<(), StateMachineError> {
     sm.apply(LogEntry::new(
         TransitionId::new(),
         LogEntryKind::Apply(Box::new(transition)),
@@ -384,4 +386,48 @@ fn full_tournament() {
         3.0,
         12.0,
     );
+}
+
+/// A single elimination match has to produce a winner, so a draw is rejected as not applicable
+/// instead of reaching the phase format, and the match can still be decided afterwards.
+#[test]
+fn single_elimination_rejects_a_draw() {
+    let mut sm = CompetitionStateMachine::default();
+    let phase_id = PhaseId::new(Uuid::new_v4());
+    apply(&mut sm, AddEntrant::new(entrant())).unwrap();
+    apply(&mut sm, AddEntrant::new(entrant())).unwrap();
+    apply(
+        &mut sm,
+        AddPhase::new(
+            phase_id,
+            Box::new(SingleElimination),
+            Box::new(HierarchicalRanker::new(vec![Box::new(
+                LexicographicalMetrics::new().add_metric(RoundOfFirstLossGetter),
+            )])),
+            vec![Box::new(RoundOfFirstLossCalculator)],
+        ),
+    )
+    .unwrap();
+    apply(&mut sm, StartCompetition).unwrap();
+    let final_id = *sm.current().phases()[&phase_id]
+        .matches()
+        .keys()
+        .exactly_one()
+        .unwrap();
+
+    let draw = apply(
+        &mut sm,
+        ReportMatchResult::new(phase_id, final_id, MatchResult::Draw),
+    );
+
+    let Err(StateMachineError::Transition(_, error)) = draw else {
+        panic!("a draw must not be applicable, got {draw:?}");
+    };
+    assert_eq!(error.to_string(), "the phase format does not allow draws");
+    assert!(!sm.current().phases()[&phase_id].matches()[&final_id].is_finished());
+    apply(
+        &mut sm,
+        ReportMatchResult::new(phase_id, final_id, MatchResult::AWins),
+    )
+    .unwrap();
 }

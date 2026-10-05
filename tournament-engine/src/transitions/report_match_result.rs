@@ -32,19 +32,25 @@ pub enum ReportMatchResultError {
     MatchDoesNotExist,
     #[error("match already finished")]
     MatchAlreadyFinished,
+    #[error("the phase format does not allow draws")]
+    DrawNotAllowed,
 }
 
 impl Transition<Competition> for ReportMatchResult {
     fn check_applicable(&self, competition: &Competition) -> Result<(), TransitionError> {
-        let r#match = competition
+        let phase = competition
             .phases()
             .get(&self.phase_id)
-            .ok_or(ReportMatchResultError::PhaseDoesNotExist)?
+            .ok_or(ReportMatchResultError::PhaseDoesNotExist)?;
+        let r#match = phase
             .matches()
             .get(&self.match_id)
             .ok_or(ReportMatchResultError::MatchDoesNotExist)?;
         if r#match.is_finished() {
             return Err(Box::new(ReportMatchResultError::MatchAlreadyFinished));
+        }
+        if self.match_result == MatchResult::Draw && !phase.phase_format().allows_draws() {
+            return Err(Box::new(ReportMatchResultError::DrawNotAllowed));
         }
         Ok(())
     }

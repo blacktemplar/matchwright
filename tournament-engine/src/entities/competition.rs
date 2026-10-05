@@ -249,6 +249,10 @@ impl Phase {
         &self.matches
     }
 
+    pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
+        &*self.phase_format
+    }
+
     pub(crate) fn start(&mut self, ranking_entrants: Vec<Vec1<EntrantId>>) {
         let (ordered_ranking_ids, rankings) = ranking_entrants
             .into_iter()

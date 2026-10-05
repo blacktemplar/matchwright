@@ -44,7 +44,7 @@ impl PhaseFormat for SingleElimination {
                     MatchResult::AWins => rank_a > rank_b,
                     MatchResult::BWins => rank_a < rank_b,
                     MatchResult::Draw => {
-                        panic!("Draw matches are not supported in single elimination")
+                        unreachable!("draws are rejected since this format does not allow them")
                     }
                     MatchResult::NotFinished => {
                         unreachable!("We ensured that all matches are finished above")
@@ -108,5 +108,10 @@ impl PhaseFormat for SingleElimination {
                 })
                 .collect()
         }
+    }
+
+    /// Every match has to produce a winner that advances to the next round.
+    fn allows_draws(&self) -> bool {
+        false
     }
 }
