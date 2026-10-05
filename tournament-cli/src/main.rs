@@ -1,5 +1,114 @@
-//! A small command line interface for running tournaments with [`tournament_engine`].
+//! An interactive command line interface for running a tournament with [`tournament_engine`].
 //!
-//! Not implemented yet.
+//! ```text
+//! tournament-cli [FILE]
+//! ```
+//!
+//! Loads the competition saved to `FILE` if it exists, and otherwise starts a new one that is
+//! saved there. Type `help` at the prompt for the available commands.
 
-fn main() {}
+use std::{
+    io::{self, IsTerminal},
+    path::PathBuf,
+    process::ExitCode,
+};
+
+use clap::Parser;
+use rustyline::{DefaultEditor, error::ReadlineError};
+use thiserror::Error;
+use tournament_cli::{
+    command::{Command, ParseError},
+    session::{self, Outcome, Session},
+};
+
+/// Runs a tournament interactively.
+#[derive(Parser)]
+#[command(version)]
+struct Args {
+    /// The file the competition is loaded from, if it exists, and saved to
+    file: Option<PathBuf>,
+}
+
+/// Why the session ended other than by an `exit`.
+#[derive(Debug, Error)]
+enum Error {
+    #[error(transparent)]
+    Session(#[from] session::Error),
+    #[error("cannot read from the terminal: {0}")]
+    Terminal(#[from] ReadlineError),
+    #[error("cannot write to the terminal: {0}")]
+    Output(#[from] io::Error),
+    #[error("the input ended with unsaved changes, which are discarded")]
+    InputEnded,
+}
+
+fn main() -> ExitCode {
+    let args = Args::parse();
+    let session = match args.file {
+        Some(path) if path.exists() => Session::load(path),
+        path => Ok(Session::new(path)),
+    };
+    match session.map_err(Error::from).and_then(run) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Reads and executes commands until one ends the session.
+fn run(mut session: Session) -> Result<(), Error> {
+    let mut editor = DefaultEditor::new()?;
+    loop {
+        let command = match editor.readline(&prompt(&session)) {
+            Ok(line) => {
+                editor.add_history_entry(line.as_str())?;
+                match Command::parse_line(&line) {
+                    Ok(Some(command)) => command,
+                    Ok(None) => continue,
+                    Err(ParseError::Clap(error)) => {
+                        // also shows help, which clap reports as an error
+                        error.print()?;
+                        continue;
+                    }
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        continue;
+                    }
+                }
+            }
+            // Ctrl-C only discards the line being typed
+            Err(ReadlineError::Interrupted) => continue,
+            // Ctrl-D exits, but not past unsaved changes
+            Err(ReadlineError::Eof) if io::stdin().is_terminal() => Command::Exit { force: false },
+            // input that is not a terminal ends for good, and every further read would end the
+            // same way, so unsaved changes can neither be saved nor kept
+            Err(ReadlineError::Eof) if session.has_unsaved_changes() => {
+                return Err(Error::InputEnded);
+            }
+            Err(ReadlineError::Eof) => return Ok(()),
+            Err(error) => return Err(Error::Terminal(error)),
+        };
+        match session.execute(command) {
+            Ok(Outcome::Continue(output)) if output.is_empty() => {}
+            Ok(Outcome::Continue(output)) => println!("{output}"),
+            Ok(Outcome::Exit) => return Ok(()),
+            Err(error) => eprintln!("error: {error}"),
+        }
+    }
+}
+
+/// Names the file the competition is saved to and marks unsaved changes with a `*`.
+fn prompt(session: &Session) -> String {
+    let name = session
+        .path()
+        .and_then(|path| path.file_stem())
+        .map_or("tournament".into(), |stem| stem.to_string_lossy());
+    let unsaved = if session.has_unsaved_changes() {
+        "*"
+    } else {
+        ""
+    };
+    format!("{name}{unsaved}> ")
+}

@@ -6,10 +6,19 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+clap.workspace = true
+rand.workspace = true
+rustyline.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+shlex.workspace = true
+thiserror.workspace = true
 tournament-engine.workspace = true
 typetag.workspace = true
+undoable-state-machine.workspace = true
+# entrant and phase ids are random, which is what keeps them independent of the name they are
+# shown with
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-serde_json.workspace = true
-uuid.workspace = true
+tempfile.workspace = true

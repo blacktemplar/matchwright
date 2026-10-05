@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 # Dependency versions live here so that every member resolves to the same one, and a bump is a
 # single edit.
 [workspace.dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
 criterion = "0.8.2"
 dyn-clone = "1.0.20"
 indexmap = { version = "2.14.2", features = ["serde"] }
@@ -18,8 +19,11 @@ postcard = { version = "1.1.3", features = ["use-std"] }
 rand = "0.10.3"
 rand_seeder = "0.5.0"
 rustc-hash = "2.1.3"
+rustyline = "18.0.1"
 serde = "1.0.229"
 serde_json = "1.0.151"
+shlex = "2.0.1"
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 tournament-engine = { path = "tournament-engine" }
 typetag = "0.2.23"
