@@ -1,6 +1,9 @@
 //! The commands an operator types at the prompt, and how a line of input becomes one.
 
-use std::{num::NonZeroUsize, path::PathBuf};
+use std::{
+    num::{NonZeroU32, NonZeroUsize},
+    path::PathBuf,
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use thiserror::Error;
@@ -35,6 +38,9 @@ pub enum Command {
         /// Only list the matches that have no result yet
         #[arg(long)]
         open: bool,
+        /// Only list the matches of this round
+        #[arg(long)]
+        round: Option<NonZeroU32>,
     },
     /// Report the result of a match
     Report {
@@ -167,6 +173,29 @@ mod tests {
                 preset: PhasePreset::RandomRounds { rounds: 5 }
             }
         );
+    }
+
+    #[test]
+    fn matches_can_be_narrowed_down_by_both_filters() {
+        assert_eq!(
+            parse("matches --open --round 2"),
+            Command::Matches {
+                open: true,
+                round: NonZeroU32::new(2)
+            }
+        );
+        assert_eq!(
+            parse("matches"),
+            Command::Matches {
+                open: false,
+                round: None
+            }
+        );
+    }
+
+    #[test]
+    fn rounds_start_at_one() {
+        assert!(Command::parse_line("matches --round 0").is_err());
     }
 
     #[test]

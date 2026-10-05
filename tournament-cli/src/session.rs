@@ -8,7 +8,7 @@ use std::{
     collections::HashSet,
     fmt::Write as _,
     fs, io,
-    num::NonZeroUsize,
+    num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
 };
 
@@ -198,7 +198,7 @@ impl Session {
             Command::RemoveEntrant { name } => self.remove_entrant(&name)?,
             Command::AddPhase { preset } => self.add_phase(preset)?,
             Command::Start => self.start()?,
-            Command::Matches { open } => self.matches(open)?,
+            Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
             Command::Ranking => self.ranking()?,
             Command::Undo => self.undo()?,
@@ -355,13 +355,16 @@ impl Session {
             .expect("a started competition must have a phase"))
     }
 
-    fn matches(&self, only_open: bool) -> Result<String, Error> {
+    /// Lists the matches, numbered the way [`Self::report`] addresses them, so that the number of a
+    /// match does not depend on the filters shown it with.
+    fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let phase = self.phase()?;
         let rows: Vec<_> = phase
             .matches()
             .values()
             .enumerate()
             .filter(|(_, r#match)| !(only_open && r#match.is_finished()))
+            .filter(|(_, r#match)| only_round.is_none_or(|round| r#match.round() == round))
             .map(|(index, r#match)| {
                 vec![
                     (index + 1).to_string(),
@@ -374,7 +377,11 @@ impl Session {
             })
             .collect();
         if rows.is_empty() {
-            return Ok("there are no open matches".to_owned());
+            let open = if only_open { " open" } else { "" };
+            return Ok(match only_round {
+                Some(round) => format!("there are no{open} matches in round {round}"),
+                None => format!("there are no{open} matches"),
+            });
         }
         // naming the two sides `A` and `B` is what `report <number> a|b` reports a win for
         Ok(table(&["#", "round", "A", "vs", "B", "result"], &rows))
@@ -772,6 +779,72 @@ mod tests {
             ["#", "name", "W-D-L", "points", "Sonneborn-Berger"]
         );
         assert_eq!(ranking.lines().skip(HEADER_LINES).count(), 4);
+    }
+
+    /// The number and the round of every match listed by `matches`.
+    fn numbered_rounds(listing: &str) -> Vec<(&str, &str)> {
+        listing
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| {
+                let mut columns = row.split_whitespace();
+                (columns.next().unwrap(), columns.next().unwrap())
+            })
+            .collect()
+    }
+
+    /// Filtering by round narrows the listing down to that round while leaving the numbers the
+    /// matches are reported by untouched.
+    #[test]
+    fn matches_can_be_filtered_by_round() {
+        let mut session = started("round-robin");
+        let all = output(&mut session, "matches");
+        let in_round_two: Vec<_> = numbered_rounds(&all)
+            .into_iter()
+            .filter(|(_, round)| *round == "2")
+            .collect();
+        assert_eq!(
+            in_round_two.len(),
+            2,
+            "a round robin between four entrants plays two matches a round"
+        );
+
+        let filtered = output(&mut session, "matches --round 2");
+
+        assert_eq!(numbered_rounds(&filtered), in_round_two);
+    }
+
+    #[test]
+    fn a_round_that_is_not_played_is_reported_as_empty() {
+        let mut session = started("round-robin");
+
+        assert_eq!(
+            output(&mut session, "matches --round 4"),
+            "there are no matches in round 4",
+            "a round robin between four entrants is played in three rounds"
+        );
+    }
+
+    #[test]
+    fn the_round_filter_combines_with_the_open_filter() {
+        let mut session = started("round-robin");
+        let listing = output(&mut session, "matches --round 2");
+        for (number, _) in numbered_rounds(&listing) {
+            output(&mut session, &format!("report {number} a"));
+        }
+
+        assert_eq!(
+            output(&mut session, "matches --open --round 2"),
+            "there are no open matches in round 2"
+        );
+        assert_eq!(
+            output(&mut session, "matches --open --round 1")
+                .lines()
+                .skip(HEADER_LINES)
+                .count(),
+            2,
+            "reporting the matches of round 2 leaves those of round 1 open"
+        );
     }
 
     #[test]
