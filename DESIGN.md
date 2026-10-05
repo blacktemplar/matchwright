@@ -361,11 +361,13 @@ pub trait MetricsCalculator: Plugin { /* ... */ }
 impl MetricsCalculator for BuchholzCalculator { /* ... */ }
 ```
 
-*Outstanding:* no impl in this crate names its tag yet — all use bare
-`#[typetag::serde]`, so every tag is currently the default bare type name
-(`"Buchholz"`, `"BuchholzCalculator"`, ...). That is both the collision risk this
-decision meant to avoid and a silent break of old snapshots on any type rename.
-Worth fixing before the first snapshot anyone needs to keep.
+*Outstanding:* no plugin or metric impl names its tag yet — all use bare
+`#[typetag::serde]`, so every tag on the snapshot path is currently the default
+bare type name (`"Buchholz"`, `"BuchholzCalculator"`, ...). That is both the
+collision risk this decision meant to avoid and a silent break of old snapshots
+on any type rename. Worth fixing before the first snapshot anyone needs to keep.
+The log path does not share the problem: every `CompetitionTransition` impl names
+its tag.
 
 This gives `Box<dyn Trait>` a working `Serialize`/`Deserialize` backed by an
 `inventory`-populated tag → type registry inside `typetag`, with no registry
@@ -396,9 +398,8 @@ short, and acceptable for occasional persistence.
 
 ### The transition log
 
-*Planned.* `Transition<S>` is generic over the state, so it cannot be
-`typetag`-annotated upstream. Serializing the log therefore needs a non-generic
-sub-trait here:
+`Transition<S>` is generic over the state, so it cannot be `typetag`-annotated
+upstream. Serializing the log therefore needs a non-generic sub-trait here:
 
 ```rust
 #[typetag::serde(tag = "type", content = "value")]
@@ -406,19 +407,41 @@ pub trait CompetitionTransition: Transition<Competition> + Debug {}
 ```
 
 with the machine becoming
-`StateMachine<Competition, Box<dyn CompetitionTransition>>` — which
-`undoable-state-machine` anticipates via its blanket impl for
-`Box<dyn Transition<S>>`. Every transition then needs `Serialize`/`Deserialize`
-and a stable tag. The existing ones already fit: `AddEntrant` holds an `Entrant`,
-`ReportMatchResult` holds ids and a `MatchResult`, and `AddPhase`'s plugin boxes
-are tagged already.
+`CompetitionStateMachine = StateMachine<Competition, Box<dyn CompetitionTransition>>`
+— which `undoable-state-machine` anticipates via its blanket impl for
+`Box<dyn Transition<S>>`, so the box needs nothing further to be applied. The
+trait adds no methods: implementing it is purely the statement that a transition
+is part of the persisted log, which is also what makes it the one place a
+consumer's own transition opts in. Every implementor needs
+`Serialize`/`Deserialize` and an explicit tag, and all six core transitions have
+both.
+
+That composes into the whole machine: with `undoable-state-machine`'s `serde`
+feature its log types are serializable whenever the transition type is, so
+`CompetitionStateMachine` serializes as its log — undo entries included — and
+nothing in this crate has to describe a log entry itself.
+
+Deserializing rebuilds the machine through `StateMachine::build`, which replays
+the log rather than trusting a stored `current`. Two consequences worth naming:
+the current state is never written, so it cannot drift from the log that produced
+it; and a log that no longer replays cleanly fails to deserialize instead of
+loading into a state no sequence of transitions could reach. Replay is already a
+hard requirement for undo, so this costs no determinism that was not owed
+anyway — it just also makes it a load-time check.
+
+This is what separates the two persistence paths in practice. A snapshot is
+smaller and loads without replaying, but holds only the current state; a log also
+holds how that state came about, so undo — and undoing an undo — still works
+after a restore.
 
 ### Tag stability
 
 A tag is a persistence contract, not a name. Renaming or moving a type must not
 change it, which is why tags are written out explicitly rather than derived. This
-now spans plugins, metrics, consumer annotations and (*planned*) transitions — so
-it is a single cross-cutting commitment, not a per-mechanism detail.
+spans plugins, metrics, consumer annotations and transitions — so it is a single
+cross-cutting commitment, not a per-mechanism detail. Each mechanism pins its
+tags in a test, so a rename fails there instead of silently invalidating old
+data.
 
 Rejected alternatives for tagging: **`std::any::TypeId`**, free and
 collision-proof but only stable within one build, so it cannot survive a
@@ -435,7 +458,8 @@ Tournament progress — registrations, reported results, round advances — is a
 sequence of transitions applied to an initial state, so transitions can be
 undone. The mechanics are generic and live in the separate
 `undoable-state-machine` crate; this crate instantiates it with `Competition` as
-the state.
+the state, through the `CompetitionStateMachine` alias, and enables that crate's
+`serde` feature so the log it keeps is persistable.
 
 Undo is implemented there as a replay of the still-active log entries from the
 initial state, which is what makes determinism under replay a global constraint

@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
-use crate::entities::competition::Competition;
+use crate::{entities::competition::Competition, transitions::CompetitionTransition};
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SetCompetitionSeed {
     seed: [u8; 12],
 }
@@ -32,3 +34,6 @@ impl Transition<Competition> for SetCompetitionSeed {
         Ok(())
     }
 }
+
+#[typetag::serde(name = "tournament_engine::set_competition_seed")]
+impl CompetitionTransition for SetCompetitionSeed {}

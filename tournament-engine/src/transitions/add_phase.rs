@@ -1,11 +1,14 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
     entities::competition::{Competition, PhaseId},
     plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::Ranker},
+    transitions::CompetitionTransition,
 };
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AddPhase {
     id: PhaseId,
     phase_format: Box<dyn PhaseFormat>,
@@ -53,3 +56,6 @@ impl Transition<Competition> for AddPhase {
         Ok(())
     }
 }
+
+#[typetag::serde(name = "tournament_engine::add_phase")]
+impl CompetitionTransition for AddPhase {}

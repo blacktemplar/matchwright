@@ -1,9 +1,13 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
-use crate::entities::competition::{Competition, MatchId, MatchResult, PhaseId};
+use crate::{
+    entities::competition::{Competition, MatchId, MatchResult, PhaseId},
+    transitions::CompetitionTransition,
+};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ReportMatchResult {
     phase_id: PhaseId,
     match_id: MatchId,
@@ -54,3 +58,6 @@ impl Transition<Competition> for ReportMatchResult {
         Ok(())
     }
 }
+
+#[typetag::serde(name = "tournament_engine::report_match_result")]
+impl CompetitionTransition for ReportMatchResult {}
