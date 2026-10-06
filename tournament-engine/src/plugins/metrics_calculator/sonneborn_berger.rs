@@ -7,7 +7,7 @@ use crate::{
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
 };
@@ -26,12 +26,12 @@ impl Compare for SonnebornBerger {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SonnebornBergerGetter;
+pub struct MoreSonnebornBerger;
 
 #[typetag::serde]
-impl MetricGetter for SonnebornBergerGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
-        storage.set_metric::<SonnebornBerger>();
+impl RankingCriterion for MoreSonnebornBerger {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric::<SonnebornBerger>();
     }
 }
 

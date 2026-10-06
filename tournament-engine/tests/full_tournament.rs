@@ -13,13 +13,11 @@ use tournament_engine::{
             },
             matches::{Matches, MatchesCalculator},
             points::{Points, PointsCalculator},
-            round_of_first_loss::{
-                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
-            },
+            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::SingleElimination,
-        ranker::{HierarchicalRanker, LexicographicalMetrics},
+        ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
@@ -109,7 +107,7 @@ fn full_tournament() {
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination);
     let ranker = Box::new(HierarchicalRanker::new(vec![Box::new(
-        LexicographicalMetrics::new().add_metric(RoundOfFirstLossGetter),
+        LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
     )]));
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
@@ -402,7 +400,7 @@ fn single_elimination_rejects_a_draw() {
             phase_id,
             Box::new(SingleElimination),
             Box::new(HierarchicalRanker::new(vec![Box::new(
-                LexicographicalMetrics::new().add_metric(RoundOfFirstLossGetter),
+                LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
             )])),
             vec![Box::new(RoundOfFirstLossCalculator)],
         ),

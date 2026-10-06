@@ -11,7 +11,7 @@ use crate::{
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
 };
@@ -42,12 +42,12 @@ impl From<f32> for Buchholz {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuchholzGetter;
+pub struct MoreBuchholz;
 
 #[typetag::serde]
-impl MetricGetter for BuchholzGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
-        storage.set_metric::<Buchholz>();
+impl RankingCriterion for MoreBuchholz {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric::<Buchholz>();
     }
 }
 
@@ -155,12 +155,12 @@ impl From<f32> for BuchholzOfBuchholz {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuchholzOfBuchholzGetter;
+pub struct MoreBuchholzOfBuchholz;
 
 #[typetag::serde]
-impl MetricGetter for BuchholzOfBuchholzGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
-        storage.set_metric::<BuchholzOfBuchholz>();
+impl RankingCriterion for MoreBuchholzOfBuchholz {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric::<BuchholzOfBuchholz>();
     }
 }
 

@@ -15,7 +15,7 @@ use std::iter;
 
 use inquire::{CustomType, MultiSelect, Select, error::InquireResult};
 
-use crate::phase::{FormatConfig, MetricConfig, MetricKind, PhaseConfig, RankingMetric};
+use crate::phase::{Criterion, FormatConfig, MetricConfig, MetricKind, PhaseConfig};
 
 /// What the ranking questions offer instead of a further metric, which ends them.
 const NO_FURTHER_METRIC: &str = "(no further metric)";
@@ -122,13 +122,10 @@ fn ask_parameters(kind: MetricKind) -> InquireResult<MetricConfig> {
 
 /// Asks which of the calculated `metrics` rank the entrants, one question per metric, until the
 /// operator asks for no further one or no metric is left to ask for.
-fn ask_ranking(
-    format: FormatConfig,
-    metrics: &[MetricConfig],
-) -> InquireResult<Vec<RankingMetric>> {
+fn ask_ranking(format: FormatConfig, metrics: &[MetricConfig]) -> InquireResult<Vec<Criterion>> {
     let mut remaining: Vec<_> = metrics
         .iter()
-        .filter_map(|metric| metric.kind().as_ranking_metric())
+        .flat_map(|metric| metric.kind().criteria().iter().copied())
         .collect();
     let mut ranked_by = Vec::new();
     while !remaining.is_empty() {

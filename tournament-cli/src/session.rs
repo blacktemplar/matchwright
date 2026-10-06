@@ -585,7 +585,7 @@ fn table(header: &[&str], rows: &[Vec<String>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::phase::{FormatConfig, MetricConfig, RankingMetric};
+    use crate::phase::{Criterion, FormatConfig, MetricConfig};
 
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
@@ -707,7 +707,7 @@ mod tests {
                     for_draw: 0.5,
                 },
             ],
-            [RankingMetric::Points],
+            [Criterion::MorePoints],
         );
 
         let added = session.add_phase(config).unwrap();
@@ -736,6 +736,91 @@ mod tests {
                 "every win is worth a single point, {row:?}"
             );
         }
+    }
+
+    /// Wins, draws, losses and the matches they add up to are four criteria of a single metric, so
+    /// a phase can be ranked by the wins alone, without calculating anything besides that metric.
+    #[test]
+    fn a_phase_can_be_ranked_by_wins_alone() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+        let config = PhaseConfig::new(FormatConfig::RoundRobin, [], [Criterion::MoreWins]);
+
+        let added = session.add_phase(config).unwrap();
+
+        assert_eq!(added, "phase added: round robin, ranked by more wins");
+        output(&mut session, "start");
+        for number in 1..=6 {
+            output(&mut session, &format!("report {number} a"));
+        }
+        let ranking = output(&mut session, "ranking");
+        assert_eq!(
+            ranking
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "name", "W-D-L"],
+            "ranking by wins needs no metric besides the one holding them"
+        );
+        let wins: Vec<&str> = ranking
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| {
+                let columns: Vec<_> = row.split_whitespace().collect();
+                columns[2].split('-').next().unwrap()
+            })
+            .collect();
+        assert!(
+            wins.windows(2).all(|pair| pair[0] >= pair[1]),
+            "the entrants must be ordered by their wins, got {wins:?}"
+        );
+        // every match was won by a team, so the six wins cannot be spread evenly over the four
+        // entrants, which is what makes the order above more than a tie
+        assert!(
+            wins.iter().any(|win| win != &wins[0]),
+            "the entrants must differ in their wins, got {wins:?}"
+        );
+    }
+
+    /// Fewer matches played is the better end of that criterion, which a knockout shows most
+    /// plainly because it is the simplest way to have entrants play a different number of matches:
+    /// the two that went out in the semifinal rank above the two finalists.
+    #[test]
+    fn ranking_by_the_matches_played_puts_the_entrants_that_played_fewest_first() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+        let config = PhaseConfig::new(
+            FormatConfig::SingleElimination,
+            [],
+            [Criterion::FewerMatchesPlayed],
+        );
+        session.add_phase(config).unwrap();
+        output(&mut session, "start");
+
+        output(&mut session, "report 1 a");
+        output(&mut session, "report 2 b");
+        output(&mut session, "report 3 a");
+
+        let ranking = output(&mut session, "ranking");
+        let ranks_and_matches: Vec<(&str, u32)> = ranking
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| {
+                let columns: Vec<_> = row.split_whitespace().collect();
+                let played = columns[2]
+                    .split('-')
+                    .map(|count| count.parse::<u32>().expect("a result count"))
+                    .sum();
+                (columns[0], played)
+            })
+            .collect();
+        assert_eq!(
+            ranks_and_matches,
+            [("1", 1), ("1", 1), ("3", 2), ("3", 2)],
+            "the two that played one match tie above the finalists, who played two: {ranking}"
+        );
     }
 
     #[test]

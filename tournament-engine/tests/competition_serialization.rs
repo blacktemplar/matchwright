@@ -13,19 +13,17 @@ use tournament_engine::{
     plugins::{
         metrics_calculator::{
             buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholz,
-                BuchholzOfBuchholzCalculator, BuchholzOfBuchholzGetter,
+                Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
+                MoreBuchholz, MoreBuchholzOfBuchholz,
             },
             matches::{Matches, MatchesCalculator},
-            points::{Points, PointsCalculator, PointsGetter},
-            round_of_first_loss::{
-                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
-            },
-            sonneborn_berger::{SonnebornBerger, SonnebornBergerCalculator, SonnebornBergerGetter},
+            points::{MorePoints, Points, PointsCalculator},
+            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
+            sonneborn_berger::{MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::SingleElimination,
-        ranker::{HierarchicalRanker, LexicographicalMetrics},
+        ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
@@ -92,12 +90,12 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
         apply(&mut sm, AddEntrant::new(entrant));
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
-        LexicographicalMetrics::new()
-            .add_metric(RoundOfFirstLossGetter)
-            .add_metric(PointsGetter)
-            .add_metric(BuchholzGetter)
-            .add_metric(SonnebornBergerGetter)
-            .add_metric(BuchholzOfBuchholzGetter),
+        LexicographicalCriteria::new()
+            .add_criterion(LaterFirstLoss)
+            .add_criterion(MorePoints)
+            .add_criterion(MoreBuchholz)
+            .add_criterion(MoreSonnebornBerger)
+            .add_criterion(MoreBuchholzOfBuchholz),
     )]);
     apply(
         &mut sm,

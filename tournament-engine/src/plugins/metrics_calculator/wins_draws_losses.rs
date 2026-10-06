@@ -5,10 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     map::Map,
-    plugins::metrics_calculator::{Metric, MetricsCalculator},
+    plugins::{
+        metrics_calculator::{Metric, MetricsCalculator},
+        ranker::{Comparison, RankingCriterion, RankingOrder},
+    },
     type_map::TypeMapValue,
 };
 
+/// How many of its matches a ranking won, drew and lost.
+///
+/// The three counts are one metric because one match result changes all of them at once, but each
+/// of them orders a ranking on its own, as does the number of matches they add up to, which is
+/// what [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`] are for. The struct
+/// as a whole has no order and so deliberately does not implement
+/// [`Compare`](crate::plugins::ranker::Compare); each criterion names the direction it sorts in
+/// instead.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLosses {
     pub wins: u32,
@@ -16,8 +27,82 @@ pub struct WinsDrawsLosses {
     pub losses: u32,
 }
 
+impl WinsDrawsLosses {
+    /// How many matches the ranking played, i.e. how many of its matches got a result reported.
+    ///
+    /// This is the same count as the length of [`Matches`](super::matches::Matches), which records
+    /// exactly these matches, but it is derived here because this metric has no dependencies of its
+    /// own, whereas calculating `Matches` clones a growing [`Vec`] for every ranking of every
+    /// reported result.
+    pub const fn matches_played(&self) -> u32 {
+        self.wins + self.draws + self.losses
+    }
+}
+
 #[typetag::serde]
 impl TypeMapValue for WinsDrawsLosses {}
+
+/// Ranks by the wins of [`WinsDrawsLosses`], where more wins are better.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoreWins;
+
+#[typetag::serde]
+impl RankingCriterion for MoreWins {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
+            Comparison::greater_is_better(wdl.wins.cmp(&other.wins))
+        });
+    }
+}
+
+/// Ranks by the draws of [`WinsDrawsLosses`], where more draws are better.
+///
+/// Which way round this belongs is a matter of the competition rather than of the metric: a draw is
+/// worth more than a loss, but a ranking that got there by drawing rather than by winning may well
+/// be meant to come second. Rank by [`FewerLosses`] instead where that is the case.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoreDraws;
+
+#[typetag::serde]
+impl RankingCriterion for MoreDraws {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
+            Comparison::greater_is_better(wdl.draws.cmp(&other.draws))
+        });
+    }
+}
+
+/// Ranks by the losses of [`WinsDrawsLosses`], where fewer losses are better.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FewerLosses;
+
+#[typetag::serde]
+impl RankingCriterion for FewerLosses {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
+            Comparison::less_is_better(wdl.losses.cmp(&other.losses))
+        });
+    }
+}
+
+/// Ranks by the matches a ranking played, see [`WinsDrawsLosses::matches_played`], where having
+/// played fewer of them is better.
+///
+/// This is a tie break: two rankings that got the same result out of a different number of matches
+/// are not equally far along, and the one that needed fewer matches for it is the one this puts
+/// first. A phase that instead means to reward lasting longer — a knockout, where the matches an
+/// entrant played are how far it got — wants the opposite order and so a criterion of its own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FewerMatchesPlayed;
+
+#[typetag::serde]
+impl RankingCriterion for FewerMatchesPlayed {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
+            Comparison::less_is_better(wdl.matches_played().cmp(&other.matches_played()))
+        });
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLossesCalculator;
@@ -75,7 +160,13 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
 mod tests {
 
     use super::*;
-    use crate::plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id};
+    use crate::{
+        plugins::{
+            metrics_calculator::test_utils::{self, MatchSpec, match_id},
+            ranker::compare_by,
+        },
+        type_map::TypeMap,
+    };
 
     /// Builds a phase with `num_players` rankings whose wins/draws/losses got initialized and
     /// with all matches of `matches` already scheduled.
@@ -185,6 +276,165 @@ mod tests {
         assert_eq!(metric_of(&phase, 1), wins_draws_losses(1, 0, 2));
         assert_eq!(metric_of(&phase, 2), wins_draws_losses(2, 1, 0));
         assert_eq!(metric_of(&phase, 3), wins_draws_losses(0, 1, 1));
+    }
+
+    /// The metrics of a ranking whose only metric is `wdl`.
+    fn metrics_of(wdl: WinsDrawsLosses) -> TypeMap {
+        let mut metrics = TypeMap::new();
+        metrics.insert(wdl);
+        metrics
+    }
+
+    /// How `criterion` orders a ranking with `first` against one with `second`.
+    fn comparison(
+        criterion: &dyn RankingCriterion,
+        first: WinsDrawsLosses,
+        second: WinsDrawsLosses,
+    ) -> Comparison {
+        let (first, second) = (metrics_of(first), metrics_of(second));
+        compare_by(criterion, &first, &second).expect("both rankings hold the metric")
+    }
+
+    #[test]
+    fn more_wins_are_better() {
+        assert_eq!(
+            comparison(
+                &MoreWins,
+                wins_draws_losses(2, 0, 0),
+                wins_draws_losses(1, 0, 0)
+            ),
+            Comparison::Better
+        );
+        assert_eq!(
+            comparison(
+                &MoreWins,
+                wins_draws_losses(1, 0, 0),
+                wins_draws_losses(2, 0, 0)
+            ),
+            Comparison::Worse
+        );
+        // the same number of wins ties, however the draws and losses differ
+        assert_eq!(
+            comparison(
+                &MoreWins,
+                wins_draws_losses(1, 3, 0),
+                wins_draws_losses(1, 0, 3)
+            ),
+            Comparison::Equal
+        );
+    }
+
+    #[test]
+    fn more_draws_are_better() {
+        assert_eq!(
+            comparison(
+                &MoreDraws,
+                wins_draws_losses(0, 2, 0),
+                wins_draws_losses(0, 1, 0)
+            ),
+            Comparison::Better
+        );
+        assert_eq!(
+            comparison(
+                &MoreDraws,
+                wins_draws_losses(0, 1, 0),
+                wins_draws_losses(0, 2, 0)
+            ),
+            Comparison::Worse
+        );
+        // the same number of draws ties, however the wins and losses differ
+        assert_eq!(
+            comparison(
+                &MoreDraws,
+                wins_draws_losses(3, 1, 0),
+                wins_draws_losses(0, 1, 3)
+            ),
+            Comparison::Equal
+        );
+    }
+
+    #[test]
+    fn fewer_losses_are_better() {
+        assert_eq!(
+            comparison(
+                &FewerLosses,
+                wins_draws_losses(0, 0, 1),
+                wins_draws_losses(0, 0, 2)
+            ),
+            Comparison::Better
+        );
+        assert_eq!(
+            comparison(
+                &FewerLosses,
+                wins_draws_losses(0, 0, 2),
+                wins_draws_losses(0, 0, 1)
+            ),
+            Comparison::Worse
+        );
+        // the same number of losses ties, however the wins and draws differ
+        assert_eq!(
+            comparison(
+                &FewerLosses,
+                wins_draws_losses(3, 0, 1),
+                wins_draws_losses(0, 3, 1)
+            ),
+            Comparison::Equal
+        );
+    }
+
+    #[test]
+    fn matches_played_counts_every_result() {
+        assert_eq!(wins_draws_losses(0, 0, 0).matches_played(), 0);
+        assert_eq!(wins_draws_losses(2, 1, 3).matches_played(), 6);
+    }
+
+    #[test]
+    fn fewer_played_matches_are_better() {
+        assert_eq!(
+            comparison(
+                &FewerMatchesPlayed,
+                wins_draws_losses(1, 0, 0),
+                wins_draws_losses(1, 1, 0)
+            ),
+            Comparison::Better
+        );
+        assert_eq!(
+            comparison(
+                &FewerMatchesPlayed,
+                wins_draws_losses(1, 1, 0),
+                wins_draws_losses(1, 0, 0)
+            ),
+            Comparison::Worse
+        );
+        // only how many matches were played counts, not how they went
+        assert_eq!(
+            comparison(
+                &FewerMatchesPlayed,
+                wins_draws_losses(3, 0, 0),
+                wins_draws_losses(0, 1, 2)
+            ),
+            Comparison::Equal
+        );
+    }
+
+    /// All four criteria read the same metric, so none of them orders a ranking that does not hold
+    /// it, which is what [`LexicographicalCriteria`] reports rather than ranking by a metric that
+    /// is not there.
+    ///
+    /// [`LexicographicalCriteria`]: crate::plugins::ranker::LexicographicalCriteria
+    #[test]
+    fn a_criterion_orders_nothing_if_a_ranking_lacks_the_metric() {
+        let with_metric = metrics_of(wins_draws_losses(1, 0, 0));
+        let without_metric = TypeMap::new();
+
+        for criterion in [
+            &MoreWins as &dyn RankingCriterion,
+            &MoreDraws,
+            &FewerLosses,
+            &FewerMatchesPlayed,
+        ] {
+            assert!(compare_by(criterion, &with_metric, &without_metric).is_none());
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::{
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
-        ranker::{Compare, Comparison, MetricGetter, MetricStorage},
+        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
 };
@@ -33,12 +33,12 @@ impl AsRef<f32> for Points {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PointsGetter;
+pub struct MorePoints;
 
 #[typetag::serde]
-impl MetricGetter for PointsGetter {
-    fn store_metric<'a, 'b>(&self, storage: MetricStorage<'a, 'b>) {
-        storage.set_metric::<Points>();
+impl RankingCriterion for MorePoints {
+    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
+        order.by_metric::<Points>();
     }
 }
 

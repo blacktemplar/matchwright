@@ -13,17 +13,17 @@ use tournament_engine::{
     plugins::{
         metrics_calculator::{
             buchholz::{
-                BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholzCalculator,
-                BuchholzOfBuchholzGetter,
+                BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz,
+                MoreBuchholzOfBuchholz,
             },
             matches::MatchesCalculator,
-            points::{PointsCalculator, PointsGetter},
+            points::{MorePoints, PointsCalculator},
             round_of_first_loss::RoundOfFirstLossCalculator,
-            sonneborn_berger::{SonnebornBergerCalculator, SonnebornBergerGetter},
+            sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::random_rounds::RandomRounds,
-        ranker::{HierarchicalRanker, LexicographicalMetrics},
+        ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
@@ -107,11 +107,11 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
         apply(&mut sm, AddEntrant::new(Entrant::new(id)));
     }
     let ranker = HierarchicalRanker::new(vec![Box::new(
-        LexicographicalMetrics::new()
-            .add_metric(PointsGetter)
-            .add_metric(BuchholzGetter)
-            .add_metric(SonnebornBergerGetter)
-            .add_metric(BuchholzOfBuchholzGetter),
+        LexicographicalCriteria::new()
+            .add_criterion(MorePoints)
+            .add_criterion(MoreBuchholz)
+            .add_criterion(MoreSonnebornBerger)
+            .add_criterion(MoreBuchholzOfBuchholz),
     )]);
     apply(
         &mut sm,

@@ -15,20 +15,21 @@ use tournament_engine::plugins::{
     metrics_calculator::{
         MetricsCalculator,
         buchholz::{
-            BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholzCalculator,
-            BuchholzOfBuchholzGetter,
+            BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz, MoreBuchholzOfBuchholz,
         },
         matches::MatchesCalculator,
-        points::{PointsCalculator, PointsGetter},
-        round_of_first_loss::{RoundOfFirstLossCalculator, RoundOfFirstLossGetter},
-        sonneborn_berger::{SonnebornBergerCalculator, SonnebornBergerGetter},
-        wins_draws_losses::WinsDrawsLossesCalculator,
+        points::{MorePoints, PointsCalculator},
+        round_of_first_loss::{LaterFirstLoss, RoundOfFirstLossCalculator},
+        sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
+        wins_draws_losses::{
+            FewerLosses, FewerMatchesPlayed, MoreDraws, MoreWins, WinsDrawsLossesCalculator,
+        },
     },
     phase_format::{
         PhaseFormat, random_rounds::RandomRounds, round_robin::RoundRobin,
         single_elimination::SingleElimination,
     },
-    ranker::{HierarchicalRanker, LexicographicalMetrics, Ranker},
+    ranker::{HierarchicalRanker, LexicographicalCriteria, Ranker},
 };
 
 use crate::command::PhasePreset;
@@ -117,15 +118,15 @@ impl FormatConfig {
 
     /// The metrics a phase of this format is ranked by unless an operator picks others, best
     /// first.
-    pub fn default_ranked_by(self) -> &'static [RankingMetric] {
+    pub fn default_ranked_by(self) -> &'static [Criterion] {
         match self {
-            Self::RoundRobin => &[RankingMetric::Points, RankingMetric::SonnebornBerger],
-            Self::SingleElimination => &[RankingMetric::RoundOfFirstLoss],
+            Self::RoundRobin => &[Criterion::MorePoints, Criterion::MoreSonnebornBerger],
+            Self::SingleElimination => &[Criterion::LaterFirstLoss],
             Self::RandomRounds { .. } => &[
-                RankingMetric::Points,
-                RankingMetric::Buchholz,
-                RankingMetric::SonnebornBerger,
-                RankingMetric::BuchholzOfBuchholz,
+                Criterion::MorePoints,
+                Criterion::MoreBuchholz,
+                Criterion::MoreSonnebornBerger,
+                Criterion::MoreBuchholzOfBuchholz,
             ],
         }
     }
@@ -243,7 +244,9 @@ impl MetricKind {
         match self {
             Self::WinsDrawsLosses => "W-D-L",
             Self::Points => "points",
-            Self::Matches => "matches played",
+            // not "matches played", which is what the criterion counting them is called, see
+            // `Criterion::FewerMatchesPlayed`
+            Self::Matches => "match list",
             Self::RoundOfFirstLoss => "round of the first loss",
             Self::Buchholz => "Buchholz",
             Self::SonnebornBerger => "Sonneborn-Berger",
@@ -275,15 +278,23 @@ impl MetricKind {
         }
     }
 
-    /// How a ranking is ranked by this metric, if it can be ranked by it at all.
-    pub fn as_ranking_metric(self) -> Option<RankingMetric> {
+    /// The ways a ranking can be sorted by this metric, which is more than one where the metric
+    /// holds several counts that each order a ranking on their own, and none where it has no order
+    /// at all.
+    pub fn criteria(self) -> &'static [Criterion] {
         match self {
-            Self::WinsDrawsLosses | Self::Matches => None,
-            Self::Points => Some(RankingMetric::Points),
-            Self::RoundOfFirstLoss => Some(RankingMetric::RoundOfFirstLoss),
-            Self::Buchholz => Some(RankingMetric::Buchholz),
-            Self::SonnebornBerger => Some(RankingMetric::SonnebornBerger),
-            Self::BuchholzOfBuchholz => Some(RankingMetric::BuchholzOfBuchholz),
+            Self::WinsDrawsLosses => &[
+                Criterion::MoreWins,
+                Criterion::MoreDraws,
+                Criterion::FewerLosses,
+                Criterion::FewerMatchesPlayed,
+            ],
+            Self::Matches => &[],
+            Self::Points => &[Criterion::MorePoints],
+            Self::RoundOfFirstLoss => &[Criterion::LaterFirstLoss],
+            Self::Buchholz => &[Criterion::MoreBuchholz],
+            Self::SonnebornBerger => &[Criterion::MoreSonnebornBerger],
+            Self::BuchholzOfBuchholz => &[Criterion::MoreBuchholzOfBuchholz],
         }
     }
 
@@ -301,47 +312,74 @@ impl MetricKind {
     }
 }
 
-/// A metric a ranking can be sorted by, i.e. one the engine compares two entrants by.
+/// One way the engine can compare two entrants, i.e. a criterion a ranking can be sorted by.
 ///
-/// Every other [`MetricKind`] is only ever shown, which is what keeps a ranking from being asked
-/// to sort by a metric that has no order, see [`MetricKind::as_ranking_metric`].
+/// This is not the same thing as a [`MetricKind`]: a metric that has no order of its own is never
+/// sorted by and only ever shown, and one that counts several things offers one criterion per
+/// count, see [`MetricKind::criteria`]. Only the criteria listed here can be sorted by, which is
+/// what keeps a ranking from being asked to sort by something the engine cannot compare.
+///
+/// A criterion over a metric that has no single natural order says in its name which way round it
+/// sorts, so that no configuration has to be read twice to see which end is the better one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RankingMetric {
-    Points,
-    RoundOfFirstLoss,
-    Buchholz,
-    SonnebornBerger,
-    BuchholzOfBuchholz,
+pub enum Criterion {
+    MoreWins,
+    MoreDraws,
+    FewerLosses,
+    /// Fewer of the matches that were won, drawn or lost, i.e. the same result out of fewer
+    /// matches ranks higher. Used as a tie break.
+    FewerMatchesPlayed,
+    MorePoints,
+    /// A later first loss, where never having lost is best.
+    LaterFirstLoss,
+    MoreBuchholz,
+    MoreSonnebornBerger,
+    MoreBuchholzOfBuchholz,
 }
 
-impl RankingMetric {
+impl Criterion {
+    /// The metric this criterion sorts by, which has to be calculated for the phase.
     pub fn kind(self) -> MetricKind {
         match self {
-            Self::Points => MetricKind::Points,
-            Self::RoundOfFirstLoss => MetricKind::RoundOfFirstLoss,
-            Self::Buchholz => MetricKind::Buchholz,
-            Self::SonnebornBerger => MetricKind::SonnebornBerger,
-            Self::BuchholzOfBuchholz => MetricKind::BuchholzOfBuchholz,
+            Self::MoreWins | Self::MoreDraws | Self::FewerLosses | Self::FewerMatchesPlayed => {
+                MetricKind::WinsDrawsLosses
+            }
+            Self::MorePoints => MetricKind::Points,
+            Self::LaterFirstLoss => MetricKind::RoundOfFirstLoss,
+            Self::MoreBuchholz => MetricKind::Buchholz,
+            Self::MoreSonnebornBerger => MetricKind::SonnebornBerger,
+            Self::MoreBuchholzOfBuchholz => MetricKind::BuchholzOfBuchholz,
         }
     }
 
-    /// The name the metric is shown by, see [`MetricKind::label`].
+    /// The name the criterion is shown by, which is the label of its metric unless several criteria
+    /// share that metric and the label has to tell them apart, direction included.
     pub fn label(self) -> &'static str {
-        self.kind().label()
+        match self {
+            Self::MoreWins => "more wins",
+            Self::MoreDraws => "more draws",
+            Self::FewerLosses => "fewer losses",
+            Self::FewerMatchesPlayed => "fewer matches played",
+            _ => self.kind().label(),
+        }
     }
 
-    /// Appends this metric to `metrics`, so that it breaks the ties of every metric already in
-    /// there.
+    /// Appends this criterion to `metrics`, so that it breaks the ties of every criterion already
+    /// in there.
     ///
-    /// Adding the getter of the metric here rather than handing one out keeps the metric a
-    /// ranking is sorted by and the way it is read out of that ranking in one place.
-    fn add_to(self, metrics: LexicographicalMetrics) -> LexicographicalMetrics {
+    /// Adding the criterion of the engine here rather than handing one out keeps what a ranking is
+    /// sorted by and how it is sorted by it in one place.
+    fn add_to(self, metrics: LexicographicalCriteria) -> LexicographicalCriteria {
         match self {
-            Self::Points => metrics.add_metric(PointsGetter),
-            Self::RoundOfFirstLoss => metrics.add_metric(RoundOfFirstLossGetter),
-            Self::Buchholz => metrics.add_metric(BuchholzGetter),
-            Self::SonnebornBerger => metrics.add_metric(SonnebornBergerGetter),
-            Self::BuchholzOfBuchholz => metrics.add_metric(BuchholzOfBuchholzGetter),
+            Self::MoreWins => metrics.add_criterion(MoreWins),
+            Self::MoreDraws => metrics.add_criterion(MoreDraws),
+            Self::FewerLosses => metrics.add_criterion(FewerLosses),
+            Self::FewerMatchesPlayed => metrics.add_criterion(FewerMatchesPlayed),
+            Self::MorePoints => metrics.add_criterion(MorePoints),
+            Self::LaterFirstLoss => metrics.add_criterion(LaterFirstLoss),
+            Self::MoreBuchholz => metrics.add_criterion(MoreBuchholz),
+            Self::MoreSonnebornBerger => metrics.add_criterion(MoreSonnebornBerger),
+            Self::MoreBuchholzOfBuchholz => metrics.add_criterion(MoreBuchholzOfBuchholz),
         }
     }
 }
@@ -350,14 +388,14 @@ impl RankingMetric {
 ///
 /// # Examples
 /// ```
-/// use tournament_cli::phase::{FormatConfig, MetricKind, PhaseConfig, RankingMetric};
+/// use tournament_cli::phase::{Criterion, FormatConfig, MetricKind, PhaseConfig};
 ///
 /// // ranking by Sonneborn-Berger needs the points it sums, which need the results they are
 /// // scored from, so all of them are calculated even though none was asked for
 /// let config = PhaseConfig::new(
 ///     FormatConfig::RoundRobin,
 ///     [],
-///     [RankingMetric::SonnebornBerger],
+///     [Criterion::MoreSonnebornBerger],
 /// );
 ///
 /// assert_eq!(
@@ -382,7 +420,7 @@ pub struct PhaseConfig {
     metrics: Vec<MetricConfig>,
     /// Best first, every metric breaking the ties of the ones before it. May be empty, which
     /// leaves every entrant tied for the first rank.
-    ranked_by: Vec<RankingMetric>,
+    ranked_by: Vec<Criterion>,
 }
 
 impl PhaseConfig {
@@ -396,11 +434,11 @@ impl PhaseConfig {
     pub fn new(
         format: FormatConfig,
         metrics: impl IntoIterator<Item = MetricConfig>,
-        ranked_by: impl IntoIterator<Item = RankingMetric>,
+        ranked_by: impl IntoIterator<Item = Criterion>,
     ) -> Self {
         // a metric cannot break its own ties, so one that is sorted by twice is only kept where
         // it is sorted by first
-        let mut ranking: Vec<RankingMetric> = Vec::new();
+        let mut ranking: Vec<Criterion> = Vec::new();
         for metric in ranked_by {
             if !ranking.contains(&metric) {
                 ranking.push(metric);
@@ -475,7 +513,7 @@ impl PhaseConfig {
     }
 
     /// The metrics the phase is ranked by, best first.
-    pub fn ranked_by(&self) -> &[RankingMetric] {
+    pub fn ranked_by(&self) -> &[Criterion] {
         &self.ranked_by
     }
 
@@ -508,7 +546,7 @@ impl PhaseConfig {
         let metrics = self
             .ranked_by
             .iter()
-            .fold(LexicographicalMetrics::new(), |metrics, ranking_metric| {
+            .fold(LexicographicalCriteria::new(), |metrics, ranking_metric| {
                 ranking_metric.add_to(metrics)
             });
         (
@@ -568,6 +606,59 @@ mod tests {
         }
     }
 
+    /// Every criterion is offered by the metric it sorts by, which is what makes
+    /// [`PhaseConfig::new`] calculate that metric for a phase that is ranked by the criterion.
+    #[test]
+    fn every_criterion_a_metric_offers_sorts_by_that_metric() {
+        for &kind in MetricKind::ALL {
+            for &ranking_metric in kind.criteria() {
+                assert_eq!(
+                    ranking_metric.kind(),
+                    kind,
+                    "{kind:?} offers {ranking_metric:?}, which sorts by {:?}",
+                    ranking_metric.kind()
+                );
+            }
+        }
+    }
+
+    /// The ranking is picked criterion by criterion, so two criteria of the same metric have to be
+    /// told apart by their labels.
+    #[test]
+    fn criteria_of_the_same_metric_have_distinct_labels() {
+        for &kind in MetricKind::ALL {
+            let labels: Vec<_> = kind
+                .criteria()
+                .iter()
+                .map(|metric| metric.label())
+                .collect();
+
+            for (index, label) in labels.iter().enumerate() {
+                assert!(
+                    !labels[..index].contains(label),
+                    "{kind:?} offers two criteria labelled {label}"
+                );
+            }
+        }
+    }
+
+    /// Wins, draws and losses are three criteria of one metric, so ranking by several of them
+    /// calculates that metric once.
+    #[test]
+    fn ranking_by_wins_and_losses_calculates_the_wins_draws_losses_metric_once() {
+        let config = PhaseConfig::new(
+            FormatConfig::RoundRobin,
+            [],
+            [Criterion::MoreWins, Criterion::FewerLosses],
+        );
+
+        assert_eq!(kinds(&config), [MetricKind::WinsDrawsLosses]);
+        assert_eq!(
+            config.summary(),
+            "round robin, ranked by more wins, then fewer losses"
+        );
+    }
+
     #[test]
     fn a_preset_is_the_configuration_of_its_format() {
         let rounds = NonZeroU32::new(7).unwrap();
@@ -616,7 +707,7 @@ mod tests {
             for_draw: 0.5,
         };
 
-        let config = PhaseConfig::new(FormatConfig::RoundRobin, [points], [RankingMetric::Points]);
+        let config = PhaseConfig::new(FormatConfig::RoundRobin, [points], [Criterion::MorePoints]);
 
         assert!(config.metrics().contains(&points));
     }
@@ -650,7 +741,7 @@ mod tests {
         let config = PhaseConfig::new(
             FormatConfig::SingleElimination,
             [],
-            [RankingMetric::RoundOfFirstLoss],
+            [Criterion::LaterFirstLoss],
         );
 
         assert_eq!(kinds(&config), [MetricKind::RoundOfFirstLoss]);

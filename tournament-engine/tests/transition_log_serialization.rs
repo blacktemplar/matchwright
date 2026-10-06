@@ -19,12 +19,12 @@ use tournament_engine::{
         metrics_calculator::{
             buchholz::BuchholzCalculator,
             matches::MatchesCalculator,
-            points::{Points, PointsCalculator, PointsGetter},
-            round_of_first_loss::{RoundOfFirstLossCalculator, RoundOfFirstLossGetter},
+            points::{MorePoints, Points, PointsCalculator},
+            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLossCalculator},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::single_elimination::SingleElimination,
-        ranker::{HierarchicalRanker, LexicographicalMetrics},
+        ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
         CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
@@ -99,9 +99,9 @@ fn played_competition() -> CompetitionStateMachine {
         RemoveEntrant::new(Entrant::new(entrant_id(4))),
     );
     let ranker = HierarchicalRanker::new(vec![Box::new(
-        LexicographicalMetrics::new()
-            .add_metric(RoundOfFirstLossGetter)
-            .add_metric(PointsGetter),
+        LexicographicalCriteria::new()
+            .add_criterion(LaterFirstLoss)
+            .add_criterion(MorePoints),
     )]);
     apply(
         &mut machine,
