@@ -8,6 +8,8 @@ use std::{
 use clap::{Parser, Subcommand, ValueEnum};
 use thiserror::Error;
 
+use crate::phase::FormatConfig;
+
 /// A single command typed at the prompt.
 ///
 /// The doc comment of every variant is the help text the prompt shows for it, while this one is
@@ -26,10 +28,11 @@ pub enum Command {
     /// Remove an entrant from the competition
     #[command(visible_alias = "remove")]
     RemoveEntrant { name: String },
-    /// Add the phase the competition is played in
+    /// Add the phase the competition is played in, configuring it at the prompt unless a preset
+    /// is given
     AddPhase {
         #[command(subcommand)]
-        preset: PhasePreset,
+        preset: Option<PhasePreset>,
     },
     /// Start the competition, which schedules the first matches
     Start,
@@ -67,7 +70,12 @@ pub enum Command {
     },
 }
 
-/// The phase formats the CLI offers, each with a fixed set of metrics it is ranked by.
+/// A phase format together with the metrics and the ranking it comes with, which is what
+/// `add-phase` adds without asking anything.
+///
+/// Each preset is the format it names with its defaults, so configuring a phase at the prompt and
+/// accepting every question adds exactly what the preset of the chosen format does, see
+/// [`PhaseConfig::with_defaults`](crate::phase::PhaseConfig::with_defaults).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum PhasePreset {
     /// Everyone plays everyone; ranked by points (3 for a win, 1 for a draw), then
@@ -77,7 +85,18 @@ pub enum PhasePreset {
     SingleElimination,
     /// A number of randomly chosen rounds of a round robin; ranked by points (3 for a win, 1 for a
     /// draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
-    RandomRounds { rounds: u32 },
+    RandomRounds { rounds: NonZeroU32 },
+}
+
+impl PhasePreset {
+    /// The format the phase is played in, which is what the preset configures the phase for.
+    pub fn format(self) -> FormatConfig {
+        match self {
+            Self::RoundRobin => FormatConfig::RoundRobin,
+            Self::SingleElimination => FormatConfig::SingleElimination,
+            Self::RandomRounds { rounds } => FormatConfig::RandomRounds { rounds },
+        }
+    }
 }
 
 /// The result of a match, as reported by an operator.
@@ -172,9 +191,23 @@ mod tests {
         assert_eq!(
             parse("add-phase random-rounds 5"),
             Command::AddPhase {
-                preset: PhasePreset::RandomRounds { rounds: 5 }
+                preset: Some(PhasePreset::RandomRounds {
+                    rounds: NonZeroU32::new(5).unwrap()
+                })
             }
         );
+    }
+
+    /// A phase is configured at the prompt rather than taken from a preset, which is what the
+    /// absent preset stands for.
+    #[test]
+    fn add_phase_takes_no_preset_at_all() {
+        assert_eq!(parse("add-phase"), Command::AddPhase { preset: None });
+    }
+
+    #[test]
+    fn a_phase_cannot_be_played_in_no_round() {
+        assert!(Command::parse_line("add-phase random-rounds 0").is_err());
     }
 
     #[test]

@@ -14,11 +14,13 @@ use std::{
 };
 
 use clap::Parser;
+use inquire::InquireError;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use thiserror::Error;
 use tournament_cli::{
     command::{Command, ParseError},
     session::{self, Outcome, Session},
+    wizard,
 };
 
 /// Runs a tournament interactively.
@@ -34,6 +36,8 @@ struct Args {
 enum Error {
     #[error(transparent)]
     Session(#[from] session::Error),
+    #[error("cannot configure the phase: {0}")]
+    Configure(InquireError),
     #[error("cannot read from the terminal: {0}")]
     Terminal(#[from] ReadlineError),
     #[error("cannot write to the terminal: {0}")]
@@ -90,12 +94,36 @@ fn run(mut session: Session) -> Result<(), Error> {
             Err(ReadlineError::Eof) => return Ok(()),
             Err(error) => return Err(Error::Terminal(error)),
         };
-        match session.execute(command) {
+        // a session never asks the operator anything, so a phase that is to be configured is
+        // configured here and reaches the session as the configuration it produced
+        let outcome = match command {
+            Command::AddPhase { preset: None } => add_configured_phase(&mut session),
+            command => session.execute(command).map_err(Error::Session),
+        };
+        match outcome {
             Ok(Outcome::Continue(output)) if output.is_empty() => {}
             Ok(Outcome::Continue(output)) => println!("{output}"),
             Ok(Outcome::Exit) => return Ok(()),
             Err(error) => eprintln!("error: {error}"),
         }
+    }
+}
+
+/// Configures a phase at the prompt and adds it, leaving the competition untouched if the
+/// operator cancels the configuration.
+fn add_configured_phase(session: &mut Session) -> Result<Outcome, Error> {
+    match wizard::configure_phase() {
+        Ok(config) => session
+            .add_phase(config)
+            .map(Outcome::Continue)
+            .map_err(Error::Session),
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            Ok(Outcome::Continue("cancelled, no phase added".to_owned()))
+        }
+        // input that is piped in cannot answer any question, which is what the session says when
+        // it is handed an unconfigured phase itself
+        Err(InquireError::NotTTY) => Err(Error::Session(session::Error::NotConfigured)),
+        Err(error) => Err(Error::Configure(error)),
     }
 }
 

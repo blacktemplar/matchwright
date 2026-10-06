@@ -18,7 +18,7 @@ a `*`.
 tournament> add Alice Bob "Carol C." Dave
 4 entrant(s) added, 4 in total
 tournament*> add-phase round-robin
-phase added
+phase added: round robin, ranked by points, then Sonneborn-Berger
 tournament*> start
 competition started, 6 match(es) scheduled
 tournament*> matches
@@ -44,7 +44,7 @@ cup> exit
 | `entrants` | Lists the entrants. |
 | `add-entrant <NAME>...` (`add`) | Adds entrants. Names must be unique; quote names containing spaces. If one name is invalid, none is added. |
 | `remove-entrant <NAME>` (`remove`) | Removes an entrant. |
-| `add-phase <PRESET>` | Adds the phase the competition is played in, see below. Only one phase is supported. |
+| `add-phase [PRESET]` | Adds the phase the competition is played in: the preset named, or, without a preset, the phase configured at the prompt, see below. Only one phase is supported. |
 | `start` | Starts the competition and schedules the first matches. Entrants and the phase cannot be changed afterwards. |
 | `matches [--open]` | Lists the matches with their number, round and result. |
 | `report <NUMBER> <a\|b\|draw>` | Reports the result of a match: team a wins, team b wins, or a draw. |
@@ -63,6 +63,55 @@ Ctrl-C clears the line being typed, Ctrl-D behaves like `exit`.
 | `round-robin` | Everyone plays everyone. | Points (3 for a win, 1 for a draw), then Sonneborn-Berger. |
 | `single-elimination` | The loser of a match is out; draws are rejected. | The round of the first loss. |
 | `random-rounds <ROUNDS>` | `ROUNDS` randomly chosen rounds of a round robin. | Points (3 for a win, 1 for a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz. |
+
+## Configuring a phase
+
+`add-phase` without a preset asks for everything about the phase instead, one
+question at a time:
+
+```text
+tournament*> add-phase
+? Phase format
+> round robin — everyone plays everyone
+  single elimination — the loser of a match is out, draws are not allowed
+  random rounds — randomly chosen rounds of a round robin
+? Metrics to calculate
+> [x] W-D-L — how many matches were won, drawn and lost
+  [x] points — scored for every win and every draw
+  [ ] round of the first loss — the later the better, never having lost is best
+  [ ] Buchholz — the points of all opponents
+  [x] Sonneborn-Berger — the points of the opponents that were beaten or drawn
+  [ ] Buchholz of Buchholz — the Buchholz of all opponents
+? Points for a win (3)
+? Points for a draw (1)
+? Sonneborn-Berger: how much a beaten opponent counts (1)
+? Sonneborn-Berger: how much an opponent played to a draw counts (0.5)
+? Rank by
+> points
+  Sonneborn-Berger
+  (no further metric)
+? Then by
+> Sonneborn-Berger
+  (no further metric)
+phase added: round robin, ranked by points, then Sonneborn-Berger
+```
+
+Every question starts out at the answer the chosen format comes with, so
+accepting all of them with Enter adds exactly what the preset of that format
+does, and changing one thing means answering one question differently. Enter
+confirms, Space toggles a metric, `↑`/`↓` move and typing filters a list. Esc
+cancels the configuration and leaves the competition unchanged, which is also
+what Ctrl-C does during it.
+
+The ranking is asked for one metric at a time, each one only breaking the ties
+of the ones before it, until `(no further metric)` is chosen or no metric is
+left. Only a metric that is calculated can be ranked by, and every metric a
+calculated one is derived from is calculated as well even when it was not
+picked: ranking by Sonneborn-Berger alone still calculates the points it sums
+and the results they are scored from, and the ranking shows them.
+
+Since this needs a terminal to ask at, a piped `add-phase` has to name a
+preset.
 
 ## Saving, undo and redo
 

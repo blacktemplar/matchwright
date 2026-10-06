@@ -17,26 +17,12 @@ use tournament_engine::{
     entities::competition::{
         Competition, Entrant, EntrantId, Match, MatchResult, Phase, PhaseId, Ranking, RankingId,
     },
-    plugins::{
-        metrics_calculator::{
-            MetricsCalculator,
-            buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzGetter, BuchholzOfBuchholz,
-                BuchholzOfBuchholzCalculator, BuchholzOfBuchholzGetter,
-            },
-            matches::MatchesCalculator,
-            points::{Points, PointsCalculator, PointsGetter},
-            round_of_first_loss::{
-                RoundOfFirstLoss, RoundOfFirstLossCalculator, RoundOfFirstLossGetter,
-            },
-            sonneborn_berger::{SonnebornBerger, SonnebornBergerCalculator, SonnebornBergerGetter},
-            wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
-        },
-        phase_format::{
-            PhaseFormat, random_rounds::RandomRounds, round_robin::RoundRobin,
-            single_elimination::SingleElimination,
-        },
-        ranker::{HierarchicalRanker, LexicographicalMetrics},
+    plugins::metrics_calculator::{
+        buchholz::{Buchholz, BuchholzOfBuchholz},
+        points::Points,
+        round_of_first_loss::RoundOfFirstLoss,
+        sonneborn_berger::SonnebornBerger,
+        wins_draws_losses::WinsDrawsLosses,
     },
     transitions::{
         CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
@@ -51,16 +37,9 @@ use uuid::Uuid;
 
 use crate::{
     annotations::DisplayName,
-    command::{Command, PhasePreset, ReportedResult},
+    command::{Command, ReportedResult},
+    phase::PhaseConfig,
 };
-
-/// The scoring system of most association football leagues, used by every preset that ranks by
-/// points.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
-
-/// The classical Sonneborn-Berger weights: the points of a beaten opponent count fully, those of
-/// an opponent that was played to a draw count half.
-const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
 
 /// What the prompt does after a command was executed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +61,13 @@ pub enum Error {
     UnknownEntrant(String),
     #[error("the competition already has a phase, and only one is supported")]
     PhaseAlreadyAdded,
+    /// A session never asks the operator anything, so a phase that is to be configured rather
+    /// than taken from a preset has to be configured before it reaches one, see
+    /// [`crate::wizard::configure_phase`].
+    #[error(
+        "configuring a phase needs a terminal to ask at; add a preset instead, see `help add-phase`"
+    )]
+    NotConfigured,
     #[error("the competition has not started yet")]
     NotStarted,
     #[error("there is no match number {0}")]
@@ -196,7 +182,9 @@ impl Session {
             Command::Entrants => self.entrants(),
             Command::AddEntrant { names } => self.add_entrants(names)?,
             Command::RemoveEntrant { name } => self.remove_entrant(&name)?,
-            Command::AddPhase { preset } => self.add_phase(preset)?,
+            Command::AddPhase { preset } => {
+                self.add_phase(PhaseConfig::preset(preset.ok_or(Error::NotConfigured)?))?
+            }
             Command::Start => self.start()?,
             Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
@@ -277,61 +265,26 @@ impl Session {
         Ok(format!("{name} removed"))
     }
 
-    fn add_phase(&mut self, preset: PhasePreset) -> Result<String, Error> {
+    /// Adds the phase `config` describes, which is the only phase the competition is played in.
+    ///
+    /// # Errors
+    /// Returns an error if the competition already has a phase or does not accept one anymore
+    /// because it has started.
+    pub fn add_phase(&mut self, config: PhaseConfig) -> Result<String, Error> {
         if !self.competition().phases().is_empty() {
             return Err(Error::PhaseAlreadyAdded);
         }
-        let (phase_format, metrics, calculators): (
-            Box<dyn PhaseFormat>,
-            LexicographicalMetrics,
-            Vec<Box<dyn MetricsCalculator>>,
-        ) = match preset {
-            PhasePreset::RoundRobin => (
-                Box::new(RoundRobin),
-                LexicographicalMetrics::new()
-                    .add_metric(PointsGetter)
-                    .add_metric(SonnebornBergerGetter),
-                vec![
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
-                    Box::new(SONNEBORN_BERGER),
-                ],
-            ),
-            PhasePreset::SingleElimination => (
-                Box::new(SingleElimination),
-                LexicographicalMetrics::new().add_metric(RoundOfFirstLossGetter),
-                vec![
-                    Box::new(RoundOfFirstLossCalculator),
-                    Box::new(WinsDrawsLossesCalculator),
-                ],
-            ),
-            PhasePreset::RandomRounds { rounds } => (
-                Box::new(RandomRounds::new(rounds)),
-                LexicographicalMetrics::new()
-                    .add_metric(PointsGetter)
-                    .add_metric(BuchholzGetter)
-                    .add_metric(SonnebornBergerGetter)
-                    .add_metric(BuchholzOfBuchholzGetter),
-                vec![
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
-                    Box::new(BuchholzCalculator),
-                    Box::new(SONNEBORN_BERGER),
-                    Box::new(BuchholzOfBuchholzCalculator),
-                ],
-            ),
-        };
-        // the calculators of every preset run in the order listed, so each one that reads the
-        // metric of another one is listed after it
+        let summary = config.summary();
+        // the calculators run in the order the configuration lists them, which is one in which
+        // every metric comes after the ones it is derived from
+        let (phase_format, ranker, calculators) = config.into_plugins();
         self.apply(AddPhase::new(
             PhaseId::new(Uuid::new_v4()),
             phase_format,
-            Box::new(HierarchicalRanker::new(vec![Box::new(metrics)])),
+            ranker,
             calculators,
         ))?;
-        Ok("phase added".to_owned())
+        Ok(format!("phase added: {summary}"))
     }
 
     fn start(&mut self) -> Result<String, Error> {
@@ -632,6 +585,7 @@ fn table(header: &[&str], rows: &[Vec<String>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::phase::{FormatConfig, MetricConfig, RankingMetric};
 
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
@@ -724,6 +678,90 @@ mod tests {
         let result = execute(&mut session, "add-phase single-elimination");
 
         assert!(matches!(result, Err(Error::PhaseAlreadyAdded)));
+    }
+
+    /// A session executes commands and never asks the operator anything, so the phase of an
+    /// `add-phase` without a preset has to be configured before the command reaches it.
+    #[test]
+    fn a_phase_to_be_configured_cannot_be_added_by_the_session_itself() {
+        let mut session = Session::new(None);
+
+        let result = execute(&mut session, "add-phase");
+
+        assert!(matches!(result, Err(Error::NotConfigured)));
+        assert!(session.competition().phases().is_empty());
+    }
+
+    /// A configured phase calculates exactly the metrics it was configured with, and scores them
+    /// the way it was configured to.
+    #[test]
+    fn a_configured_phase_is_played_the_way_it_was_configured() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+        let config = PhaseConfig::new(
+            FormatConfig::RoundRobin,
+            [
+                MetricConfig::WinsDrawsLosses,
+                MetricConfig::Points {
+                    for_win: 1.0,
+                    for_draw: 0.5,
+                },
+            ],
+            [RankingMetric::Points],
+        );
+
+        let added = session.add_phase(config).unwrap();
+
+        assert_eq!(added, "phase added: round robin, ranked by points");
+        output(&mut session, "start");
+        for number in 1..=6 {
+            output(&mut session, &format!("report {number} a"));
+        }
+        let ranking = output(&mut session, "ranking");
+        assert_eq!(
+            ranking
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "name", "W-D-L", "points"],
+            "the Sonneborn-Berger of the preset was not configured, so it is not calculated"
+        );
+        for row in ranking.lines().skip(HEADER_LINES) {
+            let columns: Vec<_> = row.split_whitespace().collect();
+            let wins = columns[2].split('-').next().unwrap();
+            assert_eq!(
+                columns[3], wins,
+                "every win is worth a single point, {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_phase_configured_without_a_ranking_leaves_every_entrant_tied() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+        let config = PhaseConfig::new(
+            FormatConfig::RoundRobin,
+            [MetricConfig::WinsDrawsLosses],
+            [],
+        );
+        session.add_phase(config).unwrap();
+        output(&mut session, "start");
+
+        for number in 1..=6 {
+            output(&mut session, &format!("report {number} a"));
+        }
+
+        let ranking = output(&mut session, "ranking");
+        assert!(
+            ranking
+                .lines()
+                .skip(HEADER_LINES)
+                .all(|row| row.starts_with('1')),
+            "nothing sorts the entrants, so all of them share the first rank: {ranking}"
+        );
     }
 
     #[test]
