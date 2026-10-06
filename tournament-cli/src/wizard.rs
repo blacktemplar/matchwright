@@ -13,7 +13,7 @@
 
 use std::iter;
 
-use inquire::{CustomType, MultiSelect, Select, error::InquireResult};
+use inquire::{Confirm, CustomType, MultiSelect, Select, error::InquireResult};
 
 use crate::phase::{Criterion, FormatConfig, MetricConfig, MetricKind, PhaseConfig};
 
@@ -61,6 +61,17 @@ fn ask_format() -> InquireResult<FormatConfig> {
                 .with_error_message("the phase has to be played in at least one round")
                 .prompt()?,
         }),
+        FormatConfig::SingleElimination { third_place_match } => {
+            Ok(FormatConfig::SingleElimination {
+                third_place_match: Confirm::new("Play a match for third place?")
+                    .with_default(third_place_match)
+                    .with_help_message(
+                        "the two entrants knocked out in the semifinals play it alongside the \
+                         final; without it they stay third equal",
+                    )
+                    .prompt()?,
+            })
+        }
         format => Ok(format),
     }
 }

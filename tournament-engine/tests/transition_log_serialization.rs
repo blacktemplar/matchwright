@@ -107,7 +107,7 @@ fn played_competition() -> CompetitionStateMachine {
         &mut machine,
         AddPhase::new(
             phase_id(),
-            Box::new(SingleElimination),
+            Box::new(SingleElimination::new()),
             Box::new(ranker),
             // the calculators run in this order, so every one of them that reads the metric of
             // another one has to be listed after it

@@ -10,8 +10,42 @@ use crate::{
     plugins::phase_format::PhaseFormat,
 };
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SingleElimination;
+/// A knockout: the loser of a match is out, so every round halves the field until the final.
+///
+/// Optionally the two entrants knocked out in the semifinals play one more match, for third place,
+/// see [`SingleElimination::with_third_place_match`].
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SingleElimination {
+    third_place_match: bool,
+}
+
+impl SingleElimination {
+    /// A knockout that ends with the final, which leaves the two entrants knocked out in the
+    /// semifinals as far as the bracket takes them, i.e. third equal.
+    pub const fn new() -> Self {
+        Self {
+            third_place_match: false,
+        }
+    }
+
+    /// A knockout in which the two entrants knocked out in the semifinals play for third place,
+    /// scheduled in the same round as the final.
+    ///
+    /// Playing the match is not by itself enough to rank its winner above its loser: both of them
+    /// first lost in the semifinal whichever way it goes, so a ranking by
+    /// [`LaterFirstLoss`] ties them. A phase that plays for third place wants a further criterion
+    /// that tells the two apart, which [`FewerLosses`] does.
+    ///
+    /// A bracket of three entrants has nobody to play the match against and so is not given it.
+    ///
+    /// [`LaterFirstLoss`]: crate::plugins::metrics_calculator::round_of_first_loss::LaterFirstLoss
+    /// [`FewerLosses`]: crate::plugins::metrics_calculator::wins_draws_losses::FewerLosses
+    pub const fn with_third_place_match() -> Self {
+        Self {
+            third_place_match: true,
+        }
+    }
+}
 
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
@@ -66,9 +100,21 @@ impl PhaseFormat for SingleElimination {
             }
             let num_survived_rankings = lowest_loser_rank.get() - 1;
             let num_matches = num_survived_rankings / 2;
-            let mut ordered_phase_team_ids = vec![RankingId::nil(); num_survived_rankings as usize];
+            // The two teams knocked out in the semifinals end up at the two ranks right below the
+            // two finalists, so the match for third place is the one scheduled alongside the
+            // final. A bracket of three has nobody at the fourth rank to play it against.
+            let plays_for_third_place =
+                self.third_place_match && num_survived_rankings == 2 && phase.rankings().len() >= 4;
+            // the two ranks of the match for third place are ordered here as well, which is what
+            // makes it a match between them rather than a swap-replaced rank looked up twice
+            let num_ordered_rankings = if plays_for_third_place {
+                4
+            } else {
+                num_survived_rankings
+            };
+            let mut ordered_phase_team_ids = vec![RankingId::nil(); num_ordered_rankings as usize];
             for (id, rank) in ranking_id_to_swap_replaced_rank {
-                if rank.get() <= num_survived_rankings {
+                if rank.get() <= num_ordered_rankings {
                     ordered_phase_team_ids[(rank.get() - 1) as usize] = id;
                 }
             }
@@ -84,6 +130,13 @@ impl PhaseFormat for SingleElimination {
                     let team_b_id = ordered_phase_team_ids[(num_survived_rankings - i) as usize];
                     Match::new(vec1![team_a_id], vec1![team_b_id], round)
                 })
+                .chain(plays_for_third_place.then(|| {
+                    Match::new(
+                        vec1![ordered_phase_team_ids[2]],
+                        vec1![ordered_phase_team_ids[3]],
+                        round,
+                    )
+                }))
                 .collect()
         } else {
             // first round
@@ -113,5 +166,137 @@ impl PhaseFormat for SingleElimination {
     /// Every match has to produce a winner that advances to the next round.
     fn allows_draws(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entities::competition::PhaseBuilder;
+
+    /// A knockout between `num_players` entrants with its first round already scheduled.
+    fn knockout(format: SingleElimination, num_players: u32) -> Phase {
+        let mut phase = PhaseBuilder::new(Box::new(format))
+            .with_players(num_players)
+            .build();
+        phase.create_new_matches();
+        phase
+    }
+
+    /// The matches of `round`, each as the pair of initial unique ranks it is played between, in
+    /// ascending order so that the pairings of a round can be compared as a whole.
+    fn pairings(phase: &Phase, round: u32) -> Vec<(u32, u32)> {
+        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
+        phase
+            .matches()
+            .values()
+            .filter(|r#match| r#match.round().get() == round)
+            .map(|r#match| (rank_of(&r#match.team_a()[0]), rank_of(&r#match.team_b()[0])))
+            .sorted()
+            .collect()
+    }
+
+    /// Reports every match of `round` as won by the side that entered the bracket higher, i.e.
+    /// lets the favourites advance, and schedules whatever follows from that.
+    fn play_round(phase: &mut Phase, round: u32) {
+        let match_ids = phase
+            .matches()
+            .values()
+            .filter(|r#match| r#match.round().get() == round)
+            .map(Match::id)
+            .collect_vec();
+        assert!(!match_ids.is_empty(), "round {round} has no matches");
+        for match_id in match_ids {
+            phase.report_match_result(match_id, MatchResult::AWins);
+        }
+        phase.create_new_matches();
+    }
+
+    #[test]
+    fn a_knockout_ends_with_the_final_unless_it_plays_for_third_place() {
+        let mut phase = knockout(SingleElimination::new(), 4);
+
+        assert_eq!(pairings(&phase, 1), [(1, 4), (2, 3)]);
+        play_round(&mut phase, 1);
+
+        assert_eq!(pairings(&phase, 2), [(1, 2)], "the final, and nothing else");
+        play_round(&mut phase, 2);
+        assert_eq!(phase.matches().len(), 3);
+    }
+
+    #[test]
+    fn the_match_for_third_place_is_scheduled_alongside_the_final() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 4);
+
+        play_round(&mut phase, 1);
+
+        assert_eq!(
+            pairings(&phase, 2),
+            [(1, 2), (3, 4)],
+            "the two losers of the semifinals play in the round of the final"
+        );
+        play_round(&mut phase, 2);
+        assert_eq!(phase.matches().len(), 4, "the bracket is over afterwards");
+    }
+
+    /// The match is played between whoever lost the semifinals, not between whoever entered the
+    /// bracket third and fourth, which is what a bracket the favourites lose shows.
+    #[test]
+    fn the_losers_of_the_semifinals_play_for_third_place() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 4);
+        for match_id in phase.matches().values().map(Match::id).collect_vec() {
+            // the lower ranked side wins both semifinals, so 1 and 2 are the ones knocked out
+            phase.report_match_result(match_id, MatchResult::BWins);
+        }
+
+        phase.create_new_matches();
+
+        assert_eq!(
+            pairings(&phase, 2),
+            [(2, 1), (4, 3)],
+            "4 and 3 advanced to the final, so 2 and 1 are the ones playing for third place"
+        );
+    }
+
+    /// A bracket of three gives one entrant a bye into the final, so only one of the three gets
+    /// knocked out before it and there is nobody for it to play against.
+    #[test]
+    fn three_entrants_do_not_play_for_third_place() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 3);
+
+        assert_eq!(pairings(&phase, 1), [(2, 3)]);
+        play_round(&mut phase, 1);
+
+        assert_eq!(pairings(&phase, 2), [(1, 2)]);
+        play_round(&mut phase, 2);
+        assert_eq!(phase.matches().len(), 2);
+    }
+
+    /// Two entrants play nothing but the final, so the option changes nothing at all.
+    #[test]
+    fn two_entrants_only_play_the_final() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 2);
+
+        assert_eq!(pairings(&phase, 1), [(1, 2)]);
+        play_round(&mut phase, 1);
+
+        assert_eq!(phase.matches().len(), 1);
+    }
+
+    /// Only the semifinals decide who plays for third place, so the earlier rounds of a larger
+    /// bracket are scheduled exactly as they are without the option, byes included.
+    #[test]
+    fn a_larger_bracket_only_gains_the_one_match() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 6);
+
+        assert_eq!(pairings(&phase, 1), [(3, 6), (4, 5)]);
+        play_round(&mut phase, 1);
+
+        assert_eq!(pairings(&phase, 2), [(1, 4), (2, 3)]);
+        play_round(&mut phase, 2);
+
+        assert_eq!(pairings(&phase, 3), [(1, 2), (3, 4)]);
+        play_round(&mut phase, 3);
+        assert_eq!(phase.matches().len(), 6);
     }
 }

@@ -63,15 +63,23 @@ pub(crate) type PhasePlugins = (
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatConfig {
     RoundRobin,
-    SingleElimination,
-    RandomRounds { rounds: NonZeroU32 },
+    SingleElimination {
+        /// Whether the two entrants knocked out in the semifinals play one more match, for third
+        /// place.
+        third_place_match: bool,
+    },
+    RandomRounds {
+        rounds: NonZeroU32,
+    },
 }
 
 impl FormatConfig {
     /// Every format, each with the parameters it is offered with.
     pub const ALL: &'static [Self] = &[
         Self::RoundRobin,
-        Self::SingleElimination,
+        Self::SingleElimination {
+            third_place_match: true,
+        },
         Self::RandomRounds {
             rounds: DEFAULT_RANDOM_ROUNDS,
         },
@@ -81,7 +89,7 @@ impl FormatConfig {
     pub fn label(self) -> &'static str {
         match self {
             Self::RoundRobin => "round robin",
-            Self::SingleElimination => "single elimination",
+            Self::SingleElimination { .. } => "single elimination",
             Self::RandomRounds { .. } => "random rounds",
         }
     }
@@ -89,7 +97,7 @@ impl FormatConfig {
     pub fn description(self) -> &'static str {
         match self {
             Self::RoundRobin => "everyone plays everyone",
-            Self::SingleElimination => "the loser of a match is out, draws are not allowed",
+            Self::SingleElimination { .. } => "the loser of a match is out, draws are not allowed",
             Self::RandomRounds { .. } => "randomly chosen rounds of a round robin",
         }
     }
@@ -105,7 +113,9 @@ impl FormatConfig {
                 MetricKind::Points,
                 MetricKind::SonnebornBerger,
             ],
-            Self::SingleElimination => &[MetricKind::RoundOfFirstLoss, MetricKind::WinsDrawsLosses],
+            Self::SingleElimination { .. } => {
+                &[MetricKind::RoundOfFirstLoss, MetricKind::WinsDrawsLosses]
+            }
             Self::RandomRounds { .. } => &[
                 MetricKind::WinsDrawsLosses,
                 MetricKind::Points,
@@ -121,7 +131,14 @@ impl FormatConfig {
     pub fn default_ranked_by(self) -> &'static [Criterion] {
         match self {
             Self::RoundRobin => &[Criterion::MorePoints, Criterion::MoreSonnebornBerger],
-            Self::SingleElimination => &[Criterion::LaterFirstLoss],
+            // the round of the first loss is the same for both entrants that lost the semifinals,
+            // so the losses are what the match for third place is decided by in the ranking
+            Self::SingleElimination {
+                third_place_match: true,
+            } => &[Criterion::LaterFirstLoss, Criterion::FewerLosses],
+            Self::SingleElimination {
+                third_place_match: false,
+            } => &[Criterion::LaterFirstLoss],
             Self::RandomRounds { .. } => &[
                 Criterion::MorePoints,
                 Criterion::MoreBuchholz,
@@ -134,7 +151,12 @@ impl FormatConfig {
     fn plugin(self) -> Box<dyn PhaseFormat> {
         match self {
             Self::RoundRobin => Box::new(RoundRobin),
-            Self::SingleElimination => Box::new(SingleElimination),
+            Self::SingleElimination {
+                third_place_match: true,
+            } => Box::new(SingleElimination::with_third_place_match()),
+            Self::SingleElimination {
+                third_place_match: false,
+            } => Box::new(SingleElimination::new()),
             Self::RandomRounds { rounds } => Box::new(RandomRounds::new(rounds.get())),
         }
     }
@@ -532,6 +554,9 @@ impl PhaseConfig {
     pub fn summary(&self) -> String {
         let format = match self.format {
             FormatConfig::RandomRounds { rounds } => format!("{rounds} random rounds"),
+            FormatConfig::SingleElimination {
+                third_place_match: true,
+            } => "single elimination with a match for third place".to_owned(),
             format => format.label().to_owned(),
         };
         if self.ranked_by.is_empty() {
@@ -659,6 +684,38 @@ mod tests {
         );
     }
 
+    /// A knockout that plays for third place needs a criterion that tells its winner from its
+    /// loser, because the round of their first loss is the semifinal either way.
+    #[test]
+    fn a_knockout_that_plays_for_third_place_also_ranks_by_the_losses() {
+        let config = PhaseConfig::with_defaults(FormatConfig::SingleElimination {
+            third_place_match: true,
+        });
+
+        assert_eq!(
+            config.ranked_by(),
+            [Criterion::LaterFirstLoss, Criterion::FewerLosses]
+        );
+        assert_eq!(
+            config.summary(),
+            "single elimination with a match for third place, ranked by round of the first loss, \
+             then fewer losses"
+        );
+    }
+
+    #[test]
+    fn a_knockout_that_ends_with_the_final_only_ranks_by_the_round_of_the_first_loss() {
+        let config = PhaseConfig::with_defaults(FormatConfig::SingleElimination {
+            third_place_match: false,
+        });
+
+        assert_eq!(config.ranked_by(), [Criterion::LaterFirstLoss]);
+        assert_eq!(
+            config.summary(),
+            "single elimination, ranked by round of the first loss"
+        );
+    }
+
     #[test]
     fn a_preset_is_the_configuration_of_its_format() {
         let rounds = NonZeroU32::new(7).unwrap();
@@ -739,7 +796,9 @@ mod tests {
     #[test]
     fn a_metric_that_is_only_ranked_by_is_calculated() {
         let config = PhaseConfig::new(
-            FormatConfig::SingleElimination,
+            FormatConfig::SingleElimination {
+                third_place_match: false,
+            },
             [],
             [Criterion::LaterFirstLoss],
         );

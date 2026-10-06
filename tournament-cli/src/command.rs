@@ -81,8 +81,13 @@ pub enum PhasePreset {
     /// Everyone plays everyone; ranked by points (3 for a win, 1 for a draw), then
     /// Sonneborn-Berger
     RoundRobin,
-    /// The loser of a match is out, draws are not allowed; ranked by the round of the first loss
-    SingleElimination,
+    /// The loser of a match is out, draws are not allowed; the semifinal losers play for third
+    /// place and are ranked by the round of the first loss, then the losses
+    SingleElimination {
+        /// End the bracket with the final, leaving the two semifinal losers third equal
+        #[arg(long)]
+        no_third_place_match: bool,
+    },
     /// A number of randomly chosen rounds of a round robin; ranked by points (3 for a win, 1 for a
     /// draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
     RandomRounds { rounds: NonZeroU32 },
@@ -93,7 +98,11 @@ impl PhasePreset {
     pub fn format(self) -> FormatConfig {
         match self {
             Self::RoundRobin => FormatConfig::RoundRobin,
-            Self::SingleElimination => FormatConfig::SingleElimination,
+            Self::SingleElimination {
+                no_third_place_match,
+            } => FormatConfig::SingleElimination {
+                third_place_match: !no_third_place_match,
+            },
             Self::RandomRounds { rounds } => FormatConfig::RandomRounds { rounds },
         }
     }
@@ -193,6 +202,28 @@ mod tests {
             Command::AddPhase {
                 preset: Some(PhasePreset::RandomRounds {
                     rounds: NonZeroU32::new(5).unwrap()
+                })
+            }
+        );
+    }
+
+    /// A knockout plays for third place unless the preset is told not to, which is the one thing
+    /// about it that can be turned off without configuring the whole phase at the prompt.
+    #[test]
+    fn a_knockout_plays_for_third_place_unless_it_is_turned_off() {
+        assert_eq!(
+            parse("add-phase single-elimination"),
+            Command::AddPhase {
+                preset: Some(PhasePreset::SingleElimination {
+                    no_third_place_match: false
+                })
+            }
+        );
+        assert_eq!(
+            parse("add-phase single-elimination --no-third-place-match"),
+            Command::AddPhase {
+                preset: Some(PhasePreset::SingleElimination {
+                    no_third_place_match: true
                 })
             }
         );

@@ -792,7 +792,11 @@ mod tests {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
         let config = PhaseConfig::new(
-            FormatConfig::SingleElimination,
+            // a match for third place would have every entrant play two matches, which is exactly
+            // the tie this criterion is shown by breaking
+            FormatConfig::SingleElimination {
+                third_place_match: false,
+            },
             [],
             [Criterion::FewerMatchesPlayed],
         );
@@ -1004,19 +1008,57 @@ mod tests {
         output(&mut session, "report 1 a");
         let semifinal = output(&mut session, "report 2 b");
         assert!(
-            semifinal.ends_with("1 new match(es) scheduled"),
-            "{semifinal}"
+            semifinal.ends_with("2 new match(es) scheduled"),
+            "the final and the match for third place: {semifinal}"
         );
         output(&mut session, "report 3 a");
+        let third_place = output(&mut session, "report 4 a");
+        assert!(
+            third_place.ends_with("all matches are finished"),
+            "{third_place}"
+        );
+
         let ranking = output(&mut session, "ranking");
-        let winner: Vec<_> = ranking
+        let rows: Vec<Vec<&str>> = ranking
             .lines()
-            .nth(HEADER_LINES)
-            .unwrap()
-            .split_whitespace()
+            .skip(HEADER_LINES)
+            .map(|row| row.split_whitespace().collect())
             .collect();
-        assert_eq!(winner[0], "1", "{ranking}");
-        assert_eq!(winner[2..], ["-", "2-0-0"], "{ranking}");
+        assert_eq!(
+            rows.iter().map(|row| row[0]).collect::<Vec<_>>(),
+            ["1", "2", "3", "4"],
+            "the match for third place leaves no two entrants tied: {ranking}"
+        );
+        assert_eq!(rows[0][2..], ["-", "2-0-0"], "{ranking}");
+        assert_eq!(rows[1][2..], ["round", "2", "1-0-1"], "{ranking}");
+        // both entrants that lost the semifinal first lost in round 1, so what tells them apart is
+        // the match for third place, which the one ranked third won and the one ranked fourth lost
+        assert_eq!(rows[2][2..], ["round", "1", "1-0-1"], "{ranking}");
+        assert_eq!(rows[3][2..], ["round", "1", "0-0-2"], "{ranking}");
+    }
+
+    /// Turning the match for third place off ends the bracket with the final, which leaves the two
+    /// entrants knocked out in the semifinals tied for the third rank.
+    #[test]
+    fn a_knockout_without_a_match_for_third_place_ends_with_the_final() {
+        let mut session = started("single-elimination --no-third-place-match");
+
+        output(&mut session, "report 1 a");
+        let semifinal = output(&mut session, "report 2 b");
+        assert!(
+            semifinal.ends_with("1 new match(es) scheduled"),
+            "the final and nothing else: {semifinal}"
+        );
+        let r#final = output(&mut session, "report 3 a");
+        assert!(r#final.ends_with("all matches are finished"), "{final}");
+
+        let ranking = output(&mut session, "ranking");
+        let ranks: Vec<_> = ranking
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| row.split_whitespace().next().expect("a rank"))
+            .collect();
+        assert_eq!(ranks, ["1", "2", "3", "3"], "{ranking}");
     }
 
     #[test]

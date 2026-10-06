@@ -105,7 +105,7 @@ fn full_tournament() {
     let mut sm = CompetitionStateMachine::default();
     let seed = rng().random();
     let phase_id = PhaseId::new(Uuid::new_v4());
-    let phase_format = Box::new(SingleElimination);
+    let phase_format = Box::new(SingleElimination::new());
     let ranker = Box::new(HierarchicalRanker::new(vec![Box::new(
         LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
     )]));
@@ -398,7 +398,7 @@ fn single_elimination_rejects_a_draw() {
         &mut sm,
         AddPhase::new(
             phase_id,
-            Box::new(SingleElimination),
+            Box::new(SingleElimination::new()),
             Box::new(HierarchicalRanker::new(vec![Box::new(
                 LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
             )])),
