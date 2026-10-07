@@ -599,7 +599,7 @@ impl IdAble for Match {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Team {
     A,
     B,
@@ -650,6 +650,12 @@ impl Match {
     /// Annotations do not take part in the [`MatchId`].
     pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
         self.annotations.insert(annotation);
+        self
+    }
+
+    /// Returns this match with `annotations` as its annotations, replacing any it had.
+    pub(crate) fn with_annotations(mut self, annotations: TypeMap) -> Self {
+        self.annotations = annotations;
         self
     }
 

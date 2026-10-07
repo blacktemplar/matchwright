@@ -1,23 +1,31 @@
 use std::num::NonZeroU32;
 
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
-    map::Map,
-    plugins::phase_format::PhaseFormat,
-    type_map::TypeMapValue,
+    entities::competition::{Match, PhaseData},
+    plugins::phase_format::{
+        PhaseFormat,
+        bracket::{Bracket, Source},
+    },
+    type_map::{TypeMap, TypeMapValue},
 };
 
 /// A knockout: the loser of a match is out, so every round halves the field until the final.
+///
+/// A match is scheduled as soon as both of its entrants are known, without waiting for the rest of
+/// its round. Seeding follows the initial ranks: in the first round the best seed plays the worst,
+/// the best two seeds can meet in the final at the earliest, and where the field is not a power of
+/// two the best seeds get the byes.
 ///
 /// Optionally the two entrants knocked out in the semifinals play one more match, for third place,
 /// see [`SingleElimination::with_third_place_match`].
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SingleElimination {
     third_place_match: bool,
+    /// Built from the seeds on the first call. Defaulted so that a phase added before the format
+    /// had state still deserializes.
+    bracket: Option<Bracket>,
 }
 
 impl SingleElimination {
@@ -26,6 +34,7 @@ impl SingleElimination {
     pub const fn new() -> Self {
         Self {
             third_place_match: false,
+            bracket: None,
         }
     }
 
@@ -43,6 +52,7 @@ impl SingleElimination {
     pub const fn with_third_place_match() -> Self {
         Self {
             third_place_match: true,
+            bracket: None,
         }
     }
 }
@@ -98,122 +108,10 @@ impl KnockoutRound {
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
-        if !phase_data.matches().values().all(Match::is_finished) {
-            return vec![];
-        }
-        let max_round = phase_data.matches().values().map(Match::round).max();
-        if let Some(max_round) = max_round {
-            // The ordering of this vector will be determined by match winners. If a lower-ranked
-            // team wins, it will be swapped with the higher-ranked losing team.
-            let mut ranking_id_to_swap_replaced_rank: Map<_, _> = phase_data
-                .rankings()
-                .iter()
-                .map(|(id, r)| (*id, r.initial_unique_rank()))
-                .collect();
-            // matches are ordered by round, which is important so that the following works:
-            let mut lowest_loser_rank = NonZeroU32::MAX;
-            let matches_odered_by_round =
-                phase_data.matches().values().sorted_by_key(|m| m.round());
-            for r#match in matches_odered_by_round {
-                let team_a_id = r#match.team_a()[0];
-                let team_b_id = r#match.team_b()[0];
-                let rank_a = ranking_id_to_swap_replaced_rank[&team_a_id];
-                let rank_b = ranking_id_to_swap_replaced_rank[&team_b_id];
-                let max_rank = rank_a.max(rank_b);
-                if max_rank < lowest_loser_rank {
-                    lowest_loser_rank = max_rank;
-                }
-                let swap = match r#match.result() {
-                    MatchResult::AWins => rank_a > rank_b,
-                    MatchResult::BWins => rank_a < rank_b,
-                    MatchResult::Draw => {
-                        unreachable!("draws are rejected since this format does not allow them")
-                    }
-                    MatchResult::NotFinished => {
-                        unreachable!("We ensured that all matches are finished above")
-                    }
-                };
-                if swap {
-                    ranking_id_to_swap_replaced_rank.insert(team_a_id, rank_b);
-                    ranking_id_to_swap_replaced_rank.insert(team_b_id, rank_a);
-                }
-            }
-            assert!(
-                lowest_loser_rank.get() >= 2
-                    && (lowest_loser_rank.get() - 1) & (lowest_loser_rank.get() - 2) == 0,
-                "lowest_loser_rank - 1 must be a power of 2"
-            );
-            if lowest_loser_rank.get() == 2 {
-                // final got played we are done
-                return vec![];
-            }
-            let num_survived_rankings = lowest_loser_rank.get() - 1;
-            let num_matches = num_survived_rankings / 2;
-            // The two teams knocked out in the semifinals end up at the two ranks right below the
-            // two finalists, so the match for third place is the one scheduled alongside the
-            // final. A bracket of three has nobody at the fourth rank to play it against.
-            let plays_for_third_place = self.third_place_match
-                && num_survived_rankings == 2
-                && phase_data.rankings().len() >= 4;
-            // the two ranks of the match for third place are ordered here as well, which is what
-            // makes it a match between them rather than a swap-replaced rank looked up twice
-            let num_ordered_rankings = if plays_for_third_place {
-                4
-            } else {
-                num_survived_rankings
-            };
-            let mut ordered_phase_team_ids = vec![RankingId::nil(); num_ordered_rankings as usize];
-            for (id, rank) in ranking_id_to_swap_replaced_rank {
-                if rank.get() <= num_ordered_rankings {
-                    ordered_phase_team_ids[(rank.get() - 1) as usize] = id;
-                }
-            }
-            assert!(
-                ordered_phase_team_ids
-                    .iter()
-                    .all(|id| *id != RankingId::nil())
-            );
-            let round = max_round.saturating_add(1);
-            (1..=num_matches)
-                .map(|i| {
-                    let team_a_id = ordered_phase_team_ids[(i - 1) as usize];
-                    let team_b_id = ordered_phase_team_ids[(num_survived_rankings - i) as usize];
-                    Match::new(vec1![team_a_id], vec1![team_b_id], round)
-                        .with_annotation(KnockoutRound::RoundOf(num_survived_rankings))
-                })
-                .chain(plays_for_third_place.then(|| {
-                    Match::new(
-                        vec1![ordered_phase_team_ids[2]],
-                        vec1![ordered_phase_team_ids[3]],
-                        round,
-                    )
-                    .with_annotation(KnockoutRound::ThirdPlace)
-                }))
-                .collect()
-        } else {
-            // first round
-            let num_teams = phase_data.rankings().len();
-            // find smallest power of 2 greater or equal than num_teams
-            let mut round_of = 2;
-            while round_of < num_teams {
-                round_of *= 2;
-            }
-            // 1 means final, 2 means semifinals, 4 means quarterfinals, ...
-            let fraction_of_final = round_of / 2;
-
-            ((round_of - num_teams + 1)..=fraction_of_final)
-                .map(|i| {
-                    let team_a_id = phase_data.ranking_ids_ordered_by_unique_rank()[i - 1];
-                    let team_b_id = phase_data.ranking_ids_ordered_by_unique_rank()[round_of - i];
-                    Match::new(
-                        vec1![team_a_id],
-                        vec1![team_b_id],
-                        NonZeroU32::new(1).unwrap(),
-                    )
-                    .with_annotation(KnockoutRound::RoundOf(round_of as u32))
-                })
-                .collect()
-        }
+        let third_place_match = self.third_place_match;
+        self.bracket
+            .get_or_insert_with(|| bracket(phase_data, third_place_match))
+            .create_new_matches(phase_data)
     }
 
     /// Every match has to produce a winner that advances to the next round.
@@ -222,10 +120,43 @@ impl PhaseFormat for SingleElimination {
     }
 }
 
+/// The whole knockout between the rankings of `phase_data`, see [`SingleElimination`].
+fn bracket(phase_data: &PhaseData, third_place_match: bool) -> Bracket {
+    let mut bracket = Bracket::default();
+    let knockout = bracket.add_knockout(phase_data, round, |round, rounds| {
+        annotations(KnockoutRound::RoundOf(1 << (rounds - round + 1)))
+    });
+    if third_place_match && let [.., semifinals, _] = &knockout[..] {
+        // In a bracket of three, one of the semifinals is a bye, whose loser is nobody, so the
+        // match for third place is decided without being played.
+        bracket.add_pairing(
+            round(knockout.len() as u32),
+            [
+                Source::LoserOf(semifinals[1]),
+                Source::LoserOf(semifinals[0]),
+            ],
+            annotations(KnockoutRound::ThirdPlace),
+        );
+    }
+    bracket
+}
+
+fn annotations(stage: KnockoutRound) -> TypeMap {
+    let mut annotations = TypeMap::new();
+    annotations.insert(stage);
+    annotations
+}
+
+fn round(round: u32) -> NonZeroU32 {
+    NonZeroU32::new(round).expect("rounds are counted from 1")
+}
+
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
-    use crate::entities::competition::{Phase, PhaseBuilder};
+    use crate::entities::competition::{MatchResult, Phase, PhaseBuilder, RankingId};
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {
@@ -239,14 +170,19 @@ mod tests {
     /// The matches of `round`, each as the pair of initial unique ranks it is played between, in
     /// ascending order so that the pairings of a round can be compared as a whole.
     fn pairings(phase: &Phase, round: u32) -> Vec<(u32, u32)> {
-        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
         phase
             .matches()
             .values()
             .filter(|r#match| r#match.round().get() == round)
-            .map(|r#match| (rank_of(&r#match.team_a()[0]), rank_of(&r#match.team_b()[0])))
+            .map(|r#match| pairing_of(phase, r#match))
             .sorted()
             .collect()
+    }
+
+    /// The initial unique ranks of the two sides of `match`.
+    fn pairing_of(phase: &Phase, r#match: &Match) -> (u32, u32) {
+        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
+        (rank_of(&r#match.team_a()[0]), rank_of(&r#match.team_b()[0]))
     }
 
     /// Reports every match of `round` as won by the side that entered the bracket higher, i.e.
@@ -370,6 +306,33 @@ mod tests {
                 "value": { "RoundOf": 2 }
             }])
         );
+    }
+
+    /// A match of the next round is scheduled as soon as the two matches it follows from are
+    /// decided, while the rest of the round is still being played.
+    #[test]
+    fn a_match_is_scheduled_as_soon_as_both_of_its_entrants_are_known() {
+        let mut phase = knockout(SingleElimination::new(), 7);
+        assert_eq!(pairings(&phase, 1), [(2, 7), (3, 6), (4, 5)]);
+        let four_against_five = phase
+            .matches()
+            .values()
+            .find(|r#match| pairing_of(&phase, r#match) == (4, 5))
+            .map(Match::id)
+            .unwrap();
+
+        phase.report_match_result(four_against_five, MatchResult::AWins);
+
+        assert_eq!(pairings(&phase, 2), [(1, 4)], "1 had a bye and meets 4 now");
+    }
+
+    /// Where two entrants with byes meet next, they play right away.
+    #[test]
+    fn two_byes_meeting_next_play_right_away() {
+        let phase = knockout(SingleElimination::new(), 5);
+
+        assert_eq!(pairings(&phase, 1), [(4, 5)]);
+        assert_eq!(pairings(&phase, 2), [(2, 3)]);
     }
 
     /// Two entrants play nothing but the final, so the option changes nothing at all.
