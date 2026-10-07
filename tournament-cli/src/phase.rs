@@ -26,8 +26,9 @@ use tournament_engine::plugins::{
         },
     },
     phase_format::{
-        PhaseFormat, double_elimination::DoubleElimination, random_rounds::RandomRounds,
-        round_robin::RoundRobin, single_elimination::SingleElimination,
+        PhaseFormat, double_elimination::DoubleElimination, monster_dyp::MonsterDyp,
+        random_rounds::RandomRounds, round_robin::RoundRobin,
+        single_elimination::SingleElimination,
     },
     ranker::{HierarchicalRanker, LexicographicalCriteria, Ranker},
 };
@@ -37,7 +38,10 @@ use crate::command::PhasePreset;
 /// The number of rounds the random rounds format is offered with.
 const DEFAULT_RANDOM_ROUNDS: NonZeroU32 = NonZeroU32::new(5).unwrap();
 
-/// The scoring system of most association football leagues.
+/// The number of rounds the Monster DYP format is offered with.
+const DEFAULT_MONSTER_DYP_ROUNDS: NonZeroU32 = NonZeroU32::new(5).unwrap();
+
+/// The scoring system of chess and most other games scoring a draw as half a win.
 const DEFAULT_POINTS: MetricConfig = MetricConfig::Points {
     for_win: 1.0,
     for_draw: 0.5,
@@ -76,6 +80,9 @@ pub enum FormatConfig {
     RandomRounds {
         rounds: NonZeroU32,
     },
+    MonsterDyp {
+        rounds: NonZeroU32,
+    },
 }
 
 impl FormatConfig {
@@ -91,6 +98,9 @@ impl FormatConfig {
         Self::RandomRounds {
             rounds: DEFAULT_RANDOM_ROUNDS,
         },
+        Self::MonsterDyp {
+            rounds: DEFAULT_MONSTER_DYP_ROUNDS,
+        },
     ];
 
     /// The name the format is shown by, without its parameters.
@@ -100,6 +110,7 @@ impl FormatConfig {
             Self::SingleElimination { .. } => "single elimination",
             Self::DoubleElimination { .. } => "double elimination",
             Self::RandomRounds { .. } => "random rounds",
+            Self::MonsterDyp { .. } => "Monster DYP",
         }
     }
 
@@ -111,6 +122,9 @@ impl FormatConfig {
                 "an entrant is out after its second loss, draws are not allowed"
             }
             Self::RandomRounds { .. } => "randomly chosen rounds of a round robin",
+            Self::MonsterDyp { .. } => {
+                "every round, entrants are drawn into teams of two that play each other"
+            }
         }
     }
 
@@ -138,6 +152,7 @@ impl FormatConfig {
                 MetricKind::SonnebornBerger,
                 MetricKind::BuchholzOfBuchholz,
             ],
+            Self::MonsterDyp { .. } => &[MetricKind::WinsDrawsLosses, MetricKind::Points],
         }
     }
 
@@ -166,6 +181,9 @@ impl FormatConfig {
                 Criterion::MoreSonnebornBerger,
                 Criterion::MoreBuchholzOfBuchholz,
             ],
+            // an entrant that sat out a round more than another one had one match less to score
+            // points in, so of two with the same points the one that played fewer matches is ahead
+            Self::MonsterDyp { .. } => &[Criterion::MorePoints, Criterion::FewerMatchesPlayed],
         }
     }
 
@@ -185,6 +203,7 @@ impl FormatConfig {
                 grand_final_reset: false,
             } => Box::new(DoubleElimination::new()),
             Self::RandomRounds { rounds } => Box::new(RandomRounds::new(rounds.get())),
+            Self::MonsterDyp { rounds } => Box::new(MonsterDyp::new(rounds.get())),
         }
     }
 }
@@ -589,6 +608,7 @@ impl PhaseConfig {
     pub fn summary(&self) -> String {
         let format = match self.format {
             FormatConfig::RandomRounds { rounds } => format!("{rounds} random rounds"),
+            FormatConfig::MonsterDyp { rounds } => format!("Monster DYP of {rounds} rounds"),
             FormatConfig::SingleElimination {
                 third_place_match: true,
             } => "single elimination with a match for third place".to_owned(),
@@ -892,6 +912,18 @@ mod tests {
             config.summary(),
             "3 random rounds, ranked by points, then Buchholz, then Sonneborn-Berger, then \
              Buchholz of Buchholz"
+        );
+    }
+
+    #[test]
+    fn the_summary_names_the_rounds_of_the_monster_dyp() {
+        let config = PhaseConfig::with_defaults(FormatConfig::MonsterDyp {
+            rounds: NonZeroU32::new(4).unwrap(),
+        });
+
+        assert_eq!(
+            config.summary(),
+            "Monster DYP of 4 rounds, ranked by points, then fewer matches played"
         );
     }
 

@@ -58,6 +58,12 @@ fn ask_format() -> InquireResult<FormatConfig> {
                 .with_error_message("the phase has to be played in at least one round")
                 .prompt()?,
         }),
+        FormatConfig::MonsterDyp { rounds } => Ok(FormatConfig::MonsterDyp {
+            rounds: CustomType::new("How many rounds?")
+                .with_default(rounds)
+                .with_error_message("the phase has to be played in at least one round")
+                .prompt()?,
+        }),
         FormatConfig::SingleElimination { third_place_match } => {
             Ok(FormatConfig::SingleElimination {
                 third_place_match: Confirm::new("Play a match for third place?")

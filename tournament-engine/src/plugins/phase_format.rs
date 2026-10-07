@@ -40,6 +40,7 @@ impl Clone for Box<dyn PhaseFormat> {
 
 mod bracket;
 pub mod double_elimination;
+pub mod monster_dyp;
 pub mod random_rounds;
 pub mod round_robin;
 pub mod single_elimination;

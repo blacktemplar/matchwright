@@ -83,7 +83,7 @@ pub enum Command {
 /// [`PhaseConfig::with_defaults`](crate::phase::PhaseConfig::with_defaults).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum PhasePreset {
-    /// Everyone plays everyone; ranked by points (3 for a win, 1 for a draw), then
+    /// Everyone plays everyone; ranked by points (1 for a win, 0.5 for a draw), then
     /// Sonneborn-Berger
     RoundRobin,
     /// The loser of a match is out, draws are not allowed; the semifinal losers play for third
@@ -102,9 +102,13 @@ pub enum PhasePreset {
         #[arg(long)]
         no_grand_final_reset: bool,
     },
-    /// A number of randomly chosen rounds of a round robin; ranked by points (3 for a win, 1 for a
-    /// draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
+    /// A number of randomly chosen rounds of a round robin; ranked by points (1 for a win, 0.5 for
+    /// a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
     RandomRounds { rounds: NonZeroU32 },
+    /// Every round, the entrants are drawn into random teams of two, each playing another such
+    /// team, and the ones left over sit the round out in turns; ranked by points (1 for a win, 0.5
+    /// for a draw), then fewer matches played
+    MonsterDyp { rounds: NonZeroU32 },
 }
 
 impl PhasePreset {
@@ -123,6 +127,7 @@ impl PhasePreset {
                 grand_final_reset: !no_grand_final_reset,
             },
             Self::RandomRounds { rounds } => FormatConfig::RandomRounds { rounds },
+            Self::MonsterDyp { rounds } => FormatConfig::MonsterDyp { rounds },
         }
     }
 }
