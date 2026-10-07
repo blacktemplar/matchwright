@@ -3,7 +3,7 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
@@ -50,8 +50,8 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         old_match_result: MatchResult,
         _: &Map<TypeId, Vec<(RankingId, Metric)>>,
@@ -68,7 +68,9 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         losing_ranking_ids
             .iter()
             .map(|r_id| {
-                let old_value = phase.rankings()[r_id].metric::<RoundOfFirstLoss>().unwrap();
+                let old_value = phase_data.rankings()[r_id]
+                    .metric::<RoundOfFirstLoss>()
+                    .unwrap();
                 let new_value = RoundOfFirstLoss(Some(match old_value.0 {
                     None => r#match.round(),
                     Some(x) => x.min(r#match.round()),

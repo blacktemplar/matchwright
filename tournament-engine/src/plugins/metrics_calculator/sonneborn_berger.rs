@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId, ResultOfTeam},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId, ResultOfTeam},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
@@ -60,8 +60,8 @@ impl MetricsCalculator for SonnebornBergerCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
@@ -69,7 +69,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         let mut sonneborn_berger_changes: Map<_, f32> = Map::default();
         for (r_id, old_metric) in &old_metrics[&TypeId::of::<Points>()] {
             let old_metric: &Points = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-            let ranking = &phase.rankings()[r_id];
+            let ranking = &phase_data.rankings()[r_id];
             let new_metric = ranking.metric::<Points>().unwrap();
             let points_diff = new_metric.0 - old_metric.0;
             if points_diff != 0. {
@@ -82,7 +82,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
                         // later separately
                         continue;
                     }
-                    let match_of_r = &phase.matches()[match_id];
+                    let match_of_r = &phase_data.matches()[match_id];
                     let opponent_team = match_of_r.team_of(r_id).unwrap().opponent();
                     let opponent_score_weight = match match_of_r.result_of_team(opponent_team) {
                         ResultOfTeam::Win => self.weight_for_win,
@@ -127,7 +127,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
             // add points of team2 * score_weight to Sonneborn-Berger of team1
             let points: f32 = team2
                 .iter()
-                .map(|r_id| phase.rankings()[r_id].metric::<Points>().unwrap().0)
+                .map(|r_id| phase_data.rankings()[r_id].metric::<Points>().unwrap().0)
                 .sum();
             let score_change = score_weight * points;
             for r_id in team1 {
@@ -140,7 +140,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
                 (
                     r_id,
                     Box::new(SonnebornBerger(
-                        phase.rankings()[&r_id]
+                        phase_data.rankings()[&r_id]
                             .metric::<SonnebornBerger>()
                             .unwrap()
                             .0
@@ -155,11 +155,14 @@ impl MetricsCalculator for SonnebornBergerCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::metrics_calculator::{
-        matches::MatchesCalculator,
-        points::PointsCalculator,
-        test_utils::{self, MatchSpec, match_id},
-        wins_draws_losses::WinsDrawsLossesCalculator,
+    use crate::{
+        entities::competition::Phase,
+        plugins::metrics_calculator::{
+            matches::MatchesCalculator,
+            points::PointsCalculator,
+            test_utils::{self, MatchSpec, match_id},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
     };
 
     /// The scoring system of most association football leagues, used by every test here but

@@ -452,7 +452,7 @@ fn deserializing_a_competition_with_an_unknown_metric_fails() {
     let sm = competition_in_the_final();
     let mut value = serde_json::to_value(sm.current()).unwrap();
     for phase in value["phases"].as_array_mut().unwrap() {
-        for ranking in phase["rankings"].as_array_mut().unwrap() {
+        for ranking in phase["data"]["rankings"].as_array_mut().unwrap() {
             ranking["metrics"][0]["type"] = Value::String("NotAMetric".to_owned());
         }
     }

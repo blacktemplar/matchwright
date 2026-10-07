@@ -219,7 +219,6 @@ pub struct Phase {
     phase_format: Box<dyn PhaseFormat>,
     ranker: Box<dyn Ranker>,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-    #[serde(flatten)]
     data: PhaseData,
 }
 
@@ -239,21 +238,63 @@ impl IdAble for Phase {
     }
 }
 
+impl PhaseData {
+    pub fn rankings(&self) -> &IdMap<Ranking> {
+        &self.rankings
+    }
+
+    pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
+        &self.ranking_ids_ordered_by_unique_rank
+    }
+
+    pub fn matches(&self) -> &IdMap<Match> {
+        &self.matches
+    }
+
+    /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
+    ///
+    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
+    /// different values give independent random streams, the same value always gives the same one.
+    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
+        Seeder::from((self.seed, entropy)).into_rng()
+    }
+
+    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
+    /// returns a [`StdRng`].
+    pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
+        self.new_seeded_rng(entropy)
+    }
+
+    /// The position of the match in [`PhaseData::matches`], which can be used as a stable match
+    /// number: matches are only ever appended, so an index never changes.
+    pub fn get_match_index(&self, match_id: &MatchId) -> usize {
+        self.matches.get_index_of(match_id).unwrap()
+    }
+}
+
 impl Phase {
     pub fn id(&self) -> PhaseId {
         self.id
     }
 
+    /// The rankings, matches and seed of this phase, i.e. everything but its plugins.
+    pub fn data(&self) -> &PhaseData {
+        &self.data
+    }
+
+    /// See [`PhaseData::rankings`].
     pub fn rankings(&self) -> &IdMap<Ranking> {
-        &self.data.rankings
+        self.data.rankings()
     }
 
+    /// See [`PhaseData::ranking_ids_ordered_by_unique_rank`].
     pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
-        &self.data.ranking_ids_ordered_by_unique_rank
+        self.data.ranking_ids_ordered_by_unique_rank()
     }
 
+    /// See [`PhaseData::matches`].
     pub fn matches(&self) -> &IdMap<Match> {
-        &self.data.matches
+        self.data.matches()
     }
 
     pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
@@ -299,7 +340,7 @@ impl Phase {
     }
 
     pub(crate) fn create_new_matches(&mut self) {
-        let new_matches = self.phase_format.create_new_matches(self);
+        let new_matches = self.phase_format.create_new_matches(&self.data);
         // check requirements of create_new_matches
         debug_assert!(
             new_matches
@@ -331,9 +372,9 @@ impl Phase {
         r#match.set_result(match_result);
         let r#match = &self.data.matches[&match_id];
         let mut old_metrics: Map<TypeId, Vec<(RankingId, Metric)>> = Map::default();
-        for metrics_calculator in &self.metrics_calculators {
+        for metrics_calculator in &mut self.metrics_calculators {
             let updates = metrics_calculator.update_after_match_result_changed(
-                self,
+                &self.data,
                 r#match,
                 old_result,
                 &old_metrics,
@@ -362,7 +403,7 @@ impl Phase {
             }
         }
         // update rankings
-        let new_ranks = self.ranker.update_ranks(self);
+        let new_ranks = self.ranker.update_ranks(&self.data);
         for (rank_id, new_rank) in new_ranks {
             self.data.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
         }
@@ -401,24 +442,19 @@ impl Phase {
         );
     }
 
-    /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
-    ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
-    /// different values give independent random streams, the same value always gives the same one.
+    /// See [`PhaseData::new_seeded_rng`].
     pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
-        Seeder::from((self.data.seed, entropy)).into_rng()
+        self.data.new_seeded_rng(entropy)
     }
 
-    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
-    /// returns a [`StdRng`].
+    /// See [`PhaseData::new_seeded_std_rng`].
     pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
-        self.new_seeded_rng(entropy)
+        self.data.new_seeded_std_rng(entropy)
     }
 
-    /// The position of the match in [`Phase::matches`], which can be used as a stable match
-    /// number: matches are only ever appended, so an index never changes.
+    /// See [`PhaseData::get_match_index`].
     pub fn get_match_index(&self, match_id: &MatchId) -> usize {
-        self.data.matches.get_index_of(match_id).unwrap()
+        self.data.get_match_index(match_id)
     }
 }
 

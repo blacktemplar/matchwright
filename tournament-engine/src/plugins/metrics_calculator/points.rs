@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
@@ -66,8 +66,8 @@ impl MetricsCalculator for PointsCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
         _: &Map<TypeId, Vec<(RankingId, Metric)>>,
@@ -75,8 +75,9 @@ impl MetricsCalculator for PointsCalculator {
         r#match
             .non_losing_rankings()
             .map(|r_id| {
-                let WinsDrawsLosses { wins, draws, .. } =
-                    *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
+                let WinsDrawsLosses { wins, draws, .. } = *phase_data.rankings()[r_id]
+                    .metric::<WinsDrawsLosses>()
+                    .unwrap();
                 let points =
                     Points(self.points_for_win * wins as f32 + self.points_for_draw * draws as f32);
                 (*r_id, Box::new(points) as Metric)
@@ -88,9 +89,12 @@ impl MetricsCalculator for PointsCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::metrics_calculator::{
-        test_utils::{self, MatchSpec, match_id},
-        wins_draws_losses::WinsDrawsLossesCalculator,
+    use crate::{
+        entities::competition::Phase,
+        plugins::metrics_calculator::{
+            test_utils::{self, MatchSpec, match_id},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
     };
 
     const fn calculator(points_for_win: Points, points_for_draw: Points) -> PointsCalculator {

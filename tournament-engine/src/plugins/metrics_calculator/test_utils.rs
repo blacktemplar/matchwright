@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
-    entities::competition::{Match, MatchId, Phase, PhaseBuilder, RankingId},
+    entities::competition::{Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
     plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
 };
 
@@ -22,8 +22,8 @@ struct FixedMatches(Vec<MatchSpec>);
 
 #[typetag::serde]
 impl PhaseFormat for FixedMatches {
-    fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
-        if !phase.matches().is_empty() {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+        if !phase_data.matches().is_empty() {
             // we generate all matches at once, so as soon as one match exists nothing is
             // to be done
             return vec![];
@@ -32,8 +32,8 @@ impl PhaseFormat for FixedMatches {
             .iter()
             .map(|(round, team_a, team_b)| {
                 Match::new(
-                    team(phase, team_a),
-                    team(phase, team_b),
+                    team(phase_data, team_a),
+                    team(phase_data, team_b),
                     NonZeroU32::new(*round).unwrap(),
                 )
             })
@@ -60,8 +60,8 @@ pub(crate) fn phase_with(
     phase
 }
 
-fn ranking_ids(phase: &Phase) -> Vec<RankingId> {
-    phase
+fn ranking_ids(phase_data: &PhaseData) -> Vec<RankingId> {
+    phase_data
         .rankings()
         .values()
         .sorted_by_key(|r| r.initial_unique_rank())
@@ -69,8 +69,8 @@ fn ranking_ids(phase: &Phase) -> Vec<RankingId> {
         .collect()
 }
 
-fn team(phase: &Phase, ranking_indices: &[usize]) -> Vec1<RankingId> {
-    let ranking_ids = ranking_ids(phase);
+fn team(phase_data: &PhaseData, ranking_indices: &[usize]) -> Vec1<RankingId> {
+    let ranking_ids = ranking_ids(phase_data);
     Vec1::try_from_vec(ranking_indices.iter().map(|i| ranking_ids[*i]).collect())
         .expect("a team must consist of at least one ranking")
 }
@@ -79,8 +79,8 @@ fn team(phase: &Phase, ranking_indices: &[usize]) -> Vec1<RankingId> {
 /// [`Match::new`] derives ids deterministically from the teams and the round.
 pub(crate) fn match_id(phase: &Phase, round: u32, team_a: &[usize], team_b: &[usize]) -> MatchId {
     let match_id = Match::new(
-        team(phase, team_a),
-        team(phase, team_b),
+        team(phase.data(), team_a),
+        team(phase.data(), team_b),
         NonZeroU32::new(round).unwrap(),
     )
     .id();
@@ -96,7 +96,7 @@ pub(crate) fn metric_of<M: Copy + 'static>(phase: &Phase, ranking_index: usize) 
 
 /// Like [`metric_of`], but for metrics that are not [`Copy`].
 pub(crate) fn metric_ref_of<M: 'static>(phase: &Phase, ranking_index: usize) -> &M {
-    phase.rankings()[&ranking_ids(phase)[ranking_index]]
+    phase.rankings()[&ranking_ids(phase.data())[ranking_index]]
         .metric::<M>()
         .expect("the metric must be initialized")
 }

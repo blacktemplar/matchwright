@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
@@ -61,20 +61,20 @@ impl MetricsCalculator for BuchholzCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        buchholz_changes_based_on::<Points, Buchholz>(phase, r#match, old_metrics)
+        buchholz_changes_based_on::<Points, Buchholz>(phase_data, r#match, old_metrics)
     }
 }
 
 /// The updates of the buchholz like metric `B`, which sums the metric `M` of all opponents of a
 /// ranking, after the result of `match` changed.
 fn buchholz_changes_based_on<M, B>(
-    phase: &Phase,
+    phase_data: &PhaseData,
     r#match: &Match,
     old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
 ) -> Vec<(RankingId, Metric)>
@@ -85,7 +85,7 @@ where
     let mut buchholz_changes: Map<_, f32> = Map::default();
     for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
         let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-        let ranking = &phase.rankings()[r_id];
+        let ranking = &phase_data.rankings()[r_id];
         let new_metric = ranking.metric::<M>().unwrap();
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
         if m_diff != 0. {
@@ -97,7 +97,7 @@ where
                     // later separately
                     continue;
                 }
-                let match_of_r = &phase.matches()[match_id];
+                let match_of_r = &phase_data.matches()[match_id];
                 let opponents =
                     match_of_r.rankings_of(match_of_r.team_of(r_id).unwrap().opponent());
                 for opponent in opponents {
@@ -114,7 +114,7 @@ where
         // add metric M of team2 to buchholz of team1
         let m_sum: f32 = team2
             .iter()
-            .map(|r_id| *phase.rankings()[r_id].metric::<M>().unwrap().as_ref())
+            .map(|r_id| *phase_data.rankings()[r_id].metric::<M>().unwrap().as_ref())
             .sum();
         for r_id in team1 {
             *buchholz_changes.entry(*r_id).or_default() += m_sum;
@@ -123,7 +123,7 @@ where
     buchholz_changes
         .into_iter()
         .map(|(r_id, change)| {
-            let old_buchholz = *phase.rankings()[&r_id].metric::<B>().unwrap().as_ref();
+            let old_buchholz = *phase_data.rankings()[&r_id].metric::<B>().unwrap().as_ref();
             (r_id, Box::new(B::from(old_buchholz + change)) as Metric)
         })
         .collect()
@@ -174,24 +174,27 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase, r#match, old_metrics)
+        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase_data, r#match, old_metrics)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::metrics_calculator::{
-        matches::MatchesCalculator,
-        points::PointsCalculator,
-        test_utils::{self, MatchSpec, match_id},
-        wins_draws_losses::WinsDrawsLossesCalculator,
+    use crate::{
+        entities::competition::Phase,
+        plugins::metrics_calculator::{
+            matches::MatchesCalculator,
+            points::PointsCalculator,
+            test_utils::{self, MatchSpec, match_id},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
     };
 
     /// The scoring system of most association football leagues, used by every test here.

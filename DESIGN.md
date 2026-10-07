@@ -59,6 +59,63 @@ non-Rust sources can be layered on additively later; it is not a v1 requirement.
   for config-file-driven selection, which v1 doesn't have. Deferred, not
   rejected.
 
+## Plugin state
+
+A plugin may need memory beyond what the matches and rankings record, e.g. a
+precomputed bracket or a structure it would otherwise rebuild from every match on
+every call — and those calls run on every reported result.
+
+### Decision
+
+**Plugins own their state and update it through `&mut self`.** The methods that
+follow the phase's progress take `&mut self` and receive the phase's data rather
+than the phase:
+
+```rust
+fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match>;    // PhaseFormat
+fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)>; // Ranker
+fn update_after_match_result_changed(&mut self, phase_data: &PhaseData, /* ... */)
+    -> Vec<(RankingId, Metric)>;                                           // MetricsCalculator
+```
+
+`SliceRanker::update_ranks` follows suit, since `HierarchicalRanker` calls it
+with its own `&PhaseData`. Methods that only describe a plugin's configuration
+(`default_metric_value`, `allows_draws`) stay `&self`.
+
+**Undo needs nothing extra.** A plugin is a field of its `Phase`, so its state is
+part of the competition state: it is in a snapshot, and undo — a replay of the
+remaining log from the initial state — rebuilds the plugin from its initial
+configuration and runs it through the same calls again. The only contract is
+determinism under replay applied to plugins: a plugin's state may depend only on
+the `PhaseData` and the calls it has seen.
+
+**`PhaseData` is everything in a `Phase` but its plugins** — rankings, their
+order, matches and the seed. The split is what makes `&mut self` possible: a call
+borrows a plugin field mutably and `data` immutably, two disjoint fields of the
+same `Phase`, so no plugin has to be moved out for the call. The consequence is
+that a plugin no longer sees the other plugins of its phase; what it needs from
+them reaches it through `PhaseData` (metrics on rankings, annotations on matches).
+`Phase` forwards the read accessors to its `PhaseData`, so consumers are
+unaffected. `data` serializes as a nested field rather than with
+`#[serde(flatten)]`, because flattening goes through serde's self-describing map
+path, which postcard cannot deserialize.
+
+### Alternatives
+
+- **Stateless plugins (`&self`, `&Phase`)**, recomputing whatever they need from
+  the phase on every call (the previous design). Keeps plugins trivially pure, but
+  makes the cost of a call grow with the phase on the result-reporting hot path,
+  which is the argument already made for incremental metrics. Superseded.
+- **Plugin state stored in `PhaseData`**, e.g. a `TypeMap` keyed by a state type,
+  with plugins staying `&self`. Separates state from the code that owns it,
+  exposes it to every other plugin, and two plugins of the same type would collide
+  on the key. Rejected.
+- **Interior mutability** (`RefCell` inside the plugin) behind `&self`. Hides the
+  mutation from the signature while the replay contract still applies. Rejected.
+- **Passing `&Phase` with the plugin temporarily taken out** (`Option` or
+  `mem::replace`). The plugin would observe a phase missing one of its plugins, a
+  state that exists nowhere else. Rejected.
+
 ## Compatibility between plugins
 
 *Planned — `intertrait` is not a dependency yet and `Plugin` carries no
@@ -150,7 +207,7 @@ ranking from scratch:
 pub trait MetricsCalculator: Plugin {
     fn default_metric_value(&self) -> Metric;
     fn update_after_match_result_changed(
-        &self, phase: &Phase, r#match: &Match,
+        &mut self, phase_data: &PhaseData, r#match: &Match,
         old_match_result: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)>;
@@ -281,7 +338,7 @@ fails for reasons that are easy to rediscover.
 Three independent blockers, all verified against `typetag` 0.2.23's source:
 
 1. **Generic entities force generic plugin traits.** Every plugin method takes
-   `&Phase`, so `Phase<M, R>` makes `PhaseFormat<M, R>` generic.
+   `&PhaseData`, so `PhaseData<M, R>` makes `PhaseFormat<M, R>` generic.
    `typetag-impl/src/tagged_trait.rs:7` rejects generic traits in `de` mode
    ("deserialization of generic traits is not supported yet"), so
    `Box<dyn PhaseFormat>` would lose `Deserialize` and the snapshot path would
@@ -511,8 +568,8 @@ the state, through the `CompetitionStateMachine` alias, and enables that crate's
 Undo is implemented there as a replay of the still-active log entries from the
 initial state, which is what makes determinism under replay a global constraint
 rather than a local concern: it is why ids are content-derived, why consumer data
-arrives as transition data, and why a match number is positional rather than
-durable.
+arrives as transition data, why a match number is positional rather than
+durable, and why plugin state needs no undo of its own.
 
 `Transition` keeps `check_applicable` and `apply` separate, and `Competition`'s
 mutators stay crate-internal, so state can only change through a logged

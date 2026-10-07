@@ -3,7 +3,7 @@ use std::any::TypeId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
@@ -106,8 +106,8 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         old_match_result: MatchResult,
         _: &Map<TypeId, Vec<(RankingId, Metric)>>,
@@ -123,8 +123,9 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
                 return r#match
                     .rankings()
                     .map(|r_id| {
-                        let mut metric =
-                            *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
+                        let mut metric = *phase_data.rankings()[r_id]
+                            .metric::<WinsDrawsLosses>()
+                            .unwrap();
                         metric.draws += 1;
                         (*r_id, Box::new(metric) as Metric)
                     })
@@ -135,12 +136,16 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         winning_team
             .iter()
             .map(|r_id| {
-                let mut metric = *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
+                let mut metric = *phase_data.rankings()[r_id]
+                    .metric::<WinsDrawsLosses>()
+                    .unwrap();
                 metric.wins += 1;
                 (*r_id, Box::new(metric) as Metric)
             })
             .chain(losing_team.iter().map(|r_id| {
-                let mut metric = *phase.rankings()[r_id].metric::<WinsDrawsLosses>().unwrap();
+                let mut metric = *phase_data.rankings()[r_id]
+                    .metric::<WinsDrawsLosses>()
+                    .unwrap();
                 metric.losses += 1;
                 (*r_id, Box::new(metric) as Metric)
             }))
@@ -153,6 +158,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        entities::competition::Phase,
         plugins::{
             metrics_calculator::test_utils::{self, MatchSpec, match_id},
             ranker::compare_by,
@@ -437,7 +443,7 @@ mod tests {
         phase.report_match_result(match_id, MatchResult::AWins);
 
         WinsDrawsLossesCalculator.update_after_match_result_changed(
-            &phase,
+            phase.data(),
             &phase.matches()[&match_id],
             MatchResult::AWins,
             &Map::default(),

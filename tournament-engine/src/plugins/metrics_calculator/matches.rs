@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchId, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::metrics_calculator::MetricsCalculator,
     type_map::TypeMapValue,
@@ -26,8 +26,8 @@ impl MetricsCalculator for MatchesCalculator {
     }
 
     fn update_after_match_result_changed(
-        &self,
-        phase: &Phase,
+        &mut self,
+        phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
         _: &Map<TypeId, Vec<(RankingId, Metric)>>,
@@ -35,7 +35,7 @@ impl MetricsCalculator for MatchesCalculator {
         r#match
             .rankings()
             .map(|r_id| {
-                let old_matches = phase.rankings()[r_id].metric::<Matches>().unwrap();
+                let old_matches = phase_data.rankings()[r_id].metric::<Matches>().unwrap();
                 let mut new_matches = Matches(old_matches.0.clone());
                 new_matches.0.push(r#match.id());
                 (*r_id, Box::new(new_matches) as Metric)
@@ -47,7 +47,10 @@ impl MetricsCalculator for MatchesCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id};
+    use crate::{
+        entities::competition::Phase,
+        plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
+    };
 
     /// Builds a phase with `num_players` rankings whose played matches got initialized and with
     /// all matches of `matches` already scheduled.

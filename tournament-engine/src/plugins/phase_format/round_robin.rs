@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, Phase},
+    entities::competition::{Match, PhaseData},
     plugins::phase_format::PhaseFormat,
 };
 
@@ -14,14 +14,14 @@ pub struct RoundRobin;
 
 #[typetag::serde]
 impl PhaseFormat for RoundRobin {
-    fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method
-        if !phase.matches().is_empty() {
+        if !phase_data.matches().is_empty() {
             // we generate all matches at once, so as soon as one match exists nothing is to be done
             return vec![];
         }
-        let num_teams = phase.rankings().len();
+        let num_teams = phase_data.rankings().len();
         let num_teams_is_odd = num_teams % 2 == 1;
         // We always fix the last element, but if we have an odd number of players the last element
         // is the by which is not part of the ranking_ids_by_initial_unique_rank vec.
@@ -31,7 +31,7 @@ impl PhaseFormat for RoundRobin {
             num_teams
         };
         assert!(num_teams_with_bye > 1);
-        let mut ranking_ids = phase
+        let mut ranking_ids = phase_data
             .rankings()
             .values()
             .sorted_by_key(|r| r.initial_unique_rank())
@@ -67,7 +67,7 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::entities::competition::PhaseBuilder;
+    use crate::entities::competition::{Phase, PhaseBuilder};
 
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.

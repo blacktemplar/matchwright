@@ -4,19 +4,19 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Phase, Ranking, RankingId},
+    entities::competition::{PhaseData, Ranking, RankingId},
     plugins::Plugin,
     type_map::{TypeMap, TypeMapValue},
 };
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait Ranker: Plugin {
-    /// The new rank of every ranking of `phase`.
+    /// The new rank of every ranking of `phase_data`.
     ///
     /// The ranks must satisfy the following invariant: ordered by rank, the first ranking has rank
     /// 1 and every following one has either the rank of its predecessor or rank `index + 1`. Equal
     /// ranks are therefore ties, and the rank after a tie skips the tied ranks.
-    fn update_ranks(&self, phase: &Phase) -> Vec<(RankingId, NonZeroU32)>;
+    fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)>;
 }
 
 impl Clone for Box<dyn Ranker> {
@@ -28,7 +28,7 @@ impl Clone for Box<dyn Ranker> {
 #[typetag::serde(tag = "type", content = "value")]
 pub trait SliceRanker: Plugin {
     /// Assigns new ranks to the given slice and reorders them according to the new ranks.
-    fn update_ranks(&self, phase: &Phase, slice: &mut [(&Ranking, NonZeroU32)]);
+    fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
 }
 
 impl Clone for Box<dyn SliceRanker> {
@@ -48,19 +48,19 @@ impl HierarchicalRanker {
 
 #[typetag::serde]
 impl Ranker for HierarchicalRanker {
-    fn update_ranks(&self, phase: &Phase) -> Vec<(RankingId, NonZeroU32)> {
-        let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase
+    fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
+        let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase_data
             .ranking_ids_ordered_by_unique_rank()
             .iter()
-            .map(|id| (&phase.rankings()[id], NonZeroU32::new(1).unwrap()))
+            .map(|id| (&phase_data.rankings()[id], NonZeroU32::new(1).unwrap()))
             .collect();
 
         let mut slices = vec![rankings_with_new_ranks.as_mut_slice()];
-        for slice_ranker in &self.0 {
+        for slice_ranker in &mut self.0 {
             slices = slices
                 .drain(..)
                 .flat_map(|slice| {
-                    slice_ranker.update_ranks(phase, slice);
+                    slice_ranker.update_ranks(phase_data, slice);
                     slice
                         .chunk_by_mut(|(_, r1), (_, r2)| r1 == r2)
                         .filter(|s| s.len() > 1)
@@ -298,7 +298,7 @@ impl LexicographicalCriteria {
 
 #[typetag::serde]
 impl SliceRanker for LexicographicalCriteria {
-    fn update_ranks(&self, _: &Phase, slice: &mut [(&Ranking, NonZeroU32)]) {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         if self.0.is_empty() || slice.len() < 2 {
             // this becomes basically a no-op
             return;

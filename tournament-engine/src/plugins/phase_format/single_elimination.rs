@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, MatchResult, Phase, RankingId},
+    entities::competition::{Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::phase_format::PhaseFormat,
     type_map::TypeMapValue,
@@ -97,22 +97,23 @@ impl KnockoutRound {
 
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
-    fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {
-        if !phase.matches().values().all(Match::is_finished) {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+        if !phase_data.matches().values().all(Match::is_finished) {
             return vec![];
         }
-        let max_round = phase.matches().values().map(Match::round).max();
+        let max_round = phase_data.matches().values().map(Match::round).max();
         if let Some(max_round) = max_round {
             // The ordering of this vector will be determined by match winners. If a lower-ranked
             // team wins, it will be swapped with the higher-ranked losing team.
-            let mut ranking_id_to_swap_replaced_rank: Map<_, _> = phase
+            let mut ranking_id_to_swap_replaced_rank: Map<_, _> = phase_data
                 .rankings()
                 .iter()
                 .map(|(id, r)| (*id, r.initial_unique_rank()))
                 .collect();
             // matches are ordered by round, which is important so that the following works:
             let mut lowest_loser_rank = NonZeroU32::MAX;
-            let matches_odered_by_round = phase.matches().values().sorted_by_key(|m| m.round());
+            let matches_odered_by_round =
+                phase_data.matches().values().sorted_by_key(|m| m.round());
             for r#match in matches_odered_by_round {
                 let team_a_id = r#match.team_a()[0];
                 let team_b_id = r#match.team_b()[0];
@@ -151,8 +152,9 @@ impl PhaseFormat for SingleElimination {
             // The two teams knocked out in the semifinals end up at the two ranks right below the
             // two finalists, so the match for third place is the one scheduled alongside the
             // final. A bracket of three has nobody at the fourth rank to play it against.
-            let plays_for_third_place =
-                self.third_place_match && num_survived_rankings == 2 && phase.rankings().len() >= 4;
+            let plays_for_third_place = self.third_place_match
+                && num_survived_rankings == 2
+                && phase_data.rankings().len() >= 4;
             // the two ranks of the match for third place are ordered here as well, which is what
             // makes it a match between them rather than a swap-replaced rank looked up twice
             let num_ordered_rankings = if plays_for_third_place {
@@ -190,7 +192,7 @@ impl PhaseFormat for SingleElimination {
                 .collect()
         } else {
             // first round
-            let num_teams = phase.rankings().len();
+            let num_teams = phase_data.rankings().len();
             // find smallest power of 2 greater or equal than num_teams
             let mut round_of = 2;
             while round_of < num_teams {
@@ -201,8 +203,8 @@ impl PhaseFormat for SingleElimination {
 
             ((round_of - num_teams + 1)..=fraction_of_final)
                 .map(|i| {
-                    let team_a_id = phase.ranking_ids_ordered_by_unique_rank()[i - 1];
-                    let team_b_id = phase.ranking_ids_ordered_by_unique_rank()[round_of - i];
+                    let team_a_id = phase_data.ranking_ids_ordered_by_unique_rank()[i - 1];
+                    let team_b_id = phase_data.ranking_ids_ordered_by_unique_rank()[round_of - i];
                     Match::new(
                         vec1![team_a_id],
                         vec1![team_b_id],
@@ -223,7 +225,7 @@ impl PhaseFormat for SingleElimination {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::competition::PhaseBuilder;
+    use crate::entities::competition::{Phase, PhaseBuilder};
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {
