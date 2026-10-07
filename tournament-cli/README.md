@@ -48,6 +48,7 @@ cup> exit
 | `start` | Starts the competition and schedules the first matches. Entrants and the phase cannot be changed afterwards. |
 | `matches [--open]` | Lists the matches with their number, round and result. |
 | `report <NUMBER> <a\|b\|draw>` | Reports the result of a match: team a wins, team b wins, or a draw. |
+| `undo-report <NUMBER>` | Undoes the result reported for a match, however long ago it was reported, keeping every other change. |
 | `ranking` | Shows the current ranking with every metric the phase calculates. |
 | `undo` / `redo` | Undoes the last change, or redoes the last undone one. |
 | `save [PATH]` | Saves to `PATH`, or to the file loaded from or last saved to. |
@@ -126,6 +127,16 @@ first, so a failed save never destroys the previous one.
 further back. `redo` reapplies the latest undone change, but only until a new
 change is made, as in an editor. Undo and redo are changes themselves, so they
 count as unsaved.
+
+`undo-report <NUMBER>` reaches a single result instead of the latest change: it
+undoes the result reported for that match whenever it was reported, and every
+result reported after it stays. A result another one depends on cannot be
+undone on its own — undoing a semifinal would unschedule a final that already
+has a result — so the dependent result has to be undone first. The match the
+result was undone for is open again and can be reported anew, which is how a
+result reported wrongly a while ago is corrected. Matches that were only
+scheduled because of the undone result are unscheduled with it, which renumbers
+the matches after them.
 
 Every new competition gets a random seed, which makes the shuffled pairings
 differ between competitions while keeping them reproducible from the log. The

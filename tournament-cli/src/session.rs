@@ -15,7 +15,8 @@ use std::{
 use thiserror::Error;
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchResult, Phase, PhaseId, Ranking, RankingId,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
+        RankingId,
     },
     plugins::metrics_calculator::{
         buchholz::{Buchholz, BuchholzOfBuchholz},
@@ -25,8 +26,9 @@ use tournament_engine::{
         wins_draws_losses::WinsDrawsLosses,
     },
     transitions::{
-        CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
-        add_phase::AddPhase, remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
+        CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
+        UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
+        remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
 };
@@ -71,6 +73,12 @@ pub enum Error {
     NotStarted,
     #[error("there is no match number {0}")]
     UnknownMatch(NonZeroUsize),
+    #[error("#{0} has no result that could be undone")]
+    NotReported(NonZeroUsize),
+    /// The match whose result depends on the undone one is scheduled because of it, e.g. the final
+    /// a semifinal decides the participants of.
+    #[error("#{0} cannot be undone, because a later result depends on it; undo that one first")]
+    ReportDependedOn(NonZeroUsize),
     #[error("there is nothing to undo")]
     NothingToUndo,
     #[error("there is nothing to redo")]
@@ -186,6 +194,7 @@ impl Session {
             Command::Start => self.start()?,
             Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
+            Command::UndoReport { number } => self.undo_report(number)?,
             Command::Ranking => self.ranking()?,
             Command::Undo => self.undo()?,
             Command::Redo => self.redo()?,
@@ -338,14 +347,23 @@ impl Session {
         Ok(table(&["#", "round", "A", "vs", "B", "result"], &rows))
     }
 
-    fn report(&mut self, number: NonZeroUsize, result: ReportedResult) -> Result<String, Error> {
+    /// The phase of the match `number` addresses and that match, where the number is the position
+    /// the match is listed at by [`Self::matches`].
+    ///
+    /// # Errors
+    /// Returns an error if the competition has not started or has no such match.
+    fn match_numbered(&self, number: NonZeroUsize) -> Result<(PhaseId, MatchId), Error> {
         let phase = self.phase()?;
         let (match_id, _) = phase
             .matches()
             .get_index(number.get() - 1)
             .ok_or(Error::UnknownMatch(number))?;
-        let (phase_id, match_id) = (phase.id(), *match_id);
-        let matches_before = phase.matches().len();
+        Ok((phase.id(), *match_id))
+    }
+
+    fn report(&mut self, number: NonZeroUsize, result: ReportedResult) -> Result<String, Error> {
+        let (phase_id, match_id) = self.match_numbered(number)?;
+        let matches_before = self.phase()?.matches().len();
         let result = match result {
             ReportedResult::A => MatchResult::AWins,
             ReportedResult::B => MatchResult::BWins,
@@ -363,6 +381,33 @@ impl Session {
             write!(output, "\n{new_matches} new match(es) scheduled").unwrap();
         } else if phase.matches().values().all(Match::is_finished) {
             output.push_str("\nall matches are finished");
+        }
+        Ok(output)
+    }
+
+    /// Undoes the result reported for the match `number`, which may be any reported match rather
+    /// than only the one reported last. Every other change stays in effect.
+    fn undo_report(&mut self, number: NonZeroUsize) -> Result<String, Error> {
+        let (phase_id, match_id) = self.match_numbered(number)?;
+        let matches_before = self.phase()?.matches().len();
+        self.machine
+            .undo_match_result(phase_id, match_id)
+            .map_err(|error| match error {
+                UndoMatchResultError::NotReported => Error::NotReported(number),
+                UndoMatchResultError::Rejected(_) => Error::ReportDependedOn(number),
+            })?;
+
+        let phase = self.phase()?;
+        let r#match = &phase.matches()[&match_id];
+        let mut output = format!(
+            "#{number} is open again: {} vs {}",
+            self.team_name(phase, r#match.team_a()),
+            self.team_name(phase, r#match.team_b())
+        );
+        // a match that was only scheduled because of the undone result is gone with it
+        let unscheduled = matches_before.saturating_sub(phase.matches().len());
+        if unscheduled > 0 {
+            write!(output, "\n{unscheduled} match(es) no longer scheduled").unwrap();
         }
         Ok(output)
     }
@@ -1057,6 +1102,79 @@ mod tests {
             .map(|row| row.split_whitespace().next().expect("a rank"))
             .collect();
         assert_eq!(ranks, ["1", "2", "3", "3"], "{ranking}");
+    }
+
+    /// The result of a match reported long ago is undone by its number, which leaves every result
+    /// reported after it alone — unlike `undo`, which would walk back through all of them.
+    #[test]
+    fn a_reported_result_is_undone_by_match_number() {
+        let mut session = started("round-robin");
+        for number in 1..=4 {
+            output(&mut session, &format!("report {number} a"));
+        }
+
+        let undone = output(&mut session, "undo-report 2");
+
+        assert!(undone.starts_with("#2 is open again: "), "{undone}");
+        let listing = output(&mut session, "matches --open");
+        let open: Vec<_> = numbered_rounds(&listing)
+            .into_iter()
+            .map(|(number, _)| number)
+            .collect();
+        assert_eq!(open, ["2", "5", "6"]);
+    }
+
+    #[test]
+    fn a_match_without_a_result_has_nothing_to_undo() {
+        let mut session = started("round-robin");
+
+        assert!(matches!(
+            execute(&mut session, "undo-report 1"),
+            Err(Error::NotReported(number)) if number.get() == 1
+        ));
+        assert!(matches!(
+            execute(&mut session, "undo-report 7"),
+            Err(Error::UnknownMatch(number)) if number.get() == 7
+        ));
+    }
+
+    /// A reported result can be undone and reported again, which is what correcting a result that
+    /// was reported wrongly a while ago comes down to.
+    #[test]
+    fn a_match_can_be_reported_again_after_its_result_was_undone() {
+        let mut session = started("round-robin");
+        output(&mut session, "report 1 a");
+        let ranking = output(&mut session, "ranking");
+
+        output(&mut session, "undo-report 1");
+        output(&mut session, "report 1 b");
+
+        assert_ne!(output(&mut session, "ranking"), ranking);
+        output(&mut session, "undo-report 1");
+        output(&mut session, "report 1 a");
+        assert_eq!(output(&mut session, "ranking"), ranking);
+    }
+
+    /// Undoing the result of a semifinal unschedules the final it decided the participants of, so
+    /// a final that has a result itself has to be undone first.
+    #[test]
+    fn undoing_a_result_a_later_result_depends_on_is_refused() {
+        let mut session = started("single-elimination");
+        output(&mut session, "report 1 a");
+        output(&mut session, "report 2 a");
+        output(&mut session, "report 3 a");
+
+        assert!(matches!(
+            execute(&mut session, "undo-report 1"),
+            Err(Error::ReportDependedOn(number)) if number.get() == 1
+        ));
+        output(&mut session, "undo-report 3");
+        let undone = output(&mut session, "undo-report 1");
+
+        assert!(
+            undone.ends_with("2 match(es) no longer scheduled"),
+            "the final and the match for third place are unscheduled with it: {undone}"
+        );
     }
 
     #[test]

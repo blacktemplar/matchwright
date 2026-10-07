@@ -22,6 +22,18 @@ impl ReportMatchResult {
             match_result,
         }
     }
+
+    pub fn phase_id(&self) -> PhaseId {
+        self.phase_id
+    }
+
+    pub fn match_id(&self) -> MatchId {
+        self.match_id
+    }
+
+    pub fn match_result(&self) -> MatchResult {
+        self.match_result
+    }
 }
 
 #[derive(Error, Debug)]

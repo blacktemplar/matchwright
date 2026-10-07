@@ -53,6 +53,12 @@ pub enum Command {
         #[arg(ignore_case = true)]
         result: ReportedResult,
     },
+    /// Undo the result reported for a match, which may be any reported match rather than only the
+    /// one reported last
+    UndoReport {
+        /// The number of the match, as listed by `matches`
+        number: NonZeroUsize,
+    },
     /// Show the current ranking
     Ranking,
     /// Undo the last change
@@ -302,6 +308,17 @@ mod tests {
     #[test]
     fn match_numbers_start_at_one() {
         assert!(Command::parse_line("report 0 a").is_err());
+        assert!(Command::parse_line("undo-report 0").is_err());
+    }
+
+    #[test]
+    fn a_reported_result_is_undone_by_match_number() {
+        assert_eq!(
+            parse("undo-report 3"),
+            Command::UndoReport {
+                number: NonZeroUsize::new(3).unwrap()
+            }
+        );
     }
 
     #[test]

@@ -471,6 +471,32 @@ durable.
 mutators stay crate-internal, so state can only change through a logged
 transition.
 
+### Undoing a change by what it did
+
+The state machine undoes a `TransitionId`, which a consumer only has if it kept
+the ids it applied. Undoing a reported result that way means walking the log back
+through every change made since, which is not what an operator correcting a
+result reported a while ago wants. `CompetitionStateMachineExt::undo_match_result`
+takes the phase and the match instead, finds the latest log entry still in effect
+that reported that match, and undoes that one. It lives in the engine, not in the
+consumer, because finding the entry means knowing the shape of the log.
+
+- **Found by downcasting**, which is what `Any` as a supertrait of
+  `CompetitionTransition` is for. A transition in a log is a
+  `Box<dyn CompetitionTransition>`, so recognizing a `ReportMatchResult` among
+  the entries needs either this or a trait method every transition answers for
+  itself — i.e. a self-reported fact a third-party transition could get wrong.
+  The cost is that only transitions this crate ships can be found, so a
+  third-party transition that sets a result is reported as not undoable rather
+  than silently mishandled.
+- **Rejected, not cascaded, when a later change depends on it.** Undoing the
+  semifinal of a knockout whose final has a result would leave that report
+  without a match, which the state machine surfaces as the failing entry and the
+  undo is refused with the log unchanged. Undoing the dependent reports as well
+  would be a second, implicit decision about what the operator meant.
+- **No new transition.** An undo entry is what the log already has for reverting
+  a change, and reusing it keeps the undo itself undoable.
+
 ## Dependencies this implies
 
 - `typetag` (plus its internal `inventory` and `erased_serde`) and `serde` for
