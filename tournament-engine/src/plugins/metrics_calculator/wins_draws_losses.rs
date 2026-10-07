@@ -14,12 +14,9 @@ use crate::{
 
 /// How many of its matches a ranking won, drew and lost.
 ///
-/// The three counts are one metric because one match result changes all of them at once, but each
-/// of them orders a ranking on its own, as does the number of matches they add up to, which is
-/// what [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`] are for. The struct
-/// as a whole has no order and so deliberately does not implement
-/// [`Compare`](crate::plugins::ranker::Compare); each criterion names the direction it sorts in
-/// instead.
+/// Each of the three counts orders a ranking on its own, as does the number of matches they add up
+/// to, see [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`]. The struct as a
+/// whole has no order and so does not implement [`Compare`](crate::plugins::ranker::Compare).
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLosses {
     pub wins: u32,
@@ -30,10 +27,8 @@ pub struct WinsDrawsLosses {
 impl WinsDrawsLosses {
     /// How many matches the ranking played, i.e. how many of its matches got a result reported.
     ///
-    /// This is the same count as the length of [`Matches`](super::matches::Matches), which records
-    /// exactly these matches, but it is derived here because this metric has no dependencies of its
-    /// own, whereas calculating `Matches` clones a growing [`Vec`] for every ranking of every
-    /// reported result.
+    /// The same count as the length of [`Matches`](super::matches::Matches), without needing that
+    /// metric to be calculated.
     pub const fn matches_played(&self) -> u32 {
         self.wins + self.draws + self.losses
     }
@@ -57,9 +52,7 @@ impl RankingCriterion for MoreWins {
 
 /// Ranks by the draws of [`WinsDrawsLosses`], where more draws are better.
 ///
-/// Which way round this belongs is a matter of the competition rather than of the metric: a draw is
-/// worth more than a loss, but a ranking that got there by drawing rather than by winning may well
-/// be meant to come second. Rank by [`FewerLosses`] instead where that is the case.
+/// Rank by [`FewerLosses`] instead where drawing a match should not rank above winning one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreDraws;
 
@@ -88,10 +81,9 @@ impl RankingCriterion for FewerLosses {
 /// Ranks by the matches a ranking played, see [`WinsDrawsLosses::matches_played`], where having
 /// played fewer of them is better.
 ///
-/// This is a tie break: two rankings that got the same result out of a different number of matches
-/// are not equally far along, and the one that needed fewer matches for it is the one this puts
-/// first. A phase that instead means to reward lasting longer — a knockout, where the matches an
-/// entrant played are how far it got — wants the opposite order and so a criterion of its own.
+/// Meant as a tie break: of two rankings with the same result, the one that needed fewer matches
+/// for it ranks higher. A phase that means to reward lasting longer instead, e.g. a knockout, needs
+/// a criterion of its own that sorts the other way round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FewerMatchesPlayed;
 

@@ -55,4 +55,4 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 ## Conventions
 
 - The user prefers invariants enforced by types/the compiler over runtime checks or self-reported plugin facts, and is cautious about costs on the result-reporting hot path.
-- Doc comments are thorough and explain *why*. Match that density in new public items.
+- Doc comments follow KISS: say what a public item does and everything a caller needs in order to use it (contract, panics, errors, ordering guarantees), nothing more. No historical rationale, no comparison with rejected alternatives — that belongs in `DESIGN.md`. Where a *maintainer* needs the reasoning, put it in a plain `//` comment next to the code instead of in the rustdoc.

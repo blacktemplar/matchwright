@@ -2,10 +2,9 @@
 //!
 //! A [`PhaseConfig`] holds everything the CLI can decide about that phase: the format its matches
 //! are scheduled by, the metrics calculated for every entrant, and the order in which those
-//! metrics rank them. A preset of `add-phase` is nothing but the configuration a format comes
-//! with, and configuring a phase at the prompt (see [`crate::wizard`]) is changing that
-//! configuration question by question, so both produce a [`PhaseConfig`] and
-//! [`Session::add_phase`] turns it into the plugins of the engine.
+//! metrics rank them. Both a preset of `add-phase` and configuring a phase at the prompt (see
+//! [`crate::wizard`]) produce one, which [`Session::add_phase`] turns into the plugins of the
+//! engine.
 //!
 //! [`Session::add_phase`]: crate::session::Session::add_phase
 
@@ -104,8 +103,8 @@ impl FormatConfig {
 
     /// The metrics calculated for a phase of this format unless an operator picks others.
     ///
-    /// Every metric these are derived from is calculated too, even when it is not listed here, so
-    /// the list only holds the metrics that are worth showing in the ranking.
+    /// Only the metrics worth showing in the ranking are listed; every metric one of them is
+    /// derived from is calculated as well.
     pub fn default_metrics(self) -> &'static [MetricKind] {
         match self {
             Self::RoundRobin => &[
@@ -233,9 +232,8 @@ pub enum MetricKind {
 impl MetricKind {
     /// Every metric, in an order in which each one comes after the metrics it is derived from.
     ///
-    /// The engine calculates the metrics of a phase in the order they are given to it, and a
-    /// derived metric only sees the updated values it is derived from if those were calculated
-    /// first, which is why this is the order a [`PhaseConfig`] keeps its metrics in.
+    /// This is the order a [`PhaseConfig`] keeps its metrics in, and therefore the order the engine
+    /// calculates them in.
     pub const ALL: &'static [Self] = &[
         Self::WinsDrawsLosses,
         Self::Points,
@@ -249,8 +247,7 @@ impl MetricKind {
     /// The metrics an operator picks from: those that are shown in the ranking or can be ranked
     /// by.
     ///
-    /// [`MetricKind::Matches`] is neither — it is the bookkeeping the metrics derived from it
-    /// need — so it is never picked and only ever added as a dependency.
+    /// [`MetricKind::Matches`] is neither and is only ever added as a dependency of another metric.
     pub const SELECTABLE: &'static [Self] = &[
         Self::WinsDrawsLosses,
         Self::Points,
@@ -336,13 +333,10 @@ impl MetricKind {
 
 /// One way the engine can compare two entrants, i.e. a criterion a ranking can be sorted by.
 ///
-/// This is not the same thing as a [`MetricKind`]: a metric that has no order of its own is never
-/// sorted by and only ever shown, and one that counts several things offers one criterion per
-/// count, see [`MetricKind::criteria`]. Only the criteria listed here can be sorted by, which is
-/// what keeps a ranking from being asked to sort by something the engine cannot compare.
-///
-/// A criterion over a metric that has no single natural order says in its name which way round it
-/// sorts, so that no configuration has to be read twice to see which end is the better one.
+/// This is not the same thing as a [`MetricKind`]: a metric with no order of its own is only ever
+/// shown and never sorted by, and one that counts several things offers one criterion per count,
+/// see [`MetricKind::criteria`]. A criterion whose metric has no single natural order says in its
+/// name which way round it sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Criterion {
     MoreWins,
@@ -375,7 +369,7 @@ impl Criterion {
     }
 
     /// The name the criterion is shown by, which is the label of its metric unless several criteria
-    /// share that metric and the label has to tell them apart, direction included.
+    /// share that metric and need to be told apart, direction included.
     pub fn label(self) -> &'static str {
         match self {
             Self::MoreWins => "more wins",
@@ -388,9 +382,6 @@ impl Criterion {
 
     /// Appends this criterion to `metrics`, so that it breaks the ties of every criterion already
     /// in there.
-    ///
-    /// Adding the criterion of the engine here rather than handing one out keeps what a ranking is
-    /// sorted by and how it is sorted by it in one place.
     fn add_to(self, metrics: LexicographicalCriteria) -> LexicographicalCriteria {
         match self {
             Self::MoreWins => metrics.add_criterion(MoreWins),
@@ -450,9 +441,8 @@ impl PhaseConfig {
     /// `ranked_by` lexicographically.
     ///
     /// Everything `ranked_by` sorts by and every metric a calculated metric is derived from is
-    /// calculated as well, with default parameters if `metrics` does not give any, so that no
-    /// configuration can ask for a metric that cannot be calculated. A metric listed twice is
-    /// calculated once, with the parameters it is listed with first.
+    /// calculated as well, with default parameters if `metrics` does not give any. A metric listed
+    /// twice is calculated once, with the parameters it is listed with first.
     pub fn new(
         format: FormatConfig,
         metrics: impl IntoIterator<Item = MetricConfig>,

@@ -12,8 +12,8 @@ use crate::phase::FormatConfig;
 
 /// A single command typed at the prompt.
 ///
-/// The doc comment of every variant is the help text the prompt shows for it, while this one is
-/// kept out of it.
+/// The doc comment of every variant is the help text the prompt shows for it. This one is kept out
+/// of the help.
 #[derive(Debug, Clone, PartialEq, Parser)]
 #[command(multicall = true, about = None, long_about = None)]
 pub enum Command {
@@ -73,8 +73,7 @@ pub enum Command {
 /// A phase format together with the metrics and the ranking it comes with, which is what
 /// `add-phase` adds without asking anything.
 ///
-/// Each preset is the format it names with its defaults, so configuring a phase at the prompt and
-/// accepting every question adds exactly what the preset of the chosen format does, see
+/// A preset is the format it names with its defaults, see
 /// [`PhaseConfig::with_defaults`](crate::phase::PhaseConfig::with_defaults).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum PhasePreset {
@@ -124,8 +123,8 @@ pub enum ReportedResult {
 pub enum ParseError {
     #[error("the line has an unclosed quote or a trailing backslash")]
     Unquote,
-    /// Covers both a malformed command and an explicit request for help, which clap reports as an
-    /// error too; [`clap::Error::print`] tells them apart when showing it.
+    /// Covers both a malformed command and an explicit request for help, which clap also reports
+    /// as an error. [`clap::Error::print`] shows either of them correctly.
     #[error(transparent)]
     Clap(#[from] clap::Error),
 }

@@ -96,9 +96,8 @@ impl Competition {
 
     /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
     ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as
-    /// `entropy` so that different operations produce independent random streams while
-    /// remaining fully deterministic given the same update log.
+    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
+    /// different values give independent random streams, the same value always gives the same one.
     pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
         Seeder::from((self.seed, entropy)).into_rng()
     }
@@ -136,11 +135,11 @@ impl EntrantId {
 
 /// Someone taking part in a competition.
 ///
-/// Core only needs the [`EntrantId`]; everything a consumer wants to show or store about an entrant
-/// — a display name, a club, a database id — lives in `annotations`, keyed by the consumer's own
-/// type. Since an entrant is consumer-created, its annotations are given once, by the
-/// [`AddEntrant`](crate::transitions::add_entrant::AddEntrant) that creates it, which is what keeps
-/// them part of the transition log and therefore reproducible under replay.
+/// Beyond its [`EntrantId`] an entrant holds only `annotations`: everything a consumer wants to
+/// show or store about it — a display name, a club, a database id — keyed by the consumer's own
+/// type. Annotations are given once, by the
+/// [`AddEntrant`](crate::transitions::add_entrant::AddEntrant) that creates the entrant, and cannot
+/// be changed afterwards.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entrant {
     id: EntrantId,
@@ -385,9 +384,8 @@ impl Phase {
 
     /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
     ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as
-    /// `entropy` so that different operations produce independent random streams while
-    /// remaining fully deterministic given the same update log.
+    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
+    /// different values give independent random streams, the same value always gives the same one.
     pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
         Seeder::from((self.seed, entropy)).into_rng()
     }
@@ -398,7 +396,8 @@ impl Phase {
         self.new_seeded_rng(entropy)
     }
 
-    /// Match index can be considered a constant match number as matches only ever get appended.
+    /// The position of the match in [`Phase::matches`], which can be used as a stable match
+    /// number: matches are only ever appended, so an index never changes.
     pub fn get_match_index(&self, match_id: &MatchId) -> usize {
         self.matches.get_index_of(match_id).unwrap()
     }
@@ -652,9 +651,9 @@ impl Match {
     }
 }
 
-/// Builds a standalone [`Phase`] with prepopulated rankings, without needing a [`Competition`]
-/// around it. Intended for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat)
-/// and [`Ranker`] implementations that only care about a single phase in isolation.
+/// Builds a standalone [`Phase`] with prepopulated rankings, without a [`Competition`] around it,
+/// for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) and [`Ranker`]
+/// implementations.
 #[cfg(test)]
 pub(crate) struct PhaseBuilder {
     phase_format: Box<dyn PhaseFormat>,

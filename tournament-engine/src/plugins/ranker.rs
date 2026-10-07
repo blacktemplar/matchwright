@@ -11,9 +11,11 @@ use crate::{
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait Ranker: Plugin {
-    /// After every rank update the following invariant must uphold: If we would order rankings by
-    /// rank we would get: First ranking has rank 1, every following ranking has either the rank of
-    /// its predecessor or has rank (index + 1).
+    /// The new rank of every ranking of `phase`.
+    ///
+    /// The ranks must satisfy the following invariant: ordered by rank, the first ranking has rank
+    /// 1 and every following one has either the rank of its predecessor or rank `index + 1`. Equal
+    /// ranks are therefore ties, and the rank after a tie skips the tied ranks.
     fn update_ranks(&self, phase: &Phase) -> Vec<(RankingId, NonZeroU32)>;
 }
 
@@ -79,11 +81,9 @@ impl Ranker for HierarchicalRanker {
 /// The order a [`RankingCriterion`] sorts the rankings in, which it states by calling exactly one
 /// of the methods here.
 ///
-/// Both of them sort by one metric, which the criterion names as the type parameter; what they
-/// differ in is where the order of that metric comes from — the metric's own [`Compare`] impl, or a
-/// comparison the criterion passes in. The rankings then compare by the value of that one metric
-/// alone, and a ranking that does not hold it makes the criterion sort nothing, see
-/// [`LexicographicalCriteria`].
+/// Both methods sort by a single metric, named as the type parameter, and differ only in where the
+/// order of that metric comes from. If a ranking does not hold that metric, the criterion orders
+/// nothing at all, see [`LexicographicalCriteria`].
 #[must_use]
 pub struct RankingOrder<'a, 'b> {
     metrics: &'b [&'a TypeMap],
@@ -96,15 +96,14 @@ impl<'a, 'b> RankingOrder<'a, 'b> {
         *self.output = self.column_by_metric::<M>()
     }
 
-    /// Sorts by metric `M` as well, but in the order `compare` puts two of its values in instead of
-    /// in `M`'s own — which is also the only way to sort by a metric that has no [`Compare`] impl
-    /// because it has no single natural order.
+    /// Sorts by metric `M` too, but in the order `compare` puts two of its values in rather than in
+    /// `M`'s own.
     ///
-    /// This is what lets one stored metric back several criteria: a
-    /// [`WinsDrawsLosses`](crate::plugins::metrics_calculator::wins_draws_losses::WinsDrawsLosses)
-    /// is a single value in the metrics of a ranking, but its wins, draws, losses and the matches
-    /// they add up to each order that value differently, so the order belongs to the criterion
-    /// asking for it and not to the metric.
+    /// This is the only way to sort by a metric that has no [`Compare`] impl, and the way several
+    /// criteria can each sort by one shared metric differently — e.g. the wins, draws and losses of
+    /// a [`WinsDrawsLosses`].
+    ///
+    /// [`WinsDrawsLosses`]: crate::plugins::metrics_calculator::wins_draws_losses::WinsDrawsLosses
     pub fn by_metric_compared_by<M: TypeMapValue>(self, compare: fn(&M, &M) -> Comparison) {
         *self.output = self.column_compared_by::<M>(compare)
     }
@@ -133,16 +132,14 @@ impl<'a, 'b> RankingOrder<'a, 'b> {
 
 /// One way to compare two rankings, i.e. a criterion a ranking can be sorted by.
 ///
-/// A criterion is more than a way to read a metric: it picks the metric *and* fixes the order the
-/// rankings are compared in. Where that order is the metric's own, see [`Compare`], naming the
-/// metric is all the criterion does, see [`RankingOrder::by_metric`]; where a metric has no single
-/// natural order, or has several, the criterion passes the comparison in as well and says in its
-/// name which way round it sorts, see [`RankingOrder::by_metric_compared_by`].
+/// A criterion picks the metric it sorts by *and* the order that metric is compared in: either the
+/// metric's own, see [`RankingOrder::by_metric`] and
+/// [`MorePoints`](crate::plugins::metrics_calculator::points::MorePoints), or one it passes in
+/// itself, see [`RankingOrder::by_metric_compared_by`] and
+/// [`FewerLosses`](crate::plugins::metrics_calculator::wins_draws_losses::FewerLosses). A criterion
+/// that passes its own order in should say in its name which way round it sorts.
 ///
-/// [`MorePoints`](crate::plugins::metrics_calculator::points::MorePoints) implements the first
-/// shape, [`FewerLosses`](crate::plugins::metrics_calculator::wins_draws_losses::FewerLosses) the
-/// second. Either way the order an implementation ends up stating can be read back with
-/// [`compare_by`].
+/// The order an implementation states can be read back with [`compare_by`].
 #[typetag::serde(tag = "type", content = "value")]
 pub trait RankingCriterion: Plugin {
     /// States the order this criterion sorts the rankings in, by calling exactly one method of
@@ -153,10 +150,8 @@ pub trait RankingCriterion: Plugin {
 /// How `criterion` compares a ranking whose metrics are `first` to one whose metrics are `second`,
 /// or [`None`] if either of them does not hold the metric `criterion` sorts by.
 ///
-/// A ranker does not compare one pair at a time — [`LexicographicalCriteria`] resolves a whole
-/// column of values per criterion and then compares within it — so this is the way to ask a
-/// criterion about a single pair: to test a criterion in isolation, or to tell which of two
-/// rankings a criterion puts first and why.
+/// This is the way to ask a criterion about a single pair, e.g. to test it in isolation. Ranking a
+/// whole phase does not go through it, see [`LexicographicalCriteria`].
 ///
 /// # Examples
 /// ```
@@ -209,14 +204,10 @@ impl Clone for Box<dyn RankingCriterion> {
 }
 
 /// The values of one metric, one per ranking, already read out of their [`TypeMap`].
-///
-/// Extracting all values up front rather than one pair at a time is what lets a column keep them
-/// typed: a comparison then indexes into values that are already known to be of one metric type,
-/// instead of downcasting a `dyn Any` it has to be told the provenance of.
-///
-/// How a criterion's order is held is nothing a criterion has to know, so this and its
-/// implementations are private to this module; a criterion only ever states an order, see
-/// [`RankingOrder`], and asks about one pair through [`compare_by`].
+// Extracting all values up front rather than one pair at a time is what keeps them typed: a
+// comparison indexes into values already known to be of one metric type instead of downcasting a
+// `dyn Any` per comparison. A criterion never sees a column, it only states an order, so this and
+// its implementations stay private to this module.
 trait MetricColumn {
     /// Compares the values of the rankings at `index1` and `index2`, in terms of the order they
     /// were extracted in.
@@ -257,18 +248,16 @@ impl Comparison {
 }
 
 /// The one order a metric is naturally compared in, which a [`RankingCriterion`] over that metric
-/// can then sort by without naming a direction of its own.
+/// can then sort by without naming a direction of its own, see [`RankingOrder::by_metric`].
 ///
-/// Only implement this where the metric has a single obvious better end — more points, a later
-/// first loss. A metric that counts several things, or one that different phases want sorted
-/// different ways round, is left without this impl, so that every criterion over it has to state
-/// its direction, see [`RankingOrder::by_metric_compared_by`].
+/// Only implement this for a metric with a single obvious better end — more points, a later first
+/// loss. Leave it out for one that counts several things, or that different phases want sorted
+/// different ways round, so that every criterion over it has to state its direction.
 pub trait Compare {
     fn compare(&self, other: &Self) -> Comparison;
 }
 
-/// The values of metric `M` of a list of rankings, which compare without any downcast because
-/// [`TypeMap::get`] already resolved them to `&M`.
+/// The values of metric `M` of a list of rankings, compared in `M`'s own order.
 struct MetricValues<'a, M>(Vec<&'a M>);
 
 impl<M: Compare> MetricColumn for MetricValues<'_, M> {
@@ -277,9 +266,8 @@ impl<M: Compare> MetricColumn for MetricValues<'_, M> {
     }
 }
 
-/// The values of metric `M` of a list of rankings, ordered by the comparison the
-/// [`RankingCriterion`] that read them picked instead of by `M`'s own [`Compare`] impl, see
-/// [`RankingOrder::by_metric_compared_by`].
+/// The values of metric `M` of a list of rankings, compared by the function the
+/// [`RankingCriterion`] that read them passed in, see [`RankingOrder::by_metric_compared_by`].
 struct ComparedBy<'a, M>(Vec<&'a M>, fn(&M, &M) -> Comparison);
 
 impl<M> MetricColumn for ComparedBy<'_, M> {
@@ -290,8 +278,9 @@ impl<M> MetricColumn for ComparedBy<'_, M> {
 
 /// Sorts rankings by its criteria in order, each one breaking the ties of the ones before it.
 ///
-/// A criterion whose metric a ranking does not hold sorts nothing at all, which is a configuration
-/// error rather than something to rank around, so it panics instead of skipping the criterion.
+/// # Panics
+/// Sorting panics if a ranking does not hold the metric one of the criteria sorts by, i.e. if the
+/// phase does not calculate that metric.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LexicographicalCriteria(Vec<Box<dyn RankingCriterion>>);
 

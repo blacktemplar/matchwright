@@ -31,10 +31,9 @@ impl SingleElimination {
     /// A knockout in which the two entrants knocked out in the semifinals play for third place,
     /// scheduled in the same round as the final.
     ///
-    /// Playing the match is not by itself enough to rank its winner above its loser: both of them
-    /// first lost in the semifinal whichever way it goes, so a ranking by
-    /// [`LaterFirstLoss`] ties them. A phase that plays for third place wants a further criterion
-    /// that tells the two apart, which [`FewerLosses`] does.
+    /// Both of them lost their first match in the semifinal whichever way the match for third place
+    /// goes, so [`LaterFirstLoss`] ties them and the ranking needs a further criterion to tell the
+    /// two apart, e.g. [`FewerLosses`].
     ///
     /// A bracket of three entrants has nobody to play the match against and so is not given it.
     ///

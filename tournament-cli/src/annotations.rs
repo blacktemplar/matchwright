@@ -1,9 +1,9 @@
 //! The data this CLI attaches to the entities of [`tournament_engine`].
 //!
-//! Every type here implements [`TypeMapValue`], which both makes it storable in the
-//! [`TypeMap`](tournament_engine::type_map::TypeMap) of an entity and gives it a `typetag` tag, so
-//! that it survives a snapshot of the competition. That tag is a persistence contract: it is
-//! written out explicitly, and renaming or moving the type must not change it.
+//! Every type here implements [`TypeMapValue`], which makes it storable in the
+//! [`TypeMap`](tournament_engine::type_map::TypeMap) of an entity and gives it an explicit
+//! `typetag` name. That name is a persistence contract: renaming or moving the type must not
+//! change it.
 
 use std::fmt::{self, Display};
 
@@ -12,10 +12,8 @@ use tournament_engine::type_map::TypeMapValue;
 
 /// The name an entrant is shown and addressed by.
 ///
-/// The engine never reads this — it identifies an entrant by its
-/// [`EntrantId`](tournament_engine::entities::competition::EntrantId) — so the name is given to an
-/// [`Entrant`](tournament_engine::entities::competition::Entrant) as an annotation, and reaches the
-/// competition through the [`AddEntrant`] that adds that entrant.
+/// Stored as an annotation of an [`Entrant`](tournament_engine::entities::competition::Entrant),
+/// which means it is given once, by the [`AddEntrant`] that adds that entrant.
 ///
 /// [`AddEntrant`]: tournament_engine::transitions::add_entrant::AddEntrant
 ///

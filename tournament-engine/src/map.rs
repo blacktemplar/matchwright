@@ -1,14 +1,12 @@
 //! The map types of the engine.
 //!
-//! Every map in this crate is an [`IndexMap`], which keeps its entries in insertion order. That is
-//! what makes iteration order reproducible across runs and architectures, and independent of how a
-//! map was filled: two maps holding the same entries in the same order iterate identically, whether
-//! they were built entry by entry or all at once. Deriving state from iteration order is therefore
-//! sound, which [`IdMap`] relies on for its serialized form.
+//! Every map in this crate is an [`IndexMap`] and therefore iterates in insertion order,
+//! reproducibly across runs and architectures. Code may rely on that order, e.g. to derive a match
+//! number from an index.
 //!
-//! Note that removing an entry has to preserve that order, so use
-//! [`shift_remove`](IndexMap::shift_remove) rather than
-//! [`swap_remove`](IndexMap::swap_remove) unless the order genuinely does not matter.
+//! Removing an entry has to preserve that order, so use
+//! [`shift_remove`](IndexMap::shift_remove) rather than [`swap_remove`](IndexMap::swap_remove)
+//! unless the order genuinely does not matter.
 
 use std::{hash::Hash, marker::PhantomData, ops::Deref};
 
@@ -20,15 +18,12 @@ use serde::{
     ser::SerializeSeq,
 };
 
-/// An [`IndexMap`] with a fast, fixed hasher.
-///
-/// The hasher is purely a performance choice: all keys in this crate are small `Copy` id types,
-/// which [`FxBuildHasher`] hashes faster than the standard library default. It is not what makes
-/// the map deterministic — an [`IndexMap`] iterates in insertion order whatever its hasher is.
+/// An [`IndexMap`] with a fast, fixed hasher, suited to the small `Copy` id types this crate keys
+/// its maps by.
 ///
 /// Note that [`new`](IndexMap::new) and [`with_capacity`](IndexMap::with_capacity) are not
-/// available on a map with a custom hasher; use [`Map::default`] and
-/// [`Map::with_capacity_and_hasher`](IndexMap::with_capacity_and_hasher) instead.
+/// available on a map with a custom hasher; use [`Map::default`] and [`map_with_capacity`]
+/// instead.
 pub type Map<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// Creates an empty [`Map`] that can hold at least `capacity` entries without reallocating.
@@ -44,16 +39,12 @@ pub trait IdAble {
 
 /// A [`Map`] of values that know their own id, keyed by that id.
 ///
-/// Every entry is stored under `value.id()`, and the whole API upholds that: values only ever go in
-/// through [`insert`](Self::insert) or [`extend`](Extend::extend), which derive the key from the
-/// value, and [`Deref`] only hands out the read-only part of [`Map`], so nothing offers a way to
-/// choose a key. Since the key is therefore never anything but a copy of data the value already
-/// holds, it is left out of the serialized form entirely: an [`IdMap`] serializes as a plain
-/// sequence of its values and rebuilds its keys when deserializing.
+/// Every entry is stored under `value.id()` and nothing can choose a key: values only go in through
+/// [`insert`](Self::insert) or [`extend`](Extend::extend), which derive the key from the value, and
+/// [`Deref`] hands out the read-only part of [`Map`] only.
 ///
-/// Leaving the keys out means the sequence order is all the serialized form has, which is sound
-/// only because a [`Map`] iterates in insertion order: serializing walks the values in that order
-/// and deserializing inserts them in the same one, so a round trip reproduces the order exactly.
+/// Serializes as a plain sequence of its values, in insertion order, leaving the keys out and
+/// rebuilding them when deserializing. A round trip therefore reproduces the order exactly.
 #[derive(Debug)]
 pub struct IdMap<V: IdAble>(Map<V::Id, V>);
 
@@ -77,9 +68,8 @@ impl<V: IdAble> IdMap<V> {
     }
 }
 
-/// Gives read-only access to the whole [`Map`] API; every mutating operation is reimplemented on
-/// [`IdMap`] itself, so that no caller can pick the key an entry is stored under. See the type
-/// level documentation for why that matters.
+/// Gives read-only access to the whole [`Map`] API. Every mutating operation is reimplemented on
+/// [`IdMap`] itself, so that no caller can pick the key an entry is stored under.
 impl<V: IdAble> Deref for IdMap<V> {
     type Target = Map<V::Id, V>;
 
@@ -115,17 +105,14 @@ where
 
     /// Removes the entry for `id` and returns its value, or [`None`] if there was none.
     ///
-    /// The remaining entries keep their relative order, which costs `O(n)` rather than the `O(1)`
-    /// of [`IndexMap::swap_remove`], but keeps the serialized form of the map independent of which
-    /// entries it has seen.
+    /// The remaining entries keep their relative order, which costs `O(n)`.
     #[inline]
     pub fn remove(&mut self, id: &V::Id) -> Option<V> {
         self.0.shift_remove(id)
     }
 }
 
-/// Serializes as a plain sequence of the values, in insertion order; their ids are left out, since
-/// every value carries its own.
+/// Serializes as a plain sequence of the values, in insertion order, leaving their ids out.
 impl<V: IdAble + Serialize> Serialize for IdMap<V> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

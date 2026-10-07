@@ -1,15 +1,12 @@
 //! Configuring a phase at the prompt, question by question.
 //!
-//! Every question starts out at the answer the format comes with (see
-//! [`PhaseConfig::with_defaults`]), so that accepting all of them with Enter configures the same
-//! phase the preset of that format does, and an operator who wants to change one thing only has
-//! to answer one question differently. Cancelling a question with Esc cancels the whole
-//! configuration, which leaves the competition untouched.
+//! Every question starts out at the answer the format comes with, see
+//! [`PhaseConfig::with_defaults`], so accepting all of them with Enter configures the same phase
+//! the preset of that format does. Cancelling a question with Esc cancels the whole configuration.
 //!
-//! This is the only part of the CLI that asks the operator anything on its own, which is why it
-//! is kept out of [`Session`](crate::session::Session): a session executes a command against the
-//! competition and never reads from the terminal, so the prompt configures the phase here and
-//! hands the result to [`Session::add_phase`](crate::session::Session::add_phase).
+//! This is the only part of the CLI that reads from the terminal on its own. The configured phase
+//! is handed to [`Session::add_phase`](crate::session::Session::add_phase), which is what changes
+//! the competition.
 
 use std::iter;
 

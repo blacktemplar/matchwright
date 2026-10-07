@@ -1,8 +1,8 @@
 //! A competition being run at the prompt, from the first command typed to the last.
 //!
 //! A [`Session`] owns the [`CompetitionStateMachine`] of the competition and executes every
-//! [`Command`] against it. It is persisted as that machine's transition log rather than as a
-//! snapshot of the competition, so undo and redo still reach back past a save and a reload.
+//! [`Command`] against it. It is saved as that machine's transition log rather than as a snapshot
+//! of the competition, so undo and redo reach back past a save and a reload.
 
 use std::{
     collections::HashSet,
@@ -61,9 +61,8 @@ pub enum Error {
     UnknownEntrant(String),
     #[error("the competition already has a phase, and only one is supported")]
     PhaseAlreadyAdded,
-    /// A session never asks the operator anything, so a phase that is to be configured rather
-    /// than taken from a preset has to be configured before it reaches one, see
-    /// [`crate::wizard::configure_phase`].
+    /// A session never reads from the terminal, so a phase that is not taken from a preset has to
+    /// be configured before it reaches one, see [`crate::wizard::configure_phase`].
     #[error(
         "configuring a phase needs a terminal to ask at; add a preset instead, see `help add-phase`"
     )]
@@ -110,9 +109,8 @@ impl From<StateMachineError> for Error {
 
 /// A competition being run at the prompt, together with the file it is saved to.
 ///
-/// The first entry of the log of every session is the [`SetCompetitionSeed`] it was created
-/// with. It is what makes the shuffles of the engine differ between competitions, so it is never
-/// undone.
+/// The first entry of the log of every session is the [`SetCompetitionSeed`] it was created with,
+/// which is never undone.
 pub struct Session {
     machine: CompetitionStateMachine,
     path: Option<PathBuf>,
@@ -308,8 +306,8 @@ impl Session {
             .expect("a started competition must have a phase"))
     }
 
-    /// Lists the matches, numbered the way [`Self::report`] addresses them, so that the number of a
-    /// match does not depend on the filters shown it with.
+    /// Lists the matches, numbered the way [`Self::report`] addresses them and independently of
+    /// the filters applied.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let phase = self.phase()?;
         let rows: Vec<_> = phase
