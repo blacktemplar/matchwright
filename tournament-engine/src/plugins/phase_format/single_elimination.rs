@@ -77,6 +77,24 @@ pub enum KnockoutRound {
 #[typetag::serde(name = "tournament_engine::knockout_round")]
 impl TypeMapValue for KnockoutRound {}
 
+impl KnockoutRound {
+    /// Which fraction of the final this round is: 1 for the final, 2 for the semifinals, 4 for the
+    /// quarterfinals and so on. `None` for the match for third place, which is no such fraction.
+    ///
+    /// # Examples
+    /// ```
+    /// # use tournament_engine::plugins::phase_format::single_elimination::KnockoutRound;
+    /// assert_eq!(KnockoutRound::RoundOf(16).fraction_of_final(), Some(8));
+    /// assert_eq!(KnockoutRound::ThirdPlace.fraction_of_final(), None);
+    /// ```
+    pub const fn fraction_of_final(self) -> Option<u32> {
+        match self {
+            Self::RoundOf(entrants) => Some(entrants / 2),
+            Self::ThirdPlace => None,
+        }
+    }
+}
+
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&self, phase: &Phase) -> Vec<Match> {

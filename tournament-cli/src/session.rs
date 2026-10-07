@@ -18,12 +18,15 @@ use tournament_engine::{
         Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
         RankingId,
     },
-    plugins::metrics_calculator::{
-        buchholz::{Buchholz, BuchholzOfBuchholz},
-        points::Points,
-        round_of_first_loss::RoundOfFirstLoss,
-        sonneborn_berger::SonnebornBerger,
-        wins_draws_losses::WinsDrawsLosses,
+    plugins::{
+        metrics_calculator::{
+            buchholz::{Buchholz, BuchholzOfBuchholz},
+            points::Points,
+            round_of_first_loss::RoundOfFirstLoss,
+            sonneborn_berger::SonnebornBerger,
+            wins_draws_losses::WinsDrawsLosses,
+        },
+        phase_format::single_elimination::KnockoutRound,
     },
     transitions::{
         CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
@@ -319,6 +322,11 @@ impl Session {
     /// the filters applied.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let phase = self.phase()?;
+        // only a format that names its stages gets a column for them
+        let has_stages = phase
+            .matches()
+            .values()
+            .any(|r#match| stage_of(r#match).is_some());
         let rows: Vec<_> = phase
             .matches()
             .values()
@@ -326,14 +334,16 @@ impl Session {
             .filter(|(_, r#match)| !(only_open && r#match.is_finished()))
             .filter(|(_, r#match)| only_round.is_none_or(|round| r#match.round() == round))
             .map(|(index, r#match)| {
-                vec![
-                    (index + 1).to_string(),
-                    r#match.round().to_string(),
-                    self.team_name(phase, r#match.team_a()),
-                    "vs".to_owned(),
-                    self.team_name(phase, r#match.team_b()),
-                    self.result_text(phase, r#match),
-                ]
+                [(index + 1).to_string(), r#match.round().to_string()]
+                    .into_iter()
+                    .chain(has_stages.then(|| stage_of(r#match).unwrap_or_default()))
+                    .chain([
+                        self.team_name(phase, r#match.team_a()),
+                        "vs".to_owned(),
+                        self.team_name(phase, r#match.team_b()),
+                        self.result_text(phase, r#match),
+                    ])
+                    .collect()
             })
             .collect();
         if rows.is_empty() {
@@ -344,7 +354,12 @@ impl Session {
             });
         }
         // naming the two sides `A` and `B` is what `report <number> a|b` reports a win for
-        Ok(table(&["#", "round", "A", "vs", "B", "result"], &rows))
+        let header = ["#", "round"]
+            .into_iter()
+            .chain(has_stages.then_some("stage"))
+            .chain(["A", "vs", "B", "result"])
+            .collect::<Vec<_>>();
+        Ok(table(&header, &rows))
     }
 
     /// The phase of the match `number` addresses and that match, where the number is the position
@@ -533,6 +548,35 @@ fn name_of(entrant: &Entrant) -> &str {
     entrant
         .annotation::<DisplayName>()
         .map_or("<unnamed>", DisplayName::as_str)
+}
+
+/// The name of the stage `r#match` belongs to, if its format names one.
+fn stage_of(r#match: &Match) -> Option<String> {
+    r#match
+        .annotation::<KnockoutRound>()
+        .copied()
+        .map(knockout_round_name)
+}
+
+fn knockout_round_name(stage: KnockoutRound) -> String {
+    match stage.fraction_of_final() {
+        None => "Third place".to_owned(),
+        Some(1) => "Final".to_owned(),
+        Some(2) => "Semifinals".to_owned(),
+        Some(4) => "Quarterfinals".to_owned(),
+        Some(fraction) => format!("{fraction}{}-finals", ordinal_suffix(fraction)),
+    }
+}
+
+/// The English ordinal suffix of `n`, e.g. "nd" for 32.
+fn ordinal_suffix(n: u32) -> &'static str {
+    match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    }
 }
 
 fn is_change(entry: &LogEntry<Box<dyn CompetitionTransition>>) -> bool {
@@ -982,6 +1026,81 @@ mod tests {
         let filtered = output(&mut session, "matches --round 2");
 
         assert_eq!(numbered_rounds(&filtered), in_round_two);
+    }
+
+    /// The stage of every match listed by `matches`, i.e. its third column.
+    fn listed_stages(listing: &str) -> Vec<&str> {
+        listing
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| row.split_whitespace().nth(2).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_knockout_lists_the_stage_of_every_match() {
+        let mut session = started("single-elimination");
+        assert_eq!(
+            listed_stages(&output(&mut session, "matches")),
+            ["Semifinals"; 2]
+        );
+        output(&mut session, "report 1 a");
+        output(&mut session, "report 2 a");
+
+        let listing = output(&mut session, "matches --round 2");
+
+        assert_eq!(listed_stages(&listing), ["Final", "Third"]);
+        assert!(listing.contains("Third place"), "{listing}");
+    }
+
+    #[test]
+    fn a_format_without_stages_lists_no_stage_column() {
+        let mut session = started("round-robin");
+
+        let listing = output(&mut session, "matches");
+
+        assert_eq!(
+            listing
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "round", "A", "vs", "B", "result"]
+        );
+    }
+
+    #[test]
+    fn knockout_rounds_are_named_by_their_fraction_of_the_final() {
+        let names: Vec<_> = [2, 4, 8, 16, 32, 64, 128, 1024]
+            .map(|entrants| knockout_round_name(KnockoutRound::RoundOf(entrants)))
+            .into();
+
+        assert_eq!(
+            names,
+            [
+                "Final",
+                "Semifinals",
+                "Quarterfinals",
+                "8th-finals",
+                "16th-finals",
+                "32nd-finals",
+                "64th-finals",
+                "512th-finals"
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinal_suffixes_follow_english_rules() {
+        let suffixes = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 111, 112, 1001].map(ordinal_suffix);
+
+        assert_eq!(
+            suffixes,
+            [
+                "st", "nd", "rd", "th", "th", "th", "th", "st", "nd", "rd", "th", "th", "st"
+            ]
+        );
     }
 
     #[test]

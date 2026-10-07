@@ -46,7 +46,7 @@ cup> exit
 | `remove-entrant <NAME>` (`remove`) | Removes an entrant. |
 | `add-phase [PRESET]` | Adds the phase the competition is played in: the preset named, or, without a preset, the phase configured at the prompt, see below. Only one phase is supported. |
 | `start` | Starts the competition and schedules the first matches. Entrants and the phase cannot be changed afterwards. |
-| `matches [--open]` | Lists the matches with their number, round and result. |
+| `matches [--open] [--round <ROUND>]` | Lists the matches with their number, round, stage (for a format that names its stages, e.g. "Quarterfinals" in a knockout) and result. |
 | `report <NUMBER> <a\|b\|draw>` | Reports the result of a match: team a wins, team b wins, or a draw. |
 | `undo-report <NUMBER>` | Undoes the result reported for a match, however long ago it was reported, keeping every other change. |
 | `ranking` | Shows the current ranking with every metric the phase calculates. |
