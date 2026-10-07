@@ -599,7 +599,7 @@ impl IdAble for Match {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Team {
     A,
     B,
@@ -763,7 +763,6 @@ impl PhaseBuilder {
         }
     }
 
-    #[expect(dead_code)]
     pub(crate) fn ranker(mut self, ranker: Box<dyn Ranker>) -> Self {
         self.ranker = ranker;
         self

@@ -58,6 +58,8 @@ struct Pairing {
     r#match: Option<MatchId>,
     winner_to: Option<Slot>,
     loser_to: Option<Slot>,
+    /// If set, the winner and the loser only move on if this side wins.
+    advances_only_if_won_by: Option<Team>,
 }
 
 impl Bracket {
@@ -101,8 +103,14 @@ impl Bracket {
             r#match: None,
             winner_to: None,
             loser_to: None,
+            advances_only_if_won_by: None,
         });
         id
+    }
+
+    /// Lets the winner and the loser of `pairing` only move on if `side` wins it.
+    pub(super) fn advance_only_if_won_by(&mut self, pairing: PairingId, side: Team) {
+        self.pairings[pairing.0].advances_only_if_won_by = Some(side);
     }
 
     /// Adds a knockout between the rankings of `phase_data`, as many rounds as it takes to leave
@@ -200,6 +208,12 @@ impl Bracket {
     /// and pushes those whose seats are both taken now to `to_check`.
     fn decide(&mut self, id: PairingId, winner: Team, to_check: &mut Vec<PairingId>) {
         let pairing = &self.pairings[id.0];
+        if pairing
+            .advances_only_if_won_by
+            .is_some_and(|side| side != winner)
+        {
+            return;
+        }
         let seats = pairing
             .seats
             .map(|seat| seat.expect("a decided pairing has both seats"));

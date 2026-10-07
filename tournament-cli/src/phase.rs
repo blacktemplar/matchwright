@@ -18,6 +18,7 @@ use tournament_engine::plugins::{
         },
         matches::MatchesCalculator,
         points::{MorePoints, PointsCalculator},
+        round_of_elimination::{LaterElimination, RoundOfEliminationCalculator},
         round_of_first_loss::{LaterFirstLoss, RoundOfFirstLossCalculator},
         sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
         wins_draws_losses::{
@@ -25,8 +26,8 @@ use tournament_engine::plugins::{
         },
     },
     phase_format::{
-        PhaseFormat, random_rounds::RandomRounds, round_robin::RoundRobin,
-        single_elimination::SingleElimination,
+        PhaseFormat, double_elimination::DoubleElimination, random_rounds::RandomRounds,
+        round_robin::RoundRobin, single_elimination::SingleElimination,
     },
     ranker::{HierarchicalRanker, LexicographicalCriteria, Ranker},
 };
@@ -67,6 +68,11 @@ pub enum FormatConfig {
         /// place.
         third_place_match: bool,
     },
+    DoubleElimination {
+        /// Whether the champion of the winner bracket also needs to lose twice, i.e. plays the
+        /// grand final once more if it loses it.
+        grand_final_reset: bool,
+    },
     RandomRounds {
         rounds: NonZeroU32,
     },
@@ -79,6 +85,9 @@ impl FormatConfig {
         Self::SingleElimination {
             third_place_match: true,
         },
+        Self::DoubleElimination {
+            grand_final_reset: true,
+        },
         Self::RandomRounds {
             rounds: DEFAULT_RANDOM_ROUNDS,
         },
@@ -89,6 +98,7 @@ impl FormatConfig {
         match self {
             Self::RoundRobin => "round robin",
             Self::SingleElimination { .. } => "single elimination",
+            Self::DoubleElimination { .. } => "double elimination",
             Self::RandomRounds { .. } => "random rounds",
         }
     }
@@ -97,6 +107,9 @@ impl FormatConfig {
         match self {
             Self::RoundRobin => "everyone plays everyone",
             Self::SingleElimination { .. } => "the loser of a match is out, draws are not allowed",
+            Self::DoubleElimination { .. } => {
+                "an entrant is out after its second loss, draws are not allowed"
+            }
             Self::RandomRounds { .. } => "randomly chosen rounds of a round robin",
         }
     }
@@ -114,6 +127,9 @@ impl FormatConfig {
             ],
             Self::SingleElimination { .. } => {
                 &[MetricKind::RoundOfFirstLoss, MetricKind::WinsDrawsLosses]
+            }
+            Self::DoubleElimination { .. } => {
+                &[MetricKind::RoundOfElimination, MetricKind::WinsDrawsLosses]
             }
             Self::RandomRounds { .. } => &[
                 MetricKind::WinsDrawsLosses,
@@ -138,6 +154,12 @@ impl FormatConfig {
             Self::SingleElimination {
                 third_place_match: false,
             } => &[Criterion::LaterFirstLoss],
+            // an entrant drops into the loser bracket with its first loss, so it is the round it
+            // was knocked out in that tells how far it got; until then, the losses tell those still
+            // in the winner bracket from those that dropped
+            Self::DoubleElimination { .. } => {
+                &[Criterion::LaterElimination, Criterion::FewerLosses]
+            }
             Self::RandomRounds { .. } => &[
                 Criterion::MorePoints,
                 Criterion::MoreBuchholz,
@@ -156,6 +178,12 @@ impl FormatConfig {
             Self::SingleElimination {
                 third_place_match: false,
             } => Box::new(SingleElimination::new()),
+            Self::DoubleElimination {
+                grand_final_reset: true,
+            } => Box::new(DoubleElimination::with_grand_final_reset()),
+            Self::DoubleElimination {
+                grand_final_reset: false,
+            } => Box::new(DoubleElimination::new()),
             Self::RandomRounds { rounds } => Box::new(RandomRounds::new(rounds.get())),
         }
     }
@@ -172,6 +200,7 @@ pub enum MetricConfig {
     },
     Matches,
     RoundOfFirstLoss,
+    RoundOfElimination,
     Buchholz,
     /// Counts the points of every beaten opponent with `weight_for_win` and those of every
     /// opponent that was played to a draw with `weight_for_draw`.
@@ -190,6 +219,7 @@ impl MetricConfig {
             Self::Points { .. } => MetricKind::Points,
             Self::Matches => MetricKind::Matches,
             Self::RoundOfFirstLoss => MetricKind::RoundOfFirstLoss,
+            Self::RoundOfElimination => MetricKind::RoundOfElimination,
             Self::Buchholz => MetricKind::Buchholz,
             Self::SonnebornBerger { .. } => MetricKind::SonnebornBerger,
             Self::BuchholzOfBuchholz => MetricKind::BuchholzOfBuchholz,
@@ -204,6 +234,7 @@ impl MetricConfig {
             }
             Self::Matches => Box::new(MatchesCalculator),
             Self::RoundOfFirstLoss => Box::new(RoundOfFirstLossCalculator),
+            Self::RoundOfElimination => Box::new(RoundOfEliminationCalculator),
             Self::Buchholz => Box::new(BuchholzCalculator),
             Self::SonnebornBerger {
                 weight_for_win,
@@ -224,6 +255,7 @@ pub enum MetricKind {
     Points,
     Matches,
     RoundOfFirstLoss,
+    RoundOfElimination,
     Buchholz,
     SonnebornBerger,
     BuchholzOfBuchholz,
@@ -239,6 +271,7 @@ impl MetricKind {
         Self::Points,
         Self::Matches,
         Self::RoundOfFirstLoss,
+        Self::RoundOfElimination,
         Self::Buchholz,
         Self::SonnebornBerger,
         Self::BuchholzOfBuchholz,
@@ -252,6 +285,7 @@ impl MetricKind {
         Self::WinsDrawsLosses,
         Self::Points,
         Self::RoundOfFirstLoss,
+        Self::RoundOfElimination,
         Self::Buchholz,
         Self::SonnebornBerger,
         Self::BuchholzOfBuchholz,
@@ -267,6 +301,7 @@ impl MetricKind {
             // `Criterion::FewerMatchesPlayed`
             Self::Matches => "match list",
             Self::RoundOfFirstLoss => "round of the first loss",
+            Self::RoundOfElimination => "round of elimination",
             Self::Buchholz => "Buchholz",
             Self::SonnebornBerger => "Sonneborn-Berger",
             Self::BuchholzOfBuchholz => "Buchholz of Buchholz",
@@ -279,6 +314,7 @@ impl MetricKind {
             Self::Points => "scored for every win and every draw",
             Self::Matches => "the matches an entrant played",
             Self::RoundOfFirstLoss => "the later the better, never having lost is best",
+            Self::RoundOfElimination => "the later the better, still being in is best",
             Self::Buchholz => "the points of all opponents",
             Self::SonnebornBerger => {
                 "the points of the opponents that were beaten or played to a draw"
@@ -290,7 +326,10 @@ impl MetricKind {
     /// The metrics this one is derived from, which have to be calculated before it.
     pub fn derived_from(self) -> &'static [Self] {
         match self {
-            Self::WinsDrawsLosses | Self::Matches | Self::RoundOfFirstLoss => &[],
+            Self::WinsDrawsLosses
+            | Self::Matches
+            | Self::RoundOfFirstLoss
+            | Self::RoundOfElimination => &[],
             Self::Points => &[Self::WinsDrawsLosses],
             Self::Buchholz | Self::SonnebornBerger => &[Self::Points, Self::Matches],
             Self::BuchholzOfBuchholz => &[Self::Buchholz, Self::Matches],
@@ -311,6 +350,7 @@ impl MetricKind {
             Self::Matches => &[],
             Self::Points => &[Criterion::MorePoints],
             Self::RoundOfFirstLoss => &[Criterion::LaterFirstLoss],
+            Self::RoundOfElimination => &[Criterion::LaterElimination],
             Self::Buchholz => &[Criterion::MoreBuchholz],
             Self::SonnebornBerger => &[Criterion::MoreSonnebornBerger],
             Self::BuchholzOfBuchholz => &[Criterion::MoreBuchholzOfBuchholz],
@@ -324,6 +364,7 @@ impl MetricKind {
             Self::Points => DEFAULT_POINTS,
             Self::Matches => MetricConfig::Matches,
             Self::RoundOfFirstLoss => MetricConfig::RoundOfFirstLoss,
+            Self::RoundOfElimination => MetricConfig::RoundOfElimination,
             Self::Buchholz => MetricConfig::Buchholz,
             Self::SonnebornBerger => DEFAULT_SONNEBORN_BERGER,
             Self::BuchholzOfBuchholz => MetricConfig::BuchholzOfBuchholz,
@@ -348,6 +389,8 @@ pub enum Criterion {
     MorePoints,
     /// A later first loss, where never having lost is best.
     LaterFirstLoss,
+    /// A later elimination, where still being in is best.
+    LaterElimination,
     MoreBuchholz,
     MoreSonnebornBerger,
     MoreBuchholzOfBuchholz,
@@ -362,6 +405,7 @@ impl Criterion {
             }
             Self::MorePoints => MetricKind::Points,
             Self::LaterFirstLoss => MetricKind::RoundOfFirstLoss,
+            Self::LaterElimination => MetricKind::RoundOfElimination,
             Self::MoreBuchholz => MetricKind::Buchholz,
             Self::MoreSonnebornBerger => MetricKind::SonnebornBerger,
             Self::MoreBuchholzOfBuchholz => MetricKind::BuchholzOfBuchholz,
@@ -390,6 +434,7 @@ impl Criterion {
             Self::FewerMatchesPlayed => metrics.add_criterion(FewerMatchesPlayed),
             Self::MorePoints => metrics.add_criterion(MorePoints),
             Self::LaterFirstLoss => metrics.add_criterion(LaterFirstLoss),
+            Self::LaterElimination => metrics.add_criterion(LaterElimination),
             Self::MoreBuchholz => metrics.add_criterion(MoreBuchholz),
             Self::MoreSonnebornBerger => metrics.add_criterion(MoreSonnebornBerger),
             Self::MoreBuchholzOfBuchholz => metrics.add_criterion(MoreBuchholzOfBuchholz),
@@ -547,6 +592,9 @@ impl PhaseConfig {
             FormatConfig::SingleElimination {
                 third_place_match: true,
             } => "single elimination with a match for third place".to_owned(),
+            FormatConfig::DoubleElimination {
+                grand_final_reset: true,
+            } => "double elimination with a grand final reset".to_owned(),
             format => format.label().to_owned(),
         };
         if self.ranked_by.is_empty() {
@@ -703,6 +751,27 @@ mod tests {
         assert_eq!(
             config.summary(),
             "single elimination, ranked by round of the first loss"
+        );
+    }
+
+    #[test]
+    fn a_double_elimination_ranks_by_the_round_of_elimination_then_the_losses() {
+        let config = PhaseConfig::with_defaults(FormatConfig::DoubleElimination {
+            grand_final_reset: true,
+        });
+
+        assert_eq!(
+            config.ranked_by(),
+            [Criterion::LaterElimination, Criterion::FewerLosses]
+        );
+        assert_eq!(
+            kinds(&config),
+            [MetricKind::WinsDrawsLosses, MetricKind::RoundOfElimination]
+        );
+        assert_eq!(
+            config.summary(),
+            "double elimination with a grand final reset, ranked by round of elimination, then \
+             fewer losses"
         );
     }
 

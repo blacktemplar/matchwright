@@ -22,11 +22,14 @@ use tournament_engine::{
         metrics_calculator::{
             buchholz::{Buchholz, BuchholzOfBuchholz},
             points::Points,
+            round_of_elimination::RoundOfElimination,
             round_of_first_loss::RoundOfFirstLoss,
             sonneborn_berger::SonnebornBerger,
             wins_draws_losses::WinsDrawsLosses,
         },
-        phase_format::single_elimination::KnockoutRound,
+        phase_format::{
+            double_elimination::DoubleEliminationRound, single_elimination::KnockoutRound,
+        },
     },
     transitions::{
         CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
@@ -552,10 +555,31 @@ fn name_of(entrant: &Entrant) -> &str {
 
 /// The name of the stage `r#match` belongs to, if its format names one.
 fn stage_of(r#match: &Match) -> Option<String> {
+    if let Some(stage) = r#match.annotation::<KnockoutRound>() {
+        return Some(knockout_round_name(*stage));
+    }
     r#match
-        .annotation::<KnockoutRound>()
+        .annotation::<DoubleEliminationRound>()
         .copied()
-        .map(knockout_round_name)
+        .map(double_elimination_round_name)
+}
+
+fn double_elimination_round_name(stage: DoubleEliminationRound) -> String {
+    let bracket_round = |bracket, round, rounds| {
+        if round == rounds {
+            format!("{bracket} final")
+        } else {
+            format!("{bracket} round {round}")
+        }
+    };
+    match stage {
+        DoubleEliminationRound::Winners { round, rounds } => {
+            bracket_round("Winners", round, rounds)
+        }
+        DoubleEliminationRound::Losers { round, rounds } => bracket_round("Losers", round, rounds),
+        DoubleEliminationRound::GrandFinal => "Grand final".to_owned(),
+        DoubleEliminationRound::GrandFinalReset => "Grand final reset".to_owned(),
+    }
 }
 
 fn knockout_round_name(stage: KnockoutRound) -> String {
@@ -608,6 +632,13 @@ const METRIC_COLUMNS: &[MetricColumn] = &[
     ("lost in", |ranking| {
         ranking.metric::<RoundOfFirstLoss>().map(|lost_in| {
             lost_in
+                .0
+                .map_or("-".to_owned(), |round| format!("round {round}"))
+        })
+    }),
+    ("out in", |ranking| {
+        ranking.metric::<RoundOfElimination>().map(|out_in| {
+            out_in
                 .0
                 .map_or("-".to_owned(), |round| format!("round {round}"))
         })
@@ -1051,6 +1082,92 @@ mod tests {
 
         assert_eq!(listed_stages(&listing), ["Final", "Third"]);
         assert!(listing.contains("Third place"), "{listing}");
+    }
+
+    /// Side A wins every match, so the favourite of every match advances and the champion of the
+    /// winner bracket wins the grand final, which needs no reset then.
+    #[test]
+    fn a_double_elimination_plays_through_both_brackets() {
+        let mut session = started("double-elimination");
+        for number in 1..=6 {
+            output(&mut session, &format!("report {number} a"));
+        }
+
+        let listing = output(&mut session, "matches");
+        let stages: Vec<_> = listing
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| {
+                row.split("  ")
+                    .filter(|cell| !cell.is_empty())
+                    .nth(2)
+                    .unwrap()
+                    .trim()
+            })
+            .collect();
+        assert_eq!(
+            stages,
+            [
+                "Winners round 1",
+                "Winners round 1",
+                "Winners final",
+                "Losers round 1",
+                "Losers final",
+                "Grand final",
+            ],
+            "{listing}"
+        );
+
+        let ranking = output(&mut session, "ranking");
+        let rows: Vec<Vec<&str>> = ranking
+            .lines()
+            .skip(HEADER_LINES)
+            .map(|row| row.split_whitespace().collect())
+            .collect();
+        assert_eq!(
+            rows.iter().map(|row| row[0]).collect::<Vec<_>>(),
+            ["1", "2", "3", "4"],
+            "every entrant is knocked out in a round of its own: {ranking}"
+        );
+        assert_eq!(rows[0][2..], ["-", "3-0-0"], "{ranking}");
+        assert_eq!(rows[1][2..], ["round", "4", "2-0-2"], "{ranking}");
+    }
+
+    #[test]
+    fn double_elimination_rounds_are_named_by_their_bracket() {
+        let names = [
+            DoubleEliminationRound::Winners {
+                round: 1,
+                rounds: 3,
+            },
+            DoubleEliminationRound::Winners {
+                round: 3,
+                rounds: 3,
+            },
+            DoubleEliminationRound::Losers {
+                round: 2,
+                rounds: 4,
+            },
+            DoubleEliminationRound::Losers {
+                round: 4,
+                rounds: 4,
+            },
+            DoubleEliminationRound::GrandFinal,
+            DoubleEliminationRound::GrandFinalReset,
+        ]
+        .map(double_elimination_round_name);
+
+        assert_eq!(
+            names,
+            [
+                "Winners round 1",
+                "Winners final",
+                "Losers round 2",
+                "Losers final",
+                "Grand final",
+                "Grand final reset"
+            ]
+        );
     }
 
     #[test]

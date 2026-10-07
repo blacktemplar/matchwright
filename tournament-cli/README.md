@@ -63,6 +63,7 @@ Ctrl-C clears the line being typed, Ctrl-D behaves like `exit`.
 |---|---|---|
 | `round-robin` | Everyone plays everyone. | Points (3 for a win, 1 for a draw), then Sonneborn-Berger. |
 | `single-elimination` | The loser of a match is out; draws are rejected. | The round of the first loss. |
+| `double-elimination [--no-grand-final-reset]` | An entrant is out after its second loss; draws are rejected. The champions of the winner and the loser bracket meet in the grand final, which is played once more if the champion of the winner bracket loses it, unless `--no-grand-final-reset` is given. | The round of elimination, then the losses. |
 | `random-rounds <ROUNDS>` | `ROUNDS` randomly chosen rounds of a round robin. | Points (3 for a win, 1 for a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz. |
 
 ## Configuring a phase
@@ -75,11 +76,13 @@ tournament*> add-phase
 ? Phase format
 > round robin — everyone plays everyone
   single elimination — the loser of a match is out, draws are not allowed
+  double elimination — an entrant is out after its second loss, draws are not allowed
   random rounds — randomly chosen rounds of a round robin
 ? Metrics to calculate
 > [x] W-D-L — how many matches were won, drawn and lost
   [x] points — scored for every win and every draw
   [ ] round of the first loss — the later the better, never having lost is best
+  [ ] round of elimination — the later the better, still being in is best
   [ ] Buchholz — the points of all opponents
   [x] Sonneborn-Berger — the points of the opponents that were beaten or drawn
   [ ] Buchholz of Buchholz — the Buchholz of all opponents

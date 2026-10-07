@@ -93,6 +93,15 @@ pub enum PhasePreset {
         #[arg(long)]
         no_third_place_match: bool,
     },
+    /// An entrant is out after its second loss, draws are not allowed; the champions of the
+    /// winner and the loser bracket meet in the grand final, which is played once more if the
+    /// champion of the winner bracket loses it; ranked by the round of elimination, then the losses
+    DoubleElimination {
+        /// Make the grand final a single match, so that losing it knocks out even the champion of
+        /// the winner bracket
+        #[arg(long)]
+        no_grand_final_reset: bool,
+    },
     /// A number of randomly chosen rounds of a round robin; ranked by points (3 for a win, 1 for a
     /// draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
     RandomRounds { rounds: NonZeroU32 },
@@ -107,6 +116,11 @@ impl PhasePreset {
                 no_third_place_match,
             } => FormatConfig::SingleElimination {
                 third_place_match: !no_third_place_match,
+            },
+            Self::DoubleElimination {
+                no_grand_final_reset,
+            } => FormatConfig::DoubleElimination {
+                grand_final_reset: !no_grand_final_reset,
             },
             Self::RandomRounds { rounds } => FormatConfig::RandomRounds { rounds },
         }
@@ -229,6 +243,26 @@ mod tests {
             Command::AddPhase {
                 preset: Some(PhasePreset::SingleElimination {
                     no_third_place_match: true
+                })
+            }
+        );
+    }
+
+    #[test]
+    fn a_double_elimination_resets_the_grand_final_unless_it_is_turned_off() {
+        assert_eq!(
+            parse("add-phase double-elimination"),
+            Command::AddPhase {
+                preset: Some(PhasePreset::DoubleElimination {
+                    no_grand_final_reset: false
+                })
+            }
+        );
+        assert_eq!(
+            parse("add-phase double-elimination --no-grand-final-reset"),
+            Command::AddPhase {
+                preset: Some(PhasePreset::DoubleElimination {
+                    no_grand_final_reset: true
                 })
             }
         );

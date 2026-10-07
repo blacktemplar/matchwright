@@ -69,6 +69,17 @@ fn ask_format() -> InquireResult<FormatConfig> {
                     .prompt()?,
             })
         }
+        FormatConfig::DoubleElimination { grand_final_reset } => {
+            Ok(FormatConfig::DoubleElimination {
+                grand_final_reset: Confirm::new("Reset the grand final?")
+                    .with_default(grand_final_reset)
+                    .with_help_message(
+                        "if the champion of the winner bracket loses the grand final, the two play \
+                         it once more; without it losing the grand final knocks out either side",
+                    )
+                    .prompt()?,
+            })
+        }
         format => Ok(format),
     }
 }
