@@ -31,7 +31,7 @@ typetag = "0.2.23"
 undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine", features = [
     "serde",
 ] }
-uuid = { version = "1.26.1", features = ["v5", "serde"] }
+uuid = { version = "1.27.0", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
 
 # Profiles are only honoured in the workspace root, so they stay here rather than in a member.
