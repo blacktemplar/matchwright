@@ -32,3 +32,24 @@ repos:
     rev: v2.1.4
     hooks:
       - id: cargo-sort
+  - repo: https://github.com/pre-commit/pre-commit-hooks  # Enables fast path
+    rev: v6.0.0  # Used for the manifest and fallback, not fast-path detection
+    hooks:
+      - id: trailing-whitespace
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-illegal-windows-names
+      - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: check-json
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-yaml
+      - id: check-xml
+      - id: mixed-line-ending
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-shebang-scripts-are-executable
+      - id: check-executables-have-shebangs
