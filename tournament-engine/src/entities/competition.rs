@@ -71,12 +71,14 @@ impl Competition {
             id,
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
-            rankings: IdMap::default(),
-            ranking_ids_ordered_by_unique_rank: vec![],
-            matches: IdMap::new(),
+            data: PhaseData {
+                rankings: IdMap::default(),
+                ranking_ids_ordered_by_unique_rank: vec![],
+                matches: IdMap::new(),
+                seed,
+            },
             phase_format,
             ranker,
-            seed,
             metrics_calculators,
         };
         self.phases.insert(phase);
@@ -214,13 +216,19 @@ pub struct Phase {
     id: PhaseId,
     outgoing_phase_transitions: Vec<PhaseTransitionId>,
     incoming_phase_transitions: Vec<PhaseTransitionId>,
+    phase_format: Box<dyn PhaseFormat>,
+    ranker: Box<dyn Ranker>,
+    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    #[serde(flatten)]
+    data: PhaseData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PhaseData {
     rankings: IdMap<Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: IdMap<Match>,
-    phase_format: Box<dyn PhaseFormat>,
-    ranker: Box<dyn Ranker>,
     seed: [u8; 12],
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
 impl IdAble for Phase {
@@ -237,15 +245,15 @@ impl Phase {
     }
 
     pub fn rankings(&self) -> &IdMap<Ranking> {
-        &self.rankings
+        &self.data.rankings
     }
 
     pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
-        &self.ranking_ids_ordered_by_unique_rank
+        &self.data.ranking_ids_ordered_by_unique_rank
     }
 
     pub fn matches(&self) -> &IdMap<Match> {
-        &self.matches
+        &self.data.matches
     }
 
     pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
@@ -261,8 +269,8 @@ impl Phase {
                 (ranking.id(), ranking)
             })
             .unzip();
-        self.rankings = rankings;
-        self.ranking_ids_ordered_by_unique_rank = ordered_ranking_ids;
+        self.data.rankings = rankings;
+        self.data.ranking_ids_ordered_by_unique_rank = ordered_ranking_ids;
         self.initialize_metrics();
         self.create_new_matches();
     }
@@ -270,7 +278,7 @@ impl Phase {
     /// Gives every ranking of this phase the default value of every metric calculated for this
     /// phase.
     fn initialize_metrics(&mut self) {
-        let ranking_ids: Vec<_> = self.rankings.keys().copied().collect();
+        let ranking_ids: Vec<_> = self.data.rankings.keys().copied().collect();
         let metrics: Vec<_> = self
             .metrics_calculators
             .iter()
@@ -281,7 +289,8 @@ impl Phase {
             })
             .collect();
         for (ranking_id, metric) in metrics {
-            self.rankings
+            self.data
+                .rankings
                 .get_mut(&ranking_id)
                 .expect("Ranking must exist")
                 .metrics
@@ -295,14 +304,17 @@ impl Phase {
         debug_assert!(
             new_matches
                 .iter()
-                .all(|m| { m.rankings().all(|r| self.rankings.contains_key(r)) })
+                .all(|m| { m.rankings().all(|r| self.data.rankings.contains_key(r)) })
         );
-        let num_matches_before = self.matches.len();
+        let num_matches_before = self.data.matches.len();
         let num_new_matches = new_matches.len();
-        self.matches.extend(new_matches);
+        self.data.matches.extend(new_matches);
         // This guarantees that all new match ids were unique (at least relative to the existing
         // match ids in this phase).
-        debug_assert_eq!(self.matches.len(), num_matches_before + num_new_matches);
+        debug_assert_eq!(
+            self.data.matches.len(),
+            num_matches_before + num_new_matches
+        );
         // check that ranking ids are unique within a round
         debug_assert!(
             self.matches()
@@ -313,11 +325,11 @@ impl Phase {
     }
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
-        let r#match = self.matches.get_mut(&match_id).unwrap();
+        let r#match = self.data.matches.get_mut(&match_id).unwrap();
         let old_result = r#match.result();
         assert!(old_result == MatchResult::NotFinished);
         r#match.set_result(match_result);
-        let r#match = &self.matches[&match_id];
+        let r#match = &self.data.matches[&match_id];
         let mut old_metrics: Map<TypeId, Vec<(RankingId, Metric)>> = Map::default();
         for metrics_calculator in &self.metrics_calculators {
             let updates = metrics_calculator.update_after_match_result_changed(
@@ -329,13 +341,14 @@ impl Phase {
             // check requirements of update_after_match_result_changed
             debug_assert!(updates.iter().all(|(ranking_id, metric)| {
                 let metric: &dyn Any = &**metric;
-                self.rankings.contains_key(ranking_id)
+                self.data.rankings.contains_key(ranking_id)
                     && (&*metrics_calculator.default_metric_value() as &dyn Any).type_id()
                         == metric.type_id()
             }));
 
             for (ranking_id, metric) in updates {
                 let old_metric = self
+                    .data
                     .rankings
                     .get_mut(&ranking_id)
                     .expect("Ranking must exist")
@@ -351,7 +364,7 @@ impl Phase {
         // update rankings
         let new_ranks = self.ranker.update_ranks(self);
         for (rank_id, new_rank) in new_ranks {
-            self.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
+            self.data.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
         }
         self.update_ranking_ordering_and_unique_ranks();
         self.create_new_matches();
@@ -360,22 +373,28 @@ impl Phase {
     fn update_ranking_ordering_and_unique_ranks(&mut self) {
         // `sort_by_key` would look every ranking up twice per comparison, whereas the cached
         // variant looks every ranking up exactly once
-        self.ranking_ids_ordered_by_unique_rank
+        self.data
+            .ranking_ids_ordered_by_unique_rank
             .sort_by_cached_key(|id| {
-                let ranking = &self.rankings[id];
+                let ranking = &self.data.rankings[id];
                 (ranking.rank(), ranking.initial_unique_rank())
             });
         // set unique ranks
-        for (index, ranking_id) in self.ranking_ids_ordered_by_unique_rank.iter().enumerate() {
-            self.rankings.get_mut(ranking_id).unwrap().unique_rank =
+        for (index, ranking_id) in self
+            .data
+            .ranking_ids_ordered_by_unique_rank
+            .iter()
+            .enumerate()
+        {
+            self.data.rankings.get_mut(ranking_id).unwrap().unique_rank =
                 NonZeroU32::new(index as u32 + 1).unwrap()
         }
         // check requirements of [`Ranker::update_ranks`]
         debug_assert!(
-            self.rankings[&self.ranking_ids_ordered_by_unique_rank[0]].rank.get() == 1 &&
-            self.ranking_ids_ordered_by_unique_rank
+            self.data.rankings[&self.data.ranking_ids_ordered_by_unique_rank[0]].rank.get() == 1 &&
+            self.data.ranking_ids_ordered_by_unique_rank
                 .iter()
-                .map(|id| &self.rankings[id])
+                .map(|id| &self.data.rankings[id])
                 .enumerate()
                 .array_windows()
                 .all(|[(_, r1), (i2, r2)]| r1.rank == r2.rank || r2.rank.get() == i2 as u32 + 1)
@@ -387,7 +406,7 @@ impl Phase {
     /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
     /// different values give independent random streams, the same value always gives the same one.
     pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
-        Seeder::from((self.seed, entropy)).into_rng()
+        Seeder::from((self.data.seed, entropy)).into_rng()
     }
 
     /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
@@ -399,7 +418,7 @@ impl Phase {
     /// The position of the match in [`Phase::matches`], which can be used as a stable match
     /// number: matches are only ever appended, so an index never changes.
     pub fn get_match_index(&self, match_id: &MatchId) -> usize {
-        self.matches.get_index_of(match_id).unwrap()
+        self.data.matches.get_index_of(match_id).unwrap()
     }
 }
 
@@ -736,11 +755,13 @@ impl PhaseBuilder {
             id: PhaseId::new(Uuid::nil()),
             outgoing_phase_transitions: vec![],
             incoming_phase_transitions: vec![],
-            rankings,
-            ranking_ids_ordered_by_unique_rank,
-            matches: IdMap::new(),
+            data: PhaseData {
+                rankings,
+                ranking_ids_ordered_by_unique_rank,
+                matches: IdMap::new(),
+                seed: [0; 12],
+            },
             phase_format: self.phase_format,
-            seed: [0; 12],
             ranker: self.ranker,
             metrics_calculators: self.metrics_calculators,
         };
