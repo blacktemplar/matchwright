@@ -520,6 +520,12 @@ impl MatchId {
     }
 }
 
+/// A match between two teams of rankings in a round of a phase.
+///
+/// Beyond who plays it, its round and its result, a match holds `annotations`: data that describes
+/// it, keyed by type, such as which stage of a knockout it belongs to. The
+/// [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) scheduling the match gives them when
+/// creating it, with [`Match::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Match {
     id: MatchId,
@@ -527,6 +533,7 @@ pub struct Match {
     team_b: Vec1<RankingId>,
     round: NonZeroU32,
     result: MatchResult,
+    annotations: TypeMap,
 }
 
 impl IdAble for Match {
@@ -579,7 +586,25 @@ impl Match {
             team_b,
             round,
             result: MatchResult::NotFinished,
+            annotations: TypeMap::new(),
         }
+    }
+
+    /// Returns this match with `annotation` added, replacing an annotation of the same type.
+    ///
+    /// Annotations do not take part in the [`MatchId`].
+    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
+        self.annotations.insert(annotation);
+        self
+    }
+
+    /// The annotation of type `T` this match was created with, if any.
+    pub fn annotation<T: 'static>(&self) -> Option<&T> {
+        self.annotations.get::<T>()
+    }
+
+    pub fn annotations(&self) -> &TypeMap {
+        &self.annotations
     }
 
     pub fn team_of(&self, ranking_id: &RankingId) -> Option<Team> {
@@ -634,6 +659,8 @@ impl Match {
         }
     }
 
+    /// The round this match is played in. A ranking plays at most once per round, and its matches
+    /// in later rounds are played after those in earlier ones.
     pub fn round(&self) -> NonZeroU32 {
         self.round
     }

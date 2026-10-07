@@ -8,6 +8,7 @@ use crate::{
     entities::competition::{Match, MatchResult, Phase, RankingId},
     map::Map,
     plugins::phase_format::PhaseFormat,
+    type_map::TypeMapValue,
 };
 
 /// A knockout: the loser of a match is out, so every round halves the field until the final.
@@ -45,6 +46,36 @@ impl SingleElimination {
         }
     }
 }
+
+/// The stage of a [`SingleElimination`] knockout a match belongs to, attached to every match it
+/// schedules as an annotation.
+///
+/// # Examples
+/// ```
+/// # use tournament_engine::entities::competition::Match;
+/// # use tournament_engine::plugins::phase_format::single_elimination::KnockoutRound;
+/// fn stage_name(r#match: &Match) -> String {
+///     match r#match.annotation::<KnockoutRound>() {
+///         Some(KnockoutRound::RoundOf(2)) => "final".to_owned(),
+///         Some(KnockoutRound::RoundOf(4)) => "semifinal".to_owned(),
+///         Some(KnockoutRound::RoundOf(n)) => format!("round of {n}"),
+///         Some(KnockoutRound::ThirdPlace) => "match for third place".to_owned(),
+///         None => format!("round {}", r#match.round()),
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum KnockoutRound {
+    /// The round that leaves this many entrants in a full bracket: 2 is the final, 4 the
+    /// semifinals, 8 the quarterfinals and so on. A bye counts as a match won, so the first round
+    /// of six entrants is the round of 8.
+    RoundOf(u32),
+    /// The match for third place, see [`SingleElimination::with_third_place_match`].
+    ThirdPlace,
+}
+
+#[typetag::serde(name = "tournament_engine::knockout_round")]
+impl TypeMapValue for KnockoutRound {}
 
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
@@ -128,6 +159,7 @@ impl PhaseFormat for SingleElimination {
                     let team_a_id = ordered_phase_team_ids[(i - 1) as usize];
                     let team_b_id = ordered_phase_team_ids[(num_survived_rankings - i) as usize];
                     Match::new(vec1![team_a_id], vec1![team_b_id], round)
+                        .with_annotation(KnockoutRound::RoundOf(num_survived_rankings))
                 })
                 .chain(plays_for_third_place.then(|| {
                     Match::new(
@@ -135,6 +167,7 @@ impl PhaseFormat for SingleElimination {
                         vec1![ordered_phase_team_ids[3]],
                         round,
                     )
+                    .with_annotation(KnockoutRound::ThirdPlace)
                 }))
                 .collect()
         } else {
@@ -157,6 +190,7 @@ impl PhaseFormat for SingleElimination {
                         vec1![team_b_id],
                         NonZeroU32::new(1).unwrap(),
                     )
+                    .with_annotation(KnockoutRound::RoundOf(round_of as u32))
                 })
                 .collect()
         }
@@ -269,6 +303,53 @@ mod tests {
         assert_eq!(pairings(&phase, 2), [(1, 2)]);
         play_round(&mut phase, 2);
         assert_eq!(phase.matches().len(), 2);
+    }
+
+    /// The stages of the matches of `round`, in the order the pairings of [`pairings`] list them.
+    fn stages(phase: &Phase, round: u32) -> Vec<KnockoutRound> {
+        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
+        phase
+            .matches()
+            .values()
+            .filter(|r#match| r#match.round().get() == round)
+            .sorted_by_key(|r#match| (rank_of(&r#match.team_a()[0]), rank_of(&r#match.team_b()[0])))
+            .map(|r#match| *r#match.annotation::<KnockoutRound>().unwrap())
+            .collect()
+    }
+
+    /// The first round is named after the full bracket it fills, byes included, and the final
+    /// shares its round with the match for third place but not its stage.
+    #[test]
+    fn every_match_is_annotated_with_its_stage() {
+        let mut phase = knockout(SingleElimination::with_third_place_match(), 6);
+        assert_eq!(stages(&phase, 1), [KnockoutRound::RoundOf(8); 2]);
+
+        play_round(&mut phase, 1);
+        assert_eq!(stages(&phase, 2), [KnockoutRound::RoundOf(4); 2]);
+
+        play_round(&mut phase, 2);
+        assert_eq!(
+            stages(&phase, 3),
+            [KnockoutRound::RoundOf(2), KnockoutRound::ThirdPlace]
+        );
+    }
+
+    /// The tag is part of the serialized form of every snapshot ever taken, so a change to it is a
+    /// breaking one and has to be deliberate.
+    #[test]
+    fn a_stage_is_serialized_under_its_explicitly_chosen_tag() {
+        let phase = knockout(SingleElimination::new(), 2);
+        let the_final = phase.matches().values().next().unwrap();
+
+        let value = serde_json::to_value(the_final).expect("serializing must not fail");
+
+        assert_eq!(
+            value["annotations"],
+            serde_json::json!([{
+                "type": "tournament_engine::knockout_round",
+                "value": { "RoundOf": 2 }
+            }])
+        );
     }
 
     /// Two entrants play nothing but the final, so the option changes nothing at all.

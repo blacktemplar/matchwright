@@ -221,8 +221,11 @@ who creates the entity:
   the `AddEntrant` that creates it — an `Entrant` is built with
   `Entrant::new(id).with_annotation(value)` and read with
   `entrant.annotation::<DisplayName>()`.
-- **Matches** (*planned*) are core-created inside `report_match_result`, with no consumer in
-  the loop, so annotating is necessarily a second step: an `AnnotateMatch`
+- **Matches** are created by the phase format, so the `TypeMap` on `Match` is
+  populated by the format when it schedules the match
+  (`Match::new(..).with_annotation(value)`), with whatever it knows about the match
+  beyond its round (see "Rounds and stages"). A consumer is not in the loop there,
+  so consumer annotations (*planned*) are necessarily a second step: an `AnnotateMatch`
   transition carrying `Box<dyn TypeMapValue>` (already `typetag`-serializable, so
   the consumer's type tags itself) writes into the `TypeMap` of an existing
   `Match`. An `Option` on lookup is honest here — the annotation genuinely does
@@ -343,6 +346,50 @@ UUIDs are not usable for human input, so a match also needs a small number.
   break the derived form.
 - **A number supplied by the phase format.** A self-reported fact a plugin could
   get wrong. Rejected.
+
+## Rounds and stages
+
+Knockout rounds have names — round of 16, quarterfinal, final, match for third
+place — and a double elimination adds a winner and a loser bracket, whose rounds
+are named per bracket. The question is whether the core's `Match::round` should
+carry that structure.
+
+### Decision
+
+**A round is a scheduling slot, nothing more.** `Match::round` is a
+`NonZeroU32` with a contract: a ranking plays at most once per round, and a
+ranking's matches in later rounds are played after those in earlier ones. The
+core relies on exactly that and on nothing else:
+
+- the check that no ranking plays twice in a round;
+- `MatchId`, which tells a rematch of the same pair apart by its round (in a
+  double elimination two entrants can meet in both brackets, and again in a
+  bracket reset);
+- metrics that read a later round as a later match, like `RoundOfFirstLoss`,
+  where knocked-out entrants are ranked by when they were knocked out.
+
+**The structure is a typed annotation written by the format.** The format is the
+only party that knows which stage a match belongs to, and the round number alone
+does not tell: the final and the match for third place share a round, and in a
+double elimination a winner-bracket round runs alongside a loser-bracket round.
+So the format attaches a value of its own type when scheduling the match, e.g.
+`KnockoutRound::RoundOf(8)` or `KnockoutRound::ThirdPlace` for
+`SingleElimination`, and a consumer maps that to a name in its own language.
+Formats without stages (round robin, Swiss) attach nothing, and the round number
+is all there is to show.
+
+### Alternatives
+
+- **Names as strings in the core.** Display data, language-dependent, and an
+  untyped bag in disguise. Rejected.
+- **A core enum of round kinds** (`Winners(n)`, `Losers(n)`, `Final`, ...). A
+  closed vocabulary third-party formats cannot extend, and meaningless for round
+  robin or Swiss. Rejected.
+- **A format-defined round type (`Box<dyn ...>`) instead of the integer.** Every
+  use above would need to order values of unrelated types, and comparisons on the
+  result-reporting hot path would become virtual calls. Rejected.
+- **The consumer translating the round number alone.** Cannot distinguish stages
+  that share a round, as shown above. Rejected.
 
 ## Persistence
 
