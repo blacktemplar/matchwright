@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
@@ -42,20 +42,47 @@ impl RankingCriterion for MorePoints {
     }
 }
 
+/// Calculates the [`Points`] of a ranking from its [`WinsDrawsLosses`], which therefore have to
+/// be calculated before.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PointsCalculator {
     points_for_win: f32,
     points_for_draw: f32,
+    // defaulted so that a calculator configured before byes were scored still deserializes
+    #[serde(default)]
+    points_for_bye: f32,
 }
 
 impl PointsCalculator {
     /// Scores every win with `points_for_win` and every draw with `points_for_draw` points, a
-    /// loss is always worth no points.
+    /// loss and a bye are worth no points.
     pub const fn new(points_for_win: f32, points_for_draw: f32) -> Self {
         Self {
             points_for_win,
             points_for_draw,
+            points_for_bye: 0.0,
         }
+    }
+
+    /// Returns this calculator scoring every bye with `points_for_bye` points.
+    pub const fn with_points_for_bye(mut self, points_for_bye: f32) -> Self {
+        self.points_for_bye = points_for_bye;
+        self
+    }
+
+    fn points_of(&self, ranking_id: &RankingId, phase_data: &PhaseData) -> Metric {
+        // calculated from the counts rather than added up result by result, so that a number of
+        // points not exactly representable as a float always comes out the same
+        let WinsDrawsLosses {
+            wins, draws, byes, ..
+        } = *phase_data.rankings()[ranking_id]
+            .metric::<WinsDrawsLosses>()
+            .unwrap();
+        Box::new(Points(
+            self.points_for_win * wins as f32
+                + self.points_for_draw * draws as f32
+                + self.points_for_bye * byes as f32,
+        ))
     }
 }
 
@@ -74,15 +101,20 @@ impl MetricsCalculator for PointsCalculator {
     ) -> Vec<(RankingId, Metric)> {
         r#match
             .non_losing_rankings()
-            .map(|r_id| {
-                let WinsDrawsLosses { wins, draws, .. } = *phase_data.rankings()[r_id]
-                    .metric::<WinsDrawsLosses>()
-                    .unwrap();
-                let points =
-                    Points(self.points_for_win * wins as f32 + self.points_for_draw * draws as f32);
-                (*r_id, Box::new(points) as Metric)
-            })
+            .map(|r_id| (*r_id, self.points_of(r_id, phase_data)))
             .collect()
+    }
+
+    fn update_after_bye(
+        &mut self,
+        phase_data: &PhaseData,
+        bye: &Bye,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        if self.points_for_bye == 0.0 {
+            return vec![];
+        }
+        vec![(bye.ranking(), self.points_of(&bye.ranking(), phase_data))]
     }
 }
 
@@ -247,6 +279,55 @@ mod tests {
         for ranking_index in 0..4 {
             assert_eq!(metric_of(&phase, ranking_index), Points(1.0));
         }
+    }
+
+    /// Builds a phase with three rankings, in which `2` has a bye in round 1 and `0` beats `1`
+    /// in round 2, scoring with `calculator`.
+    fn phase_with_a_bye(calculator: PointsCalculator) -> Phase {
+        let mut phase = test_utils::phase_with_byes(
+            3,
+            vec![(2, vec![0], vec![1])],
+            vec![(1, 2)],
+            vec![Box::new(WinsDrawsLossesCalculator), Box::new(calculator)],
+        );
+        let match_id = match_id(&phase, 2, &[0], &[1]);
+        phase.report_match_result(match_id, MatchResult::AWins);
+        phase
+    }
+
+    #[test]
+    fn a_bye_is_worth_no_points_by_default() {
+        let phase = phase_with_a_bye(ONE_HALF);
+
+        assert_eq!(metric_of(&phase, 2), Points(0.0));
+    }
+
+    #[test]
+    fn a_bye_is_worth_the_points_for_a_bye() {
+        let phase = phase_with_a_bye(ONE_HALF.with_points_for_bye(1.0));
+
+        assert_eq!(metric_of(&phase, 0), Points(1.0));
+        assert_eq!(metric_of(&phase, 1), Points(0.0));
+        assert_eq!(metric_of(&phase, 2), Points(1.0));
+    }
+
+    #[test]
+    fn the_points_of_a_bye_add_to_those_of_matches() {
+        let mut phase = test_utils::phase_with_byes(
+            2,
+            vec![(2, vec![0], vec![1])],
+            vec![(1, 0)],
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE.with_points_for_bye(2.0)),
+            ],
+        );
+        let match_id = match_id(&phase, 2, &[0], &[1]);
+
+        phase.report_match_result(match_id, MatchResult::Draw);
+
+        assert_eq!(metric_of(&phase, 0), Points(3.0));
+        assert_eq!(metric_of(&phase, 1), Points(1.0));
     }
 
     #[test]

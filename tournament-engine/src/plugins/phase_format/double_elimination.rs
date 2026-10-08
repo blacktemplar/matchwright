@@ -3,11 +3,11 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, PhaseData, Team},
+    entities::competition::{PhaseData, Team},
     plugins::{
         metrics_calculator::round_of_elimination::Eliminates,
         phase_format::{
-            PhaseFormat,
+            PhaseFormat, Schedule,
             bracket::{Bracket, Source},
         },
     },
@@ -106,7 +106,7 @@ impl TypeMapValue for DoubleEliminationRound {}
 
 #[typetag::serde]
 impl PhaseFormat for DoubleElimination {
-    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let reset = self.grand_final_reset;
         self.bracket
             .get_or_insert_with(|| bracket(phase_data, reset))
@@ -220,7 +220,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
+        entities::competition::{Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
         plugins::{
             metrics_calculator::{
                 round_of_elimination::{
@@ -466,6 +466,48 @@ mod tests {
         assert_eq!(
             schedule(&phase),
             [(1, winners(1), (4, 5)), (2, winners(2), (2, 3))]
+        );
+    }
+
+    /// The bye of the winner bracket leaves nobody to drop down, so whoever drops down to meet
+    /// nobody has a bye in the loser bracket as well.
+    #[test]
+    fn a_bye_of_the_winner_bracket_leads_to_one_in_the_loser_bracket() {
+        let mut phase = bracket(DoubleElimination::new(), 3);
+
+        play_out(&mut phase, favourite);
+
+        let byes = phase
+            .byes()
+            .values()
+            .map(|bye| {
+                (
+                    bye.round().get(),
+                    *bye.annotation::<DoubleEliminationRound>().unwrap(),
+                    seed_of(&phase, &bye.ranking()),
+                )
+            })
+            .collect_vec();
+        assert_eq!(
+            byes,
+            [
+                (
+                    1,
+                    Winners {
+                        round: 1,
+                        rounds: 2
+                    },
+                    1
+                ),
+                (
+                    2,
+                    Losers {
+                        round: 1,
+                        rounds: 2
+                    },
+                    3
+                ),
+            ]
         );
     }
 

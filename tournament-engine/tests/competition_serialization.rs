@@ -22,7 +22,7 @@ use tournament_engine::{
             sonneborn_berger::{MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
-        phase_format::single_elimination::SingleElimination,
+        phase_format::single_elimination::{KnockoutRound, SingleElimination},
         ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
@@ -267,6 +267,12 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             assert_eq!(r#match.round(), other_match.round());
             assert_eq!(r#match.result(), other_match.result());
         }
+        assert_eq!(phase.byes().len(), other.byes().len());
+        for bye in phase.byes() {
+            let other_bye = other.byes().get(&bye.id()).expect("the bye must exist");
+            assert_eq!(bye.ranking(), other_bye.ranking());
+            assert_eq!(bye.round(), other_bye.round());
+        }
         // the phase seed is private and only observable through the random streams it produces
         assert_eq!(
             phase.new_seeded_std_rng("entropy").random::<u64>(),
@@ -373,6 +379,43 @@ fn a_played_competition_round_trips_through_a_binary_format() {
     let competition = binary_round_trip(sm.current());
 
     assert_same_competition(sm.current(), &competition);
+}
+
+/// Three entrants leave the best seed with a bye in the semifinals, which has to survive both
+/// formats along with the annotation it carries.
+#[test]
+fn a_competition_with_a_bye_round_trips() {
+    let mut sm = CompetitionStateMachine::default();
+    apply(&mut sm, SetCompetitionSeed::new(SEED));
+    for entrant in 0..3 {
+        apply(
+            &mut sm,
+            AddEntrant::new(Entrant::new(EntrantId::new(Uuid::from_u128(entrant)))),
+        );
+    }
+    apply(
+        &mut sm,
+        AddPhase::new(
+            phase_id(),
+            Box::new(SingleElimination::new()),
+            Box::new(HierarchicalRanker::new(vec![])),
+            vec![Box::new(WinsDrawsLossesCalculator)],
+        ),
+    );
+    apply(&mut sm, StartCompetition);
+    let bye = sm.current().phases()[&phase_id()]
+        .byes()
+        .values()
+        .exactly_one()
+        .unwrap();
+    assert_eq!(
+        bye.annotation::<KnockoutRound>(),
+        Some(&KnockoutRound::RoundOf(4))
+    );
+
+    for competition in [round_trip(sm.current()), binary_round_trip(sm.current())] {
+        assert_same_competition(sm.current(), &competition);
+    }
 }
 
 #[test]

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{EntropyTypes, Match, PhaseData},
-    plugins::phase_format::PhaseFormat,
+    entities::competition::{Bye, EntropyTypes, Match, PhaseData},
+    plugins::phase_format::{PhaseFormat, Schedule},
 };
 
 /// A Monster DYP ("draw your partner"): every round, the rankings are drawn into random teams of
@@ -15,9 +15,9 @@ use crate::{
 ///
 /// Every ranking keeps its own place in the ranking and gets the result of every match its team
 /// played. If the number of rankings is not a multiple of four, the ones left over sit the round
-/// out. Those are always drawn from the rankings that sat out the fewest rounds so far, so the
-/// numbers of matches the rankings play differ by at most one. With fewer than four rankings
-/// nothing is scheduled.
+/// out, each with a bye. Those are always drawn from the rankings that sat out the fewest rounds so
+/// far, so the numbers of matches the rankings play differ by at most one. With fewer than four
+/// rankings nothing is scheduled.
 ///
 /// All rounds are scheduled at once, when the phase starts.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -34,10 +34,14 @@ impl MonsterDyp {
 
 #[typetag::serde]
 impl PhaseFormat for MonsterDyp {
-    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
-        if !phase_data.matches().is_empty() {
-            // we generate all matches at once, so as soon as one match exists nothing is to be done
-            return vec![];
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
+        if !phase_data.matches().is_empty()
+            || !phase_data.byes().is_empty()
+            || phase_data.rankings().len() < 4
+        {
+            // we generate all rounds at once, so as soon as one match or bye exists nothing is to
+            // be done
+            return Schedule::default();
         }
         // sorted, because the iteration order of the rankings is not the same for every phase
         // with the same seeding
@@ -51,7 +55,7 @@ impl PhaseFormat for MonsterDyp {
         let mut rounds_sat_out = vec![0_u32; ranking_ids.len()];
         let mut order = (0..ranking_ids.len()).collect_vec();
         let mut rng = phase_data.new_seeded_std_rng(EntropyTypes::PhaseFormat);
-        let mut matches = Vec::new();
+        let mut schedule = Schedule::default();
         for round in 1..=self.rounds {
             let round = NonZeroU32::new(round).unwrap();
             order.shuffle(&mut rng);
@@ -65,10 +69,11 @@ impl PhaseFormat for MonsterDyp {
                 .collect_vec();
             for &i in &sitting_out {
                 rounds_sat_out[i] += 1;
+                schedule.byes.push(Bye::new(ranking_ids[i], round));
             }
             // the playing rankings are taken in shuffled order rather than in the sorted one above,
             // which would team up rankings that sat out equally often
-            matches.extend(
+            schedule.matches.extend(
                 order
                     .iter()
                     .filter(|i| !sitting_out.contains(i))
@@ -77,7 +82,7 @@ impl PhaseFormat for MonsterDyp {
                     .map(|(a1, a2, b1, b2)| Match::new(vec1![a1, a2], vec1![b1, b2], round)),
             );
         }
-        matches
+        schedule
     }
 }
 
@@ -134,6 +139,13 @@ mod tests {
 
         assert_eq!(phase.matches().len(), 5 * 2);
         assert!(matches_per_ranking(&phase).values().all(|&n| n == 4));
+        assert_eq!(phase.byes().len(), 5 * 2);
+        assert!(
+            phase
+                .rankings()
+                .values()
+                .all(|ranking| { ranking.metric::<WinsDrawsLosses>().unwrap().byes == 1 })
+        );
     }
 
     #[test]
@@ -175,6 +187,7 @@ mod tests {
         let phase = phase(5, 3);
 
         assert!(phase.matches().is_empty());
+        assert!(phase.byes().is_empty());
     }
 
     #[test]
@@ -206,6 +219,7 @@ mod tests {
                     wins: 1,
                     draws: 0,
                     losses: 0,
+                    byes: 0,
                 },
             ),
             (
@@ -214,6 +228,7 @@ mod tests {
                     wins: 0,
                     draws: 0,
                     losses: 1,
+                    byes: 0,
                 },
             ),
         ] {

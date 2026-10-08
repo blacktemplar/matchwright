@@ -168,12 +168,14 @@ pub trait RankingCriterion: Plugin {
 ///     wins: 1,
 ///     draws: 0,
 ///     losses: 1,
+///     byes: 0,
 /// });
 /// let mut two_losses = TypeMap::new();
 /// two_losses.insert(WinsDrawsLosses {
 ///     wins: 5,
 ///     draws: 0,
 ///     losses: 2,
+///     byes: 0,
 /// });
 ///
 /// // the wins do not enter into it, this criterion sorts by the losses alone

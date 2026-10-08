@@ -72,7 +72,7 @@ follow the phase's progress take `&mut self` and receive the phase's data rather
 than the phase:
 
 ```rust
-fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match>;    // PhaseFormat
+fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;      // PhaseFormat
 fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)>; // Ranker
 fn update_after_match_result_changed(&mut self, phase_data: &PhaseData, /* ... */)
     -> Vec<(RankingId, Metric)>;                                           // MetricsCalculator
@@ -211,8 +211,14 @@ pub trait MetricsCalculator: Plugin {
         old_match_result: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)>;
+    fn update_after_bye(
+        &mut self, phase_data: &PhaseData, bye: &Bye,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)>;
 }
 ```
+
+(`update_after_bye` is explained in [Byes](#byes).)
 
 `default_metric_value()` both seeds every ranking at phase start and declares
 which metric type this calculator owns, so disjointness is checkable without
@@ -447,6 +453,75 @@ is all there is to show.
   result-reporting hot path would become virtual calls. Rejected.
 - **The consumer translating the round number alone.** Cannot distinguish stages
   that share a round, as shown above. Rejected.
+
+## Byes
+
+A ranking that has no match in a round, because the field is odd, a bracket is
+not full or it sits a Monster DYP round out, often scores for it anyway, e.g. a
+full point in a Swiss. A calculator cannot tell that from the matches: a ranking
+missing from a round may have a bye, but it may also have been knocked out or not
+be scheduled yet, and only the format knows which.
+
+### Decision
+
+**A bye is an entity of its own, scheduled by the format.** `Bye` holds its
+ranking, its round and annotations, like a `Match` without an opponent and
+without a result. Its `ByeId` is a UUIDv5 of ranking and round. The format
+returns byes next to matches in a `Schedule { matches, byes }`, and the phase
+stores them in `PhaseData::byes`, apart from the matches, so match numbers stay
+the positions of matches alone. The round contract covers both: a ranking is in
+at most one match or bye per round, and the bracket formats move the annotations
+of a pairing decided without a match onto its bye, so a consumer can name its
+stage.
+
+**A bye is final when it is scheduled.** A match is created open, gets a result
+later and may get another one; a bye has nothing to report and never changes.
+So it reaches calculators through a hook of its own,
+`MetricsCalculator::update_after_bye`, run right when the format schedules the
+bye, followed by a re-rank. The hook has no default implementation: whether a bye
+counts is a different question per metric (points: configurable; matches played,
+round of first loss, round of elimination: no; Buchholz and Sonneborn-Berger: no
+opponent to count, but the points of the bye count for the ranking's
+opponents), and the compiler makes every calculator answer it.
+
+**Scheduling a bye does not schedule again.** Only a reported result calls the
+format, even though a bye can change the ranks the format pairs by. The format
+knows about every bye it returns when it returns it, so a second call would only
+see what it already decided.
+
+**Points stay calculated from counts.** `WinsDrawsLosses` counts byes next to
+wins, draws and losses (but not as matches played), and `PointsCalculator`
+scores them with `points_for_bye`, 0 unless set. Adding up points result by
+result would drift for scores a float cannot represent exactly.
+
+*Not covered yet:* kinds of byes worth different points (a requested half-point
+bye, a sit-out scored with average points). A requested bye is transition data
+the format has to accept, so it is a feature of its own, and the kind would then
+need a vocabulary calculators can read. Forfeits are not byes: they have an
+opponent and are a match result.
+
+### Alternatives
+
+- **One enum `Match | Bye` in and out**, i.e. formats emit it and calculators
+  receive it in place of the match. Calculators would need a `Bye` arm in
+  `update_after_match_result_changed` that can never run, since nobody reports a
+  result for a bye, and one collection of both would mix byes into the match
+  numbers. Rejected; the format's side of it survives as `Schedule`.
+- **A bye as a degenerate match** (no opponent, or a preset result). Every
+  calculator would see byes through the existing path and silently get them
+  wrong: Buchholz looking up an opponent, `Matches` counting it as played. Every
+  consumer of `Match` would have to handle a match without opponent. Rejected.
+- **A phantom "bye" ranking** paired like any other and auto-reported as beaten.
+  Breaks the contract that a format only pairs rankings of its phase, and the
+  phantom would get metrics, a rank and feed into Buchholz. Rejected.
+- **Calculators inferring byes from gaps in the rounds.** Cannot tell a bye from
+  an elimination or a match not scheduled yet. Rejected.
+- **The format stating what a bye is worth.** Points and their scale are the
+  points calculator's configuration; the format would reach into another
+  plugin's concern. Rejected.
+- **A default no-op `update_after_bye`.** Less to write per calculator, but a
+  calculator that forgets byes would be silently wrong instead of failing to
+  compile. Rejected.
 
 ## Persistence
 

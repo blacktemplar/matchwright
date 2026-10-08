@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, MatchId, MatchResult, PhaseData, RankingId, Team},
+    entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId, Team},
+    plugins::phase_format::Schedule,
     type_map::TypeMap,
 };
 
@@ -14,7 +15,7 @@ use crate::{
 ///
 /// A pairing is scheduled as a match as soon as both of its seats are taken, without waiting for
 /// the rest of its round. A pairing with a bye on one side is decided without a match, for the
-/// other side.
+/// other side, which is scheduled a [`Bye`] if it is a ranking.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct Bracket {
     pairings: Vec<Pairing>,
@@ -51,7 +52,7 @@ struct Slot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pairing {
     round: NonZeroU32,
-    /// Moved into the match once it is scheduled.
+    /// Moved into the match or the bye once it is scheduled.
     annotations: TypeMap,
     /// `None` while the source of the seat is not decided yet.
     seats: [Option<Seat>; 2],
@@ -64,7 +65,7 @@ struct Pairing {
 
 impl Bracket {
     /// Adds a pairing to be played in phase round `round` between the two `sources`, as sides A
-    /// and B. The match it schedules is annotated with `annotations`.
+    /// and B. The match or the bye it schedules is annotated with `annotations`.
     ///
     /// A pairing can only take the winner and the loser of a pairing added before it, each at most
     /// once, and all pairings have to be added before the first [`Bracket::create_new_matches`].
@@ -157,10 +158,11 @@ impl Bracket {
     }
 
     /// Decides every pairing in play whose match got a result, moves its winner and its loser on,
-    /// and returns the matches of the pairings that got both of their seats taken by that, ordered
-    /// by round and then by the order their pairings were added in.
-    pub(super) fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+    /// and returns the matches and the byes of the pairings that got both of their seats taken by
+    /// that, each ordered by round and then by the order their pairings were added in.
+    pub(super) fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let mut new_matches = Vec::new();
+        let mut new_byes = Vec::new();
         let mut to_check = mem::take(&mut self.in_play);
         while let Some(id) = to_check.pop() {
             let pairing = &mut self.pairings[id.0];
@@ -192,16 +194,31 @@ impl Bracket {
                         }
                     }
                 }
-                (_, Seat::Bye) => Team::A,
-                (Seat::Bye, Seat::Ranking(_)) => Team::B,
+                (Seat::Ranking(a), Seat::Bye) => {
+                    let bye = Bye::new(a, pairing.round)
+                        .with_annotations(mem::take(&mut pairing.annotations));
+                    new_byes.push((id, bye));
+                    Team::A
+                }
+                (Seat::Bye, Seat::Ranking(b)) => {
+                    let bye = Bye::new(b, pairing.round)
+                        .with_annotations(mem::take(&mut pairing.annotations));
+                    new_byes.push((id, bye));
+                    Team::B
+                }
+                (Seat::Bye, Seat::Bye) => Team::A,
             };
             self.decide(id, winner, &mut to_check);
         }
         new_matches.sort_by_key(|(id, r#match)| (r#match.round(), *id));
-        new_matches
-            .into_iter()
-            .map(|(_, r#match)| r#match)
-            .collect()
+        new_byes.sort_by_key(|(id, bye)| (bye.round(), *id));
+        Schedule {
+            matches: new_matches
+                .into_iter()
+                .map(|(_, r#match)| r#match)
+                .collect(),
+            byes: new_byes.into_iter().map(|(_, bye)| bye).collect(),
+        }
     }
 
     /// Moves the winner and the loser of `id`, which side `winner` won, on to their next pairings,

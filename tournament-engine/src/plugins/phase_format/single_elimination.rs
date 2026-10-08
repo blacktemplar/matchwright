@@ -3,9 +3,9 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, PhaseData},
+    entities::competition::PhaseData,
     plugins::phase_format::{
-        PhaseFormat,
+        PhaseFormat, Schedule,
         bracket::{Bracket, Source},
     },
     type_map::{TypeMap, TypeMapValue},
@@ -107,7 +107,7 @@ impl KnockoutRound {
 
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
-    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let third_place_match = self.third_place_match;
         self.bracket
             .get_or_insert_with(|| bracket(phase_data, third_place_match))
@@ -156,7 +156,7 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::entities::competition::{MatchResult, Phase, PhaseBuilder, RankingId};
+    use crate::entities::competition::{Match, MatchResult, Phase, PhaseBuilder, RankingId};
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {
@@ -324,6 +324,33 @@ mod tests {
         phase.report_match_result(four_against_five, MatchResult::AWins);
 
         assert_eq!(pairings(&phase, 2), [(1, 4)], "1 had a bye and meets 4 now");
+    }
+
+    /// The best seeds advance without a match, each with a bye in the round it skips, annotated
+    /// with the stage of that round.
+    #[test]
+    fn the_best_seeds_get_the_byes() {
+        let phase = knockout(SingleElimination::new(), 6);
+
+        let byes = phase
+            .byes()
+            .values()
+            .map(|bye| {
+                (
+                    phase.rankings()[&bye.ranking()].initial_unique_rank().get(),
+                    bye.round().get(),
+                    *bye.annotation::<KnockoutRound>().unwrap(),
+                )
+            })
+            .sorted_by_key(|(seed, ..)| *seed)
+            .collect_vec();
+        assert_eq!(
+            byes,
+            [
+                (1, 1, KnockoutRound::RoundOf(8)),
+                (2, 1, KnockoutRound::RoundOf(8))
+            ]
+        );
     }
 
     /// Where two entrants with byes meet next, they play right away.

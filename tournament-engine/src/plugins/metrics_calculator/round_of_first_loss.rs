@@ -3,7 +3,7 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
@@ -78,5 +78,15 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
                 (*r_id, Box::new(new_value) as Metric)
             })
             .collect()
+    }
+
+    /// A bye is never lost.
+    fn update_after_bye(
+        &mut self,
+        _: &PhaseData,
+        _: &Bye,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        vec![]
     }
 }

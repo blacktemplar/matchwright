@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchId, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::metrics_calculator::MetricsCalculator,
     type_map::TypeMapValue,
@@ -41,6 +41,16 @@ impl MetricsCalculator for MatchesCalculator {
                 (*r_id, Box::new(new_matches) as Metric)
             })
             .collect()
+    }
+
+    /// A bye is not a match, so it is not recorded.
+    fn update_after_bye(
+        &mut self,
+        _: &PhaseData,
+        _: &Bye,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        vec![]
     }
 }
 

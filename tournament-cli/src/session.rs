@@ -322,7 +322,7 @@ impl Session {
     }
 
     /// Lists the matches, numbered the way [`Self::report`] addresses them and independently of
-    /// the filters applied.
+    /// the filters applied, followed by the byes unless only open matches are asked for.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let phase = self.phase()?;
         // only a format that names its stages gets a column for them
@@ -349,7 +349,20 @@ impl Session {
                     .collect()
             })
             .collect();
-        if rows.is_empty() {
+        // a bye is never open, it is decided when it is scheduled
+        let bye_rows: Vec<_> = phase
+            .byes()
+            .values()
+            .filter(|_| !only_open)
+            .filter(|bye| only_round.is_none_or(|round| bye.round() == round))
+            .map(|bye| {
+                vec![
+                    bye.round().to_string(),
+                    self.team_name(phase, &[bye.ranking()]),
+                ]
+            })
+            .collect();
+        if rows.is_empty() && bye_rows.is_empty() {
             let open = if only_open { " open" } else { "" };
             return Ok(match only_round {
                 Some(round) => format!("there are no{open} matches in round {round}"),
@@ -362,7 +375,15 @@ impl Session {
             .chain(has_stages.then_some("stage"))
             .chain(["A", "vs", "B", "result"])
             .collect::<Vec<_>>();
-        Ok(table(&header, &rows))
+        let tables = [
+            (!rows.is_empty()).then(|| table(&header, &rows)),
+            (!bye_rows.is_empty()).then(|| table(&["round", "bye"], &bye_rows)),
+        ];
+        Ok(tables
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n\n"))
     }
 
     /// The phase of the match `number` addresses and that match, where the number is the position
@@ -823,6 +844,7 @@ mod tests {
                 MetricConfig::Points {
                     for_win: 1.0,
                     for_draw: 0.5,
+                    for_bye: 0.0,
                 },
             ],
             [Criterion::MorePoints],
@@ -1167,6 +1189,32 @@ mod tests {
                 "Grand final",
                 "Grand final reset"
             ]
+        );
+    }
+
+    /// A round robin of three has one entrant sit out every round, which is listed after the
+    /// matches but not among the open ones.
+    #[test]
+    fn byes_are_listed_after_the_matches() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol");
+        output(&mut session, "add-phase round-robin");
+        output(&mut session, "start");
+
+        let listing = output(&mut session, "matches --round 2");
+
+        let (matches, byes) = listing.split_once("\n\n").expect("two tables");
+        assert_eq!(matches.lines().skip(HEADER_LINES).count(), 1, "{listing}");
+        let byes: Vec<Vec<&str>> = byes
+            .lines()
+            .map(|row| row.split_whitespace().collect())
+            .collect();
+        assert_eq!(byes[0], ["round", "bye"], "{listing}");
+        assert_eq!(byes.len(), HEADER_LINES + 1, "{listing}");
+        assert_eq!(byes[HEADER_LINES][0], "2", "{listing}");
+        assert!(
+            !output(&mut session, "matches --open").contains("bye"),
+            "a bye is never open"
         );
     }
 

@@ -8,27 +8,31 @@ use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
-    entities::competition::{Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
-    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
+    entities::competition::{Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
+    plugins::{
+        metrics_calculator::MetricsCalculator,
+        phase_format::{PhaseFormat, Schedule},
+    },
 };
 
 /// A match scheduled by [`FixedMatches`], given as its round and its two teams, where a team is
 /// described by the indices of its rankings ordered by initial unique rank.
 pub(crate) type MatchSpec = (u32, Vec<usize>, Vec<usize>);
 
-/// Test-only [`PhaseFormat`] that schedules a fixed list of matches, all at once.
+/// A bye scheduled by [`FixedMatches`], given as its round and the index of its ranking ordered by
+/// initial unique rank.
+pub(crate) type ByeSpec = (u32, usize);
+
+/// Test-only [`PhaseFormat`] that schedules a fixed list of matches all at once, and a fixed list
+/// of byes, each as soon as every match of the rounds before its own is finished.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FixedMatches(Vec<MatchSpec>);
+struct FixedMatches(Vec<MatchSpec>, Vec<ByeSpec>);
 
 #[typetag::serde]
 impl PhaseFormat for FixedMatches {
-    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
-        if !phase_data.matches().is_empty() {
-            // we generate all matches at once, so as soon as one match exists nothing is
-            // to be done
-            return vec![];
-        }
-        self.0
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
+        let all_matches: Vec<_> = self
+            .0
             .iter()
             .map(|(round, team_a, team_b)| {
                 Match::new(
@@ -37,7 +41,33 @@ impl PhaseFormat for FixedMatches {
                     NonZeroU32::new(*round).unwrap(),
                 )
             })
-            .collect()
+            .collect();
+        let ranking_ids = ranking_ids(phase_data);
+        let byes = self
+            .1
+            .iter()
+            .map(|(round, ranking)| {
+                Bye::new(ranking_ids[*ranking], NonZeroU32::new(*round).unwrap())
+            })
+            .filter(|bye| {
+                !phase_data.byes().contains_key(&bye.id())
+                    && all_matches
+                        .iter()
+                        .filter(|r#match| r#match.round() < bye.round())
+                        .all(|r#match| {
+                            phase_data
+                                .matches()
+                                .get(&r#match.id())
+                                .is_some_and(Match::is_finished)
+                        })
+            })
+            .collect();
+        let matches = if phase_data.matches().is_empty() {
+            all_matches
+        } else {
+            vec![]
+        };
+        Schedule { matches, byes }
     }
 }
 
@@ -51,7 +81,19 @@ pub(crate) fn phase_with(
     matches: Vec<MatchSpec>,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 ) -> Phase {
-    let mut builder = PhaseBuilder::new(Box::new(FixedMatches(matches))).with_players(num_players);
+    phase_with_byes(num_players, matches, vec![], metrics_calculators)
+}
+
+/// Like [`phase_with`], with the byes of `byes` scheduled as well: those of a round once every
+/// match of the rounds before it is reported, so the byes of the first round right away.
+pub(crate) fn phase_with_byes(
+    num_players: u32,
+    matches: Vec<MatchSpec>,
+    byes: Vec<ByeSpec>,
+    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+) -> Phase {
+    let mut builder =
+        PhaseBuilder::new(Box::new(FixedMatches(matches, byes))).with_players(num_players);
     for metrics_calculator in metrics_calculators {
         builder = builder.metrics_calculator(metrics_calculator);
     }

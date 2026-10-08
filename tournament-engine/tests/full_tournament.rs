@@ -12,11 +12,11 @@ use tournament_engine::{
                 Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
             },
             matches::{Matches, MatchesCalculator},
-            points::{Points, PointsCalculator},
+            points::{MorePoints, Points, PointsCalculator},
             round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
-        phase_format::single_elimination::SingleElimination,
+        phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
         ranker::{HierarchicalRanker, LexicographicalCriteria},
     },
     transitions::{
@@ -79,7 +79,8 @@ fn assert_metrics(
         Some(&WinsDrawsLosses {
             wins,
             draws,
-            losses
+            losses,
+            byes: 0,
         })
     );
     assert_eq!(ranking.metric::<Points>(), Some(&Points(points)));
@@ -384,6 +385,44 @@ fn full_tournament() {
         3.0,
         12.0,
     );
+}
+
+/// In a round robin of three, every entrant has a bye in one of the three rounds. The byes are
+/// scheduled and scored when the competition starts, before any result is reported.
+#[test]
+fn byes_are_scored_when_they_are_scheduled() {
+    let mut sm = CompetitionStateMachine::default();
+    let phase_id = PhaseId::new(Uuid::new_v4());
+    for _ in 0..3 {
+        apply(&mut sm, AddEntrant::new(entrant())).unwrap();
+    }
+    apply(
+        &mut sm,
+        AddPhase::new(
+            phase_id,
+            Box::new(RoundRobin),
+            Box::new(HierarchicalRanker::new(vec![Box::new(
+                LexicographicalCriteria::new().add_criterion(MorePoints),
+            )])),
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE.with_points_for_bye(3.0)),
+            ],
+        ),
+    )
+    .unwrap();
+
+    apply(&mut sm, StartCompetition).unwrap();
+
+    let phase = &sm.current().phases()[&phase_id];
+    assert_eq!(phase.matches().len(), 3);
+    assert_eq!(phase.byes().len(), 3);
+    for ranking in phase.rankings().values() {
+        let wins_draws_losses = ranking.metric::<WinsDrawsLosses>().unwrap();
+        assert_eq!(wins_draws_losses.byes, 1);
+        assert_eq!(wins_draws_losses.matches_played(), 0);
+        assert_eq!(ranking.metric::<Points>(), Some(&Points(3.0)));
+    }
 }
 
 /// A single elimination match has to produce a winner, so a draw is rejected as not applicable

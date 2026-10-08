@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::Plugin,
     type_map::TypeMapValue,
@@ -39,6 +39,20 @@ pub trait MetricsCalculator: Plugin {
         phase_data: &PhaseData,
         r#match: &Match,
         old_match_result: MatchResult,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)>;
+
+    /// The new values of all rankings whose metric the newly scheduled `bye` changed.
+    ///
+    /// A bye is not a match: it has no opponent and no result, and it never changes once
+    /// scheduled. Whether it counts for this metric at all is up to the calculator.
+    ///
+    /// `old_metrics` and the returned metrics are as for
+    /// [`Self::update_after_match_result_changed`].
+    fn update_after_bye(
+        &mut self,
+        phase_data: &PhaseData,
+        bye: &Bye,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)>;
 }

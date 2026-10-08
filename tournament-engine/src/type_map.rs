@@ -288,6 +288,7 @@ mod tests {
             wins: 3,
             draws: 1,
             losses: 2,
+            byes: 1,
         });
 
         let map = round_trip(&map);
@@ -299,6 +300,7 @@ mod tests {
                 wins: 3,
                 draws: 1,
                 losses: 2,
+                byes: 1,
             })
         );
     }

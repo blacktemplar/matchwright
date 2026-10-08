@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
@@ -67,15 +67,26 @@ impl MetricsCalculator for BuchholzCalculator {
         _: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        buchholz_changes_based_on::<Points, Buchholz>(phase_data, r#match, old_metrics)
+        buchholz_changes_based_on::<Points, Buchholz>(phase_data, Some(r#match), old_metrics)
+    }
+
+    /// A bye has no opponent to count, but the points it is worth count for the opponents of its
+    /// ranking.
+    fn update_after_bye(
+        &mut self,
+        phase_data: &PhaseData,
+        _: &Bye,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        buchholz_changes_based_on::<Points, Buchholz>(phase_data, None, old_metrics)
     }
 }
 
 /// The updates of the buchholz like metric `B`, which sums the metric `M` of all opponents of a
-/// ranking, after the result of `match` changed.
+/// ranking, after the result of `match` changed, or, without a match, after a bye was scheduled.
 fn buchholz_changes_based_on<M, B>(
     phase_data: &PhaseData,
-    r#match: &Match,
+    r#match: Option<&Match>,
     old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
 ) -> Vec<(RankingId, Metric)>
 where
@@ -83,7 +94,7 @@ where
     B: TypeMapValue + AsRef<f32> + From<f32>,
 {
     let mut buchholz_changes: Map<_, f32> = Map::default();
-    for (r_id, old_metric) in &old_metrics[&TypeId::of::<M>()] {
+    for (r_id, old_metric) in old_metrics.get(&TypeId::of::<M>()).into_iter().flatten() {
         let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
         let ranking = &phase_data.rankings()[r_id];
         let new_metric = ranking.metric::<M>().unwrap();
@@ -92,7 +103,7 @@ where
             // buchholz of all opponents of this ranking change
             let matches = ranking.metric::<Matches>().unwrap();
             for match_id in &matches.0 {
-                if match_id == &r#match.id() {
+                if r#match.is_some_and(|r#match| match_id == &r#match.id()) {
                     // we don't consider the newly reported match here as we will account for it
                     // later separately
                     continue;
@@ -107,10 +118,12 @@ where
         }
     }
     // now also account for the new match
-    for (team1, team2) in [
-        (r#match.team_a(), r#match.team_b()),
-        (r#match.team_b(), r#match.team_a()),
-    ] {
+    for (team1, team2) in r#match.into_iter().flat_map(|r#match| {
+        [
+            (r#match.team_a(), r#match.team_b()),
+            (r#match.team_b(), r#match.team_a()),
+        ]
+    }) {
         // add metric M of team2 to buchholz of team1
         let m_sum: f32 = team2
             .iter()
@@ -180,7 +193,22 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
         _: MatchResult,
         old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
     ) -> Vec<(RankingId, Metric)> {
-        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase_data, r#match, old_metrics)
+        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(
+            phase_data,
+            Some(r#match),
+            old_metrics,
+        )
+    }
+
+    /// A bye has no opponent to count, but a change of the buchholz of its ranking counts for the
+    /// opponents of that ranking.
+    fn update_after_bye(
+        &mut self,
+        phase_data: &PhaseData,
+        _: &Bye,
+        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        buchholz_changes_based_on::<Buchholz, BuchholzOfBuchholz>(phase_data, None, old_metrics)
     }
 }
 
@@ -347,8 +375,40 @@ mod tests {
         }
     }
 
+    /// `2` has a bye in round 1 and `1` one in round 2, each worth as much as a win, so that the
+    /// bye of `1` is scheduled only after `0` faced it.
     #[test]
-    #[should_panic(expected = "no entry found for key")]
+    fn the_points_of_a_bye_count_for_the_opponents_of_its_ranking() {
+        let mut phase = test_utils::phase_with_byes(
+            3,
+            vec![(1, vec![0], vec![1]), (2, vec![0], vec![2])],
+            vec![(1, 2), (2, 1)],
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE.with_points_for_bye(3.0)),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+            ],
+        );
+
+        let first_match = match_id(&phase, 1, &[0], &[1]);
+        phase.report_match_result(first_match, MatchResult::AWins);
+        // the bye `1` got after its loss gave it three points, which count for `0` already
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(3.0));
+        // a bye has no opponent whose points could count
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
+
+        let second_match = match_id(&phase, 2, &[0], &[2]);
+        phase.report_match_result(second_match, MatchResult::Draw);
+
+        // `0` has 4 points, `1` 3 and `2` 4
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(7.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(4.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(4.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_buchholz_without_the_points_metric_panics() {
         let mut phase = test_utils::phase_with(
             2,
@@ -501,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "no entry found for key")]
+    #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_buchholz_of_buchholz_without_the_buchholz_metric_panics() {
         let mut phase = test_utils::phase_with(
             2,

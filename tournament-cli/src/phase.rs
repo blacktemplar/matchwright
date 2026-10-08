@@ -41,10 +41,12 @@ const DEFAULT_RANDOM_ROUNDS: NonZeroU32 = NonZeroU32::new(5).unwrap();
 /// The number of rounds the Monster DYP format is offered with.
 const DEFAULT_MONSTER_DYP_ROUNDS: NonZeroU32 = NonZeroU32::new(5).unwrap();
 
-/// The scoring system of chess and most other games scoring a draw as half a win.
+/// The scoring system of chess and most other games scoring a draw as half a win, with a bye worth
+/// as much as a win.
 const DEFAULT_POINTS: MetricConfig = MetricConfig::Points {
     for_win: 1.0,
     for_draw: 0.5,
+    for_bye: 1.0,
 };
 
 /// The classical Sonneborn-Berger weights: the points of a beaten opponent count fully, those of
@@ -181,9 +183,8 @@ impl FormatConfig {
                 Criterion::MoreSonnebornBerger,
                 Criterion::MoreBuchholzOfBuchholz,
             ],
-            // an entrant that sat out a round more than another one had one match less to score
-            // points in, so of two with the same points the one that played fewer matches is ahead
-            Self::MonsterDyp { .. } => &[Criterion::MorePoints, Criterion::FewerMatchesPlayed],
+            // sitting a round out scores like a win, so the matches played need no tie break
+            Self::MonsterDyp { .. } => &[Criterion::MorePoints],
         }
     }
 
@@ -212,10 +213,12 @@ impl FormatConfig {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MetricConfig {
     WinsDrawsLosses,
-    /// Scores every win with `for_win` and every draw with `for_draw` points.
+    /// Scores every win with `for_win`, every draw with `for_draw` and every bye with `for_bye`
+    /// points.
     Points {
         for_win: f32,
         for_draw: f32,
+        for_bye: f32,
     },
     Matches,
     RoundOfFirstLoss,
@@ -248,9 +251,11 @@ impl MetricConfig {
     fn calculator(self) -> Box<dyn MetricsCalculator> {
         match self {
             Self::WinsDrawsLosses => Box::new(WinsDrawsLossesCalculator),
-            Self::Points { for_win, for_draw } => {
-                Box::new(PointsCalculator::new(for_win, for_draw))
-            }
+            Self::Points {
+                for_win,
+                for_draw,
+                for_bye,
+            } => Box::new(PointsCalculator::new(for_win, for_draw).with_points_for_bye(for_bye)),
             Self::Matches => Box::new(MatchesCalculator),
             Self::RoundOfFirstLoss => Box::new(RoundOfFirstLossCalculator),
             Self::RoundOfElimination => Box::new(RoundOfEliminationCalculator),
@@ -330,7 +335,7 @@ impl MetricKind {
     pub fn description(self) -> &'static str {
         match self {
             Self::WinsDrawsLosses => "how many matches were won, drawn and lost",
-            Self::Points => "scored for every win and every draw",
+            Self::Points => "scored for every win, every draw and every bye",
             Self::Matches => "the matches an entrant played",
             Self::RoundOfFirstLoss => "the later the better, never having lost is best",
             Self::RoundOfElimination => "the later the better, still being in is best",
@@ -813,10 +818,12 @@ mod tests {
                 MetricConfig::Points {
                     for_win: 2.0,
                     for_draw: 1.0,
+                    for_bye: 2.0,
                 },
                 MetricConfig::Points {
                     for_win: 1.0,
                     for_draw: 0.5,
+                    for_bye: 0.0,
                 },
             ],
             [],
@@ -828,7 +835,8 @@ mod tests {
                 MetricConfig::WinsDrawsLosses,
                 MetricConfig::Points {
                     for_win: 2.0,
-                    for_draw: 1.0
+                    for_draw: 1.0,
+                    for_bye: 2.0,
                 },
             ]
         );
@@ -841,6 +849,7 @@ mod tests {
         let points = MetricConfig::Points {
             for_win: 1.0,
             for_draw: 0.5,
+            for_bye: 1.0,
         };
 
         let config = PhaseConfig::new(FormatConfig::RoundRobin, [points], [Criterion::MorePoints]);
@@ -923,7 +932,7 @@ mod tests {
 
         assert_eq!(
             config.summary(),
-            "Monster DYP of 4 rounds, ranked by points, then fewer matches played"
+            "Monster DYP of 4 rounds, ranked by points"
         );
     }
 

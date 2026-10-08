@@ -5,21 +5,26 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Match, PhaseData},
-    plugins::phase_format::PhaseFormat,
+    entities::competition::{Bye, Match, PhaseData},
+    plugins::phase_format::{PhaseFormat, Schedule},
 };
 
+/// Everyone plays everyone once. With an odd number of rankings, every ranking has a bye in one of
+/// the rounds.
+///
+/// All rounds are scheduled at once, when the phase starts.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RoundRobin;
 
 #[typetag::serde]
 impl PhaseFormat for RoundRobin {
-    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Vec<Match> {
+    fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method
-        if !phase_data.matches().is_empty() {
-            // we generate all matches at once, so as soon as one match exists nothing is to be done
-            return vec![];
+        if !phase_data.matches().is_empty() || !phase_data.byes().is_empty() {
+            // we generate all rounds at once, so as soon as one match or bye exists nothing is to
+            // be done
+            return Schedule::default();
         }
         let num_teams = phase_data.rankings().len();
         let num_teams_is_odd = num_teams % 2 == 1;
@@ -39,6 +44,7 @@ impl PhaseFormat for RoundRobin {
             .collect_vec();
         let first_playing_index = if num_teams_is_odd { 1 } else { 0 };
         let mut matches = Vec::with_capacity(num_teams * (num_teams - 1) / 2);
+        let mut byes = Vec::new();
         for round in
             NonZeroU32::new(1).unwrap()..NonZeroU32::new(num_teams_with_bye as u32).unwrap()
         {
@@ -52,13 +58,16 @@ impl PhaseFormat for RoundRobin {
             // now index 0 plays against index num_players_with_bye - 1 (if existing), index 1
             // against num_players_with_bye - 2, and in general index `i` against
             // `num_players_with_bye - i - 1`
+            if num_teams_is_odd {
+                byes.push(Bye::new(ranking_ids[0], round));
+            }
             matches.extend((first_playing_index..(num_teams_with_bye / 2)).map(|i| {
                 let team_a = vec1![ranking_ids[i]];
                 let team_b = vec1![ranking_ids[num_teams_with_bye - i - 1]];
                 Match::new(team_a, team_b, round)
             }));
         }
-        matches
+        Schedule { matches, byes }
     }
 }
 
@@ -123,5 +132,29 @@ mod tests {
             phase.matches().values().map(Match::round).max(),
             Some(NonZero::new(7).unwrap())
         );
+    }
+
+    #[test]
+    fn every_ranking_has_one_bye_in_a_round_robin_of_an_odd_number_of_players() {
+        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
+            .with_players(7)
+            .build();
+
+        phase.create_new_matches();
+
+        assert_eq!(phase.byes().len(), 7);
+        assert!(phase.byes().values().map(Bye::ranking).all_unique());
+        assert!(phase.byes().values().map(Bye::round).all_unique());
+    }
+
+    #[test]
+    fn nobody_has_a_bye_in_a_round_robin_of_an_even_number_of_players() {
+        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
+            .with_players(6)
+            .build();
+
+        phase.create_new_matches();
+
+        assert!(phase.byes().is_empty());
     }
 }

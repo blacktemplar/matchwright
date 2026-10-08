@@ -3,7 +3,7 @@ use std::any::TypeId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
@@ -12,20 +12,23 @@ use crate::{
     type_map::TypeMapValue,
 };
 
-/// How many of its matches a ranking won, drew and lost.
+/// How many of its matches a ranking won, drew and lost, and how many byes it had.
 ///
-/// Each of the three counts orders a ranking on its own, as does the number of matches they add up
-/// to, see [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`]. The struct as a
-/// whole has no order and so does not implement [`Compare`](crate::plugins::ranker::Compare).
+/// Each of the first three counts orders a ranking on its own, as does the number of matches they
+/// add up to, see [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`]. A bye is
+/// not a match, so it counts as none of them. The struct as a whole has no order and so does not
+/// implement [`Compare`](crate::plugins::ranker::Compare).
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLosses {
     pub wins: u32,
     pub draws: u32,
     pub losses: u32,
+    pub byes: u32,
 }
 
 impl WinsDrawsLosses {
-    /// How many matches the ranking played, i.e. how many of its matches got a result reported.
+    /// How many matches the ranking played, i.e. how many of its matches got a result reported,
+    /// byes not included.
     ///
     /// The same count as the length of [`Matches`](super::matches::Matches), without needing that
     /// metric to be calculated.
@@ -151,6 +154,19 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
             }))
             .collect()
     }
+
+    fn update_after_bye(
+        &mut self,
+        phase_data: &PhaseData,
+        bye: &Bye,
+        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    ) -> Vec<(RankingId, Metric)> {
+        let mut metric = *phase_data.rankings()[&bye.ranking()]
+            .metric::<WinsDrawsLosses>()
+            .unwrap();
+        metric.byes += 1;
+        vec![(bye.ranking(), Box::new(metric) as Metric)]
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +201,7 @@ mod tests {
             wins,
             draws,
             losses,
+            byes: 0,
         }
     }
 
@@ -274,6 +291,26 @@ mod tests {
         assert_eq!(metric_of(&phase, 1), wins_draws_losses(1, 0, 2));
         assert_eq!(metric_of(&phase, 2), wins_draws_losses(2, 1, 0));
         assert_eq!(metric_of(&phase, 3), wins_draws_losses(0, 1, 1));
+    }
+
+    #[test]
+    fn a_bye_is_counted_as_soon_as_it_is_scheduled_but_not_as_a_match() {
+        let mut phase = test_utils::phase_with_byes(
+            3,
+            vec![(1, vec![0], vec![1])],
+            vec![(1, 2), (2, 2)],
+            vec![Box::new(WinsDrawsLossesCalculator)],
+        );
+        assert_eq!(metric_of(&phase, 2).byes, 1);
+
+        // finishing the first round schedules the bye of the second one
+        let match_id = match_id(&phase, 1, &[0], &[1]);
+        phase.report_match_result(match_id, MatchResult::AWins);
+
+        let with_two_byes = metric_of(&phase, 2);
+        assert_eq!(with_two_byes.byes, 2);
+        assert_eq!(with_two_byes.matches_played(), 0);
+        assert_eq!(metric_of(&phase, 0), wins_draws_losses(1, 0, 0));
     }
 
     /// The metrics of a ranking whose only metric is `wdl`.

@@ -15,7 +15,7 @@ use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
         metrics_calculator::{Metric, MetricsCalculator},
-        phase_format::PhaseFormat,
+        phase_format::{PhaseFormat, Schedule},
         ranker::Ranker,
     },
     type_map::{TypeMap, TypeMapValue},
@@ -24,6 +24,7 @@ use crate::{
 /// Namespaces for various deterministic ids
 const NAMESPACE_MATCH: Uuid = uuid!("d4098937-85f4-49ce-945a-be8ae74da780");
 const NAMESPACE_RANKING: Uuid = uuid!("eb5e6d16-15af-42e1-b0f4-f5a643fd1e9a");
+const NAMESPACE_BYE: Uuid = uuid!("5b0f3c1e-2d8a-4c67-9e41-7a3f6d92b8c5");
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Competition {
@@ -75,6 +76,7 @@ impl Competition {
                 rankings: IdMap::default(),
                 ranking_ids_ordered_by_unique_rank: vec![],
                 matches: IdMap::new(),
+                byes: IdMap::new(),
                 seed,
             },
             phase_format,
@@ -227,6 +229,7 @@ pub struct PhaseData {
     rankings: IdMap<Ranking>,
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: IdMap<Match>,
+    byes: IdMap<Bye>,
     seed: [u8; 12],
 }
 
@@ -249,6 +252,11 @@ impl PhaseData {
 
     pub fn matches(&self) -> &IdMap<Match> {
         &self.matches
+    }
+
+    /// The byes of this phase, in the order they were scheduled in.
+    pub fn byes(&self) -> &IdMap<Bye> {
+        &self.byes
     }
 
     /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
@@ -297,6 +305,11 @@ impl Phase {
         self.data.matches()
     }
 
+    /// See [`PhaseData::byes`].
+    pub fn byes(&self) -> &IdMap<Bye> {
+        self.data.byes()
+    }
+
     pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
         &*self.phase_format
     }
@@ -339,30 +352,52 @@ impl Phase {
         }
     }
 
+    /// Adds the matches and byes the phase format schedules next, and updates the metrics and the
+    /// ranks for every new bye.
     pub(crate) fn create_new_matches(&mut self) {
-        let new_matches = self.phase_format.create_new_matches(&self.data);
+        let Schedule { matches, byes } = self.phase_format.create_new_matches(&self.data);
         // check requirements of create_new_matches
         debug_assert!(
-            new_matches
+            matches
                 .iter()
-                .all(|m| { m.rankings().all(|r| self.data.rankings.contains_key(r)) })
+                .flat_map(Match::rankings)
+                .copied()
+                .chain(byes.iter().map(Bye::ranking))
+                .all(|r| self.data.rankings.contains_key(&r))
         );
         let num_matches_before = self.data.matches.len();
-        let num_new_matches = new_matches.len();
-        self.data.matches.extend(new_matches);
-        // This guarantees that all new match ids were unique (at least relative to the existing
-        // match ids in this phase).
+        let num_new_matches = matches.len();
+        self.data.matches.extend(matches);
+        let new_bye_ids: Vec<_> = byes.iter().map(Bye::id).collect();
+        let num_byes_before = self.data.byes.len();
+        self.data.byes.extend(byes);
+        // This guarantees that all new match and bye ids were unique (at least relative to the
+        // existing ids in this phase).
         debug_assert_eq!(
             self.data.matches.len(),
             num_matches_before + num_new_matches
         );
+        debug_assert_eq!(self.data.byes.len(), num_byes_before + new_bye_ids.len());
         // check that ranking ids are unique within a round
         debug_assert!(
             self.matches()
                 .values()
-                .flat_map(|m| m.rankings().map(|r| (m.round, r)))
+                .flat_map(|m| m.rankings().map(|r| (m.round, *r)))
+                .chain(self.byes().values().map(|b| (b.round, b.ranking)))
                 .all_unique()
         );
+
+        // A bye is final when it is scheduled, so it is accounted for right away. The format is not
+        // asked again afterwards, even though the ranks may have changed: only a reported result
+        // makes it schedule.
+        for bye_id in &new_bye_ids {
+            self.update_metrics(|metrics_calculator, data, old_metrics| {
+                metrics_calculator.update_after_bye(data, &data.byes[bye_id], old_metrics)
+            });
+        }
+        if !new_bye_ids.is_empty() {
+            self.update_ranks();
+        }
     }
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
@@ -370,16 +405,32 @@ impl Phase {
         let old_result = r#match.result();
         assert!(old_result == MatchResult::NotFinished);
         r#match.set_result(match_result);
-        let r#match = &self.data.matches[&match_id];
+        self.update_metrics(|metrics_calculator, data, old_metrics| {
+            metrics_calculator.update_after_match_result_changed(
+                data,
+                &data.matches[&match_id],
+                old_result,
+                old_metrics,
+            )
+        });
+        self.update_ranks();
+        self.create_new_matches();
+    }
+
+    /// Runs every metrics calculator, in order, through `updates_of` and stores the metrics it
+    /// returns, handing each calculator the metrics replaced by the ones before it.
+    fn update_metrics(
+        &mut self,
+        mut updates_of: impl FnMut(
+            &mut dyn MetricsCalculator,
+            &PhaseData,
+            &Map<TypeId, Vec<(RankingId, Metric)>>,
+        ) -> Vec<(RankingId, Metric)>,
+    ) {
         let mut old_metrics: Map<TypeId, Vec<(RankingId, Metric)>> = Map::default();
         for metrics_calculator in &mut self.metrics_calculators {
-            let updates = metrics_calculator.update_after_match_result_changed(
-                &self.data,
-                r#match,
-                old_result,
-                &old_metrics,
-            );
-            // check requirements of update_after_match_result_changed
+            let updates = updates_of(&mut **metrics_calculator, &self.data, &old_metrics);
+            // check requirements of the update methods of MetricsCalculator
             debug_assert!(updates.iter().all(|(ranking_id, metric)| {
                 let metric: &dyn Any = &**metric;
                 self.data.rankings.contains_key(ranking_id)
@@ -402,13 +453,14 @@ impl Phase {
                     .push((ranking_id, old_metric))
             }
         }
-        // update rankings
+    }
+
+    fn update_ranks(&mut self) {
         let new_ranks = self.ranker.update_ranks(&self.data);
         for (rank_id, new_rank) in new_ranks {
             self.data.rankings.get_mut(&rank_id).unwrap().rank = new_rank;
         }
         self.update_ranking_ordering_and_unique_ranks();
-        self.create_new_matches();
     }
 
     fn update_ranking_ordering_and_unique_ranks(&mut self) {
@@ -739,6 +791,89 @@ impl Match {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ByeId(Uuid);
+
+/// A round of a phase in which a ranking has no match to play, as decided by the
+/// [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) that schedules it.
+///
+/// A bye is final as soon as it is scheduled: it has no result to report, and the metrics of its
+/// ranking are updated right away, see [`MetricsCalculator::update_after_bye`]. Like a match it
+/// holds `annotations`, given by the format when creating it with [`Bye::with_annotation`].
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bye {
+    id: ByeId,
+    ranking: RankingId,
+    round: NonZeroU32,
+    annotations: TypeMap,
+}
+
+impl IdAble for Bye {
+    type Id = ByeId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+}
+
+impl Bye {
+    pub fn new(ranking: RankingId, round: NonZeroU32) -> Self {
+        let id = ByeId(Uuid::new_v5(
+            &NAMESPACE_BYE,
+            &ranking
+                .0
+                .into_bytes()
+                .into_iter()
+                .chain(round.get().to_le_bytes())
+                .collect::<Vec<_>>(),
+        ));
+        Self {
+            id,
+            ranking,
+            round,
+            annotations: TypeMap::new(),
+        }
+    }
+
+    /// Returns this bye with `annotation` added, replacing an annotation of the same type.
+    ///
+    /// Annotations do not take part in the [`ByeId`].
+    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
+        self.annotations.insert(annotation);
+        self
+    }
+
+    /// Returns this bye with `annotations` as its annotations, replacing any it had.
+    pub(crate) fn with_annotations(mut self, annotations: TypeMap) -> Self {
+        self.annotations = annotations;
+        self
+    }
+
+    /// The annotation of type `T` this bye was created with, if any.
+    pub fn annotation<T: 'static>(&self) -> Option<&T> {
+        self.annotations.get::<T>()
+    }
+
+    pub fn annotations(&self) -> &TypeMap {
+        &self.annotations
+    }
+
+    pub fn id(&self) -> ByeId {
+        self.id
+    }
+
+    /// The ranking that has no match to play.
+    pub fn ranking(&self) -> RankingId {
+        self.ranking
+    }
+
+    /// The round the ranking has no match in. Like a match, a bye takes up the one slot its ranking
+    /// has in that round, see [`Match::round`].
+    pub fn round(&self) -> NonZeroU32 {
+        self.round
+    }
+}
+
 /// Builds a standalone [`Phase`] with prepopulated rankings, without a [`Competition`] around it,
 /// for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) and [`Ranker`]
 /// implementations.
@@ -800,6 +935,7 @@ impl PhaseBuilder {
                 rankings,
                 ranking_ids_ordered_by_unique_rank,
                 matches: IdMap::new(),
+                byes: IdMap::new(),
                 seed: [0; 12],
             },
             phase_format: self.phase_format,

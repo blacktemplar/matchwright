@@ -118,12 +118,20 @@ fn ask_metrics(format: FormatConfig) -> InquireResult<Vec<MetricConfig>> {
 /// Asks for the parameters of `kind`, which is answered for it if it has none.
 fn ask_parameters(kind: MetricKind) -> InquireResult<MetricConfig> {
     match kind.with_defaults() {
-        MetricConfig::Points { for_win, for_draw } => Ok(MetricConfig::Points {
+        MetricConfig::Points {
+            for_win,
+            for_draw,
+            for_bye,
+        } => Ok(MetricConfig::Points {
             for_win: CustomType::new("Points for a win")
                 .with_default(for_win)
                 .prompt()?,
             for_draw: CustomType::new("Points for a draw")
                 .with_default(for_draw)
+                .prompt()?,
+            for_bye: CustomType::new("Points for a bye")
+                .with_default(for_bye)
+                .with_help_message("a round without a match, e.g. with an odd number of entrants")
                 .prompt()?,
         }),
         MetricConfig::SonnebornBerger {

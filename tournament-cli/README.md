@@ -46,7 +46,7 @@ cup> exit
 | `remove-entrant <NAME>` (`remove`) | Removes an entrant. |
 | `add-phase [PRESET]` | Adds the phase the competition is played in: the preset named, or, without a preset, the phase configured at the prompt, see below. Only one phase is supported. |
 | `start` | Starts the competition and schedules the first matches. Entrants and the phase cannot be changed afterwards. |
-| `matches [--open] [--round <ROUND>]` | Lists the matches with their number, round, stage (for a format that names its stages, e.g. "Quarterfinals" in a knockout) and result. |
+| `matches [--open] [--round <ROUND>]` | Lists the matches with their number, round, stage (for a format that names its stages, e.g. "Quarterfinals" in a knockout) and result, followed by the byes, i.e. who has no match in which round. `--open` leaves the byes out. |
 | `report <NUMBER> <a\|b\|draw>` | Reports the result of a match: team a wins, team b wins, or a draw. |
 | `undo-report <NUMBER>` | Undoes the result reported for a match, however long ago it was reported, keeping every other change. |
 | `ranking` | Shows the current ranking with every metric the phase calculates. |
@@ -61,11 +61,11 @@ Ctrl-C clears the line being typed, Ctrl-D behaves like `exit`.
 
 | Preset | Format | Ranked by |
 |---|---|---|
-| `round-robin` | Everyone plays everyone. | Points (1 for a win, 0.5 for a draw), then Sonneborn-Berger. |
+| `round-robin` | Everyone plays everyone. | Points (1 for a win or a bye, 0.5 for a draw), then Sonneborn-Berger. |
 | `single-elimination [--no-third-place-match]` | The loser of a match is out; draws are rejected. The two entrants knocked out in the semifinals play for third place, unless `--no-third-place-match` is given, which leaves them third equal. | The round of the first loss, then the losses (only the round of the first loss without a match for third place). |
 | `double-elimination [--no-grand-final-reset]` | An entrant is out after its second loss; draws are rejected. The champions of the winner and the loser bracket meet in the grand final, which is played once more if the champion of the winner bracket loses it, unless `--no-grand-final-reset` is given. | The round of elimination, then the losses. |
-| `random-rounds <ROUNDS>` | `ROUNDS` randomly chosen rounds of a round robin. | Points (1 for a win, 0.5 for a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz. |
-| `monster-dyp <ROUNDS>` | `ROUNDS` rounds in each of which the entrants are drawn into random teams of two, each playing another such team. Entrants left over sit the round out, in turns. | Points (1 for a win, 0.5 for a draw), then fewer matches played. |
+| `random-rounds <ROUNDS>` | `ROUNDS` randomly chosen rounds of a round robin. | Points (1 for a win or a bye, 0.5 for a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz. |
+| `monster-dyp <ROUNDS>` | `ROUNDS` rounds in each of which the entrants are drawn into random teams of two, each playing another such team. Entrants left over sit the round out, in turns. | Points (1 for a win or for sitting out, 0.5 for a draw). |
 
 ## Configuring a phase
 
@@ -82,7 +82,7 @@ tournament*> add-phase
   Monster DYP — every round, entrants are drawn into teams of two that play each other
 ? Metrics to calculate
 > [x] W-D-L — how many matches were won, drawn and lost
-  [x] points — scored for every win and every draw
+  [x] points — scored for every win, every draw and every bye
   [ ] round of the first loss — the later the better, never having lost is best
   [ ] round of elimination — the later the better, still being in is best
   [ ] Buchholz — the points of all opponents
@@ -90,6 +90,7 @@ tournament*> add-phase
   [ ] Buchholz of Buchholz — the Buchholz of all opponents
 ? Points for a win (1)
 ? Points for a draw (0.5)
+? Points for a bye (1)
 ? Sonneborn-Berger: how much a beaten opponent counts (1)
 ? Sonneborn-Berger: how much an opponent played to a draw counts (0.5)
 ? Rank by
