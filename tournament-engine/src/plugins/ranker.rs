@@ -5,12 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Ranking, RankingId},
-    plugins::Plugin,
+    plugins::{Plugin, compatibility::Declaration},
     type_map::{TypeMap, TypeMapValue},
 };
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait Ranker: Plugin {
+    /// Declares what this ranker provides to and requires of its phase, including what the parts
+    /// it is made of declare, see [`Declaration`].
+    fn declare(&self, declaration: &mut Declaration);
+
     /// The new rank of every ranking of `phase_data`.
     ///
     /// The ranks must satisfy the following invariant: ordered by rank, the first ranking has rank
@@ -27,6 +31,10 @@ impl Clone for Box<dyn Ranker> {
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait SliceRanker: Plugin {
+    /// Declares what this slice ranker provides to and requires of its phase, see
+    /// [`Declaration`].
+    fn declare(&self, declaration: &mut Declaration);
+
     /// Assigns new ranks to the given slice and reorders them according to the new ranks.
     fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
 }
@@ -48,6 +56,8 @@ impl HierarchicalRanker {
 
 #[typetag::serde]
 impl Ranker for HierarchicalRanker {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase_data
             .ranking_ids_ordered_by_unique_rank()
@@ -300,6 +310,8 @@ impl LexicographicalCriteria {
 
 #[typetag::serde]
 impl SliceRanker for LexicographicalCriteria {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         if self.0.is_empty() || slice.len() < 2 {
             // this becomes basically a no-op

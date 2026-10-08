@@ -7,7 +7,10 @@ use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
-    plugins::phase_format::{PhaseFormat, Schedule},
+    plugins::{
+        compatibility::Declaration,
+        phase_format::{PhaseFormat, Schedule},
+    },
 };
 
 /// A Monster DYP ("draw your partner"): every round, the rankings are drawn into random teams of
@@ -34,6 +37,8 @@ impl MonsterDyp {
 
 #[typetag::serde]
 impl PhaseFormat for MonsterDyp {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         if !phase_data.matches().is_empty()
             || !phase_data.byes().is_empty()

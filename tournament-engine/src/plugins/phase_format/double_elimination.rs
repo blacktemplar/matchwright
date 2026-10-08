@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     entities::competition::{PhaseData, Team},
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::round_of_elimination::Eliminates,
         phase_format::{
             PhaseFormat, Schedule,
@@ -106,6 +107,8 @@ impl TypeMapValue for DoubleEliminationRound {}
 
 #[typetag::serde]
 impl PhaseFormat for DoubleElimination {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let reset = self.grand_final_reset;
         self.bracket

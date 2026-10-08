@@ -130,7 +130,8 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
                 Box::new(SONNEBORN_BERGER),
                 Box::new(BuchholzOfBuchholzCalculator),
             ],
-        ),
+        )
+        .unwrap(),
     );
     // this creates the rankings, initializes all metrics and schedules the matches of all rounds
     apply(&mut sm, StartCompetition);

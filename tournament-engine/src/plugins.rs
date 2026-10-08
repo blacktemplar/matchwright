@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use dyn_clone::DynClone;
 
+pub mod compatibility;
 pub mod metrics_calculator;
 pub mod phase_format;
 pub mod ranker;

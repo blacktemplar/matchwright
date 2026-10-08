@@ -6,6 +6,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
@@ -45,6 +46,8 @@ pub struct RoundOfFirstLossCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for RoundOfFirstLossCalculator {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn default_metric_value(&self) -> Metric {
         Box::new(RoundOfFirstLoss::default())
     }

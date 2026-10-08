@@ -134,7 +134,8 @@ fn full_tournament() {
                 Box::new(BuchholzCalculator),
                 Box::new(BuchholzOfBuchholzCalculator),
             ],
-        ),
+        )
+        .unwrap(),
     )
     .unwrap();
     apply(&mut sm, StartCompetition).unwrap();
@@ -408,7 +409,8 @@ fn byes_are_scored_when_they_are_scheduled() {
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE.with_points_for_bye(3.0)),
             ],
-        ),
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -442,7 +444,8 @@ fn single_elimination_rejects_a_draw() {
                 LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
             )])),
             vec![Box::new(RoundOfFirstLossCalculator)],
-        ),
+        )
+        .unwrap(),
     )
     .unwrap();
     apply(&mut sm, StartCompetition).unwrap();

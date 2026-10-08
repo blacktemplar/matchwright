@@ -4,9 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::PhaseData,
-    plugins::phase_format::{
-        PhaseFormat, Schedule,
-        bracket::{Bracket, Source},
+    plugins::{
+        compatibility::Declaration,
+        phase_format::{
+            PhaseFormat, Schedule,
+            bracket::{Bracket, Source},
+        },
     },
     type_map::{TypeMap, TypeMapValue},
 };
@@ -107,6 +110,8 @@ impl KnockoutRound {
 
 #[typetag::serde]
 impl PhaseFormat for SingleElimination {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let third_place_match = self.third_place_match;
         self.bracket

@@ -6,7 +6,10 @@ use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, Match, PhaseData},
-    plugins::phase_format::{PhaseFormat, Schedule},
+    plugins::{
+        compatibility::Declaration,
+        phase_format::{PhaseFormat, Schedule},
+    },
 };
 
 /// Everyone plays everyone once. With an odd number of rankings, every ranking has a bye in one of
@@ -18,6 +21,8 @@ pub struct RoundRobin;
 
 #[typetag::serde]
 impl PhaseFormat for RoundRobin {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method

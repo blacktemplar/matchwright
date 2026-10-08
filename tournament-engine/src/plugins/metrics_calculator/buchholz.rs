@@ -10,6 +10,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
@@ -56,6 +57,8 @@ pub struct BuchholzCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for BuchholzCalculator {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn default_metric_value(&self) -> Metric {
         Box::new(Buchholz::default())
     }
@@ -182,6 +185,8 @@ pub struct BuchholzOfBuchholzCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for BuchholzOfBuchholzCalculator {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn default_metric_value(&self) -> Metric {
         Box::new(BuchholzOfBuchholz::default())
     }

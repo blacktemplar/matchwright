@@ -6,6 +6,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, ResultOfTeam, Team},
     map::Map,
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
@@ -55,6 +56,8 @@ impl SonnebornBergerCalculator {
 
 #[typetag::serde]
 impl MetricsCalculator for SonnebornBergerCalculator {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn default_metric_value(&self) -> Metric {
         Box::new(SonnebornBerger::default())
     }

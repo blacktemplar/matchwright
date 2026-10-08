@@ -153,7 +153,8 @@ pub trait CompetitionStateMachineExt {
     /// #         Box::new(RoundRobin),
     /// #         Box::new(HierarchicalRanker::new(Vec::new())),
     /// #         Vec::new(),
-    /// #     ),
+    /// #     )
+    /// #     .unwrap(),
     /// # );
     /// # apply(&mut machine, StartCompetition);
     /// // a round robin between four entrants, with the first and the last match reported
@@ -285,7 +286,8 @@ mod tests {
                 Box::new(SingleElimination::new()),
                 Box::new(HierarchicalRanker::new(Vec::new())),
                 Vec::new(),
-            ),
+            )
+            .unwrap(),
         );
         apply(&mut machine, StartCompetition);
         machine

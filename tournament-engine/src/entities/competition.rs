@@ -14,6 +14,7 @@ use vec1::{Vec1, vec1};
 use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::{PhaseFormat, Schedule},
         ranker::Ranker,
@@ -85,6 +86,10 @@ impl Competition {
         };
         self.phases.insert(phase);
     }
+
+    /// Declares the facts that hold for a phase added to this competition before any of its
+    /// plugins declare theirs.
+    pub(crate) fn declare_phase_context(&self, _: &mut Declaration) {}
 
     pub fn phases(&self) -> &IdMap<Phase> {
         &self.phases

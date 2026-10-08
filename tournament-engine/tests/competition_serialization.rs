@@ -114,7 +114,8 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
                 Box::new(SONNEBORN_BERGER),
                 Box::new(BuchholzOfBuchholzCalculator),
             ],
-        ),
+        )
+        .unwrap(),
     );
     sm
 }
@@ -400,7 +401,8 @@ fn a_competition_with_a_bye_round_trips() {
             Box::new(SingleElimination::new()),
             Box::new(HierarchicalRanker::new(vec![])),
             vec![Box::new(WinsDrawsLossesCalculator)],
-        ),
+        )
+        .unwrap(),
     );
     apply(&mut sm, StartCompetition);
     let bye = sm.current().phases()[&phase_id()]

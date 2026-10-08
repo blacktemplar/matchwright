@@ -118,7 +118,8 @@ fn played_competition() -> CompetitionStateMachine {
                 Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
             ],
-        ),
+        )
+        .unwrap(),
     );
     apply(&mut machine, StartCompetition);
     for match_id in matches_of_round(&machine.current().phases()[&phase_id()], 1) {

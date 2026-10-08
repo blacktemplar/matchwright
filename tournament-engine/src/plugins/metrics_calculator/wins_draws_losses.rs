@@ -6,6 +6,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
+        compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Comparison, RankingCriterion, RankingOrder},
     },
@@ -104,6 +105,8 @@ pub struct WinsDrawsLossesCalculator;
 
 #[typetag::serde]
 impl MetricsCalculator for WinsDrawsLossesCalculator {
+    fn declare(&self, _: &mut Declaration) {}
+
     fn default_metric_value(&self) -> Metric {
         Box::new(WinsDrawsLosses::default())
     }

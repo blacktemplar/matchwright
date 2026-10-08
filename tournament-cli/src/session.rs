@@ -19,6 +19,7 @@ use tournament_engine::{
         RankingId,
     },
     plugins::{
+        compatibility::Incompatibility,
         metrics_calculator::{
             buchholz::{Buchholz, BuchholzOfBuchholz},
             points::Points,
@@ -97,6 +98,9 @@ pub enum Error {
     /// after the start.
     #[error("{0}")]
     Rejected(TransitionError),
+    /// The plugins of a phase do not fit together.
+    #[error(transparent)]
+    Incompatible(#[from] Incompatibility),
     #[error(transparent)]
     StateMachine(StateMachineError),
     #[error("cannot read {}: {source}", path.display())]
@@ -281,8 +285,8 @@ impl Session {
     /// Adds the phase `config` describes, which is the only phase the competition is played in.
     ///
     /// # Errors
-    /// Returns an error if the competition already has a phase or does not accept one anymore
-    /// because it has started.
+    /// Returns an error if the competition already has a phase, does not accept one anymore
+    /// because it has started, or if the plugins `config` describes do not fit together.
     pub fn add_phase(&mut self, config: PhaseConfig) -> Result<String, Error> {
         if !self.competition().phases().is_empty() {
             return Err(Error::PhaseAlreadyAdded);
@@ -296,7 +300,7 @@ impl Session {
             phase_format,
             ranker,
             calculators,
-        ))?;
+        )?)?;
         Ok(format!("phase added: {summary}"))
     }
 
