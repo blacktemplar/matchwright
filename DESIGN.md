@@ -118,62 +118,124 @@ path, which postcard cannot deserialize.
 
 ## Compatibility between plugins
 
-*Planned — `intertrait` is not a dependency yet and `Plugin` carries no
-`requirements()`.*
+*Planned — no axis trait declares anything yet; the CLI orders calculators by a
+hardcoded `derived_from` table.*
 
 Not every combination of plugins is valid, and detecting that must not rely on a
 hardcoded list of concrete type pairs, which would be blind to third-party
-implementations.
+implementations. The dependencies that already exist or are foreseeable run
+between every pair of axes and in both directions:
+
+- a calculator reads another calculator's metric (Points on wins/draws/losses,
+  Buchholz on Points and Matches);
+- a calculator reads match annotations only some formats write (round of
+  elimination on `Eliminates`);
+- a criterion sorts by a metric some calculator must produce;
+- a calculator needs matches of a certain structure (goal difference needs
+  goals, provided by a future match plugin axis);
+- a format needs something of the ranker (Swiss pairs by rank) and a ranker of
+  the format (ranking by elimination round needs an elimination format);
+- a format needs something of the phase's input (monster DYP forms teams per
+  match from rankings of single players, so it cannot follow a DYP draw that
+  already made each ranking a pair).
+
+A phase is a loop — the format schedules, results arrive, calculators update,
+the ranker ranks, the format schedules again from those ranks — so there is no
+pipeline direction these could be sorted into. Two concerns are kept apart:
+whether a set of plugins fits together (*compatibility*), and in which order
+plugins called one after another within a single pass must run (*execution
+order*).
 
 ### Decision
 
-Marker traits registered with `intertrait`, one mechanism for both plain yes/no
-compatibility and compatibility that needs extra behavior — "does this implement
-`XYZ`" is already a yes/no answer, and giving `XYZ` methods adds richer behavior
-for free.
-
-**Providing** a capability is structural, not self-reported: a type provides
-`XYZ` by implementing it and registering the cast with `#[cast_to(XYZ)]`. There
-is no `capabilities()` list that can drift from what the type actually does.
-
-**Requiring** a capability is a type-erased predicate, so the central check never
-names a concrete axis or marker trait:
+**Compatibility is checked on typed facts.** A fact is any `'static` type
+describing something true of a phase, identified by its `TypeId` like a metric.
+Every axis trait gets
 
 ```rust
-pub struct Requirement {
-    label: &'static str,                // for error messages
-    satisfied_by: fn(&dyn Any) -> bool,
-}
+fn declare(&self, declaration: &mut Declaration);
 
-impl Requirement {
-    pub fn implements<T: ?Sized + 'static>(label: &'static str) -> Self {
-        Self { label, satisfied_by: |any| any.cast::<T>().is_some() }
-    }
+impl Declaration {
+    pub fn provides<F: Fact>(&mut self, fact: F) -> &mut Self;
+    pub fn requires<F: Fact>(&mut self) -> &mut Self;          // present at all
+    pub fn requires_that<F: Fact>(&mut self, what: &'static str,
+                                  holds: fn(&F) -> bool) -> &mut Self;
 }
 ```
 
-Every axis trait gains `as_any()` and `requirements() -> Vec<Requirement>`, so
-one check can walk all configured plugins homogeneously and verify every
-requirement is satisfied by some other plugin.
+Facts are provided by the phase's plugins and by its context: the competition,
+or the output the previous phase's format declares, e.g. `EntrantsPerRanking(1)`.
+A fact a plugin of the phase provides replaces the same fact of the context. The
+check collects all provided facts into a type-keyed map built only for the
+check (never stored or serialized) and evaluates every requirement against it.
+It is flat: any plugin may require a fact of any other plugin or of the context,
+and mutual requirements are fine, because a requirement states what must be true
+of the phase, not what must have run first.
 
-Known caveat before implementing: `intertrait`'s registry is keyed by concrete
-`TypeId`, so `#[cast_to]` cannot register a generic impl for all its
-instantiations. Marker traits must be implemented on concrete types.
+The vocabulary is open. Core defines facts about concepts it owns
+(`MetricOf<M>`, `MatchAnnotation<A>`, `EntrantsPerRanking`, ...); the crate
+that owns a concept defines facts about it (a match plugin crate defines
+`MatchDetail<Goals>`, which a goal-difference calculator in another crate
+requires). Incompatibilities are unmet conditions on facts — monster DYP
+`requires_that::<EntrantsPerRanking>("rankings of single players", ..)` —
+never pairs of concrete types. A fact carries a value, so a requirement can ask
+*how* as well as *whether*, and a fact holding a `fn` or a `Box<dyn Trait>`
+carries behavior where a plugin needs some from another.
+
+A fact provided twice within a phase is an error, which gives the disjointness
+of calculators' metrics for free.
+
+**Declarations are derived structurally where possible.** `MetricOf<M>` is
+provided from `default_metric_value()`, and a criterion's requirement is recorded
+from its call to `RankingOrder::by_metric::<M>()`, so neither can drift from
+what the plugin does. Everything else is self-reported in `declare`. That is the
+trade-off accepted here: facts like "rankings are pairs" are not something the
+compiler can derive, and none of the alternatives can express conditions on
+values. Test helpers that build a phase from a plugin plus only the facts it
+declares catch reads it did not declare.
+
+**Execution order is fixed by the engine, except among calculators.** On a
+reported result the engine runs the calculators, then the ranker, and the format
+schedules next; scheduled matches and their annotations exist before any of
+their results. So the ranker always sees current metrics, the format current
+ranks, and calculators every annotation; none of these needs ordering. The only
+place plugins run one after another within a pass and read what an earlier one
+wrote in that same pass is the calculator list, so only it is sorted: a
+calculator requiring `MetricOf<M>` runs after the one providing it, ties keep
+the configured order (deterministic, so replay is unaffected), and a cycle is an
+error. Should a future axis also become a list of plugins building on each
+other within a pass, the same rule applies to it.
+
+**Both run once per phase.** Validation and sorting happen when the phase is
+configured (`AddPhase::check_applicable`, or the constructor of a validated
+plugin set the transition takes), with facts only known at start, such as the
+number of entrants, checked the same way at `StartCompetition`. The
+result-reporting path loops over an already sorted list and pays nothing.
 
 ### Alternatives
 
-- **Closed `Capability` enum owned by core.** Cheap `HashSet` checks, but the
-  vocabulary is closed to core, and `capabilities()` is a hand-maintained list
-  that can drift from the actual impls. Rejected.
+- **Marker traits registered with `intertrait`** (the previous plan). Providing
+  is structural, but it answers only "does some plugin implement `XYZ`": it
+  cannot state conditions on values ("rankings are single players"), needs a
+  link-time registry, and cannot register generic impls. A fact holding a trait
+  object covers the behavioral case without it. Superseded.
+- **Closed `Capability` enum owned by core.** Cheap checks, but the vocabulary is
+  closed to core. Rejected.
 - **Hardcoded match over concrete type pairs.** Invisible to third-party types.
   Rejected.
-- **`Any` + downcast to a concrete type.** Cannot generically ask "does this
-  implement `XYZ`" without already knowing every concrete type that might.
-  Rejected as insufficient alone.
+- **Fixed stages with requirements only on earlier stages** (match plugin →
+  calculators → ranker → format). Ties compatibility to execution order, which a
+  phase does not have between axes: the format needs the ranker and the ranker
+  the format. Rejected.
+- **Calculators in the order configured, unchecked** (the current state).
+  Pushes a hidden ordering contract onto every consumer, e.g. the CLI's
+  `derived_from` table. Superseded.
+- **The engine adding missing producers itself.** It cannot know their
+  configuration (points per win, ...). Rejected; a consumer can map the missing
+  facts the check reports to plugins it knows how to build.
 - **Optional accessor on the base trait** (`fn as_xyz(&self) -> Option<&dyn
-  XYZ>`). The base trait must be edited per marker trait, so only core can add
-  optional interfaces. Rejected as the general mechanism; still fine as a local
-  pattern.
+  XYZ>`). Only core can add such accessors. Rejected as the general mechanism;
+  still fine as a local pattern.
 
 ## Metrics: plugin-produced ranking data
 
@@ -223,8 +285,11 @@ pub trait MetricsCalculator: Plugin {
 `default_metric_value()` both seeds every ranking at phase start and declares
 which metric type this calculator owns, so disjointness is checkable without
 running any computation. `old_metrics` lets a calculator that depends on another
-calculator's output (e.g. Buchholz on points) read the pre-update values,
-making the order calculators run in irrelevant to the result.
+calculator's output (e.g. Buchholz on points) read the pre-update values of the
+calculators that ran before it, while `PhaseData` holds their new ones. Both are
+only complete if those calculators did run before it, so calculator order does
+matter; it is derived from their declared dependencies, see
+[Compatibility between plugins](#compatibility-between-plugins).
 
 **Ranking comparison stays typed.** A `Ranker` orders rankings; the implemented
 one, `HierarchicalRanker`, applies a list of `SliceRanker`s, each resolving ties
@@ -233,11 +298,10 @@ per metric up front via `MetricGetter`/`MetricColumn`, so a comparison indexes
 into values already known to be of that metric's type instead of downcasting per
 comparison — this runs on every reported result, so it is worth resolving once.
 
-*Planned:* validate in `AddPhase::check_applicable` that the active calculators'
-metric types are pairwise disjoint, and that metrics required by other plugins
-are present. Both are declared-set checks run once per phase, not per
-recalculation. `AddPhase` currently only checks that the competition has not
-started.
+*Planned:* the active calculators' metric types being pairwise disjoint, and
+metrics required by other plugins being present, are checked as facts once per
+phase, see [Compatibility between plugins](#compatibility-between-plugins).
+`AddPhase` currently only checks that the competition has not started.
 
 ### Alternatives
 
@@ -246,10 +310,10 @@ started.
   of this design). Gave core one fixed comparison per ranking type; the
   `SliceRanker` chain gives composable tiebreaking instead, and `TypeMap` already
   supplies typed access. Superseded.
-- **Metrics as marker traits checked via `Requirement`.** That mechanism answers
-  "does this instance implement behavior X", not "what data did calculating for
-  this ranking produce", and offers no way to express disjointness. Rejected as a
-  different concern.
+- **Metrics as marker traits.** A marker trait answers "does this instance
+  implement behavior X", not "what data did calculating for this ranking
+  produce", and offers no way to express disjointness. Rejected as a different
+  concern.
 - **Runtime-discovered produced metrics** (inspect what `calculate` returned).
   Would require running calculation just to validate configuration. Rejected in
   favor of the static declaration.
@@ -686,6 +750,5 @@ consumer, because finding the entry means knowing the shape of the log.
   hasher for small `Copy` id keys.
 - `uuid` (v5) for content-derived ids; `rand` and `rand_seeder` for seeded,
   reproducible shuffling; `vec1` for non-empty collections.
-- *Planned:* `intertrait` for the compatibility mechanism.
-- No `enum_dispatch`, `linkme` or `ambassador`: each was only needed for an
-  alternative ruled out above.
+- No `enum_dispatch`, `linkme`, `ambassador` or `intertrait`: each was only
+  needed for an alternative ruled out above.
