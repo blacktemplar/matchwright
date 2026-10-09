@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, fmt::Debug, num::NonZeroU32};
 
+use dyn_clone::DynClone;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -9,12 +10,12 @@ use crate::{
     type_map::{TypeMap, TypeMapValue},
 };
 
+/// Ranks the rankings of a phase.
+///
+/// A ranker made of other parts has to include what they [declare](Plugin::declare) in its own
+/// declaration.
 #[typetag::serde(tag = "type", content = "value")]
 pub trait Ranker: Plugin {
-    /// Declares what this ranker provides to and requires of its phase, including what the parts
-    /// it is made of declare, see [`Declaration`].
-    fn declare(&self, declaration: &mut Declaration);
-
     /// The new rank of every ranking of `phase_data`.
     ///
     /// The ranks must satisfy the following invariant: ordered by rank, the first ranking has rank
@@ -31,10 +32,6 @@ impl Clone for Box<dyn Ranker> {
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait SliceRanker: Plugin {
-    /// Declares what this slice ranker provides to and requires of its phase, see
-    /// [`Declaration`].
-    fn declare(&self, declaration: &mut Declaration);
-
     /// Assigns new ranks to the given slice and reorders them according to the new ranks.
     fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
 }
@@ -54,10 +51,12 @@ impl HierarchicalRanker {
     }
 }
 
+impl Plugin for HierarchicalRanker {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl Ranker for HierarchicalRanker {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase_data
             .ranking_ids_ordered_by_unique_rank()
@@ -151,7 +150,7 @@ impl<'a, 'b> RankingOrder<'a, 'b> {
 ///
 /// The order an implementation states can be read back with [`compare_by`].
 #[typetag::serde(tag = "type", content = "value")]
-pub trait RankingCriterion: Plugin {
+pub trait RankingCriterion: Debug + DynClone {
     /// States the order this criterion sorts the rankings in, by calling exactly one method of
     /// `order`.
     fn order_rankings(&self, order: RankingOrder<'_, '_>);
@@ -308,10 +307,12 @@ impl LexicographicalCriteria {
     }
 }
 
+impl Plugin for LexicographicalCriteria {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl SliceRanker for LexicographicalCriteria {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         if self.0.is_empty() || slice.len() < 2 {
             // this becomes basically a no-op

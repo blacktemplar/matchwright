@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     entities::competition::{PhaseData, Team},
     plugins::{
+        Plugin,
         compatibility::Declaration,
         metrics_calculator::round_of_elimination::Eliminates,
         phase_format::{
@@ -105,10 +106,12 @@ pub enum DoubleEliminationRound {
 #[typetag::serde(name = "tournament_engine::double_elimination_round")]
 impl TypeMapValue for DoubleEliminationRound {}
 
+impl Plugin for DoubleElimination {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl PhaseFormat for DoubleElimination {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let reset = self.grand_final_reset;
         self.bracket

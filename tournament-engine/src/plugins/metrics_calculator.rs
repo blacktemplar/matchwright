@@ -3,7 +3,7 @@ use std::any::TypeId;
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugins::{Plugin, compatibility::Declaration},
+    plugins::Plugin,
     type_map::TypeMapValue,
 };
 
@@ -21,27 +21,15 @@ pub type MetricId = TypeId;
 
 pub type Metric = Box<dyn TypeMapValue>;
 
-/// A metric plugins can require, see [`Declaration::requires_metric`].
-pub trait CalculatedMetric: TypeMapValue {
-    /// The calculator added to a phase that requires this metric but configures no calculator for
-    /// it, or [`None`] if no single calculator fits every phase, so that it has to be configured.
-    ///
-    /// The returned calculator must calculate this metric.
-    fn default_calculator() -> Option<Box<dyn MetricsCalculator>> {
-        None
-    }
-}
-
+/// Calculates one metric of every ranking of a phase.
+///
+/// A calculator has to [declare](Plugin::declare) that it provides its metric, as a fact of the
+/// metric's type, and that it requires every fact it reads, in particular the metrics of other
+/// calculators. It runs after the calculators providing the facts it requires.
 #[typetag::serde(tag = "type", content = "value")]
 pub trait MetricsCalculator: Plugin {
-    /// Declares what this calculator requires of its phase, in particular every metric besides its
-    /// own that it reads, see [`Declaration`]. A calculator runs after the calculators of the
-    /// metrics it requires.
-    ///
-    /// The metric this calculator calculates is declared by [`Self::default_metric_value`].
-    fn declare(&self, declaration: &mut Declaration);
-
-    /// The value every ranking of a phase starts out with.
+    /// The value every ranking of a phase starts out with, whose type is the metric this
+    /// calculator calculates.
     fn default_metric_value(&self) -> Metric;
 
     /// The new values of all rankings whose metric the reported result of `match` changed, where

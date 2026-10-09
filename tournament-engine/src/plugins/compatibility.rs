@@ -7,11 +7,7 @@ use thiserror::Error;
 
 use crate::{
     map::Map,
-    plugins::{
-        metrics_calculator::{CalculatedMetric, MetricId, MetricsCalculator},
-        phase_format::PhaseFormat,
-        ranker::Ranker,
-    },
+    plugins::{PhasePlugins, Plugin},
 };
 
 /// Something true of a phase, which the plugins of the phase and its context provide and require,
@@ -23,20 +19,25 @@ pub trait Fact: Any + Debug {}
 
 impl<T: Any + Debug> Fact for T {}
 
-/// What a plugin provides to and requires of the phase it is part of, filled in by the `declare`
-/// method of its axis trait.
-///
-/// A declaration has to depend on the plugin's configuration alone, since it is made before the
-/// phase exists.
+/// A fact that a plugin can be added for to a phase that requires it but has nothing providing it,
+/// see [`Declaration::requires_with_default`].
+pub trait DefaultProvider: Fact {
+    /// Adds a plugin providing this fact to `plugins`. Adds nothing if no single plugin fits every
+    /// phase, so that one has to be configured.
+    fn add_default_provider(plugins: &mut PhasePlugins) {
+        let _ = plugins;
+    }
+}
+
+/// What a plugin provides to and requires of the phase it is part of, filled in by
+/// [`Plugin::declare`].
 pub struct Declaration {
     provided: Vec<ProvidedFact>,
     required: Vec<RequiredFact>,
-    required_metrics: Vec<RequiredMetric>,
 }
 
 struct ProvidedFact {
     type_id: TypeId,
-    name: &'static str,
     value: Box<dyn Fact>,
 }
 
@@ -44,7 +45,11 @@ struct RequiredFact {
     type_id: TypeId,
     name: &'static str,
     condition: Option<Condition>,
+    add_default_provider: Option<AddDefaultProvider>,
 }
+
+/// See [`DefaultProvider::add_default_provider`].
+type AddDefaultProvider = fn(&mut PhasePlugins);
 
 struct Condition {
     description: &'static str,
@@ -54,18 +59,11 @@ struct Condition {
 /// A condition on a fact, given the fact as [`Any`].
 type Holds = Box<dyn Fn(&dyn Any) -> bool>;
 
-struct RequiredMetric {
-    id: MetricId,
-    name: &'static str,
-    default_calculator: fn() -> Option<Box<dyn MetricsCalculator>>,
-}
-
 impl Declaration {
     pub(crate) fn new() -> Self {
         Self {
             provided: Vec::new(),
             required: Vec::new(),
-            required_metrics: Vec::new(),
         }
     }
 
@@ -76,6 +74,11 @@ impl Declaration {
         declaration
     }
 
+    /// Whether this declaration provides a fact of the type `type_id`.
+    pub(crate) fn provides_type(&self, type_id: TypeId) -> bool {
+        self.provided.iter().any(|fact| fact.type_id == type_id)
+    }
+
     /// Declares that `fact` holds for the phase.
     ///
     /// No two plugins of a phase may provide the same fact. A fact of the phase's context is
@@ -83,7 +86,6 @@ impl Declaration {
     pub fn provides<F: Fact>(&mut self, fact: F) -> &mut Self {
         self.provided.push(ProvidedFact {
             type_id: TypeId::of::<F>(),
-            name: type_name::<F>(),
             value: Box::new(fact),
         });
         self
@@ -91,12 +93,7 @@ impl Declaration {
 
     /// Declares that the phase must have a fact of type `F`, whatever its value.
     pub fn requires<F: Fact>(&mut self) -> &mut Self {
-        self.required.push(RequiredFact {
-            type_id: TypeId::of::<F>(),
-            name: type_name::<F>(),
-            condition: None,
-        });
-        self
+        self.require::<F>(None, None)
     }
 
     /// Declares that the phase must have a fact of type `F` for which `holds` is true, where
@@ -107,29 +104,32 @@ impl Declaration {
         condition: &'static str,
         holds: fn(&F) -> bool,
     ) -> &mut Self {
+        let condition = Condition {
+            description: condition,
+            holds: Box::new(move |fact| {
+                holds(fact.downcast_ref().expect("facts are keyed by their type"))
+            }),
+        };
+        self.require::<F>(Some(condition), None)
+    }
+
+    /// Declares that the phase must have a fact of type `F`, like [`Self::requires`], and that the
+    /// [default provider](DefaultProvider::add_default_provider) of `F` is added to a phase that
+    /// has nothing providing it.
+    pub fn requires_with_default<F: DefaultProvider>(&mut self) -> &mut Self {
+        self.require::<F>(None, Some(F::add_default_provider))
+    }
+
+    fn require<F: Fact>(
+        &mut self,
+        condition: Option<Condition>,
+        add_default_provider: Option<AddDefaultProvider>,
+    ) -> &mut Self {
         self.required.push(RequiredFact {
             type_id: TypeId::of::<F>(),
             name: type_name::<F>(),
-            condition: Some(Condition {
-                description: condition,
-                holds: Box::new(move |fact| {
-                    holds(fact.downcast_ref().expect("facts are keyed by their type"))
-                }),
-            }),
-        });
-        self
-    }
-
-    /// Declares that the phase must calculate metric `M`.
-    ///
-    /// A metrics calculator that requires a metric runs after the calculator of that metric. If
-    /// the phase configures no calculator for `M`, the
-    /// [default calculator](CalculatedMetric::default_calculator) of `M` is added.
-    pub fn requires_metric<M: CalculatedMetric>(&mut self) -> &mut Self {
-        self.required_metrics.push(RequiredMetric {
-            id: TypeId::of::<M>(),
-            name: type_name::<M>(),
-            default_calculator: M::default_calculator,
+            condition,
+            add_default_provider,
         });
         self
     }
@@ -138,23 +138,9 @@ impl Declaration {
 /// Why plugins cannot be combined into one phase.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum Incompatibility {
-    #[error("{first} and {second} calculate the same metric")]
-    MetricCalculatedTwice { first: String, second: String },
-    #[error(
-        "{required_by} requires the metric {metric}, which no calculator of the phase calculates \
-         and which has no default calculator"
-    )]
-    MetricNotCalculated {
-        metric: &'static str,
-        required_by: String,
-    },
-    #[error("the metrics calculators {calculators:?} require each other's metrics in a cycle")]
-    CyclicMetricRequirements { calculators: Vec<String> },
-    #[error("{calculator} runs before the calculator of a metric it requires")]
-    MetricsCalculatorsOutOfOrder { calculator: String },
     #[error("{first} and {second} both provide {fact}")]
     FactProvidedTwice {
-        fact: &'static str,
+        fact: String,
         first: String,
         second: String,
     },
@@ -169,150 +155,82 @@ pub enum Incompatibility {
         required_by: String,
         provided: String,
     },
+    #[error("{plugins:?} require facts of each other in a cycle")]
+    CyclicRequirements { plugins: Vec<String> },
+    #[error("{plugin} runs before a plugin providing a fact it requires")]
+    OutOfOrder { plugin: String },
 }
 
-/// The metric `calculator` calculates.
-fn metric_of(calculator: &dyn MetricsCalculator) -> MetricId {
-    (&*calculator.default_metric_value() as &dyn Any).type_id()
+/// The declaration of `plugin`, together with its name.
+pub(crate) fn declaration_of(plugin: &dyn Plugin) -> (String, Declaration) {
+    (
+        format!("{plugin:?}"),
+        Declaration::of(|declaration| plugin.declare(declaration)),
+    )
 }
 
-/// The metrics calculators of a phase with format `phase_format` and ranker `ranker`, given that
-/// `calculators` are the ones configured, put into an order in which every calculator runs after
-/// the calculators of the metrics it requires, keeping the configured order otherwise.
-///
-/// With `add_defaults` the default calculator of every required metric no calculator calculates is
-/// added, otherwise such a metric is an error, and so are configured calculators that are not
-/// already ordered.
-pub(crate) fn resolve_metrics_calculators(
-    phase_format: &dyn PhaseFormat,
-    ranker: &dyn Ranker,
-    mut calculators: Vec<Box<dyn MetricsCalculator>>,
-    add_defaults: bool,
-) -> Result<Vec<Box<dyn MetricsCalculator>>, Incompatibility> {
-    let mut calculated: Map<MetricId, usize> = Map::default();
-    for (index, calculator) in calculators.iter().enumerate() {
-        if let Some(&first) = calculated.get(&metric_of(&**calculator)) {
-            return Err(Incompatibility::MetricCalculatedTwice {
-                first: format!("{:?}", calculators[first]),
-                second: format!("{calculator:?}"),
-            });
-        }
-        calculated.insert(metric_of(&**calculator), index);
-    }
-
-    // the metrics required, together with who requires them, that are not yet known to be
-    // calculated
-    let mut unresolved: Vec<(String, RequiredMetric)> = [
-        (
-            format!("{phase_format:?}"),
-            Declaration::of(|declaration| phase_format.declare(declaration)),
-        ),
-        (
-            format!("{ranker:?}"),
-            Declaration::of(|declaration| ranker.declare(declaration)),
-        ),
-    ]
-    .into_iter()
-    .flat_map(|(required_by, declaration)| {
-        declaration
-            .required_metrics
-            .into_iter()
-            .map(move |metric| (required_by.clone(), metric))
-    })
-    .collect();
-    // the metrics each calculator requires, by the index of the calculator; grows with
-    // `calculators`, which grows by the defaults added, which may require metrics themselves
-    let mut required_by_calculator: Vec<Vec<MetricId>> = Vec::new();
-    loop {
-        for (required_by, metric) in unresolved.drain(..) {
-            if calculated.contains_key(&metric.id) {
-                continue;
-            }
-            let default = add_defaults
-                .then(metric.default_calculator)
-                .flatten()
-                .ok_or(Incompatibility::MetricNotCalculated {
-                    metric: metric.name,
-                    required_by,
-                })?;
-            assert_eq!(
-                metric_of(&*default),
-                metric.id,
-                "the default calculator of {} must calculate it",
-                metric.name
-            );
-            calculated.insert(metric.id, calculators.len());
-            calculators.push(default);
-        }
-        let Some(calculator) = calculators.get(required_by_calculator.len()) else {
-            break;
-        };
-        let declaration = Declaration::of(|declaration| calculator.declare(declaration));
-        required_by_calculator.push(
-            declaration
-                .required_metrics
+/// The facts required in `declarations` that none of them provides and that have a default
+/// provider, as their type and the function adding their default provider.
+pub(crate) fn unprovided_with_default(
+    declarations: &[(String, Declaration)],
+) -> impl Iterator<Item = (TypeId, AddDefaultProvider)> {
+    declarations
+        .iter()
+        .flat_map(|(_, declaration)| &declaration.required)
+        .filter(|requirement| {
+            !declarations
                 .iter()
-                .map(|metric| metric.id)
-                .collect(),
-        );
-        let required_by = format!("{calculator:?}");
-        unresolved.extend(
-            declaration
-                .required_metrics
-                .into_iter()
-                .map(|metric| (required_by.clone(), metric)),
-        );
-    }
+                .any(|(_, declaration)| declaration.provides_type(requirement.type_id))
+        })
+        .filter_map(|requirement| Some((requirement.type_id, requirement.add_default_provider?)))
+}
 
-    // every required metric is calculated by now, so it maps to the index of its calculator
-    let dependencies: Vec<Vec<usize>> = required_by_calculator
+/// An order in which plugins with `declarations` can run one after another, so that each runs
+/// after the plugins providing the facts it requires, given as indices into `declarations`.
+/// Plugins keep their given order wherever the requirements allow it, so an order that is
+/// already valid stays as it is.
+///
+/// A plugin may require a fact it provides itself.
+///
+/// # Errors
+/// Returns an error if plugins require facts of each other in a cycle.
+pub(crate) fn order(declarations: &[(String, Declaration)]) -> Result<Vec<usize>, Incompatibility> {
+    let dependencies: Vec<Vec<usize>> = declarations
         .iter()
         .enumerate()
-        .map(|(index, metrics)| {
-            metrics
-                .iter()
-                .map(|metric| calculated[metric])
-                // a calculator reading its own metric reads the value it calculated before
-                .filter(|&dependency| dependency != index)
+        .map(|(index, (_, declaration))| {
+            (0..declarations.len())
+                .filter(|&other| {
+                    other != index
+                        && declaration.required.iter().any(|requirement| {
+                            declarations[other].1.provides_type(requirement.type_id)
+                        })
+                })
                 .collect()
         })
         .collect();
-    // a topological sort that always takes the first calculator in configured order whose
-    // dependencies all run before it, so that an order that is already valid stays as it is
-    let mut placed = vec![false; calculators.len()];
-    let mut order = Vec::with_capacity(calculators.len());
-    while order.len() < calculators.len() {
-        let Some(next) = (0..calculators.len()).find(|&index| {
+    // a topological sort that always takes the first plugin in the given order whose dependencies
+    // all run before it
+    let mut placed = vec![false; declarations.len()];
+    let mut order = Vec::with_capacity(declarations.len());
+    while order.len() < declarations.len() {
+        let Some(next) = (0..declarations.len()).find(|&index| {
             !placed[index]
                 && dependencies[index]
                     .iter()
                     .all(|&dependency| placed[dependency])
         }) else {
-            return Err(Incompatibility::CyclicMetricRequirements {
-                calculators: (0..calculators.len())
+            return Err(Incompatibility::CyclicRequirements {
+                plugins: (0..declarations.len())
                     .filter(|&index| !placed[index])
-                    .map(|index| format!("{:?}", calculators[index]))
+                    .map(|index| declarations[index].0.clone())
                     .collect(),
             });
         };
-        if !add_defaults && next != order.len() {
-            return Err(Incompatibility::MetricsCalculatorsOutOfOrder {
-                calculator: format!("{:?}", calculators[order.len()]),
-            });
-        }
         placed[next] = true;
         order.push(next);
     }
-
-    let mut calculators: Vec<_> = calculators.into_iter().map(Some).collect();
-    Ok(order
-        .into_iter()
-        .map(|index| {
-            calculators[index]
-                .take()
-                .expect("an order holds every index once")
-        })
-        .collect())
+    Ok(order)
 }
 
 /// Checks that every fact required in `declarations` is provided by another one of them or by
@@ -331,7 +249,7 @@ pub(crate) fn check_facts(
         for fact in &declaration.provided {
             if let Some((Some(first), _)) = facts.get(&fact.type_id) {
                 return Err(Incompatibility::FactProvidedTwice {
-                    fact: fact.name,
+                    fact: format!("{:?}", fact.value),
                     first: (*first).to_owned(),
                     second: provider.clone(),
                 });
@@ -372,7 +290,8 @@ mod tests {
     use crate::{
         entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
         plugins::{
-            metrics_calculator::Metric, phase_format::round_robin::RoundRobin,
+            metrics_calculator::{Metric, MetricsCalculator},
+            phase_format::round_robin::RoundRobin,
             ranker::HierarchicalRanker,
         },
         type_map::TypeMapValue,
@@ -385,9 +304,9 @@ mod tests {
     #[typetag::serde(name = "tournament_engine::compatibility::tests::base")]
     impl TypeMapValue for Base {}
 
-    impl CalculatedMetric for Base {
-        fn default_calculator() -> Option<Box<dyn MetricsCalculator>> {
-            Some(Box::new(Calculator::new(Name::Base, &[])))
+    impl DefaultProvider for Base {
+        fn add_default_provider(plugins: &mut PhasePlugins) {
+            plugins.add_metrics_calculator(Box::new(Calculator::new(Name::Base, &[])));
         }
     }
 
@@ -398,9 +317,9 @@ mod tests {
     #[typetag::serde(name = "tournament_engine::compatibility::tests::derived")]
     impl TypeMapValue for Derived {}
 
-    impl CalculatedMetric for Derived {
-        fn default_calculator() -> Option<Box<dyn MetricsCalculator>> {
-            Some(Box::new(Calculator::new(Name::Derived, &[Name::Base])))
+    impl DefaultProvider for Derived {
+        fn add_default_provider(plugins: &mut PhasePlugins) {
+            plugins.add_metrics_calculator(Box::new(Calculator::new(Name::Derived, &[Name::Base])));
         }
     }
 
@@ -411,7 +330,7 @@ mod tests {
     #[typetag::serde(name = "tournament_engine::compatibility::tests::configured")]
     impl TypeMapValue for Configured {}
 
-    impl CalculatedMetric for Configured {}
+    impl DefaultProvider for Configured {}
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     enum Name {
@@ -437,18 +356,25 @@ mod tests {
         }
     }
 
-    #[typetag::serde(name = "tournament_engine::compatibility::tests::calculator")]
-    impl MetricsCalculator for Calculator {
+    impl Plugin for Calculator {
         fn declare(&self, declaration: &mut Declaration) {
+            match self.calculates {
+                Name::Base => declaration.provides(Base),
+                Name::Derived => declaration.provides(Derived),
+                Name::Configured => declaration.provides(Configured),
+            };
             for name in &self.requires {
                 match name {
-                    Name::Base => declaration.requires_metric::<Base>(),
-                    Name::Derived => declaration.requires_metric::<Derived>(),
-                    Name::Configured => declaration.requires_metric::<Configured>(),
+                    Name::Base => declaration.requires_with_default::<Base>(),
+                    Name::Derived => declaration.requires_with_default::<Derived>(),
+                    Name::Configured => declaration.requires_with_default::<Configured>(),
                 };
             }
         }
+    }
 
+    #[typetag::serde(name = "tournament_engine::compatibility::tests::calculator")]
+    impl MetricsCalculator for Calculator {
         fn default_metric_value(&self) -> Metric {
             match self.calculates {
                 Name::Base => Box::new(Base),
@@ -477,34 +403,42 @@ mod tests {
         }
     }
 
-    /// The resolved `calculators` of a phase whose other plugins require nothing, each given by its
-    /// [`Debug`] form, since a boxed calculator cannot be downcast.
-    fn resolve(
-        calculators: &[Calculator],
-        add_defaults: bool,
-    ) -> Result<Vec<String>, Incompatibility> {
-        let calculators = calculators
-            .iter()
-            .map(|calculator| Box::new(calculator.clone()) as Box<dyn MetricsCalculator>)
-            .collect();
-        let resolved = resolve_metrics_calculators(
-            &RoundRobin,
-            &HierarchicalRanker::new(Vec::new()),
-            calculators,
-            add_defaults,
-        )?;
-        Ok(resolved
-            .iter()
-            .map(|calculator| format!("{calculator:?}"))
-            .collect())
+    /// The plugins of a phase whose format and ranker provide and require nothing, with
+    /// `calculators` configured.
+    fn plugins(calculators: &[Calculator]) -> PhasePlugins {
+        PhasePlugins::new(
+            Box::new(RoundRobin),
+            Box::new(HierarchicalRanker::new(Vec::new())),
+            calculators
+                .iter()
+                .map(|calculator| Box::new(calculator.clone()) as Box<dyn MetricsCalculator>)
+                .collect(),
+        )
     }
 
-    /// The [`Debug`] forms of `calculators`, to compare with what [`resolve`] returns.
-    fn debug(calculators: &[Calculator]) -> Vec<String> {
+    /// The [`Debug`] forms of the metrics calculators of `plugins`, since a boxed calculator
+    /// cannot be downcast.
+    fn names_of_calculators(plugins: &PhasePlugins) -> Vec<String> {
+        plugins
+            .metrics_calculators()
+            .iter()
+            .map(|calculator| format!("{calculator:?}"))
+            .collect()
+    }
+
+    /// The [`Debug`] forms of `calculators`.
+    fn names(calculators: &[Calculator]) -> Vec<String> {
         calculators
             .iter()
             .map(|calculator| format!("{calculator:?}"))
             .collect()
+    }
+
+    /// The metrics calculators the plugins with `calculators` configured resolve to.
+    fn resolve(calculators: &[Calculator]) -> Result<Vec<String>, Incompatibility> {
+        let mut plugins = plugins(calculators);
+        plugins.resolve()?;
+        Ok(names_of_calculators(&plugins))
     }
 
     #[test]
@@ -514,7 +448,7 @@ mod tests {
             Calculator::new(Name::Base, &[]),
         ];
 
-        assert_eq!(resolve(&calculators, true), Ok(debug(&calculators)));
+        assert_eq!(resolve(&calculators), Ok(names(&calculators)));
     }
 
     #[test]
@@ -523,8 +457,8 @@ mod tests {
         let base = Calculator::new(Name::Base, &[]);
 
         assert_eq!(
-            resolve(&[derived.clone(), base.clone()], true),
-            Ok(debug(&[base, derived]))
+            resolve(&[derived.clone(), base.clone()]),
+            Ok(names(&[base, derived]))
         );
     }
 
@@ -533,8 +467,8 @@ mod tests {
         let configured = Calculator::new(Name::Configured, &[Name::Derived]);
 
         assert_eq!(
-            resolve(slice::from_ref(&configured), true),
-            Ok(debug(&[
+            resolve(slice::from_ref(&configured)),
+            Ok(names(&[
                 Calculator::new(Name::Base, &[]),
                 Calculator::new(Name::Derived, &[Name::Base]),
                 configured,
@@ -549,34 +483,27 @@ mod tests {
         let configured = Calculator::new(Name::Configured, &[Name::Derived]);
 
         assert_eq!(
-            resolve(&[configured.clone(), derived.clone()], true),
-            Ok(debug(&[derived, configured]))
+            resolve(&[configured.clone(), derived.clone()]),
+            Ok(names(&[derived, configured]))
         );
     }
 
     #[test]
-    fn a_required_metric_without_calculator_and_default_is_an_error() {
+    fn a_required_metric_without_default_is_left_unprovided() {
         let base = Calculator::new(Name::Base, &[Name::Configured]);
 
+        let mut plugins = plugins(slice::from_ref(&base));
+        plugins.resolve().unwrap();
+
         assert_eq!(
-            resolve(slice::from_ref(&base), true),
-            Err(Incompatibility::MetricNotCalculated {
-                metric: type_name::<Configured>(),
-                required_by: format!("{base:?}"),
-            })
+            names_of_calculators(&plugins),
+            names(slice::from_ref(&base))
         );
-    }
-
-    #[test]
-    fn two_calculators_of_the_same_metric_are_an_error() {
-        let first = Calculator::new(Name::Base, &[]);
-        let second = Calculator::new(Name::Base, &[Name::Derived]);
-
         assert_eq!(
-            resolve(&[first.clone(), second.clone()], true),
-            Err(Incompatibility::MetricCalculatedTwice {
-                first: format!("{first:?}"),
-                second: format!("{second:?}"),
+            check_facts(Declaration::new(), &plugins.declarations()),
+            Err(Incompatibility::FactNotProvided {
+                fact: type_name::<Configured>(),
+                required_by: format!("{base:?}"),
             })
         );
     }
@@ -587,9 +514,9 @@ mod tests {
         let derived = Calculator::new(Name::Derived, &[Name::Base]);
 
         assert_eq!(
-            resolve(&[base.clone(), derived.clone()], true),
-            Err(Incompatibility::CyclicMetricRequirements {
-                calculators: vec![format!("{base:?}"), format!("{derived:?}")],
+            resolve(&[base.clone(), derived.clone()]),
+            Err(Incompatibility::CyclicRequirements {
+                plugins: names(&[base, derived]),
             })
         );
     }
@@ -598,53 +525,53 @@ mod tests {
     fn a_calculator_may_require_its_own_metric() {
         let base = Calculator::new(Name::Base, &[Name::Base]);
 
-        assert_eq!(resolve(slice::from_ref(&base), true), Ok(debug(&[base])));
+        assert_eq!(resolve(slice::from_ref(&base)), Ok(names(&[base])));
     }
 
     #[test]
-    fn without_defaults_a_valid_order_is_accepted() {
-        let calculators = [
-            Calculator::new(Name::Base, &[]),
-            Calculator::new(Name::Derived, &[Name::Base]),
-        ];
+    fn a_resolved_order_passes_the_order_check() {
+        let mut plugins = plugins(&[Calculator::new(Name::Configured, &[Name::Derived])]);
+        plugins.resolve().unwrap();
 
-        assert_eq!(resolve(&calculators, false), Ok(debug(&calculators)));
+        assert_eq!(plugins.check_order(), Ok(()));
     }
 
     #[test]
-    fn without_defaults_a_missing_calculator_is_an_error() {
-        let derived = Calculator::new(Name::Derived, &[Name::Base]);
-
-        assert_eq!(
-            resolve(slice::from_ref(&derived), false),
-            Err(Incompatibility::MetricNotCalculated {
-                metric: type_name::<Base>(),
-                required_by: format!("{derived:?}"),
-            })
-        );
-    }
-
-    #[test]
-    fn without_defaults_an_unsorted_order_is_an_error() {
+    fn an_unsorted_order_fails_the_order_check() {
         let derived = Calculator::new(Name::Derived, &[Name::Base]);
         let base = Calculator::new(Name::Base, &[]);
 
         assert_eq!(
-            resolve(&[derived.clone(), base], false),
-            Err(Incompatibility::MetricsCalculatorsOutOfOrder {
-                calculator: format!("{derived:?}"),
+            plugins(&[derived.clone(), base]).check_order(),
+            Err(Incompatibility::OutOfOrder {
+                plugin: format!("{derived:?}"),
             })
         );
     }
 
-    #[derive(Debug, PartialEq, Eq)]
-    struct EntrantsPerRanking(u32);
-
     #[derive(Debug)]
     struct Annotated;
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct EntrantsPerRanking(u32);
+
     fn declared(name: &str, declare: impl FnOnce(&mut Declaration)) -> (String, Declaration) {
         (name.to_owned(), Declaration::of(declare))
+    }
+
+    #[test]
+    fn plugins_are_ordered_by_any_fact_they_require() {
+        let declarations = [
+            declared("requiring", |declaration| {
+                declaration.requires::<Annotated>();
+            }),
+            declared("independent", |_| {}),
+            declared("annotating", |declaration| {
+                declaration.provides(Annotated);
+            }),
+        ];
+
+        assert_eq!(order(&declarations), Ok(vec![1, 2, 0]));
     }
 
     #[test]
@@ -708,7 +635,7 @@ mod tests {
         assert_eq!(
             check_facts(Declaration::new(), &declarations),
             Err(Incompatibility::FactProvidedTwice {
-                fact: type_name::<Annotated>(),
+                fact: format!("{Annotated:?}"),
                 first: "format".to_owned(),
                 second: "ranker".to_owned(),
             })

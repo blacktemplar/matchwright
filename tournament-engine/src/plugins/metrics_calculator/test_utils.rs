@@ -10,6 +10,7 @@ use vec1::Vec1;
 use crate::{
     entities::competition::{Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
     plugins::{
+        Plugin,
         compatibility::Declaration,
         metrics_calculator::MetricsCalculator,
         phase_format::{PhaseFormat, Schedule},
@@ -29,10 +30,12 @@ pub(crate) type ByeSpec = (u32, usize);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FixedMatches(Vec<MatchSpec>, Vec<ByeSpec>);
 
+impl Plugin for FixedMatches {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl PhaseFormat for FixedMatches {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let all_matches: Vec<_> = self
             .0

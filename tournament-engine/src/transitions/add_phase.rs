@@ -5,7 +5,8 @@ use undoable_state_machine::{Transition, TransitionError};
 use crate::{
     entities::competition::{Competition, PhaseId},
     plugins::{
-        compatibility::{Declaration, Incompatibility, check_facts, resolve_metrics_calculators},
+        PhasePlugins,
+        compatibility::{Declaration, Incompatibility, check_facts},
         metrics_calculator::MetricsCalculator,
         phase_format::PhaseFormat,
         ranker::Ranker,
@@ -15,42 +16,58 @@ use crate::{
 
 /// Adds a phase to a competition that has not started yet.
 ///
-/// Deserializing one fails if its metrics calculators are not complete and ordered as
-/// [`AddPhase::new`] makes them.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(try_from = "UncheckedAddPhase")]
+/// Applying it fails if a fact one of its plugins requires is neither provided by another one nor
+/// by the competition, or does not meet the condition it is required with, see
+/// [`Plugin::declare`](crate::plugins::Plugin::declare).
+///
+/// Deserializing one fails if its metrics calculators are not ordered as [`AddPhase::new`] orders
+/// them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "SerializedAddPhase", into = "SerializedAddPhase")]
 pub struct AddPhase {
     id: PhaseId,
-    phase_format: Box<dyn PhaseFormat>,
-    ranker: Box<dyn Ranker>,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    plugins: PhasePlugins,
 }
 
-/// An [`AddPhase`] as it is serialized, before its metrics calculators are checked.
-#[derive(Deserialize)]
-struct UncheckedAddPhase {
+/// The form an [`AddPhase`] is serialized in.
+#[derive(Serialize, Deserialize)]
+struct SerializedAddPhase {
     id: PhaseId,
     phase_format: Box<dyn PhaseFormat>,
     ranker: Box<dyn Ranker>,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
-impl TryFrom<UncheckedAddPhase> for AddPhase {
+impl TryFrom<SerializedAddPhase> for AddPhase {
     type Error = Incompatibility;
 
-    fn try_from(unchecked: UncheckedAddPhase) -> Result<Self, Self::Error> {
-        let metrics_calculators = resolve_metrics_calculators(
-            &*unchecked.phase_format,
-            &*unchecked.ranker,
-            unchecked.metrics_calculators,
-            false,
-        )?;
+    fn try_from(serialized: SerializedAddPhase) -> Result<Self, Self::Error> {
+        let plugins = PhasePlugins::new(
+            serialized.phase_format,
+            serialized.ranker,
+            serialized.metrics_calculators,
+        );
+        plugins.check_order()?;
         Ok(Self {
-            id: unchecked.id,
-            phase_format: unchecked.phase_format,
-            ranker: unchecked.ranker,
-            metrics_calculators,
+            id: serialized.id,
+            plugins,
         })
+    }
+}
+
+impl From<AddPhase> for SerializedAddPhase {
+    fn from(add_phase: AddPhase) -> Self {
+        let PhasePlugins {
+            phase_format,
+            ranker,
+            metrics_calculators,
+        } = add_phase.plugins;
+        Self {
+            id: add_phase.id,
+            phase_format,
+            ranker,
+            metrics_calculators,
+        }
     }
 }
 
@@ -58,37 +75,28 @@ impl AddPhase {
     /// Adds the phase `id`, played in `phase_format`, ranked by `ranker` and calculating the
     /// metrics of `metrics_calculators`.
     ///
-    /// Every metric a plugin requires that none of `metrics_calculators` calculates is calculated
-    /// by the [default calculator][default] of that metric. The calculators are ordered so that
-    /// each one runs after the calculators of the metrics it requires, keeping the given order
-    /// otherwise; [`AddPhase::metrics_calculators`] returns the result.
+    /// For every fact a plugin requires that nothing provides, the
+    /// [default provider](crate::plugins::compatibility::DefaultProvider) of the fact is added, if
+    /// it has one. The metrics calculators are ordered so that each one runs after the calculators
+    /// providing the facts it requires, keeping the given order otherwise; [`AddPhase::plugins`]
+    /// returns the result.
     ///
     /// # Errors
-    /// Returns an error if two calculators calculate the same metric, if a required metric has
-    /// neither a calculator nor a default one, or if calculators require each other's metrics in
-    /// a cycle.
-    ///
-    /// [default]: crate::plugins::metrics_calculator::CalculatedMetric::default_calculator
+    /// Returns an error if metrics calculators require facts of each other in a cycle.
     pub fn new(
         id: PhaseId,
         phase_format: Box<dyn PhaseFormat>,
         ranker: Box<dyn Ranker>,
         metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<Self, Incompatibility> {
-        let metrics_calculators =
-            resolve_metrics_calculators(&*phase_format, &*ranker, metrics_calculators, true)?;
-        Ok(Self {
-            id,
-            phase_format,
-            ranker,
-            metrics_calculators,
-        })
+        let mut plugins = PhasePlugins::new(phase_format, ranker, metrics_calculators);
+        plugins.resolve()?;
+        Ok(Self { id, plugins })
     }
 
-    /// The metrics calculators of the phase, including the ones added by [`AddPhase::new`], in the
-    /// order they run in.
-    pub fn metrics_calculators(&self) -> &[Box<dyn MetricsCalculator>] {
-        &self.metrics_calculators
+    /// The plugins of the phase, including the ones added by [`AddPhase::new`].
+    pub fn plugins(&self) -> &PhasePlugins {
+        &self.plugins
     }
 }
 
@@ -103,36 +111,13 @@ impl Transition<Competition> for AddPhase {
         if competition.is_started() {
             return Err(Box::new(AddPhaseError::TournamentAlreadyStarted));
         }
-        let declarations: Vec<_> = [
-            (
-                format!("{:?}", self.phase_format),
-                Declaration::of(|declaration| self.phase_format.declare(declaration)),
-            ),
-            (
-                format!("{:?}", self.ranker),
-                Declaration::of(|declaration| self.ranker.declare(declaration)),
-            ),
-        ]
-        .into_iter()
-        .chain(self.metrics_calculators.iter().map(|calculator| {
-            (
-                format!("{calculator:?}"),
-                Declaration::of(|declaration| calculator.declare(declaration)),
-            )
-        }))
-        .collect();
         let context = Declaration::of(|declaration| competition.declare_phase_context(declaration));
-        check_facts(context, &declarations)?;
+        check_facts(context, &self.plugins.declarations())?;
         Ok(())
     }
 
     fn apply(&self, state: &mut Competition) -> Result<(), TransitionError> {
-        state.add_phase(
-            self.id,
-            self.phase_format.clone(),
-            self.ranker.clone(),
-            self.metrics_calculators.clone(),
-        );
+        state.add_phase(self.id, self.plugins.clone());
         Ok(())
     }
 }

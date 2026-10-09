@@ -7,6 +7,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
     plugins::{
+        Plugin,
         compatibility::Declaration,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
@@ -87,10 +88,14 @@ impl PointsCalculator {
     }
 }
 
+impl Plugin for PointsCalculator {
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration.provides(Points::default());
+    }
+}
+
 #[typetag::serde]
 impl MetricsCalculator for PointsCalculator {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn default_metric_value(&self) -> Metric {
         Box::new(Points::default())
     }

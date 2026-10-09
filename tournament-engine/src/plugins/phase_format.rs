@@ -1,13 +1,10 @@
 use crate::{
     entities::competition::{Bye, Match, PhaseData},
-    plugins::{Plugin, compatibility::Declaration},
+    plugins::Plugin,
 };
 
 #[typetag::serde(tag = "type", content = "value")]
 pub trait PhaseFormat: Plugin {
-    /// Declares what this format provides to and requires of its phase, see [`Declaration`].
-    fn declare(&self, declaration: &mut Declaration);
-
     /// The matches and byes to schedule next, given everything the phase has played so far. Empty
     /// if there is nothing to schedule, which is how a finished phase is reported.
     ///

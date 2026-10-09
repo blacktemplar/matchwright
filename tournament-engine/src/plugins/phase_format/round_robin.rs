@@ -7,6 +7,7 @@ use vec1::vec1;
 use crate::{
     entities::competition::{Bye, Match, PhaseData},
     plugins::{
+        Plugin,
         compatibility::Declaration,
         phase_format::{PhaseFormat, Schedule},
     },
@@ -19,10 +20,12 @@ use crate::{
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RoundRobin;
 
+impl Plugin for RoundRobin {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl PhaseFormat for RoundRobin {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method

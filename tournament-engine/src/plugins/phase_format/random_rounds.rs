@@ -8,6 +8,7 @@ use vec1::vec1;
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
     plugins::{
+        Plugin,
         compatibility::Declaration,
         phase_format::{PhaseFormat, Schedule},
     },
@@ -29,10 +30,12 @@ impl RandomRounds {
     }
 }
 
+impl Plugin for RandomRounds {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl PhaseFormat for RandomRounds {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see
         // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method

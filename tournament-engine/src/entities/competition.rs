@@ -14,6 +14,7 @@ use vec1::{Vec1, vec1};
 use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
+        PhasePlugins,
         compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::{PhaseFormat, Schedule},
@@ -61,13 +62,12 @@ impl Competition {
         self.seed
     }
 
-    pub(crate) fn add_phase(
-        &mut self,
-        id: PhaseId,
-        phase_format: Box<dyn PhaseFormat>,
-        ranker: Box<dyn Ranker>,
-        metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-    ) {
+    pub(crate) fn add_phase(&mut self, id: PhaseId, plugins: PhasePlugins) {
+        let PhasePlugins {
+            phase_format,
+            ranker,
+            metrics_calculators,
+        } = plugins;
         let seed = self.new_seeded_std_rng(id).random();
         let phase = Phase {
             id,
@@ -337,6 +337,12 @@ impl Phase {
     /// Gives every ranking of this phase the default value of every metric calculated for this
     /// phase.
     fn initialize_metrics(&mut self) {
+        // check requirements of MetricsCalculator: a calculator provides the metric it calculates
+        debug_assert!(self.metrics_calculators.iter().all(|metrics_calculator| {
+            let metric = metrics_calculator.default_metric_value();
+            Declaration::of(|declaration| metrics_calculator.declare(declaration))
+                .provides_type((&*metric as &dyn Any).type_id())
+        }));
         let ranking_ids: Vec<_> = self.data.rankings.keys().copied().collect();
         let metrics: Vec<_> = self
             .metrics_calculators

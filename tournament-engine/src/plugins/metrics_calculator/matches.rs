@@ -6,7 +6,7 @@ use super::Metric;
 use crate::{
     entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugins::{compatibility::Declaration, metrics_calculator::MetricsCalculator},
+    plugins::{Plugin, compatibility::Declaration, metrics_calculator::MetricsCalculator},
     type_map::TypeMapValue,
 };
 
@@ -19,10 +19,14 @@ impl TypeMapValue for Matches {}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MatchesCalculator;
 
+impl Plugin for MatchesCalculator {
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration.provides(Matches::default());
+    }
+}
+
 #[typetag::serde]
 impl MetricsCalculator for MatchesCalculator {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn default_metric_value(&self) -> Metric {
         Box::new(Matches::default())
     }

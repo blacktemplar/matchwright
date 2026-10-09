@@ -41,9 +41,11 @@ must never require touching another axis's trait.
 
 Every axis is its own public, unsealed trait, selected as `Box<dyn Trait>` and
 constructed directly by the consumer. Implemented axes: `PhaseFormat`, `Ranker`
-(with `SliceRanker`, `MetricGetter` beneath it), `MetricsCalculator`. All share
-the `Plugin` supertrait (`Debug + DynClone`), and each has a hand-written
-`impl Clone for Box<dyn Trait>` delegating to `dyn_clone`.
+(with `SliceRanker`, `RankingCriterion` beneath it), `MetricsCalculator`. All
+but `RankingCriterion` share the `Plugin` supertrait (`Debug + DynClone` plus
+`declare`, see [Compatibility between plugins](#compatibility-between-plugins)),
+and each has a hand-written `impl Clone for Box<dyn Trait>` delegating to
+`dyn_clone`.
 
 This applies uniformly to future axes: each one gets a trait and a slot, with no
 per-axis judgment call. A string-keyed registry for loading a configuration from
@@ -119,9 +121,9 @@ path, which postcard cannot deserialize.
 ## Compatibility between plugins
 
 *Partly implemented — the mechanism exists (`plugins::compatibility`,
-`AddPhase`), but every existing plugin still declares nothing and no metric has
-a default calculator, so the CLI still orders calculators by a hardcoded
-`derived_from` table.*
+`Plugin::declare`, `PhasePlugins`, `AddPhase`), but existing plugins declare
+nothing beyond a calculator's own metric and no fact has a default provider, so
+the CLI still orders calculators by a hardcoded `derived_from` table.*
 
 Not every combination of plugins is valid, and detecting that must not rely on a
 hardcoded list of concrete type pairs, which would be blind to third-party
@@ -152,23 +154,33 @@ order*).
 
 **Compatibility is checked on typed facts.** A fact is any `'static` type
 describing something true of a phase, identified by its `TypeId` like a metric.
-Every axis trait gets
+The `Plugin` supertrait every axis trait shares carries the declaration, and is
+implemented by hand next to the axis trait:
 
 ```rust
-fn declare(&self, declaration: &mut Declaration);
+pub trait Plugin: Debug + DynClone {
+    fn declare(&self, declaration: &mut Declaration);
+}
 
 impl Declaration {
     pub fn provides<F: Fact>(&mut self, fact: F) -> &mut Self;
     pub fn requires<F: Fact>(&mut self) -> &mut Self;          // present at all
     pub fn requires_that<F: Fact>(&mut self, what: &'static str,
                                   holds: fn(&F) -> bool) -> &mut Self;
-    pub fn requires_metric<M: CalculatedMetric>(&mut self) -> &mut Self;
+    pub fn requires_with_default<F: DefaultProvider>(&mut self) -> &mut Self;
 }
 ```
 
-`declare` is a required method on every axis trait, so an implementation
-cannot silently forget it — composite plugins like `HierarchicalRanker` in
-particular have to forward to their parts.
+`declare` is required, so an implementation cannot silently forget it —
+composite plugins like `HierarchicalRanker` in particular have to forward to
+their parts. Having it on `Plugin` rather than on each axis trait lets the
+engine collect every declaration through `&dyn Plugin`, whatever the axis.
+
+A `RankingCriterion` is not a `Plugin`. All it can do is state, through
+`RankingOrder`, which metric it sorts by, and the engine controls
+`RankingOrder`; so `LexicographicalCriteria`, the `SliceRanker` that holds the
+criteria, declares their metrics by running each criterion against a
+`RankingOrder` that records instead of sorting.
 
 Facts are provided by the phase's plugins and by its context: the competition,
 or the output the previous phase's format declares, e.g. `EntrantsPerRanking(1)`.
@@ -191,16 +203,21 @@ carries behavior where a plugin needs some from another.
 
 A fact provided twice within a phase is an error.
 
-**Metrics are a kind of fact of their own**, because which metric a calculator
-provides is only known from the value `default_metric_value()` returns, as a
-`TypeId` rather than a static type. They follow the same rules: a metric
-calculated by two calculators is an error (the disjointness of metrics), and a
-required metric no calculator calculates is unmet.
+**A metric is a fact**, keyed by the metric type itself, and a calculator is an
+ordinary plugin declaring that it provides it (`provides(Points::default())`).
+There is no separate handling: a metric calculated by two calculators is a fact
+provided twice (the disjointness of metrics), and a required metric no
+calculator calculates is an unmet fact. That the declared metric is the one
+`default_metric_value()` returns is a debug assertion when the phase starts.
 
-**Declarations are derived structurally where possible.** A calculator's metric
-is provided by `default_metric_value()`, and a criterion's requirement is recorded
-from its call to `RankingOrder::by_metric::<M>()`, so neither can drift from
-what the plugin does. Everything else is self-reported in `declare`. That is the
+**`compatibility` knows no axes.** It holds facts, declarations, the check and a
+generic order of any list of plugins. The one place that knows the axes is
+`PhasePlugins`, the plugins of a phase: it collects their declarations through
+`&dyn Plugin`, resolves defaults and orders its calculators.
+
+**Self-reported, except for criteria.** A criterion's requirement is recorded
+from its call to `RankingOrder::by_metric::<M>()`, so it cannot drift from what
+the criterion does. Everything else is self-reported in `declare`. That is the
 trade-off accepted here: facts like "rankings are pairs" are not something the
 compiler can derive, and none of the alternatives can express conditions on
 values. Test helpers that build a phase from a plugin plus only the facts it
@@ -213,18 +230,21 @@ their results. So the ranker always sees current metrics, the format current
 ranks, and calculators every annotation; none of these needs ordering. The only
 place plugins run one after another within a pass and read what an earlier one
 wrote in that same pass is the calculator list, so only it is sorted: a
-calculator requiring metric `M` runs after the one calculating it, ties keep
+calculator requiring a fact runs after the calculator providing it, ties keep
 the configured order (deterministic, so replay is unaffected), and a cycle is an
 error. Should a future axis also become a list of plugins building on each
 other within a pass, the same rule applies to it.
 
-**Missing calculators are added from the metric's default.** Requiring a metric
-needs `M: CalculatedMetric`, whose `default_calculator() -> Option<Box<dyn
-MetricsCalculator>>` names the calculator to use when the metric is required but
-none is configured; it defaults to `None` for a metric no single calculator fits
-every phase for. Resolution adds the default of every missing metric, then the
-defaults of whatever those require, until nothing is missing (each metric is
-added at most once, so this terminates). A calculator configured explicitly
+**Missing providers are added from defaults.** A fact type can implement
+`DefaultProvider`, whose `add_default_provider(&mut PhasePlugins)` adds a plugin
+providing it to a phase — e.g. `Points` adds a `PointsCalculator` — or nothing
+for a fact no single plugin fits every phase for. Where to put the plugin is up
+to the provider, so the resolution never needs to know an axis. A requirement
+made with `requires_with_default::<F>()` remembers `F`'s provider; a plain
+`requires::<F>()` has none (Rust cannot pick the default up without
+specialization, hence two methods). Resolution repeatedly collects the
+declarations and runs the provider of the first missing fact, each fact once, so
+it terminates even if a provider adds nothing. A plugin configured explicitly
 always wins over a default, and an added default is checked like every other
 plugin, so a default that does not fit the phase — e.g. one that cannot read a
 third-party match format — is reported as unmet rather than used. Consumers
@@ -232,14 +252,16 @@ only configure calculators that need their configuration (points per win, ...)
 or that they want calculated without ranking by them.
 
 **Resolution happens before the transition, validation in it.** `AddPhase::new`
-resolves: it adds defaults, sorts, and returns an error for anything it cannot
-fix. The transition then holds the complete, sorted list, so neither the log nor
-a snapshot depends on how calculators were picked, and changing a default or the
-way of picking later never changes a replay. Deserializing an `AddPhase` only
-validates — a missing calculator or an unsorted list fails to load instead of
-being filled in. Facts are checked in `AddPhase::check_applicable`, where the
-phase's context is known; facts only known at start, such as the number of
-entrants, are checked the same way at `StartCompetition`. All of this runs once
+resolves: it adds defaults and sorts, and returns an error for a fact provided
+twice or a cycle. A fact that stays unprovided is not its concern, since the
+context may provide it. The transition then holds the complete, sorted list, so
+neither the log nor a snapshot depends on how calculators were picked, and
+changing a default or the way of picking later never changes a replay.
+Deserializing an `AddPhase` adds nothing — an unsorted list fails to load, and
+a missing calculator fails the replay. Facts are checked in
+`AddPhase::check_applicable`, where the phase's context is known; facts only
+known at start, such as the number of entrants, are checked the same way at
+`StartCompetition`. All of this runs once
 per phase; the result-reporting path loops over an already sorted list and pays
 nothing.
 
@@ -272,12 +294,29 @@ change freely.
   `derived_from` table. Superseded.
 - **Consumers adding every needed calculator themselves.** Each consumer would
   need its own table of which metric derives from which, like the CLI's
-  `derived_from`. Superseded by defaults on the metric.
-- **The requiring plugin naming the default** (`requires_metric_or(..)`). Two
-  plugins could suggest different defaults for the same metric with nothing to
-  settle which wins. Rejected; the metric type is the one place that knows.
+  `derived_from`. Superseded by defaults on the fact type.
+- **The requiring plugin naming the default** (`requires_or(..)`). Two plugins
+  could suggest different defaults for the same fact with nothing to settle
+  which wins. Rejected; the fact type is the one place that knows.
 - **Resolving inside `AddPhase::apply`.** Replay would then depend on the
   current defaults, so changing one would change every saved log. Rejected.
+- **Metrics as a kind of requirement of their own** (`required_metrics` next to
+  `required`). Duplicated every rule for facts. Superseded.
+- **The engine adding a calculator's metric to its declaration** from
+  `default_metric_value()`. Structural, but made calculators a special case of
+  collecting declarations. Superseded by calculators declaring their metric,
+  checked by a debug assertion.
+- **`declare` on each axis trait.** Repeated the same method per axis and left
+  the engine no uniform way to ask a plugin. Superseded by `Plugin::declare`.
+- **A blanket `impl<T: RankingCriterion> Plugin for T`** deriving a criterion's
+  declaration from `order_rankings`. Works, but criteria are deliberately
+  limited to what `RankingOrder` offers, so the holder of the criteria can
+  declare for them without making them plugins. Rejected.
+- **A boxed plugin as the default provider**, put into its slot by the
+  resolution. `Box<dyn Plugin>` cannot become a `Box<dyn MetricsCalculator>`
+  without the trait-to-trait casts `intertrait` existed for, and an enum over
+  the axes makes the resolution axis-aware. Superseded by a provider that adds
+  itself to `PhasePlugins`.
 - **Optional accessor on the base trait** (`fn as_xyz(&self) -> Option<&dyn
   XYZ>`). Only core can add such accessors. Rejected as the general mechanism;
   still fine as a local pattern.

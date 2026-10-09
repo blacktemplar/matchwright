@@ -6,6 +6,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, Team},
     map::Map,
     plugins::{
+        Plugin,
         compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
@@ -63,10 +64,14 @@ impl RankingCriterion for LaterElimination {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RoundOfEliminationCalculator;
 
+impl Plugin for RoundOfEliminationCalculator {
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration.provides(RoundOfElimination::default());
+    }
+}
+
 #[typetag::serde]
 impl MetricsCalculator for RoundOfEliminationCalculator {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn default_metric_value(&self) -> Metric {
         Box::new(RoundOfElimination::default())
     }

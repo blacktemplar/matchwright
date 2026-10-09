@@ -8,6 +8,7 @@ use vec1::vec1;
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
     plugins::{
+        Plugin,
         compatibility::Declaration,
         phase_format::{PhaseFormat, Schedule},
     },
@@ -35,10 +36,12 @@ impl MonsterDyp {
     }
 }
 
+impl Plugin for MonsterDyp {
+    fn declare(&self, _: &mut Declaration) {}
+}
+
 #[typetag::serde]
 impl PhaseFormat for MonsterDyp {
-    fn declare(&self, _: &mut Declaration) {}
-
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         if !phase_data.matches().is_empty()
             || !phase_data.byes().is_empty()
