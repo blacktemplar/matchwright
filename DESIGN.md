@@ -57,9 +57,10 @@ non-Rust sources can be layered on additively later; it is not a v1 requirement.
   but third parties cannot add variants. Rejected.
 - **Generic type parameters per axis.** Zero-cost, but conflicts with runtime
   selection, and every combination becomes a distinct type. Rejected.
-- **Name-driven registry from the start** (`inventory`/`linkme`). Needed only
-  for config-file-driven selection, which v1 doesn't have. Deferred, not
-  rejected.
+- **Name-driven registry from the start** (`inventory`/`linkme`). Not needed to
+  select an axis, since a consumer constructs the implementation it wants.
+  Added later for what does need it, see
+  [The plugin catalog](#the-plugin-catalog).
 
 ## Plugin state
 
@@ -120,11 +121,10 @@ path, which postcard cannot deserialize.
 
 ## Compatibility between plugins
 
-*Partly implemented — the mechanism exists (`plugins::compatibility`,
-`Plugin::declare`, `PhasePlugins`, `AddPhase`) and every plugin of this
-workspace declares what it provides and requires, but no fact has a default
-provider, so the CLI still adds the calculators of derived metrics itself, by a
-hardcoded `derived_from` table.*
+*Implemented: `plugins::compatibility`, `Plugin::declare`, `PhasePlugins`,
+`AddPhase`, every plugin of this workspace declaring what it provides and
+requires, and resolution reading the catalog (see
+[The plugin catalog](#the-plugin-catalog)).*
 
 Not every combination of plugins is valid, and detecting that must not rely on a
 hardcoded list of concrete type pairs, which would be blind to third-party
@@ -168,7 +168,6 @@ impl Declaration {
     pub fn requires<F: Fact>(&mut self) -> &mut Self;          // present at all
     pub fn requires_that<F: Fact>(&mut self, what: &'static str,
                                   holds: fn(&F) -> bool) -> &mut Self;
-    pub fn requires_with_default<F: DefaultProvider>(&mut self) -> &mut Self;
 }
 ```
 
@@ -236,28 +235,30 @@ the configured order (deterministic, so replay is unaffected), and a cycle is an
 error. Should a future axis also become a list of plugins building on each
 other within a pass, the same rule applies to it.
 
-**Missing providers are added from defaults.** A fact type can implement
-`DefaultProvider`, whose `add_default_provider(&mut PhasePlugins)` adds a plugin
-providing it to a phase — e.g. `Points` adds a `PointsCalculator` — or nothing
-for a fact no single plugin fits every phase for. Where to put the plugin is up
-to the provider, so the resolution never needs to know an axis. A requirement
-made with `requires_with_default::<F>()` remembers `F`'s provider; a plain
-`requires::<F>()` has none (Rust cannot pick the default up without
-specialization, hence two methods). Resolution repeatedly collects the
-declarations and runs the provider of the first missing fact, each fact once, so
-it terminates even if a provider adds nothing. A plugin configured explicitly
-always wins over a default, and an added default is checked like every other
-plugin, so a default that does not fit the phase — e.g. one that cannot read a
-third-party match format — is reported as unmet rather than used. Consumers
-only configure calculators that need their configuration (points per win, ...)
-or that they want calculated without ranking by them.
+**Missing providers come from the catalog.** For a required fact nothing
+provides, resolution asks the catalog for the registered plugins that provide it
+with their default configuration, and adds the one it finds if there is exactly
+one — `Matches` has exactly one calculator, so nobody is ever asked about it.
+Several candidates are an ambiguity the engine must not settle, so it adds
+nothing and the fact stays unprovided, as it does for a fact only a plugin that
+has to be configured provides. Which kinds of plugin may be added is
+`PhasePlugins`'s decision, expressed as `Accepts<K>` impls, so the resolution
+itself knows no axis. Resolution repeatedly collects the declarations and
+settles the first missing fact, each fact once, so it terminates even where
+nothing is added. A plugin configured explicitly always wins, since the fact it
+provides is never missing, and an added plugin is checked like every other one,
+so one that does not fit the phase — e.g. a calculator that cannot read a
+third-party match format — is reported as unmet rather than used. Consumers only
+configure calculators that need their configuration (points per win, ...) or
+that they want calculated without ranking by them.
 
 **Resolution happens before the transition, validation in it.** `AddPhase::new`
-resolves: it adds defaults and sorts, and returns an error for a fact provided
-twice or a cycle. A fact that stays unprovided is not its concern, since the
-context may provide it. The transition then holds the complete, sorted list, so
-neither the log nor a snapshot depends on how calculators were picked, and
-changing a default or the way of picking later never changes a replay.
+resolves: it adds the missing plugins and sorts, and returns an error for a fact
+provided twice or a cycle. A fact that stays unprovided is not its concern,
+since the context may provide it. The transition then holds the complete, sorted
+list, so neither the log nor a snapshot depends on how calculators were picked —
+which it must not, because the catalog depends on which crates are linked in —
+and changing a registration or the way of picking later never changes a replay.
 Deserializing an `AddPhase` adds nothing — an unsorted list fails to load, and
 a missing calculator fails the replay. Facts are checked in
 `AddPhase::check_applicable`, where the phase's context is known; facts only
@@ -266,13 +267,10 @@ known at start, such as the number of entrants, are checked the same way at
 per phase; the result-reporting path loops over an already sorted list and pays
 nothing.
 
-*Planned, once a metric has a second calculator:* plugins *offer* calculators
-for existing metrics (`declaration.offers_calculator(..)`), e.g. a match format
-offering a points calculator that understands its matches. Resolution then
-collects the candidates for a missing metric — offers of configured plugins
-before the metric's default — keeps the compatible ones, takes the result if
-exactly one is left and otherwise reports the candidates for the consumer to
-pick from. This is additive, and since resolution is not part of the log it can
+*Planned, once a metric has a second calculator:* a preference among the
+candidates for one metric, so that resolution can settle what is an ambiguity
+today — e.g. a match format offering the points calculator that understands its
+matches. This is additive, and since resolution is not part of the log it can
 change freely.
 
 ### Alternatives
@@ -295,12 +293,18 @@ change freely.
   `derived_from` table. Superseded.
 - **Consumers adding every needed calculator themselves.** Each consumer would
   need its own table of which metric derives from which, like the CLI's
-  `derived_from`. Superseded by defaults on the fact type.
+  `derived_from`. Superseded by the catalog.
+- **A default provider on the fact type** (`DefaultProvider`, with
+  `requires_with_default::<F>()` next to `requires::<F>()`), adding itself to a
+  `PhasePlugins`. Made a core fact type name a concrete plugin and know the
+  composite, could not express "nothing may be added to this slot", and left a
+  third-party plugin unfindable. Superseded by the catalog.
 - **The requiring plugin naming the default** (`requires_or(..)`). Two plugins
   could suggest different defaults for the same fact with nothing to settle
-  which wins. Rejected; the fact type is the one place that knows.
-- **Resolving inside `AddPhase::apply`.** Replay would then depend on the
-  current defaults, so changing one would change every saved log. Rejected.
+  which wins. Rejected; a requirement names a fact and nothing else.
+- **Resolving inside `AddPhase::apply`.** Replay would then depend on which
+  plugins are registered, so linking a crate in would change every saved log.
+  Rejected.
 - **Metrics as a kind of requirement of their own** (`required_metrics` next to
   `required`). Duplicated every rule for facts. Superseded.
 - **The engine adding a calculator's metric to its declaration** from
@@ -316,11 +320,75 @@ change freely.
 - **A boxed plugin as the default provider**, put into its slot by the
   resolution. `Box<dyn Plugin>` cannot become a `Box<dyn MetricsCalculator>`
   without the trait-to-trait casts `intertrait` existed for, and an enum over
-  the axes makes the resolution axis-aware. Superseded by a provider that adds
-  itself to `PhasePlugins`.
+  the axes makes the resolution axis-aware. Superseded by a registry per axis,
+  which hands out a `Box<K::Object>`.
 - **Optional accessor on the base trait** (`fn as_xyz(&self) -> Option<&dyn
   XYZ>`). Only core can add such accessors. Rejected as the general mechanism;
   still fine as a local pattern.
+
+## The plugin catalog
+
+*Partly implemented — the registries, `PluginEntry` and resolution reading them
+exist. The schemas that let a UI ask for a plugin's parameters, the builder and
+the defaults are the remaining steps of `PROPOSAL-plugin-catalog.md`.*
+
+Every consumer that configures a phase has to know every plugin: the CLI holds a
+table of labels, descriptions and default parameters, and a plugin of another
+crate appears in none of them. The engine needs the same knowledge to fill a gap
+a requirement leaves, which it had as a default provider per fact type.
+
+### Decision
+
+**A plugin registers itself, described.** One `PluginEntry<K>` per plugin holds
+its id, its label, its description and, where the plugin needs no configuration,
+a `fn() -> Box<K::Object>` creating it. Entries are collected with `inventory`,
+so the catalog is whatever is linked in, plugins of other crates included, and
+nothing enumerates them.
+
+**One registry per axis, typed.** A `PluginKind` ties the axis trait to its
+registry through `K::Object`, so the catalog hands out a `Box<dyn
+MetricsCalculator>`, never something to downcast. `inventory` collects by type
+and only into a type of the crate declaring the collection, so the registry type
+is generated, by `plugin_kind!` next to the trait of the axis; that is the only
+reason the macro exists. It writes the axis trait out, which is what lets a
+registration name neither the entry type nor the kind twice:
+
+```rust
+plugin_kind! {
+    pub MetricsCalculatorKind for dyn MetricsCalculator
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register("…::points", "points", "scored for every win, …")
+        .with_default(|| Box::new(PointsCalculator::new(1.0, 0.5)))
+}
+```
+
+**What may be added is the composite's decision**, stated as `Accepts<K>` impls:
+`PhasePlugins` accepts metrics calculators and nothing else, so "resolution adds
+a second phase format" cannot be written, and resolution stays generic over the
+axis.
+
+**The ids are a contract** as soon as something outside the process names a
+plugin — a saved configuration will, see the proposal. They are namespaced with
+the crate the plugin lives in, and a plugin's id and its `typetag` tag are meant
+to be the same string once the plugins get explicit tags.
+
+**UI text lives on the plugin**, which means the engine ships English;
+localisation would wrap it, keyed by the plugin id. It is what the CLI does
+today, one crate further out.
+
+### Alternatives
+
+- **One global registry** with a `build` returning `Box<dyn Any>`. One
+  `collect!` for everything instead of a generated type per axis, but trades a
+  compile-time guarantee for a downcast. Rejected.
+- **Generating the CLI's enums** from the plugin list. A consumer-side table
+  either way, and no third-party plugin ever appears in it. Rejected.
+- **A default provider per fact type**, see
+  [Compatibility between plugins](#compatibility-between-plugins). Superseded.
+- **A derive macro for the registration.** Worth it once the entry shape has
+  stopped moving, not before. Deferred.
 
 ## Metrics: plugin-produced ranking data
 

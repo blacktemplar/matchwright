@@ -286,10 +286,7 @@ pub enum MetricKind {
 }
 
 impl MetricKind {
-    /// Every metric, in an order in which each one comes after the metrics it is derived from.
-    ///
-    /// This is the order a [`PhaseConfig`] keeps its metrics in, and therefore the order the engine
-    /// calculates them in.
+    /// Every metric, in the order a [`PhaseConfig`] lists them in.
     pub const ALL: &'static [Self] = &[
         Self::WinsDrawsLosses,
         Self::Points,
@@ -304,7 +301,8 @@ impl MetricKind {
     /// The metrics an operator picks from: those that are shown in the ranking or can be ranked
     /// by.
     ///
-    /// [`MetricKind::Matches`] is neither and is only ever added as a dependency of another metric.
+    /// [`MetricKind::Matches`] is neither; the engine calculates it where another metric is derived
+    /// from it.
     pub const SELECTABLE: &'static [Self] = &[
         Self::WinsDrawsLosses,
         Self::Points,
@@ -344,19 +342,6 @@ impl MetricKind {
                 "the points of the opponents that were beaten or played to a draw"
             }
             Self::BuchholzOfBuchholz => "the Buchholz of all opponents",
-        }
-    }
-
-    /// The metrics this one is derived from, which have to be calculated before it.
-    pub fn derived_from(self) -> &'static [Self] {
-        match self {
-            Self::WinsDrawsLosses
-            | Self::Matches
-            | Self::RoundOfFirstLoss
-            | Self::RoundOfElimination => &[],
-            Self::Points => &[Self::WinsDrawsLosses],
-            Self::Buchholz | Self::SonnebornBerger => &[Self::Points, Self::Matches],
-            Self::BuchholzOfBuchholz => &[Self::Buchholz, Self::Matches],
         }
     }
 
@@ -468,15 +453,16 @@ impl Criterion {
 
 /// Everything the CLI can configure about the phase a competition is played in.
 ///
+/// A phase is ranked by metrics it calculates, so a criterion that is picked without its metric
+/// adds it.
+///
 /// # Examples
 /// ```
-/// use tournament_cli::phase::{Criterion, FormatConfig, MetricKind, PhaseConfig};
+/// use tournament_cli::phase::{Criterion, FormatConfig, MetricConfig, MetricKind, PhaseConfig};
 ///
-/// // ranking by Sonneborn-Berger needs the points it sums, which need the results they are
-/// // scored from, so all of them are calculated even though none was asked for
 /// let config = PhaseConfig::new(
 ///     FormatConfig::RoundRobin,
-///     [],
+///     [MetricConfig::WinsDrawsLosses],
 ///     [Criterion::MoreSonnebornBerger],
 /// );
 ///
@@ -486,19 +472,14 @@ impl Criterion {
 ///         .iter()
 ///         .map(|metric| metric.kind())
 ///         .collect::<Vec<_>>(),
-///     [
-///         MetricKind::WinsDrawsLosses,
-///         MetricKind::Points,
-///         MetricKind::Matches,
-///         MetricKind::SonnebornBerger,
-///     ]
+///     [MetricKind::WinsDrawsLosses, MetricKind::SonnebornBerger]
 /// );
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhaseConfig {
     format: FormatConfig,
-    /// In the order the metrics are calculated in, see [`MetricKind::ALL`]. Holds every metric of
-    /// `ranked_by` and every metric any of them is derived from.
+    /// In the order of [`MetricKind::ALL`]. Holds every metric of `ranked_by`, but not the metrics
+    /// the engine derives from these.
     metrics: Vec<MetricConfig>,
     /// Best first, every metric breaking the ties of the ones before it. May be empty, which
     /// leaves every entrant tied for the first rank.
@@ -509,9 +490,12 @@ impl PhaseConfig {
     /// Configures a phase played in `format` that calculates `metrics` and is ranked by
     /// `ranked_by` lexicographically.
     ///
-    /// Everything `ranked_by` sorts by and every metric a calculated metric is derived from is
-    /// calculated as well, with default parameters if `metrics` does not give any. A metric listed
-    /// twice is calculated once, with the parameters it is listed with first.
+    /// Everything `ranked_by` sorts by is calculated as well, with default parameters if `metrics`
+    /// does not give any. A metric listed twice is calculated once, with the parameters it is
+    /// listed with first. The engine adds the metrics a calculated one is derived from, see
+    /// [`AddPhase::new`].
+    ///
+    /// [`AddPhase::new`]: tournament_engine::transitions::add_phase::AddPhase::new
     pub fn new(
         format: FormatConfig,
         metrics: impl IntoIterator<Item = MetricConfig>,
@@ -537,29 +521,15 @@ impl PhaseConfig {
                 configured.push(metric);
             }
         }
-        // every metric a calculated one is derived from is calculated too, and since a dependency
-        // can itself be derived, the list grows while it is walked
-        let mut needed: Vec<MetricKind> = configured.iter().map(|metric| metric.kind()).collect();
-        let mut index = 0;
-        while let Some(&kind) = needed.get(index) {
-            for &dependency in kind.derived_from() {
-                if !needed.contains(&dependency) {
-                    needed.push(dependency);
-                }
-            }
-            index += 1;
-        }
         Self {
             format,
             metrics: MetricKind::ALL
                 .iter()
-                .filter(|kind| needed.contains(kind))
-                .map(|&kind| {
+                .filter_map(|&kind| {
                     configured
                         .iter()
                         .copied()
                         .find(|metric| metric.kind() == kind)
-                        .unwrap_or_else(|| kind.with_defaults())
                 })
                 .collect(),
             ranked_by: ranking,
@@ -588,7 +558,8 @@ impl PhaseConfig {
         self.format
     }
 
-    /// The metrics calculated for the phase, in the order they are calculated in.
+    /// The metrics the phase is configured to calculate, which the engine adds the metrics they
+    /// are derived from to.
     pub fn metrics(&self) -> &[MetricConfig] {
         &self.metrics
     }
@@ -658,26 +629,6 @@ mod tests {
             .iter()
             .map(|metric| metric.kind())
             .collect()
-    }
-
-    /// The engine calculates the metrics of a phase in the order it is given them, so a metric
-    /// that is derived from another one only works if that one is calculated first. Every
-    /// configuration orders its metrics by [`MetricKind::ALL`], which therefore has to be an
-    /// order in which no metric comes before one it is derived from.
-    #[test]
-    fn every_metric_is_listed_after_the_ones_it_is_derived_from() {
-        for (index, kind) in MetricKind::ALL.iter().enumerate() {
-            for dependency in kind.derived_from() {
-                let position = MetricKind::ALL
-                    .iter()
-                    .position(|other| other == dependency)
-                    .expect("every metric a metric is derived from must be listed too");
-                assert!(
-                    position < index,
-                    "{kind:?} is derived from {dependency:?}, which is calculated after it"
-                );
-            }
-        }
     }
 
     /// Only a metric that is both offered and ordered can be ranked by, and every metric that is
@@ -831,14 +782,11 @@ mod tests {
 
         assert_eq!(
             config.metrics(),
-            [
-                MetricConfig::WinsDrawsLosses,
-                MetricConfig::Points {
-                    for_win: 2.0,
-                    for_draw: 1.0,
-                    for_bye: 2.0,
-                },
-            ]
+            [MetricConfig::Points {
+                for_win: 2.0,
+                for_draw: 1.0,
+                for_bye: 2.0,
+            }]
         );
     }
 
@@ -857,8 +805,10 @@ mod tests {
         assert!(config.metrics().contains(&points));
     }
 
+    /// What a metric is derived from is the engine's business, so a configuration holds only the
+    /// metrics it was given; the phase then calculates more than that.
     #[test]
-    fn every_metric_a_calculated_one_is_derived_from_is_calculated_too() {
+    fn a_configuration_holds_no_metric_it_was_not_given() {
         let config = PhaseConfig::new(
             FormatConfig::RandomRounds {
                 rounds: DEFAULT_RANDOM_ROUNDS,
@@ -867,18 +817,7 @@ mod tests {
             [],
         );
 
-        assert_eq!(
-            kinds(&config),
-            [
-                MetricKind::WinsDrawsLosses,
-                MetricKind::Points,
-                MetricKind::Matches,
-                MetricKind::Buchholz,
-                MetricKind::BuchholzOfBuchholz,
-            ],
-            "Buchholz of Buchholz needs the Buchholz it sums, which needs points and the matches \
-             they were scored in"
-        );
+        assert_eq!(kinds(&config), [MetricKind::BuchholzOfBuchholz]);
     }
 
     #[test]

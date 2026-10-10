@@ -3,6 +3,7 @@ use std::any::TypeId;
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
+    plugin_kind,
     plugins::Plugin,
     type_map::TypeMapValue,
 };
@@ -67,4 +68,13 @@ impl Clone for Box<dyn MetricsCalculator> {
     fn clone(&self) -> Self {
         dyn_clone::clone_box(&**self)
     }
+}
+
+plugin_kind! {
+    /// The metrics calculators, i.e. the axis of [`MetricsCalculator`].
+    ///
+    /// This is the one kind of plugin a phase can be given more of, so a metric that is required
+    /// but not configured is calculated by the registered calculator of that metric, see
+    /// [`add_provider_of`](crate::plugins::catalog::add_provider_of).
+    pub MetricsCalculatorKind for dyn MetricsCalculator
 }

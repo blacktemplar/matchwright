@@ -8,7 +8,7 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::Declaration,
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
         ranker::{Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -108,6 +108,15 @@ impl Plugin for WinsDrawsLossesCalculator {
     fn declare(&self, declaration: &mut Declaration) {
         declaration.provides(WinsDrawsLosses::default());
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::wins_draws_losses",
+        "W-D-L",
+        "how many matches were won, drawn and lost",
+    )
+    .with_default(|| Box::new(WinsDrawsLossesCalculator))
 }
 
 #[typetag::serde]

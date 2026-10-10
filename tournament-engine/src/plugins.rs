@@ -1,14 +1,16 @@
-use std::{fmt::Debug, mem};
+use std::{any::TypeId, fmt::Debug, mem};
 
 use dyn_clone::DynClone;
 
 use crate::plugins::{
-    compatibility::{Declaration, Incompatibility, declaration_of, order, unprovided_with_default},
-    metrics_calculator::MetricsCalculator,
+    catalog::{Accepts, add_provider_of},
+    compatibility::{Declaration, Incompatibility, declaration_of, order, unprovided},
+    metrics_calculator::{MetricsCalculator, MetricsCalculatorKind},
     phase_format::PhaseFormat,
     ranker::Ranker,
 };
 
+pub mod catalog;
 pub mod compatibility;
 pub mod metrics_calculator;
 pub mod phase_format;
@@ -32,8 +34,7 @@ pub trait Plugin: Debug + DynClone {
     fn declare(&self, declaration: &mut Declaration);
 }
 
-/// The plugins of one phase, which a
-/// [default provider](compatibility::DefaultProvider::add_default_provider) adds to.
+/// The plugins of one phase.
 #[derive(Debug, Clone)]
 pub struct PhasePlugins {
     pub(crate) phase_format: Box<dyn PhaseFormat>,
@@ -67,11 +68,6 @@ impl PhasePlugins {
         &self.metrics_calculators
     }
 
-    /// Adds `metrics_calculator` after the metrics calculators already there.
-    pub fn add_metrics_calculator(&mut self, metrics_calculator: Box<dyn MetricsCalculator>) {
-        self.metrics_calculators.push(metrics_calculator);
-    }
-
     /// The declarations of all plugins, each together with the name of its plugin.
     pub(crate) fn declarations(&self) -> Vec<(String, Declaration)> {
         [
@@ -90,25 +86,26 @@ impl PhasePlugins {
             .collect()
     }
 
-    /// Adds the default provider of every required fact nothing provides, including those the
-    /// added providers require, and orders the metrics calculators so that each runs after the
+    /// Adds a plugin for every required fact nothing provides, including the facts the added
+    /// plugins require themselves, and orders the metrics calculators so that each runs after the
     /// ones providing the facts it requires, keeping their order otherwise.
+    ///
+    /// The plugins come from the [catalog](catalog), which only settles a fact that exactly one
+    /// registered plugin of a kind the phase [accepts](Accepts) provides without configuration.
     ///
     /// # Errors
     /// Returns an error if metrics calculators require facts of each other in a cycle.
     pub(crate) fn resolve(&mut self) -> Result<(), Incompatibility> {
-        // every fact gets one try, so that a fact without default provider, or with one that does
-        // not provide it, does not stop the loop from ending
+        // every fact gets one try, so that a fact the catalog cannot settle does not stop the loop
+        // from ending
         let mut tried = Vec::new();
         loop {
             let declarations = self.declarations();
-            let Some((fact, add_default_provider)) =
-                unprovided_with_default(&declarations).find(|(fact, _)| !tried.contains(fact))
-            else {
+            let Some(fact) = unprovided(&declarations).find(|fact| !tried.contains(fact)) else {
                 break;
             };
             tried.push(fact);
-            add_default_provider(self);
+            self.add_provider_from_catalog(fact);
         }
 
         let order = order(&self.declarations_of_metrics_calculators())?;
@@ -125,6 +122,14 @@ impl PhasePlugins {
             })
             .collect();
         Ok(())
+    }
+
+    /// Adds the plugin the catalog settles on for a fact of type `fact`, for every kind of plugin
+    /// a phase accepts.
+    fn add_provider_from_catalog(&mut self, fact: TypeId) {
+        // a phase is played in one format and ranked by one ranker, so its calculators are the
+        // only thing that can be added to; a second accepted kind is one more line here
+        add_provider_of::<MetricsCalculatorKind, _>(self, fact);
     }
 
     /// Checks that the metrics calculators are ordered as [`Self::resolve`] orders them.
@@ -146,6 +151,14 @@ impl PhasePlugins {
     }
 }
 
+/// A phase can calculate any number of metrics, so a calculator the catalog settles on is added
+/// after the ones already configured; [`PhasePlugins::resolve`] sorts them afterwards.
+impl Accepts<MetricsCalculatorKind> for PhasePlugins {
+    fn add(&mut self, plugin: Box<dyn MetricsCalculator>) {
+        self.metrics_calculators.push(plugin);
+    }
+}
+
 /// What the plugins of this crate declare, i.e. the facts they provide to and require of their
 /// phase. The mechanism itself is tested in [`compatibility`].
 #[cfg(test)]
@@ -159,6 +172,7 @@ mod tests {
     use crate::{
         entities::competition::Competition,
         plugins::{
+            catalog::PluginKind,
             compatibility::{EntrantsPerRanking, MatchAnnotation, check_facts, declaration_of},
             metrics_calculator::{
                 buchholz::{
@@ -209,9 +223,7 @@ mod tests {
         ranker: Box<dyn Ranker>,
         calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<(), Incompatibility> {
-        let competition = Competition::default();
-        let context = Declaration::of(|declaration| competition.declare_phase_context(declaration));
-        check_in(context, format, ranker, calculators)
+        check_facts_of(&PhasePlugins::new(format, ranker, calculators))
     }
 
     /// Like [`check`], for a phase whose context provides `context` rather than a competition.
@@ -222,6 +234,13 @@ mod tests {
         calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<(), Incompatibility> {
         let plugins = PhasePlugins::new(format, ranker, calculators);
+        check_facts(context, &plugins.declarations())
+    }
+
+    /// Whether the facts of `plugins` fit together in a competition, i.e. what `AddPhase` checks.
+    fn check_facts_of(plugins: &PhasePlugins) -> Result<(), Incompatibility> {
+        let competition = Competition::default();
+        let context = Declaration::of(|declaration| competition.declare_phase_context(declaration));
         check_facts(context, &plugins.declarations())
     }
 
@@ -265,6 +284,67 @@ mod tests {
                 TypeId::of::<BuchholzOfBuchholz>(),
             ]
         );
+    }
+
+    /// Nobody configuring a phase has to know that the Sonneborn-Berger sums the points of the
+    /// opponents a ranking met, nor that the points are scored from its results: every metric a
+    /// configured calculator reads is calculated by the calculator the catalog registers for it.
+    #[test]
+    fn the_metrics_a_configured_calculator_reads_are_added_from_the_catalog() {
+        let mut plugins =
+            PhasePlugins::new(Box::new(RoundRobin), unranked(), vec![Box::new(FULL_HALF)]);
+
+        plugins.resolve().unwrap();
+
+        assert_eq!(
+            metrics(&plugins),
+            [
+                TypeId::of::<Matches>(),
+                TypeId::of::<WinsDrawsLosses>(),
+                TypeId::of::<Points>(),
+                TypeId::of::<SonnebornBerger>(),
+            ]
+        );
+        assert_eq!(check_facts_of(&plugins), Ok(()));
+    }
+
+    /// A metric is required by the ranker as well as by a calculator, so ranking by one that is
+    /// not configured calculates it, with the parameters it is registered with.
+    #[test]
+    fn a_metric_the_phase_is_ranked_by_is_added_from_the_catalog() {
+        let mut plugins = PhasePlugins::new(
+            Box::new(RoundRobin),
+            ranked_by(LexicographicalCriteria::new().add_criterion(MorePoints)),
+            Vec::new(),
+        );
+
+        plugins.resolve().unwrap();
+
+        assert_eq!(
+            metrics(&plugins),
+            [TypeId::of::<WinsDrawsLosses>(), TypeId::of::<Points>()]
+        );
+        assert_eq!(check_facts_of(&plugins), Ok(()));
+    }
+
+    /// The catalog finds a calculator by the fact it declares, so a registered calculator that
+    /// declares a metric other than the one it calculates would be added for the wrong metric and
+    /// never for its own.
+    #[test]
+    fn every_registered_calculator_provides_the_metric_it_calculates() {
+        for entry in MetricsCalculatorKind::entries() {
+            let Some(calculator) = entry.create_default() else {
+                continue;
+            };
+            let metric = (&*calculator.default_metric_value() as &dyn Any).type_id();
+            let (_, declaration) = declaration_of(&*calculator);
+
+            assert!(
+                declaration.provides_type(metric),
+                "{} does not provide the metric it calculates",
+                entry.id()
+            );
+        }
     }
 
     #[test]

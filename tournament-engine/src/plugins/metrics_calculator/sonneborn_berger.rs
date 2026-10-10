@@ -8,7 +8,9 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::Declaration,
-        metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
+        metrics_calculator::{
+            Metric, MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
+        },
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -62,6 +64,17 @@ impl Plugin for SonnebornBergerCalculator {
             .requires::<Points>()
             .requires::<Matches>();
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::sonneborn_berger",
+        "Sonneborn-Berger",
+        "the points of the opponents that were beaten or played to a draw",
+    )
+    // the classical weights: the points of a beaten opponent count fully, those of an opponent
+    // that was played to a draw count half
+    .with_default(|| Box::new(SonnebornBergerCalculator::new(1.0, 0.5)))
 }
 
 #[typetag::serde]

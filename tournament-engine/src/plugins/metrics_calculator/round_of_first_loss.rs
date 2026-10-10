@@ -8,7 +8,7 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::Declaration,
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -49,6 +49,15 @@ impl Plugin for RoundOfFirstLossCalculator {
     fn declare(&self, declaration: &mut Declaration) {
         declaration.provides(RoundOfFirstLoss::default());
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::round_of_first_loss",
+        "round of the first loss",
+        "the later the better, never having lost is best",
+    )
+    .with_default(|| Box::new(RoundOfFirstLossCalculator))
 }
 
 #[typetag::serde]

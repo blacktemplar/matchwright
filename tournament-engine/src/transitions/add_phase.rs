@@ -75,11 +75,10 @@ impl AddPhase {
     /// Adds the phase `id`, played in `phase_format`, ranked by `ranker` and calculating the
     /// metrics of `metrics_calculators`.
     ///
-    /// For every fact a plugin requires that nothing provides, the
-    /// [default provider](crate::plugins::compatibility::DefaultProvider) of the fact is added, if
-    /// it has one. The metrics calculators are ordered so that each one runs after the calculators
-    /// providing the facts it requires, keeping the given order otherwise; [`AddPhase::plugins`]
-    /// returns the result.
+    /// For every fact a plugin requires that nothing provides, the plugin the
+    /// [catalog](crate::plugins::catalog) settles on is added, if there is one. The metrics
+    /// calculators are ordered so that each one runs after the calculators providing the facts it
+    /// requires, keeping the given order otherwise; [`AddPhase::plugins`] returns the result.
     ///
     /// # Errors
     /// Returns an error if metrics calculators require facts of each other in a cycle.

@@ -12,7 +12,9 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::Declaration,
-        metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
+        metrics_calculator::{
+            MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
+        },
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -63,6 +65,15 @@ impl Plugin for BuchholzCalculator {
             .requires::<Points>()
             .requires::<Matches>();
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::buchholz",
+        "Buchholz",
+        "the points of all opponents",
+    )
+    .with_default(|| Box::new(BuchholzCalculator))
 }
 
 #[typetag::serde]
@@ -198,6 +209,15 @@ impl Plugin for BuchholzOfBuchholzCalculator {
             .requires::<Buchholz>()
             .requires::<Matches>();
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::buchholz_of_buchholz",
+        "Buchholz of Buchholz",
+        "the Buchholz of all opponents",
+    )
+    .with_default(|| Box::new(BuchholzOfBuchholzCalculator))
 }
 
 #[typetag::serde]

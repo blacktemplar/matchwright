@@ -1230,6 +1230,7 @@ dependencies = [
  "criterion",
  "dyn-clone",
  "indexmap",
+ "inventory",
  "itertools 0.15.0",
  "postcard",
  "rand",

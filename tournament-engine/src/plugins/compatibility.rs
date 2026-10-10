@@ -7,11 +7,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{
-    map::Map,
-    plugins::{PhasePlugins, Plugin},
-    type_map::TypeMapValue,
-};
+use crate::{map::Map, plugins::Plugin, type_map::TypeMapValue};
 
 /// Something true of a phase, which the plugins of the phase and its context provide and require,
 /// see [`Declaration`].
@@ -65,16 +61,6 @@ impl<A: TypeMapValue> Debug for MatchAnnotation<A> {
     }
 }
 
-/// A fact that a plugin can be added for to a phase that requires it but has nothing providing it,
-/// see [`Declaration::requires_with_default`].
-pub trait DefaultProvider: Fact {
-    /// Adds a plugin providing this fact to `plugins`. Adds nothing if no single plugin fits every
-    /// phase, so that one has to be configured.
-    fn add_default_provider(plugins: &mut PhasePlugins) {
-        let _ = plugins;
-    }
-}
-
 /// What a plugin provides to and requires of the phase it is part of, filled in by
 /// [`Plugin::declare`].
 pub struct Declaration {
@@ -91,11 +77,7 @@ struct RequiredFact {
     type_id: TypeId,
     name: &'static str,
     condition: Option<Condition>,
-    add_default_provider: Option<AddDefaultProvider>,
 }
-
-/// See [`DefaultProvider::add_default_provider`].
-type AddDefaultProvider = fn(&mut PhasePlugins);
 
 struct Condition {
     description: &'static str,
@@ -138,8 +120,12 @@ impl Declaration {
     }
 
     /// Declares that the phase must have a fact of type `F`, whatever its value.
+    ///
+    /// A phase that has nothing providing it gets the one plugin the
+    /// [catalog](crate::plugins::catalog) registers for it, if there is exactly one and it needs no
+    /// configuration.
     pub fn requires<F: Fact>(&mut self) -> &mut Self {
-        self.require::<F>(None, None)
+        self.require::<F>(None)
     }
 
     /// Declares that the phase must have a fact of type `F` for which `holds` is true, where
@@ -156,26 +142,14 @@ impl Declaration {
                 holds(fact.downcast_ref().expect("facts are keyed by their type"))
             }),
         };
-        self.require::<F>(Some(condition), None)
+        self.require::<F>(Some(condition))
     }
 
-    /// Declares that the phase must have a fact of type `F`, like [`Self::requires`], and that the
-    /// [default provider](DefaultProvider::add_default_provider) of `F` is added to a phase that
-    /// has nothing providing it.
-    pub fn requires_with_default<F: DefaultProvider>(&mut self) -> &mut Self {
-        self.require::<F>(None, Some(F::add_default_provider))
-    }
-
-    fn require<F: Fact>(
-        &mut self,
-        condition: Option<Condition>,
-        add_default_provider: Option<AddDefaultProvider>,
-    ) -> &mut Self {
+    fn require<F: Fact>(&mut self, condition: Option<Condition>) -> &mut Self {
         self.required.push(RequiredFact {
             type_id: TypeId::of::<F>(),
             name: type_name::<F>(),
             condition,
-            add_default_provider,
         });
         self
     }
@@ -215,20 +189,18 @@ pub(crate) fn declaration_of(plugin: &dyn Plugin) -> (String, Declaration) {
     )
 }
 
-/// The facts required in `declarations` that none of them provides and that have a default
-/// provider, as their type and the function adding their default provider.
-pub(crate) fn unprovided_with_default(
-    declarations: &[(String, Declaration)],
-) -> impl Iterator<Item = (TypeId, AddDefaultProvider)> {
+/// The types of the facts required in `declarations` that none of them provides, in the order they
+/// are required in and with repetitions.
+pub(crate) fn unprovided(declarations: &[(String, Declaration)]) -> impl Iterator<Item = TypeId> {
     declarations
         .iter()
         .flat_map(|(_, declaration)| &declaration.required)
-        .filter(|requirement| {
+        .map(|requirement| requirement.type_id)
+        .filter(|&required| {
             !declarations
                 .iter()
-                .any(|(_, declaration)| declaration.provides_type(requirement.type_id))
+                .any(|(_, declaration)| declaration.provides_type(required))
         })
-        .filter_map(|requirement| Some((requirement.type_id, requirement.add_default_provider?)))
 }
 
 /// An order in which plugins with `declarations` can run one after another, so that each runs
@@ -336,47 +308,61 @@ mod tests {
     use crate::{
         entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
         plugins::{
-            metrics_calculator::{Metric, MetricsCalculator},
+            PhasePlugins,
+            metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
             phase_format::round_robin::RoundRobin,
             ranker::HierarchicalRanker,
         },
         type_map::TypeMapValue,
     };
 
-    /// A metric no calculator of which reads another metric, with a default calculator.
+    /// A metric no calculator of which reads another metric, calculated by a registered calculator
+    /// that needs no configuration.
     #[derive(Debug, Default, Clone, Serialize, Deserialize)]
     struct Base;
 
     #[typetag::serde(name = "tournament_engine::compatibility::tests::base")]
     impl TypeMapValue for Base {}
 
-    impl DefaultProvider for Base {
-        fn add_default_provider(plugins: &mut PhasePlugins) {
-            plugins.add_metrics_calculator(Box::new(Calculator::new(Name::Base, &[])));
-        }
+    inventory::submit! {
+        MetricsCalculatorKind::register(
+            "tournament_engine::compatibility::tests::base",
+            "base",
+            "a metric calculated from nothing else",
+        )
+        .with_default(|| Box::new(Calculator::new(Name::Base, &[])))
     }
 
-    /// A metric derived from [`Base`], whose default calculator requires it.
+    /// A metric derived from [`Base`], whose registered calculator requires it.
     #[derive(Debug, Default, Clone, Serialize, Deserialize)]
     struct Derived;
 
     #[typetag::serde(name = "tournament_engine::compatibility::tests::derived")]
     impl TypeMapValue for Derived {}
 
-    impl DefaultProvider for Derived {
-        fn add_default_provider(plugins: &mut PhasePlugins) {
-            plugins.add_metrics_calculator(Box::new(Calculator::new(Name::Derived, &[Name::Base])));
-        }
+    inventory::submit! {
+        MetricsCalculatorKind::register(
+            "tournament_engine::compatibility::tests::derived",
+            "derived",
+            "a metric calculated from the base one",
+        )
+        .with_default(|| Box::new(Calculator::new(Name::Derived, &[Name::Base])))
     }
 
-    /// A metric without a default calculator.
+    /// A metric whose calculator has to be configured, so that the catalog cannot create it.
     #[derive(Debug, Default, Clone, Serialize, Deserialize)]
     struct Configured;
 
     #[typetag::serde(name = "tournament_engine::compatibility::tests::configured")]
     impl TypeMapValue for Configured {}
 
-    impl DefaultProvider for Configured {}
+    inventory::submit! {
+        MetricsCalculatorKind::register(
+            "tournament_engine::compatibility::tests::configured",
+            "configured",
+            "a metric whose calculator has to be configured",
+        )
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     enum Name {
@@ -411,9 +397,9 @@ mod tests {
             };
             for name in &self.requires {
                 match name {
-                    Name::Base => declaration.requires_with_default::<Base>(),
-                    Name::Derived => declaration.requires_with_default::<Derived>(),
-                    Name::Configured => declaration.requires_with_default::<Configured>(),
+                    Name::Base => declaration.requires::<Base>(),
+                    Name::Derived => declaration.requires::<Derived>(),
+                    Name::Configured => declaration.requires::<Configured>(),
                 };
             }
         }
@@ -509,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_calculators_are_added_from_the_defaults_of_their_metrics_recursively() {
+    fn missing_calculators_are_added_from_the_catalog_recursively() {
         let configured = Calculator::new(Name::Configured, &[Name::Derived]);
 
         assert_eq!(
@@ -523,8 +509,8 @@ mod tests {
     }
 
     #[test]
-    fn a_configured_calculator_wins_over_the_default() {
-        // the default calculator of `Derived` requires `Base`, this one does not
+    fn a_configured_calculator_wins_over_the_registered_one() {
+        // the registered calculator of `Derived` requires `Base`, this one does not
         let derived = Calculator::new(Name::Derived, &[]);
         let configured = Calculator::new(Name::Configured, &[Name::Derived]);
 
@@ -535,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn a_required_metric_without_default_is_left_unprovided() {
+    fn a_metric_whose_calculator_has_to_be_configured_is_left_unprovided() {
         let base = Calculator::new(Name::Base, &[Name::Configured]);
 
         let mut plugins = plugins(slice::from_ref(&base));

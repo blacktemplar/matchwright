@@ -8,7 +8,7 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::{Declaration, MatchAnnotation},
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -70,6 +70,15 @@ impl Plugin for RoundOfEliminationCalculator {
             .provides(RoundOfElimination::default())
             .requires::<MatchAnnotation<Eliminates>>();
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::round_of_elimination",
+        "round of elimination",
+        "the later the better, still being in is best",
+    )
+    .with_default(|| Box::new(RoundOfEliminationCalculator))
 }
 
 #[typetag::serde]

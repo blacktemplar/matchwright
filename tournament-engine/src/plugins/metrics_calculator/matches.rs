@@ -6,7 +6,11 @@ use super::Metric;
 use crate::{
     entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugins::{Plugin, compatibility::Declaration, metrics_calculator::MetricsCalculator},
+    plugins::{
+        Plugin,
+        compatibility::Declaration,
+        metrics_calculator::{MetricsCalculator, MetricsCalculatorKind},
+    },
     type_map::TypeMapValue,
 };
 
@@ -23,6 +27,15 @@ impl Plugin for MatchesCalculator {
     fn declare(&self, declaration: &mut Declaration) {
         declaration.provides(Matches::default());
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::matches",
+        "match list",
+        "the matches an entrant played",
+    )
+    .with_default(|| Box::new(MatchesCalculator))
 }
 
 #[typetag::serde]

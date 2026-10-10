@@ -9,7 +9,9 @@ use crate::{
     plugins::{
         Plugin,
         compatibility::Declaration,
-        metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
+        metrics_calculator::{
+            MetricsCalculator, MetricsCalculatorKind, wins_draws_losses::WinsDrawsLosses,
+        },
         ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
     },
     type_map::TypeMapValue,
@@ -94,6 +96,17 @@ impl Plugin for PointsCalculator {
             .provides(Points::default())
             .requires::<WinsDrawsLosses>();
     }
+}
+
+inventory::submit! {
+    MetricsCalculatorKind::register(
+        "tournament_engine::metrics_calculator::points",
+        "points",
+        "scored for every win, every draw and every bye",
+    )
+    // the scoring system of chess and most other games scoring a draw as half a win, with a bye
+    // worth as much as a win
+    .with_default(|| Box::new(PointsCalculator::new(1.0, 0.5).with_points_for_bye(1.0)))
 }
 
 #[typetag::serde]

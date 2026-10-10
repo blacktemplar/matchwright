@@ -1,6 +1,8 @@
 # Proposal: plugins describe themselves
 
-Status: proposal. To be folded into `DESIGN.md` once settled.
+Status: proposal. To be folded into `DESIGN.md` once settled; steps 0 and 1 of
+the build order are implemented and are recorded there, under
+[The plugin catalog](DESIGN.md#the-plugin-catalog).
 
 ## The problem
 
@@ -101,10 +103,12 @@ two highlighted in the list it already offers.
 
 Catalog — a registry per axis:
 
-- **`PluginKind`** — a marker type per axis (`MetricsCalculatorKind`, …) tying
-  the axis trait to its registry. `inventory::collect!` needs a type local to
-  the collecting crate, so a macro generates the registry type; that is the only
-  reason the macro exists.
+- **`PluginKind`** — a type per axis (`MetricsCalculatorKind`, …) tying the axis
+  trait to its registry. `inventory::collect!` needs a type local to the
+  collecting crate, so a macro generates it; that is the only reason the macro
+  exists. *(Built: the generated type is the registry, one value of it being one
+  registered plugin, and it carries the `register`/`with_default` constructors,
+  so that a registration names the concrete axis trait nowhere.)*
 - **`PluginEntry<K>`** — one plugin's registration: `id` (stable, namespaced,
   the same string as its `typetag` tag), `label`, `description`, and the erased
   form of what `Configurable` authors.
@@ -276,14 +280,14 @@ about open slots.
 
 Each step is shippable on its own, and nothing in the log changes.
 
-0. **Write the declarations.** Today every `declare` only provides a
+0. **Write the declarations.** *(done)* Today every `declare` only provides a
    calculator's own metric, and the formats declare nothing: `SonnebornBerger`
    does not say it reads `Points` and `Matches`, the elimination formats do not
    say they eliminate, monster DYP does not say it needs single players. Nothing
    below works without them — not ordering the calculators, not adding `Matches`
    by itself, not filtering what a UI offers. One prerequisite for all three,
    and it needs none of the new types.
-1. **Catalog, no schemas.** `PluginKind`, `PluginEntry` with just
+1. **Catalog, no schemas.** *(done)* `PluginKind`, `PluginEntry` with just
    `{ id, label, description, default: Option<fn() -> Box<K::Object>> }`,
    `Accepts<K>`, the macro. Switch resolution to the catalog; delete
    `DefaultProvider`, `requires_with_default` and the CLI's `derived_from`. The

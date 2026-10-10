@@ -292,8 +292,8 @@ impl Session {
             return Err(Error::PhaseAlreadyAdded);
         }
         let summary = config.summary();
-        // the calculators run in the order the configuration lists them, which is one in which
-        // every metric comes after the ones it is derived from
+        // the engine adds the calculators of the metrics these are derived from and runs them in
+        // the order it sorts them into
         let (phase_format, ranker, calculators) = config.into_plugins();
         self.apply(AddPhase::new(
             PhaseId::new(Uuid::new_v4()),
@@ -894,6 +894,41 @@ mod tests {
                 "every win is worth a single point, {row:?}"
             );
         }
+    }
+
+    /// Which metrics a metric is derived from is the engine's business: the Sonneborn-Berger sums
+    /// the points of the opponents a ranking met, so a phase calculating it also calculates the
+    /// points and the results they were scored from, neither of which was configured.
+    #[test]
+    fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+        let config = PhaseConfig::new(
+            FormatConfig::RoundRobin,
+            [MetricConfig::SonnebornBerger {
+                weight_for_win: 1.0,
+                weight_for_draw: 0.5,
+            }],
+            [],
+        );
+        session.add_phase(config).unwrap();
+        output(&mut session, "start");
+        for number in 1..=6 {
+            output(&mut session, &format!("report {number} a"));
+        }
+
+        let ranking = output(&mut session, "ranking");
+
+        assert_eq!(
+            ranking
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "name", "W-D-L", "points", "Sonneborn-Berger"],
+            "{ranking}"
+        );
     }
 
     /// Wins, draws, losses and the matches they add up to are four criteria of a single metric, so
