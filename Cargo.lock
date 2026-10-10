@@ -809,6 +809,7 @@ name = "plugin-factory"
 version = "0.1.0"
 dependencies = [
  "inventory",
+ "thiserror",
 ]
 
 [[package]]

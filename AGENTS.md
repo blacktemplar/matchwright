@@ -19,7 +19,7 @@ The hooks are `cargo-fmt`, `cargo-clippy` (`-D warnings`), `cargo-test`, `cargo-
 - Example: `cargo run -p tournament-engine --example run_tournament`.
 - CLI: `cargo run -p tournament-cli -- [FILE]` (see `tournament-cli/README.md` for commands and presets).
 - Profile `release-checked`: release with debug assertions and overflow checks.
-- Keep `Cargo.toml` dependency lists sorted (the `cargo-sort` hook checks this). Dependency versions are declared only in the root `[workspace.dependencies]`; members use `dep.workspace = true`.
+- Keep `Cargo.toml` dependency lists sorted (the `cargo-sort` hook checks this). Dependency versions are declared only in the root `[workspace.dependencies]`; members use `dep.workspace = true`. `plugin-factory` is the exception on purpose: it declares everything itself, including `version`/`edition`/`license`, so that it can be moved out of the workspace. Don't give it workspace references, and don't let it depend on the other crates.
 - `undoable-state-machine` is a git dependency (same author). To develop against a local checkout at `../undoable-state-machine`, uncomment the `[patch]` in `.cargo/config.toml`.
 
 ## Architecture
