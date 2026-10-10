@@ -15,11 +15,18 @@ use crate::{
         metrics_calculator::MetricsCalculator,
         phase_format::{PhaseFormat, Schedule},
     },
+    type_map::TypeMap,
 };
 
 /// A match scheduled by [`FixedMatches`], given as its round and its two teams, where a team is
 /// described by the indices of its rankings ordered by initial unique rank.
 pub(crate) type MatchSpec = (u32, Vec<usize>, Vec<usize>);
+
+/// A match scheduled by [`FixedMatches`] together with the annotations it carries, as a format
+/// annotating the matches it schedules writes them, e.g. the [`Eliminates`] of a knockout.
+///
+/// [`Eliminates`]: super::round_of_elimination::Eliminates
+pub(crate) type AnnotatedMatchSpec = (MatchSpec, TypeMap);
 
 /// A bye scheduled by [`FixedMatches`], given as its round and the index of its ranking ordered by
 /// initial unique rank.
@@ -28,7 +35,7 @@ pub(crate) type ByeSpec = (u32, usize);
 /// Test-only [`PhaseFormat`] that schedules a fixed list of matches all at once, and a fixed list
 /// of byes, each as soon as every match of the rounds before its own is finished.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FixedMatches(Vec<MatchSpec>, Vec<ByeSpec>);
+struct FixedMatches(Vec<AnnotatedMatchSpec>, Vec<ByeSpec>);
 
 impl Plugin for FixedMatches {
     fn declare(&self, _: &mut Declaration) {}
@@ -40,12 +47,13 @@ impl PhaseFormat for FixedMatches {
         let all_matches: Vec<_> = self
             .0
             .iter()
-            .map(|(round, team_a, team_b)| {
+            .map(|((round, team_a, team_b), annotations)| {
                 Match::new(
                     team(phase_data, team_a),
                     team(phase_data, team_b),
                     NonZeroU32::new(*round).unwrap(),
                 )
+                .with_annotations(annotations.clone())
             })
             .collect();
         let ranking_ids = ranking_ids(phase_data);
@@ -95,6 +103,21 @@ pub(crate) fn phase_with(
 pub(crate) fn phase_with_byes(
     num_players: u32,
     matches: Vec<MatchSpec>,
+    byes: Vec<ByeSpec>,
+    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+) -> Phase {
+    let matches = matches
+        .into_iter()
+        .map(|r#match| (r#match, TypeMap::new()))
+        .collect();
+    phase_with_annotated_matches(num_players, matches, byes, metrics_calculators)
+}
+
+/// Like [`phase_with_byes`], where every match carries the annotations given next to its schedule,
+/// which is what a calculator reading a match annotation needs.
+pub(crate) fn phase_with_annotated_matches(
+    num_players: u32,
+    matches: Vec<AnnotatedMatchSpec>,
     byes: Vec<ByeSpec>,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 ) -> Phase {

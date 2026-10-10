@@ -121,9 +121,10 @@ path, which postcard cannot deserialize.
 ## Compatibility between plugins
 
 *Partly implemented — the mechanism exists (`plugins::compatibility`,
-`Plugin::declare`, `PhasePlugins`, `AddPhase`), but existing plugins declare
-nothing beyond a calculator's own metric and no fact has a default provider, so
-the CLI still orders calculators by a hardcoded `derived_from` table.*
+`Plugin::declare`, `PhasePlugins`, `AddPhase`) and every plugin of this
+workspace declares what it provides and requires, but no fact has a default
+provider, so the CLI still adds the calculators of derived metrics itself, by a
+hardcoded `derived_from` table.*
 
 Not every combination of plugins is valid, and detecting that must not rely on a
 hardcoded list of concrete type pairs, which would be blind to third-party

@@ -9,7 +9,7 @@ use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
     plugins::{
         Plugin,
-        compatibility::Declaration,
+        compatibility::{Declaration, EntrantsPerRanking},
         phase_format::{PhaseFormat, Schedule},
     },
 };
@@ -37,7 +37,13 @@ impl MonsterDyp {
 }
 
 impl Plugin for MonsterDyp {
-    fn declare(&self, _: &mut Declaration) {}
+    fn declare(&self, declaration: &mut Declaration) {
+        // the teams are drawn per match, so a ranking that already stands for a team of two
+        // cannot be drawn into one
+        declaration.requires_that::<EntrantsPerRanking>("rankings of single players", |entrants| {
+            *entrants == EntrantsPerRanking::SINGLE
+        });
+    }
 }
 
 #[typetag::serde]

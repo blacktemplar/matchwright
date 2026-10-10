@@ -52,7 +52,11 @@ impl HierarchicalRanker {
 }
 
 impl Plugin for HierarchicalRanker {
-    fn declare(&self, _: &mut Declaration) {}
+    fn declare(&self, declaration: &mut Declaration) {
+        for slice_ranker in &self.0 {
+            slice_ranker.declare(declaration);
+        }
+    }
 }
 
 #[typetag::serde]
@@ -94,15 +98,32 @@ impl Ranker for HierarchicalRanker {
 /// order of that metric comes from. If a ranking does not hold that metric, the criterion orders
 /// nothing at all, see [`LexicographicalCriteria`].
 #[must_use]
-pub struct RankingOrder<'a, 'b> {
-    metrics: &'b [&'a TypeMap],
-    output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
+pub struct RankingOrder<'a, 'b>(Use<'a, 'b>);
+
+/// What the metric a criterion states it sorts by is used for.
+enum Use<'a, 'b> {
+    /// Reading the metric of every ranking to be sorted, see [`LexicographicalCriteria`].
+    Sort {
+        metrics: &'b [&'a TypeMap],
+        output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
+    },
+    /// Requiring the metric of the phase, so that the criteria of a ranker declare the metrics
+    /// they sort by without a plugin author restating them.
+    Declare(&'b mut Declaration),
 }
 
 impl<'a, 'b> RankingOrder<'a, 'b> {
     /// Sorts by metric `M`, in the one order `M` is compared in itself, see [`Compare`].
     pub fn by_metric<M: TypeMapValue + Compare>(self) {
-        *self.output = self.column_by_metric::<M>()
+        match self.0 {
+            Use::Sort { metrics, output } => {
+                *output = values::<M>(metrics)
+                    .map(|values| Box::new(MetricValues(values)) as Box<dyn MetricColumn + 'a>);
+            }
+            Use::Declare(declaration) => {
+                declaration.requires::<M>();
+            }
+        }
     }
 
     /// Sorts by metric `M` too, but in the order `compare` puts two of its values in rather than in
@@ -114,29 +135,40 @@ impl<'a, 'b> RankingOrder<'a, 'b> {
     ///
     /// [`WinsDrawsLosses`]: crate::plugins::metrics_calculator::wins_draws_losses::WinsDrawsLosses
     pub fn by_metric_compared_by<M: TypeMapValue>(self, compare: fn(&M, &M) -> Comparison) {
-        *self.output = self.column_compared_by::<M>(compare)
+        match self.0 {
+            Use::Sort { metrics, output } => {
+                *output = values::<M>(metrics).map(|values| {
+                    Box::new(ComparedBy(values, compare)) as Box<dyn MetricColumn + 'a>
+                });
+            }
+            Use::Declare(declaration) => {
+                declaration.requires::<M>();
+            }
+        }
     }
 
-    fn column_by_metric<M: TypeMapValue + Compare>(&self) -> Option<Box<dyn MetricColumn + 'a>> {
-        let values: Vec<&M> = self.values::<M>()?;
-        Some(Box::new(MetricValues(values)))
+    /// Reads the metric a criterion sorts by out of `metrics`, one [`TypeMap`] per ranking, into
+    /// `output`.
+    fn sorting(
+        metrics: &'b [&'a TypeMap],
+        output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
+    ) -> Self {
+        Self(Use::Sort { metrics, output })
     }
 
-    fn column_compared_by<M: TypeMapValue>(
-        &self,
-        compare: fn(&M, &M) -> Comparison,
-    ) -> Option<Box<dyn MetricColumn + 'a>> {
-        let values: Vec<&M> = self.values::<M>()?;
-        Some(Box::new(ComparedBy(values, compare)))
+    /// Declares the metric a criterion sorts by as required by the phase.
+    fn declaring(declaration: &'b mut Declaration) -> Self {
+        Self(Use::Declare(declaration))
     }
+}
 
-    /// The value of metric `M` of every ranking, or [`None`] if any of them does not hold it.
-    fn values<M: TypeMapValue>(&self) -> Option<Vec<&'a M>> {
-        self.metrics
-            .iter()
-            .map(|map| map.get::<M>())
-            .collect::<Option<_>>()
-    }
+/// The value of metric `M` of every ranking of `metrics`, or [`None`] if any of them does not hold
+/// it.
+fn values<'a, M: TypeMapValue>(metrics: &[&'a TypeMap]) -> Option<Vec<&'a M>> {
+    metrics
+        .iter()
+        .map(|map| map.get::<M>())
+        .collect::<Option<_>>()
 }
 
 /// One way to compare two rankings, i.e. a criterion a ranking can be sorted by.
@@ -201,10 +233,7 @@ pub fn compare_by(
     second: &TypeMap,
 ) -> Option<Comparison> {
     let mut column = None;
-    criterion.order_rankings(RankingOrder {
-        metrics: &[first, second],
-        output: &mut column,
-    });
+    criterion.order_rankings(RankingOrder::sorting(&[first, second], &mut column));
     Some(column?.compare(0, 1))
 }
 
@@ -308,7 +337,13 @@ impl LexicographicalCriteria {
 }
 
 impl Plugin for LexicographicalCriteria {
-    fn declare(&self, _: &mut Declaration) {}
+    /// Requires the metric of every criterion, read from the order each one states rather than
+    /// declared by the criterion itself.
+    fn declare(&self, declaration: &mut Declaration) {
+        for criterion in &self.0 {
+            criterion.order_rankings(RankingOrder::declaring(declaration));
+        }
+    }
 }
 
 #[typetag::serde]
@@ -330,11 +365,7 @@ impl SliceRanker for LexicographicalCriteria {
             .iter()
             .map(|criterion| {
                 let mut column = None;
-                let order = RankingOrder {
-                    metrics: &metrics,
-                    output: &mut column,
-                };
-                criterion.order_rankings(order);
+                criterion.order_rankings(RankingOrder::sorting(&metrics, &mut column));
                 column.expect("All queried metrics must exist")
             })
             .collect_vec();

@@ -90,7 +90,9 @@ impl PointsCalculator {
 
 impl Plugin for PointsCalculator {
     fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(Points::default());
+        declaration
+            .provides(Points::default())
+            .requires::<WinsDrawsLosses>();
     }
 }
 

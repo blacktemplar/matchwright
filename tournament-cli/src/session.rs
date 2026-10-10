@@ -823,6 +823,20 @@ mod tests {
         assert!(matches!(result, Err(Error::PhaseAlreadyAdded)));
     }
 
+    /// Every format is offered with metrics that cover everything its ranking and its own
+    /// calculators read, which the engine checks against what the plugins declare when the phase
+    /// is added.
+    #[test]
+    fn every_format_is_offered_with_plugins_the_engine_accepts() {
+        for &format in FormatConfig::ALL {
+            let mut session = Session::new(None);
+
+            if let Err(error) = session.add_phase(PhaseConfig::with_defaults(format)) {
+                panic!("{format:?} is offered with plugins the engine rejects: {error}");
+            }
+        }
+    }
+
     /// A session executes commands and never asks the operator anything, so the phase of an
     /// `add-phase` without a preset has to be configured before the command reaches it.
     #[test]

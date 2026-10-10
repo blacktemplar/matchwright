@@ -57,7 +57,10 @@ impl SonnebornBergerCalculator {
 
 impl Plugin for SonnebornBergerCalculator {
     fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(SonnebornBerger::default());
+        declaration
+            .provides(SonnebornBerger::default())
+            .requires::<Points>()
+            .requires::<Matches>();
     }
 }
 

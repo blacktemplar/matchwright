@@ -58,7 +58,10 @@ pub struct BuchholzCalculator;
 
 impl Plugin for BuchholzCalculator {
     fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(Buchholz::default());
+        declaration
+            .provides(Buchholz::default())
+            .requires::<Points>()
+            .requires::<Matches>();
     }
 }
 
@@ -190,7 +193,10 @@ pub struct BuchholzOfBuchholzCalculator;
 
 impl Plugin for BuchholzOfBuchholzCalculator {
     fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(BuchholzOfBuchholz::default());
+        declaration
+            .provides(BuchholzOfBuchholz::default())
+            .requires::<Buchholz>()
+            .requires::<Matches>();
     }
 }
 
@@ -247,9 +253,24 @@ mod tests {
     ///
     /// [`BuchholzCalculator`] derives its metric from [`Points`] and [`Matches`], so the phase has
     /// to update both of them first, and [`Points`] in turn derives from
-    /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses).
-    /// [`BuchholzOfBuchholzCalculator`] builds on [`Buchholz`] and therefore comes last.
+    /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses). Those are the only metrics
+    /// it declares, so the phase calculates nothing else.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
+        test_utils::phase_with(
+            num_players,
+            matches,
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+            ],
+        )
+    }
+
+    /// Like [`phase_with`], with the buchholz of buchholz calculated as well, which reads the
+    /// [`Buchholz`] and therefore runs last.
+    fn phase_with_buchholz_of_buchholz(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
             num_players,
             matches,
@@ -280,20 +301,38 @@ mod tests {
         (3, &[1], &[2], MatchResult::BWins),
     ];
 
-    /// Plays [`SCENARIO`] between four players, reporting its matches in the given order, which
-    /// leaves them with the following points: `0`: 3, `1`: 3, `2`: 7, `3`: 1.
-    fn play_scenario(report_order: impl Iterator<Item = usize>) -> Phase {
-        let matches = SCENARIO
+    /// The matches of [`SCENARIO`], as the schedule of a phase playing it.
+    fn scenario_matches() -> Vec<MatchSpec> {
+        SCENARIO
             .iter()
             .map(|(round, team_a, team_b, _)| (*round, team_a.to_vec(), team_b.to_vec()))
-            .collect();
-        let mut phase = phase_with(4, matches);
+            .collect()
+    }
+
+    /// Plays [`SCENARIO`] in `phase`, which has to be a phase of four players scheduled with
+    /// [`scenario_matches`], reporting its matches in the given order. That leaves them with the
+    /// following points: `0`: 3, `1`: 3, `2`: 7, `3`: 1.
+    fn play_scenario(mut phase: Phase, report_order: impl Iterator<Item = usize>) -> Phase {
         for index in report_order {
             let (round, team_a, team_b, result) = SCENARIO[index];
             let match_id = match_id(&phase, round, team_a, team_b);
             phase.report_match_result(match_id, result);
         }
         phase
+    }
+
+    /// Plays [`SCENARIO`] in a phase calculating the buchholz, see [`play_scenario`].
+    fn scenario(report_order: impl Iterator<Item = usize>) -> Phase {
+        play_scenario(phase_with(4, scenario_matches()), report_order)
+    }
+
+    /// Plays [`SCENARIO`] in a phase calculating the buchholz of buchholz as well, see
+    /// [`play_scenario`].
+    fn scenario_with_buchholz_of_buchholz(report_order: impl Iterator<Item = usize>) -> Phase {
+        play_scenario(
+            phase_with_buchholz_of_buchholz(4, scenario_matches()),
+            report_order,
+        )
     }
 
     #[test]
@@ -307,7 +346,7 @@ mod tests {
 
     #[test]
     fn the_buchholz_of_a_ranking_is_the_sum_of_the_points_of_its_opponents() {
-        let phase = play_scenario(0..SCENARIO.len());
+        let phase = scenario(0..SCENARIO.len());
 
         // opponents of `0` are `1` (3 points) and `2` (7 points)
         assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
@@ -321,7 +360,7 @@ mod tests {
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_buchholz() {
-        let phase = play_scenario((0..SCENARIO.len()).rev());
+        let phase = scenario((0..SCENARIO.len()).rev());
 
         assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
         assert_eq!(buchholz_of(&phase, 1), Buchholz(11.0));
@@ -444,7 +483,7 @@ mod tests {
 
     #[test]
     fn initialize_metrics_starts_every_buchholz_of_buchholz_at_zero() {
-        let phase = phase_with(4, vec![]);
+        let phase = phase_with_buchholz_of_buchholz(4, vec![]);
 
         for ranking_index in 0..4 {
             assert_eq!(
@@ -456,7 +495,7 @@ mod tests {
 
     #[test]
     fn the_buchholz_of_buchholz_of_a_ranking_is_the_sum_of_the_buchholz_of_its_opponents() {
-        let phase = play_scenario(0..SCENARIO.len());
+        let phase = scenario_with_buchholz_of_buchholz(0..SCENARIO.len());
 
         // the buchholz of the scenario are `0`: 10, `1`: 11, `2`: 7, `3`: 10
 
@@ -472,7 +511,7 @@ mod tests {
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_buchholz_of_buchholz() {
-        let phase = play_scenario((0..SCENARIO.len()).rev());
+        let phase = scenario_with_buchholz_of_buchholz((0..SCENARIO.len()).rev());
 
         assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(18.0));
         assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(27.0));
@@ -482,7 +521,8 @@ mod tests {
 
     #[test]
     fn buchholz_an_opponent_gains_later_is_added_retroactively() {
-        let mut phase = phase_with(3, vec![(1, vec![0], vec![1]), (2, vec![1], vec![2])]);
+        let mut phase =
+            phase_with_buchholz_of_buchholz(3, vec![(1, vec![0], vec![1]), (2, vec![1], vec![2])]);
 
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
@@ -508,7 +548,7 @@ mod tests {
             (2, vec![1], vec![2]),
             (3, vec![2], vec![3]),
         ];
-        let mut phase = phase_with(4, matches);
+        let mut phase = phase_with_buchholz_of_buchholz(4, matches);
 
         for (round, team_a, team_b) in [(1, [0], [1]), (2, [1], [2]), (3, [2], [3])] {
             let match_id = match_id(&phase, round, &team_a, &team_b);
@@ -533,7 +573,7 @@ mod tests {
             (1, vec![2], vec![3]),
             (2, vec![0], vec![2]),
         ];
-        let mut phase = phase_with(4, matches);
+        let mut phase = phase_with_buchholz_of_buchholz(4, matches);
 
         for (round, team_a, team_b) in [(1, [0], [1]), (1, [2], [3])] {
             let match_id = match_id(&phase, round, &team_a, &team_b);
@@ -551,7 +591,7 @@ mod tests {
     #[test]
     fn every_ranking_of_a_team_counts_the_buchholz_of_every_opponent_ranking() {
         let matches = vec![(1, vec![0, 1], vec![2, 3]), (2, vec![0, 1], vec![2, 3])];
-        let mut phase = phase_with(4, matches);
+        let mut phase = phase_with_buchholz_of_buchholz(4, matches);
 
         for (round, result) in [(1, MatchResult::AWins), (2, MatchResult::Draw)] {
             let match_id = match_id(&phase, round, &[0, 1], &[2, 3]);

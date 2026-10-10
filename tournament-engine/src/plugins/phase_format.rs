@@ -18,7 +18,10 @@ pub trait PhaseFormat: Plugin {
     ///
     /// Anything a consumer needs to know about a match or a bye beyond its round, e.g. the stage of
     /// a bracket it belongs to, is attached with [`Match::with_annotation`] or
-    /// [`Bye::with_annotation`].
+    /// [`Bye::with_annotation`]. Every annotation a format writes has to be
+    /// [declared](Plugin::declare) as a
+    /// [`MatchAnnotation`](crate::plugins::compatibility::MatchAnnotation), so that the plugins
+    /// reading it can require it.
     ///
     /// [`RoundOfFirstLoss`]: super::metrics_calculator::round_of_first_loss::RoundOfFirstLoss
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;

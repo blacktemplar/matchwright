@@ -6,7 +6,7 @@ use crate::{
     entities::competition::{PhaseData, Team},
     plugins::{
         Plugin,
-        compatibility::Declaration,
+        compatibility::{Declaration, MatchAnnotation},
         metrics_calculator::round_of_elimination::Eliminates,
         phase_format::{
             PhaseFormat, Schedule,
@@ -107,7 +107,11 @@ pub enum DoubleEliminationRound {
 impl TypeMapValue for DoubleEliminationRound {}
 
 impl Plugin for DoubleElimination {
-    fn declare(&self, _: &mut Declaration) {}
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration
+            .provides(MatchAnnotation::<DoubleEliminationRound>::new())
+            .provides(MatchAnnotation::<Eliminates>::new());
+    }
 }
 
 #[typetag::serde]

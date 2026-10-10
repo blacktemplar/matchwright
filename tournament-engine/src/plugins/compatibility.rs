@@ -1,6 +1,8 @@
 use std::{
     any::{Any, TypeId, type_name},
-    fmt::Debug,
+    fmt::{self, Debug, Formatter},
+    marker::PhantomData,
+    num::NonZeroU32,
 };
 
 use thiserror::Error;
@@ -8,6 +10,7 @@ use thiserror::Error;
 use crate::{
     map::Map,
     plugins::{PhasePlugins, Plugin},
+    type_map::TypeMapValue,
 };
 
 /// Something true of a phase, which the plugins of the phase and its context provide and require,
@@ -18,6 +21,49 @@ use crate::{
 pub trait Fact: Any + Debug {}
 
 impl<T: Any + Debug> Fact for T {}
+
+/// How many entrants every ranking of the phase stands for: one for rankings of single players,
+/// two for a phase played between pairs.
+///
+/// Provided by the phase's context, so a plugin only provides it if it changes the rankings of its
+/// own phase, e.g. a draw that pairs the entrants up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntrantsPerRanking(pub NonZeroU32);
+
+impl EntrantsPerRanking {
+    /// One entrant per ranking, i.e. rankings of single players.
+    pub const SINGLE: Self = Self(NonZeroU32::MIN);
+}
+
+/// Every match the phase plays that `A` applies to carries it as an annotation.
+///
+/// Provided by the phase format writing the annotation, and required by everything reading it,
+/// e.g. the calculator of the [round of elimination] requires `MatchAnnotation<Eliminates>`. Which
+/// matches `A` applies to is up to the format: a double elimination annotates only the matches that
+/// can knock an entrant out with `Eliminates`.
+///
+/// [round of elimination]: crate::plugins::metrics_calculator::round_of_elimination
+pub struct MatchAnnotation<A: TypeMapValue>(PhantomData<A>);
+
+impl<A: TypeMapValue> MatchAnnotation<A> {
+    /// The fact that the matches of the phase carry an `A` annotation.
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<A: TypeMapValue> Default for MatchAnnotation<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// written out rather than derived, which would print the `PhantomData` and demand `A: Debug`
+impl<A: TypeMapValue> Debug for MatchAnnotation<A> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "MatchAnnotation<{}>", type_name::<A>())
+    }
+}
 
 /// A fact that a plugin can be added for to a phase that requires it but has nothing providing it,
 /// see [`Declaration::requires_with_default`].
@@ -552,8 +598,8 @@ mod tests {
     #[derive(Debug)]
     struct Annotated;
 
-    #[derive(Debug, PartialEq, Eq)]
-    struct EntrantsPerRanking(u32);
+    /// Two entrants per ranking, i.e. the rankings a draw pairing the entrants up leaves behind.
+    const PAIRS: EntrantsPerRanking = EntrantsPerRanking(NonZeroU32::new(2).unwrap());
 
     fn declared(name: &str, declare: impl FnOnce(&mut Declaration)) -> (String, Declaration) {
         (name.to_owned(), Declaration::of(declare))
@@ -598,7 +644,7 @@ mod tests {
             }),
             declared("ranker", |declaration| {
                 declaration
-                    .provides(EntrantsPerRanking(1))
+                    .provides(EntrantsPerRanking::SINGLE)
                     .requires::<Annotated>();
             }),
         ];
@@ -643,14 +689,15 @@ mod tests {
     }
 
     fn requires_single_players(declaration: &mut Declaration) {
-        declaration
-            .requires_that::<EntrantsPerRanking>("rankings of single players", |fact| fact.0 == 1);
+        declaration.requires_that::<EntrantsPerRanking>("rankings of single players", |fact| {
+            *fact == EntrantsPerRanking::SINGLE
+        });
     }
 
     #[test]
     fn a_condition_is_checked_against_the_fact_of_the_context() {
         let context = Declaration::of(|declaration| {
-            declaration.provides(EntrantsPerRanking(1));
+            declaration.provides(EntrantsPerRanking::SINGLE);
         });
         let declarations = [declared("format", requires_single_players)];
 
@@ -660,11 +707,11 @@ mod tests {
     #[test]
     fn a_plugin_replaces_a_fact_of_the_context() {
         let context = Declaration::of(|declaration| {
-            declaration.provides(EntrantsPerRanking(1));
+            declaration.provides(EntrantsPerRanking::SINGLE);
         });
         let declarations = [
             declared("draw", |declaration| {
-                declaration.provides(EntrantsPerRanking(2));
+                declaration.provides(PAIRS);
             }),
             declared("format", requires_single_players),
         ];
@@ -674,7 +721,7 @@ mod tests {
             Err(Incompatibility::ConditionNotMet {
                 condition: "rankings of single players",
                 required_by: "format".to_owned(),
-                provided: format!("{:?}", EntrantsPerRanking(2)),
+                provided: format!("{PAIRS:?}"),
             })
         );
     }

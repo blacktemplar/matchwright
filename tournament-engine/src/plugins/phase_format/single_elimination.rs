@@ -6,7 +6,7 @@ use crate::{
     entities::competition::PhaseData,
     plugins::{
         Plugin,
-        compatibility::Declaration,
+        compatibility::{Declaration, MatchAnnotation},
         phase_format::{
             PhaseFormat, Schedule,
             bracket::{Bracket, Source},
@@ -110,7 +110,9 @@ impl KnockoutRound {
 }
 
 impl Plugin for SingleElimination {
-    fn declare(&self, _: &mut Declaration) {}
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration.provides(MatchAnnotation::<KnockoutRound>::new());
+    }
 }
 
 #[typetag::serde]

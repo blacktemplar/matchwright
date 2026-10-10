@@ -15,7 +15,7 @@ use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
         PhasePlugins,
-        compatibility::Declaration,
+        compatibility::{Declaration, EntrantsPerRanking},
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::{PhaseFormat, Schedule},
         ranker::Ranker,
@@ -89,7 +89,10 @@ impl Competition {
 
     /// Declares the facts that hold for a phase added to this competition before any of its
     /// plugins declare theirs.
-    pub(crate) fn declare_phase_context(&self, _: &mut Declaration) {}
+    pub(crate) fn declare_phase_context(&self, declaration: &mut Declaration) {
+        // every entrant gets a ranking of its own when the competition starts, see `Self::start`
+        declaration.provides(EntrantsPerRanking::SINGLE);
+    }
 
     pub fn phases(&self) -> &IdMap<Phase> {
         &self.phases
