@@ -57,10 +57,7 @@ pub trait PluginKind: Sized + 'static {
 ///
 /// # Examples
 /// ```
-/// use plugin_factory::{
-///     Plugin, inventory, plugin_kind,
-///     schema::{Configurable, Schema},
-/// };
+/// use plugin_factory::{Plugin, inventory, plugin_kind};
 /// use serde::Deserialize;
 ///
 /// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
@@ -90,12 +87,6 @@ pub trait PluginKind: Sized + 'static {
 ///     }
 /// }
 ///
-/// impl Configurable for ByRank {
-///     fn schema() -> Schema {
-///         Schema::new()
-///     }
-/// }
-///
 /// impl Seeding for ByRank {
 ///     fn seed(&self) {}
 /// }
@@ -112,8 +103,8 @@ macro_rules! plugin_kind {
         $visibility struct $kind($crate::catalog::PluginEntry);
 
         impl $kind {
-            /// Registers the plugin `P` for this axis, which is configured by answering the
-            /// schema of its `Configurable` impl.
+            /// Registers the plugin `P` for this axis, which is configured by answering its
+            /// schema, see `Plugin::schema`.
             pub const fn register<P>() -> Self
             where
                 P: $crate::schema::Configurable + $object,
@@ -148,7 +139,7 @@ pub struct PluginEntry {
     label: fn() -> &'static str,
     description: fn() -> &'static str,
     declare: fn(&mut Declaration),
-    configured_declare: fn(&Value) -> Result<Declaration, ConfigError>,
+    instantiate: fn(&Value) -> Result<Box<dyn Plugin>, ConfigError>,
     schema: fn() -> Schema,
     is_unit: fn() -> bool,
 }
@@ -161,8 +152,8 @@ impl PluginEntry {
             label: P::label,
             description: P::description,
             declare: P::static_declare,
-            configured_declare: configured_declaration::<P>,
-            schema: P::schema,
+            instantiate: instantiate::<P>,
+            schema: <P as Plugin>::schema,
             is_unit: config::deserializes_from_null::<P>,
         }
     }
@@ -198,11 +189,24 @@ impl PluginEntry {
     /// Returns [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed
     /// config, and whatever completing `config` fails with otherwise.
     pub fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
-        (self.configured_declare)(&self.complete(config)?)
+        let instance = self.instance(config)?;
+        Ok(Declaration::of(|declaration| {
+            instance.total_declare(declaration);
+        }))
+    }
+
+    /// The plugin built from `config` completed, see [`Self::complete`], for what only a
+    /// configured plugin can say: what it declares on top of its static declaration, and what it
+    /// recommends.
+    ///
+    /// # Errors
+    /// As [`Self::declaration_for`].
+    pub(crate) fn instance(&self, config: &Config) -> Result<Box<dyn Plugin>, ConfigError> {
+        (self.instantiate)(&self.complete(config)?)
     }
 
     /// What has to be answered in order to create the plugin, see
-    /// [`Configurable::schema`]. Built on every call.
+    /// [`Plugin::schema`]. Built on every call.
     pub fn schema(&self) -> Schema {
         (self.schema)()
     }
@@ -237,15 +241,19 @@ impl PluginEntry {
     }
 }
 
-/// What the plugin `P` deserialized from `config`, its completed config, declares, see
-/// [`PluginEntry::declaration_for`].
-fn configured_declaration<P: Plugin + Configurable>(
-    config: &Value,
-) -> Result<Declaration, ConfigError> {
-    let plugin = config::deserialize::<P>(config)?;
-    Ok(Declaration::of(|declaration| {
-        plugin.total_declare(declaration);
-    }))
+impl Debug for PluginEntry {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("PluginEntry")
+            .field(&self.id())
+            .finish()
+    }
+}
+
+/// The plugin `P` deserialized from `config`, its completed config, see
+/// [`PluginEntry::instance`].
+fn instantiate<P: Plugin + Configurable>(config: &Value) -> Result<Box<dyn Plugin>, ConfigError> {
+    Ok(Box::new(config::deserialize::<P>(config)?))
 }
 
 /// A [`PluginKind`] as a value, i.e. the kind of plugin a field takes, see
@@ -294,6 +302,19 @@ impl Kind {
             ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
             ("value".to_owned(), entry.complete(plugin.config())?),
         ])))
+    }
+
+    /// `plugin` as a plugin of this kind with its config checked but not completed, see
+    /// [`Schema::check`], written as [`PluginConfig`] writes a plugin answer.
+    ///
+    /// # Errors
+    /// As [`Self::complete`], except that an unanswered field is no error.
+    pub(crate) fn check(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
+        let entry = self
+            .entry(plugin.plugin())
+            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
+        let checked = entry.schema().check(plugin.config())?;
+        Ok(PluginConfig::new(plugin.plugin(), checked).into())
     }
 
     /// The types of the facts the plugins of this kind provide, i.e. what a slot for this kind
@@ -540,12 +561,6 @@ mod tests {
         }
     }
 
-    impl Configurable for OnlyProvider {
-        fn schema() -> Schema {
-            Schema::new()
-        }
-    }
-
     #[typetag::serde(name = "only_provider")]
     impl Tested for OnlyProvider {}
 
@@ -575,12 +590,6 @@ mod tests {
         }
     }
 
-    impl Configurable for OneProvider {
-        fn schema() -> Schema {
-            Schema::new()
-        }
-    }
-
     #[typetag::serde(name = "one_provider")]
     impl Tested for OneProvider {}
 
@@ -607,12 +616,6 @@ mod tests {
 
         fn static_declare(declaration: &mut Declaration) {
             declaration.provide(Ambiguous);
-        }
-    }
-
-    impl Configurable for AnotherProvider {
-        fn schema() -> Schema {
-            Schema::new()
         }
     }
 
@@ -646,9 +649,7 @@ mod tests {
         fn static_declare(declaration: &mut Declaration) {
             declaration.provide(Configured).provide(Shared);
         }
-    }
 
-    impl Configurable for ConfiguredProvider {
         fn schema() -> Schema {
             Schema::new().field(Field::integer("rounds", "Rounds"))
         }
@@ -701,9 +702,7 @@ mod tests {
                     .map(|nested| nested.as_ref() as &dyn Plugin),
             ))
         }
-    }
 
-    impl Configurable for Wrapper {
         fn schema() -> Schema {
             Schema::new().field(
                 Field::plugin::<NestedKind>("nested", "Nested")
@@ -743,9 +742,7 @@ mod tests {
         fn static_declare(declaration: &mut Declaration) {
             declaration.provide(Deep);
         }
-    }
 
-    impl Configurable for DeepProvider {
         fn schema() -> Schema {
             Schema::new().field(
                 Field::plugin::<TestedKind>("inner", "Inner")
@@ -968,12 +965,6 @@ mod tests {
 
         fn description() -> &'static str {
             "a plugin whose typetag name is not its id"
-        }
-    }
-
-    impl Configurable for Renamed {
-        fn schema() -> Schema {
-            Schema::new()
         }
     }
 

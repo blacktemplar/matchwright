@@ -102,7 +102,7 @@ impl From<PluginConfig> for Value {
 /// [`Configurable`](crate::schema::Configurable).
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct Config(Map<String, Value>);
+pub struct Config(pub(crate) Map<String, Value>);
 
 impl<'de> Deserialize<'de> for Config {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -224,6 +224,28 @@ impl Path {
     /// The segments of this path, from the outermost field inwards.
     pub fn segments(&self) -> &[Segment] {
         &self.0
+    }
+
+    /// Whether this path is `prefix` or addresses something within what `prefix` addresses.
+    pub fn starts_with(&self, prefix: &Self) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
+    /// The path of the config or list holding what this path addresses, i.e. this path without
+    /// its last segment. The parent of [`Self::ROOT`] is [`Self::ROOT`].
+    pub(crate) fn parent(&self) -> Self {
+        let mut parent = self.clone();
+        parent.0.pop();
+        parent
+    }
+
+    /// `error`, whose path is relative to what this path addresses, with its path seen from the
+    /// root, see [`ConfigError::within`].
+    pub(crate) fn prefix(&self, error: ConfigError) -> ConfigError {
+        self.0
+            .iter()
+            .rev()
+            .fold(error, |error, segment| error.within(segment.clone()))
     }
 
     /// Prefixes this path by `segment`, i.e. makes it the path of the same thing seen from one

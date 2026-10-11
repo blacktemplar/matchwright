@@ -3,18 +3,23 @@
 //!
 //! A [`Configurable`] states its questions as a [`Schema`] — a list of [`Field`]s, each taking an
 //! answer of one [`FieldKind`] and offering a default — and is deserialized from the answers, see
-//! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
-//! program reads the questions of a plugin before it is chosen and never names one.
+//! [`Config`]. A plugin states its schema in [`Plugin::schema`] and registers in the
+//! [catalog](crate::catalog) with it, so that a program reads the questions of a plugin before it
+//! is chosen and never names one.
 
 use serde::de::DeserializeOwned;
 
 use crate::{
+    Plugin,
     catalog::{Kind, PluginKind},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
 };
 
 /// Something configured by answering the fields of its [`Schema`]: a plugin, or the composite a
 /// program configures plugins into.
+///
+/// Implemented for every [`Plugin`] with a `Deserialize` impl, through [`Plugin::schema`]; a
+/// composite implements it itself.
 ///
 /// It is built by deserializing a config that answers every field of its schema, see
 /// [`Schema::complete`], so its `Deserialize` impl has to read each field under the name the
@@ -25,13 +30,11 @@ use crate::{
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     /// What has to be answered in order to build it.
     fn schema() -> Schema;
+}
 
-    /// The plugins this configuration suggests for the composite it is part of, which is what a
-    /// field taking plugins of their kind offers as its default.
-    ///
-    /// A recommendation of a plugin of a kind the composite takes nowhere has no effect.
-    fn recommends(&self) -> Vec<PluginConfig> {
-        Vec::new()
+impl<P: Plugin + DeserializeOwned> Configurable for P {
+    fn schema() -> Schema {
+        <P as Plugin>::schema()
     }
 }
 
@@ -76,13 +79,7 @@ impl Schema {
     /// kind, and [`ConfigError::Unanswered`] if a field without a default is unanswered, each
     /// anchored to where in a nested answer it is.
     pub fn complete(&self, config: &Config) -> Result<Config, ConfigError> {
-        for (answered, _) in config.answers() {
-            if self.field_named(answered).is_none() {
-                return Err(ConfigError::UnknownField {
-                    path: Path::of(answered),
-                });
-            }
-        }
+        self.check_known(config)?;
         let mut completed = Config::new();
         for field in self.fields() {
             let answer = match config.get(field.name()) {
@@ -102,6 +99,40 @@ impl Schema {
             completed.set(field.name(), answer);
         }
         Ok(completed)
+    }
+
+    /// `config` with every answer checked as [`Self::complete`] checks it, but with the fields it
+    /// leaves unanswered left unanswered, here and in the configs of the plugins answering its
+    /// fields. A plugin answer is written as [`PluginConfig`] writes it.
+    ///
+    /// # Errors
+    /// Returns what [`Self::complete`] returns, except [`ConfigError::Unanswered`].
+    pub(crate) fn check(&self, config: &Config) -> Result<Config, ConfigError> {
+        self.check_known(config)?;
+        let mut checked = Config::new();
+        for field in self.fields() {
+            if let Some(answer) = config.get(field.name()) {
+                let answer = field
+                    .kind()
+                    .check(answer)
+                    .map_err(|error| error.within(Segment::field(field.name())))?;
+                checked.set(field.name(), answer);
+            }
+        }
+        Ok(checked)
+    }
+
+    /// Checks that `config` answers no field this schema does not have.
+    fn check_known(&self, config: &Config) -> Result<(), ConfigError> {
+        match config
+            .answers()
+            .find(|(answered, _)| self.field_named(answered).is_none())
+        {
+            Some((answered, _)) => Err(ConfigError::UnknownField {
+                path: Path::of(answered),
+            }),
+            None => Ok(()),
+        }
     }
 }
 
@@ -274,23 +305,43 @@ impl FieldKind {
     /// Returns why `answer` is not one a field of this kind takes, as the config holding that
     /// field sees it, i.e. to be prefixed by the field.
     fn complete(&self, answer: &Value) -> Result<Value, ConfigError> {
+        self.map_plugins(answer, &|kind, plugin| kind.complete(plugin))
+    }
+
+    /// `answer` checked against this kind, with the config of every plugin in it checked against
+    /// the schema of that plugin but not completed, see [`Schema::check`].
+    ///
+    /// # Errors
+    /// Returns why `answer` is not one a field of this kind takes, as the config holding that
+    /// field sees it, i.e. to be prefixed by the field.
+    pub(crate) fn check(&self, answer: &Value) -> Result<Value, ConfigError> {
+        self.map_plugins(answer, &|kind, plugin| kind.check(plugin))
+    }
+
+    /// `answer` checked against this kind, with every plugin answer in it replaced by what
+    /// `plugin` makes of it.
+    fn map_plugins(
+        &self,
+        answer: &Value,
+        plugin: &dyn Fn(&Kind, &PluginConfig) -> Result<Value, ConfigError>,
+    ) -> Result<Value, ConfigError> {
         match (self, answer) {
             (Self::Bool, Value::Bool(_)) | (Self::Optional(_), Value::Null) => Ok(answer.clone()),
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
-            (Self::Optional(inner), _) => inner.complete(answer),
+            (Self::Optional(inner), _) => inner.map_plugins(answer, plugin),
             (Self::List(element), Value::Array(answers)) => answers
                 .iter()
                 .enumerate()
                 .map(|(position, answer)| {
                     element
-                        .complete(answer)
+                        .map_plugins(answer, plugin)
                         .map_err(|error| error.within(Segment::Index(position)))
                 })
                 .collect::<Result<_, _>>()
                 .map(Value::Array),
             (Self::Plugin(kind), _) => match PluginConfig::from_answer(answer) {
-                Some(plugin) => kind.complete(&plugin),
+                Some(answer) => plugin(kind, &answer),
                 None => Err(self.wrong_kind(answer)),
             },
             _ => Err(self.wrong_kind(answer)),
@@ -378,9 +429,7 @@ mod tests {
         fn description() -> &'static str {
             "a plugin with a parameter of every scalar kind"
         }
-    }
 
-    impl Configurable for Points {
         fn schema() -> Schema {
             Schema::new()
                 .field(
@@ -436,12 +485,6 @@ mod tests {
         }
     }
 
-    impl Configurable for Matches {
-        fn schema() -> Schema {
-            Schema::new()
-        }
-    }
-
     #[typetag::serde(name = "matches")]
     impl Configured for Matches {
         fn summary(&self) -> String {
@@ -471,9 +514,7 @@ mod tests {
         fn description() -> &'static str {
             "a plugin that has to be configured"
         }
-    }
 
-    impl Configurable for Threshold {
         fn schema() -> Schema {
             Schema::new()
                 .field(Field::integer("least", "Matches at least"))
@@ -516,9 +557,7 @@ mod tests {
         fn description() -> &'static str {
             "a plugin made of other plugins"
         }
-    }
 
-    impl Configurable for Ranker {
         fn schema() -> Schema {
             Schema::new()
                 .field(
@@ -572,7 +611,7 @@ mod tests {
 
     #[test]
     fn a_field_taking_plugins_knows_the_kind_it_takes() {
-        let schema = Ranker::schema();
+        let schema = <Ranker as Plugin>::schema();
         let kind = FieldKind::plugin::<ConfiguredKind>();
 
         assert_eq!(schema.field_named("by").map(Field::kind), Some(&kind));
@@ -857,7 +896,7 @@ mod tests {
                 PluginConfig::of::<Points>(Config::new().with("for_win", 2.0)),
             )
             .with("fallback", PluginConfig::of::<Matches>(Config::new()));
-        let completed = Ranker::schema().complete(&config).unwrap();
+        let completed = <Ranker as Plugin>::schema().complete(&config).unwrap();
         let built = PluginConfig::of::<Ranker>(config)
             .build::<ConfiguredKind>()
             .unwrap();

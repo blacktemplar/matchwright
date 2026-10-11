@@ -3,10 +3,12 @@
 //! A [`Plugin`] says what to call it, what it has to be told in order to be built, see [`schema`]
 //! and [`config`], and what it provides to and requires of the composite it is part of, see
 //! [`compatibility`]. It registers itself in the [`catalog`], which is where a program looking for
-//! a plugin finds it.
+//! a plugin finds it. A [`Builder`](builder::Builder) holds a composite of plugins while it is
+//! being configured.
 
-use crate::compatibility::Declaration;
+use crate::{compatibility::Declaration, config::PluginConfig, schema::Schema};
 
+pub mod builder;
 pub mod catalog;
 pub mod compatibility;
 pub mod config;
@@ -71,6 +73,25 @@ pub trait Plugin: TotalDeclare + 'static {
     /// The declaration must depend on the plugin's configuration alone, since it is made before
     /// the phase exists.
     fn dyn_declare(&self, _: &mut Declaration) {}
+
+    /// What has to be answered in order to build the plugin, see [`schema`]; nothing by default.
+    ///
+    /// The plugin is built by deserializing a config answering every field of its schema, see
+    /// [`Configurable`](schema::Configurable), which every plugin with a `Deserialize` impl is.
+    fn schema() -> Schema
+    where
+        Self: Sized,
+    {
+        Schema::new()
+    }
+
+    /// The plugins this configuration suggests for the composite it is part of, which is what a
+    /// field taking plugins of their kind offers as its default; nothing by default.
+    ///
+    /// A recommendation of a plugin of a kind the composite takes nowhere has no effect.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        Vec::new()
+    }
 
     /// The plugins this plugin is made of, whose declarations are part of its own.
     fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {

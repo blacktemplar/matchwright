@@ -189,6 +189,21 @@ impl FromIterator<TypeId> for OpenFacts {
     }
 }
 
+impl Extend<TypeId> for OpenFacts {
+    fn extend<I: IntoIterator<Item = TypeId>>(&mut self, types: I) {
+        self.0.extend(types);
+    }
+}
+
+impl IntoIterator for OpenFacts {
+    type Item = TypeId;
+    type IntoIter = std::collections::btree_set::IntoIter<TypeId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 /// Why plugins cannot be combined into one composite.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum Incompatibility {

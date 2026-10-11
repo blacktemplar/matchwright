@@ -1,7 +1,7 @@
 # Development plan
 
-Status: the compatibility layer, the catalog and the schemas are implemented, the
-builder is not. Everything here is about this crate alone; what a consumer does
+Status: the compatibility layer, the catalog, the schemas and the builder are
+implemented. Everything here is about this crate alone; what a consumer does
 with it is out of scope, see [Not in this crate](#not-in-this-crate).
 
 ## What the crate is for
@@ -61,11 +61,16 @@ traits.
   a slot to be filled with a plugin that has slots of its own. `Accepts<K>`,
   `providers_of`, `add_provider_of`, `facts_of_kind`; `check_serialization`.
 - `Plugin` with
-  `id`/`label`/`description`/`static_declare`/`dyn_declare`/`sub_plugins`, and
-  `TotalDeclare`, which walks the sub-plugins so a composite plugin forwards
-  nothing by hand.
-- `schema`: `Configurable: DeserializeOwned` with `schema()` and a defaulted
-  `recommends()`; `Schema`/`Field`/`FieldKind`. A field takes yes or no, a whole
+  `id`/`label`/`description`/`static_declare`/`dyn_declare`/`schema`/`recommends`/`sub_plugins`
+  (`schema` and `recommends` default to nothing), and `TotalDeclare`, which
+  walks the sub-plugins so a composite plugin forwards nothing by hand.
+  `recommends` takes `&self`, so a built plugin behind `dyn Plugin` can be
+  asked for it.
+- `schema`: `Configurable: DeserializeOwned` with `schema()`, what the builder
+  builds; implemented for every `Plugin + DeserializeOwned` through
+  `Plugin::schema`, so only a composite implements it by hand. With both
+  traits in scope `P::schema()` is ambiguous for a plugin and is written
+  `<P as Plugin>::schema()`. `Schema`/`Field`/`FieldKind`. A field takes yes or no, a whole
   number, a number, one plugin of a kind, a list of answers of one kind
   (`List`, so that "several plugins of a kind" is a list of plugins) or an answer
   of one kind or nothing (`Optional`, answered by the answer or by `null`), the
@@ -84,6 +89,25 @@ traits.
   `Deserialize` impl rejects is `ConfigError::Rejected`, its path taken from
   `serde_path_to_error` with the `type`/`value` wrapping of plugin answers left
   out. A whole number answers a decimal field.
+- `builder`: `Builder<T: Configurable>` over one answer tree with a context, see
+  [step 2](#2-the-builder-done) for the rules it follows. `questions()` is every
+  field of the tree, answered or not, depth first in schema order, each a
+  `Question` with its path, field and answer, so that a form renders the layout
+  and a wizard picks the first unanswered one. `set`/`unset` address a field or a
+  position in a list (one past the end appends; unsetting a position removes it).
+  `set` checks only the structure of an answer — field, kind, registered plugin,
+  via `Schema::check`, which is `complete` without filling defaults — so a plugin
+  answer may leave fields unanswered; what a plugin's `Deserialize` rejects is
+  an `Issue`. `Issue`s are `Invalid` (a rejected answer, at its field),
+  `Incompatible` (at the plugin, so both plugins providing one fact get one) and
+  `Unprovided` (a requirement nothing provides and no unanswered field could, at
+  every answered field whose kind could provide it, with the providing ids).
+  `finish` accepts each default in question order on a copy of the answers, as
+  an operator accepting each would, then checks with `OpenFacts::NOTHING` and
+  deserializes `T`; `FinishError` is a `ConfigError` or an `Incompatibility`.
+  Each plugin of the tree counts with its own declaration (static plus `dyn`
+  from its completed config, or static alone if it does not complete yet), its
+  sub-plugins being placed in the tree themselves.
 
 ### Identity and persistence
 
@@ -121,7 +145,7 @@ schemas and declarations, and follows the kinds their plugin fields take; see
 [Implemented](#implemented). No object-safe view of an entry was needed: only
 building mentioned `K`, and building moved to deserialization.
 
-### 2. The builder
+### 2. The builder (done)
 
 `Builder<T>` over one answer tree, addressed by the `Path` a config error
 carries, and the queries a UI renders from: `questions()`, `default(path)`,
@@ -139,13 +163,18 @@ The rules the queries follow, which the compatibility layer already supports:
 - **Candidates are per position.** For a candidate at some path, the plugins
   occupying that path are left out and the candidate takes their place, so a
   single slot does not conflict with what it replaces and a list does not
-  conflict with itself.
+  conflict with itself. A candidate for a whole list field is one of its
+  plugins, so the list's kind is open; at a position in the list the rest of it
+  is as answered. The candidate's own plugin fields are open too.
 - **A candidate conflicts iff `check_addition` says so**, with `open` computed
   from the fields still unanswered. The filter is therefore the strict check
   weakened by one argument, and `OpenFacts::NOTHING` at `finish` cannot let an
   invalid composite through.
 - **Defaults come from the plugin or from its siblings' recommendations**, never
-  from a table in the consumer.
+  from a table in the consumer. Siblings are the plugins answering the other
+  fields of the same config; a recommendation of the field's kind that fits as a
+  candidate would wins over the schema default (the first for a single field,
+  all that fit together for a list).
 
 ### 3. A generic resolution loop
 
@@ -198,6 +227,12 @@ the id, so that the id is written once. Separate crate.
 - **Where `Debug` belongs.** The checks name plugins by their `Debug` form, and
   `declaration_of` asks for it explicitly rather than `Plugin` requiring it, so
   each axis decides. Simpler would be `Plugin: Debug`.
+- **`finish` and automatic resolution.** `finish` checks with nothing open, so a
+  required fact that resolution (step 3) would settle — exactly one provider
+  needing no configuration — fails `finish` instead, and shows as an
+  `Unprovided` issue before. Either the builder runs resolution before its
+  final check, or a consumer resolves first (e.g. by setting the single
+  provider an `Unprovided` issue names).
 - **Conditions cannot capture**, being `fn(&T) -> bool`, which is what keeps
   `require::<F>(name, None)` inferable. Fine so far.
 
