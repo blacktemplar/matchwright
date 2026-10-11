@@ -1,6 +1,6 @@
 # Simplification plan
 
-Status: step 1 done. The crate does everything it should, i.e. the catalog,
+Status: steps 1 and 2 done. The crate does everything it should, i.e. the catalog,
 schemas, configs, the compatibility checks, the builder, resolution and the
 derive are implemented and tested. This plan reduces it to its core without
 losing any of that: first the API a plugin author, a composite author and a UI
@@ -339,7 +339,7 @@ Resolution moves onto the answer tree, which removes `resolve`,
   is only read, through `Path::segments`.
 - `Config` keeps `new`, `with` and `get`; `set`, `unset` and `answers` become
   crate-internal, since the builder holds the answers being edited.
-- Remove `facts_of_kind`; `AnyAxis::facts` and `PluginEntry::sub_kinds` become
+- Remove `facts_of_axis`; `AnyAxis::facts` and `PluginEntry::sub_axes` become
   crate-internal.
 - Remove `Candidate::fits`, which is `conflict().is_none()`.
 - The `inventory` re-export moves to `__private`; only generated code uses it.

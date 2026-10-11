@@ -25,11 +25,11 @@ pub fn expand(arguments: TokenStream, input: ItemImpl) -> Result<TokenStream> {
     let plugin = &input.self_ty;
     // typetag takes any constant expression as the name, which is what keeps the id in one place
     Ok(quote! {
-        #[typetag::serde(name = <#plugin as ::plugin_factory::PluginType>::ID)]
+        #[::typetag::serde(name = <#plugin as ::plugin_factory::PluginType>::ID)]
         #input
 
         ::plugin_factory::inventory::submit! {
-            <<dyn #object as ::plugin_factory::catalog::PluginObject>::Kind>::register::<#plugin>()
+            <dyn #object as ::plugin_factory::__private::Register<#plugin>>::REGISTRY
         }
     })
 }

@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     Plugin,
-    catalog::{Kind, PluginKind, PluginObject},
+    catalog::{AnyAxis, Axis},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
 };
 
@@ -79,9 +79,9 @@ macro_rules! field_types {
 field_types!(Integer: i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 field_types!(Decimal: f32, f64);
 
-impl<O: PluginObject + ?Sized> FieldType for Box<O> {
+impl<A: Axis + ?Sized> FieldType for Box<A> {
     fn kind() -> FieldKind {
-        FieldKind::plugin::<O::Kind>()
+        FieldKind::plugin::<A>()
     }
 
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
@@ -155,7 +155,7 @@ impl Schema {
     /// Returns [`ConfigError::UnknownField`] if `config` answers a field this schema does not
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// kind, and [`ConfigError::Unanswered`] if a field without a default is unanswered, each
+    /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered, each
     /// anchored to where in a nested answer it is.
     pub fn complete(&self, config: &Config) -> Result<Config, ConfigError> {
         self.check_known(config)?;
@@ -257,14 +257,15 @@ impl Field {
         Self::new(name, label, FieldKind::Decimal)
     }
 
-    /// A field answered by one plugin of kind `K`, named `name` and labelled `label`.
-    pub const fn plugin<K: PluginKind>(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::plugin::<K>())
+    /// A field answered by one plugin of the axis `A`, named `name` and labelled `label`.
+    pub const fn plugin<A: Axis + ?Sized>(name: &'static str, label: &'static str) -> Self {
+        Self::new(name, label, FieldKind::plugin::<A>())
     }
 
-    /// A field answered by any number of plugins of kind `K`, named `name` and labelled `label`.
-    pub fn plugins<K: PluginKind>(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::plugins::<K>())
+    /// A field answered by any number of plugins of the axis `A`, named `name` and labelled
+    /// `label`.
+    pub fn plugins<A: Axis + ?Sized>(name: &'static str, label: &'static str) -> Self {
+        Self::new(name, label, FieldKind::plugins::<A>())
     }
 
     /// This field with `description` as the help text of its question.
@@ -334,8 +335,8 @@ pub enum FieldKind {
     Integer,
     /// A number with a fractional part, answered by any [`Value::Number`].
     Decimal,
-    /// One plugin of the kind, answered by a [`PluginConfig`] naming a plugin registered for it.
-    Plugin(Kind),
+    /// One plugin of the axis, answered by a [`PluginConfig`] naming a plugin registered for it.
+    Plugin(AnyAxis),
     /// Any number of answers of the kind, answered by a [`Value::Array`].
     List(Box<FieldKind>),
     /// An answer of the kind or nothing, answered by an answer of the kind or by [`Value::Null`].
@@ -347,14 +348,14 @@ pub enum FieldKind {
 }
 
 impl FieldKind {
-    /// One plugin of kind `K`.
-    pub const fn plugin<K: PluginKind>() -> Self {
-        Self::Plugin(Kind::of::<K>())
+    /// One plugin of the axis `A`.
+    pub const fn plugin<A: Axis + ?Sized>() -> Self {
+        Self::Plugin(AnyAxis::of::<A>())
     }
 
-    /// Any number of plugins of kind `K`.
-    pub fn plugins<K: PluginKind>() -> Self {
-        Self::list(Self::plugin::<K>())
+    /// Any number of plugins of the axis `A`.
+    pub fn plugins<A: Axis + ?Sized>() -> Self {
+        Self::list(Self::plugin::<A>())
     }
 
     /// Any number of answers of the kind `element`.
@@ -367,12 +368,12 @@ impl FieldKind {
         Self::Optional(Box::new(answer))
     }
 
-    /// The kind of plugin this kind of answer is made of, through lists and optional answers, or
-    /// [`None`] if it takes no plugin.
-    pub fn plugin_kind(&self) -> Option<Kind> {
+    /// The axis of the plugins this kind of answer is made of, through lists and optional
+    /// answers, or [`None`] if it takes no plugin.
+    pub fn axis(&self) -> Option<AnyAxis> {
         match self {
-            Self::Plugin(kind) => Some(*kind),
-            Self::List(inner) | Self::Optional(inner) => inner.plugin_kind(),
+            Self::Plugin(axis) => Some(*axis),
+            Self::List(inner) | Self::Optional(inner) => inner.axis(),
             Self::Bool | Self::Integer | Self::Decimal => None,
         }
     }
@@ -384,7 +385,7 @@ impl FieldKind {
     /// Returns why `answer` is not one a field of this kind takes, as the config holding that
     /// field sees it, i.e. to be prefixed by the field.
     fn complete(&self, answer: &Value) -> Result<Value, ConfigError> {
-        self.map_plugins(answer, &|kind, plugin| kind.complete(plugin))
+        self.map_plugins(answer, &|axis, plugin| axis.complete(plugin))
     }
 
     /// `answer` checked against this kind, with the config of every plugin in it checked against
@@ -394,7 +395,7 @@ impl FieldKind {
     /// Returns why `answer` is not one a field of this kind takes, as the config holding that
     /// field sees it, i.e. to be prefixed by the field.
     pub(crate) fn check(&self, answer: &Value) -> Result<Value, ConfigError> {
-        self.map_plugins(answer, &|kind, plugin| kind.check(plugin))
+        self.map_plugins(answer, &|axis, plugin| axis.check(plugin))
     }
 
     /// `answer` checked against this kind, with every plugin answer in it replaced by what
@@ -402,7 +403,7 @@ impl FieldKind {
     fn map_plugins(
         &self,
         answer: &Value,
-        plugin: &dyn Fn(&Kind, &PluginConfig) -> Result<Value, ConfigError>,
+        plugin: &dyn Fn(&AnyAxis, &PluginConfig) -> Result<Value, ConfigError>,
     ) -> Result<Value, ConfigError> {
         match (self, answer) {
             (Self::Bool, Value::Bool(_)) | (Self::Optional(_), Value::Null) => Ok(answer.clone()),
@@ -419,8 +420,8 @@ impl FieldKind {
                 })
                 .collect::<Result<_, _>>()
                 .map(Value::Array),
-            (Self::Plugin(kind), _) => match PluginConfig::from_answer(answer) {
-                Some(answer) => plugin(kind, &answer),
+            (Self::Plugin(axis), _) => match PluginConfig::from_answer(answer) {
+                Some(answer) => plugin(axis, &answer),
                 None => Err(self.wrong_kind(answer)),
             },
             _ => Err(self.wrong_kind(answer)),
@@ -458,21 +459,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        Plugin, PluginType,
+        Plugin, PluginType, axis,
         catalog::{PluginEntry, check_serialization},
-        plugin_kind, register,
+        register,
     };
 
     /// A plugin axis whose plugins are nothing but their configuration, reported as a summary so
     /// that a built plugin can be checked without being downcast.
-    #[typetag::serde(tag = "type", content = "value")]
+    #[axis]
     trait Configured: Plugin {
         fn summary(&self) -> String;
-    }
-
-    plugin_kind! {
-        /// The axis of [`Configured`].
-        ConfiguredKind for dyn Configured
     }
 
     /// A plugin with a field of every scalar kind and one that may be answered with nothing, all
@@ -630,20 +626,20 @@ mod tests {
 
     /// The entry of the plugin `P`.
     fn entry_of<P: PluginType>() -> &'static PluginEntry {
-        ConfiguredKind::entry(P::ID).expect("the plugin is registered")
+        <dyn Configured>::entry(P::ID).expect("the plugin is registered")
     }
 
     /// The summary of the plugin `P` as `config` configures it.
     fn built<P: PluginType>(config: Config) -> Result<String, ConfigError> {
         PluginConfig::of::<P>(config)
-            .build::<ConfiguredKind>()
+            .build::<dyn Configured>()
             .map(|plugin| plugin.summary())
     }
 
     #[test]
-    fn a_field_taking_plugins_knows_the_kind_it_takes() {
+    fn a_field_taking_plugins_knows_the_axis_it_takes() {
         let schema = Ranker::schema();
-        let kind = FieldKind::plugin::<ConfiguredKind>();
+        let kind = FieldKind::plugin::<dyn Configured>();
 
         assert_eq!(schema.field_named("by").map(Field::kind), Some(&kind));
         assert_eq!(
@@ -656,10 +652,10 @@ mod tests {
         );
         assert!(schema.field_named("losses").is_none());
         assert_eq!(
-            entry_of::<Ranker>().sub_kinds(),
-            [Kind::of::<ConfiguredKind>(); 3]
+            entry_of::<Ranker>().sub_axes(),
+            [AnyAxis::of::<dyn Configured>(); 3]
         );
-        assert!(entry_of::<Points>().sub_kinds().is_empty());
+        assert!(entry_of::<Points>().sub_axes().is_empty());
     }
 
     #[test]
@@ -908,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_no_kind_registered_cannot_answer_a_plugin_field() {
+    fn a_plugin_not_registered_for_the_axis_cannot_answer_a_plugin_field() {
         let config = Config::new().with("by", PluginConfig::new("unregistered", Config::new()));
 
         assert_eq!(
@@ -929,7 +925,7 @@ mod tests {
             .with("fallback", PluginConfig::of::<Matches>(Config::new()));
         let completed = Ranker::schema().complete(&config).unwrap();
         let built = PluginConfig::of::<Ranker>(config)
-            .build::<ConfiguredKind>()
+            .build::<dyn Configured>()
             .unwrap();
 
         assert_eq!(
@@ -956,11 +952,11 @@ mod tests {
 
     #[test]
     fn the_plugins_of_the_axis_serialize_as_they_are_built() {
-        assert_eq!(check_serialization::<ConfiguredKind>(), Ok(()));
+        assert_eq!(check_serialization::<dyn Configured>(), Ok(()));
     }
 
     #[test]
-    fn a_plugin_recommends_what_a_field_of_that_kind_offers() {
+    fn a_plugin_recommends_what_a_field_of_that_axis_offers() {
         let points = Points {
             for_win: 1.0,
             rounds: 3,

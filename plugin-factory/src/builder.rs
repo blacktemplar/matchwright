@@ -8,7 +8,7 @@
 //! changes the tree through [`Builder::set`] and [`Builder::unset`] alone, so that no answer is
 //! ever changed behind its back. [`Builder::finish`] builds the composite.
 //!
-//! While a field taking plugins is unanswered, whatever the plugins of its kind could provide may
+//! While a field taking plugins is unanswered, whatever the plugins of its axis could provide may
 //! still arrive, see [`OpenFacts`], so the candidates and issues are optimistic about it;
 //! [`Builder::finish`] checks with nothing open.
 
@@ -17,7 +17,7 @@ use std::{fmt::Write as _, marker::PhantomData, mem};
 use thiserror::Error;
 
 use crate::{
-    catalog::{Kind, PluginEntry},
+    catalog::{AnyAxis, PluginEntry},
     compatibility::{self, Declaration, Incompatibility, OpenFacts},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
     schema::{Configurable, Field, FieldKind, Schema},
@@ -58,7 +58,7 @@ impl<T: Configurable> Builder<T> {
     ///
     /// A field taking plugins offers what the plugins answering the other fields of its config
     /// recommend, see [`Plugin::recommends`](crate::Plugin::recommends), as far as it is of its
-    /// kind and fits as a [candidate](Self::candidates) would: a field taking one plugin the first
+    /// axis and fits as a [candidate](Self::candidates) would: a field taking one plugin the first
     /// such recommendation, a field taking a list all of them that fit together, in the order they
     /// are recommended in. A field no recommendation fits offers the default of its schema.
     ///
@@ -83,20 +83,20 @@ impl<T: Configurable> Builder<T> {
     pub fn candidates(&self, path: &Path) -> Result<Vec<Candidate>, ConfigError> {
         let schema = T::schema();
         let position = locate(&schema, &self.answers, path)?;
-        let Some((kind, list)) = slot(&position.kind) else {
+        let Some((axis, list)) = slot(&position.kind) else {
             return Ok(Vec::new());
         };
         let tree = Tree::of(&schema, &self.answers).without(path);
         let declarations = tree.declarations();
         let mut open = tree.open();
         if list {
-            open.extend(kind.facts());
+            open.extend(axis.facts());
         }
-        let mut candidates: Vec<_> = kind
+        let mut candidates: Vec<_> = axis
             .entries()
             .map(|entry| {
                 let mut open = open.clone();
-                open.extend(entry.sub_kinds().iter().flat_map(Kind::facts));
+                open.extend(entry.sub_axes().iter().flat_map(AnyAxis::facts));
                 let conflict = compatibility::check_addition(
                     &self.context,
                     &declarations,
@@ -177,7 +177,7 @@ impl<T: Configurable> Builder<T> {
                 .iter()
                 .filter(|question| question.answer.is_some())
                 .filter_map(|question| Some((question, slot(question.field.kind())?.0)))
-                .filter(|(_, kind)| kind.facts().contains(fact))
+                .filter(|(_, axis)| axis.facts().contains(fact))
                 .collect();
             if fields.is_empty() {
                 issues.push(Issue {
@@ -190,8 +190,8 @@ impl<T: Configurable> Builder<T> {
                 });
                 continue;
             }
-            for (question, kind) in fields {
-                let mut providers: Vec<_> = kind
+            for (question, axis) in fields {
+                let mut providers: Vec<_> = axis
                     .entries()
                     .filter(|entry| entry.declaration().provides_type(fact))
                     .map(PluginEntry::id)
@@ -280,7 +280,7 @@ impl<T: Configurable> Builder<T> {
         let Some(field) = position.field else {
             return Ok(None);
         };
-        let Some((kind, list)) = slot(field.kind()) else {
+        let Some((axis, list)) = slot(field.kind()) else {
             return Ok(field.default_value().cloned());
         };
         let tree = Tree::of(&schema, answers);
@@ -291,14 +291,14 @@ impl<T: Configurable> Builder<T> {
             .filter(|placed| placed.parent == parent && !placed.path.starts_with(path))
             .filter_map(|placed| placed.entry.instance(&placed.config).ok())
             .flat_map(|instance| instance.recommends())
-            .filter_map(|recommended| Some((kind.entry(recommended.plugin())?, recommended)))
+            .filter_map(|recommended| Some((axis.entry(recommended.plugin())?, recommended)))
             .collect();
 
         let tree = tree.without(path);
         let mut declarations = tree.declarations();
         let mut open = tree.open();
         if list {
-            open.extend(kind.facts());
+            open.extend(axis.facts());
         }
         let mut fitting = Vec::new();
         for (entry, recommended) in recommended {
@@ -408,8 +408,8 @@ pub enum Problem {
     /// The plugin at the issue's path does not fit next to the others.
     Incompatible(Incompatibility),
     /// The plugin at `required_by` requires `fact`, which nothing provides and no unanswered field
-    /// could. The issue is at each answered field whose kind could provide it, with the ids of the
-    /// plugins of that kind that do, or at `required_by` if there is none.
+    /// could. The issue is at each answered field whose axis could provide it, with the ids of the
+    /// plugins of that axis that do, or at `required_by` if there is none.
     Unprovided {
         fact: &'static str,
         required_by: Path,
@@ -426,13 +426,13 @@ pub enum FinishError {
     Incompatible(#[from] Incompatibility),
 }
 
-/// The kind of plugin a position of `kind` takes and whether it takes a list of them, or [`None`]
-/// if it takes no plugin.
-fn slot(kind: &FieldKind) -> Option<(Kind, bool)> {
+/// The axis of the plugins a position of `kind` takes and whether it takes a list of them, or
+/// [`None`] if it takes no plugin.
+fn slot(kind: &FieldKind) -> Option<(AnyAxis, bool)> {
     match unwrapped(kind) {
-        FieldKind::Plugin(kind) => Some((*kind, false)),
+        FieldKind::Plugin(axis) => Some((*axis, false)),
         FieldKind::List(element) => match unwrapped(element) {
-            FieldKind::Plugin(kind) => Some((*kind, true)),
+            FieldKind::Plugin(axis) => Some((*axis, true)),
             _ => None,
         },
         _ => None,
@@ -491,7 +491,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
                 }
             }
             Segment::Field(name) => {
-                let FieldKind::Plugin(kind) = unwrapped(&position.kind) else {
+                let FieldKind::Plugin(axis) = unwrapped(&position.kind) else {
                     return Err(unknown());
                 };
                 let plugin = position
@@ -499,7 +499,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
                     .as_ref()
                     .and_then(PluginConfig::from_answer)
                     .ok_or_else(unknown)?;
-                let schema = kind.entry(plugin.plugin()).ok_or_else(unknown)?.schema();
+                let schema = axis.entry(plugin.plugin()).ok_or_else(unknown)?.schema();
                 let field = schema.field_named(name).ok_or_else(unknown)?;
                 Position {
                     field: Some(field.clone()),
@@ -654,11 +654,11 @@ impl Tree {
                     );
                 }
             }
-            (FieldKind::Plugin(kind), _) => {
+            (FieldKind::Plugin(axis), _) => {
                 let Some(plugin) = PluginConfig::from_answer(answer) else {
                     return;
                 };
-                let Some(entry) = kind.entry(plugin.plugin()) else {
+                let Some(entry) = axis.entry(plugin.plugin()) else {
                     return;
                 };
                 self.plugins.push(Placed {
@@ -683,16 +683,16 @@ impl Tree {
 
     /// The types of the facts the fields still unanswered could provide.
     fn open(&self) -> OpenFacts {
-        let mut kinds = Vec::new();
+        let mut axes = Vec::new();
         for question in &self.questions {
             if question.answer.is_none()
-                && let Some((kind, _)) = slot(question.field.kind())
-                && !kinds.contains(&kind)
+                && let Some((axis, _)) = slot(question.field.kind())
+                && !axes.contains(&axis)
             {
-                kinds.push(kind);
+                axes.push(axis);
             }
         }
-        kinds.iter().flat_map(Kind::facts).collect()
+        axes.iter().flat_map(AnyAxis::facts).collect()
     }
 
     /// What the plugins declare, each named as the checks report it, in the order of
@@ -739,7 +739,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Plugin, PluginType, compatibility::Condition, plugin_kind, register};
+    use crate::{Plugin, PluginType, axis, compatibility::Condition, register};
 
     #[derive(Debug)]
     struct Points;
@@ -755,22 +755,12 @@ mod tests {
     struct EntrantsPerRanking(u32);
 
     /// How the matches of a phase are scheduled.
-    #[typetag::serde(tag = "type", content = "value")]
+    #[axis]
     trait Format: Plugin {}
 
-    plugin_kind! {
-        /// The axis of [`Format`].
-        FormatKind for dyn Format
-    }
-
     /// What is calculated for an entrant.
-    #[typetag::serde(tag = "type", content = "value")]
+    #[axis]
     trait Metric: Plugin {}
-
-    plugin_kind! {
-        /// The axis of [`Metric`].
-        MetricKind for dyn Metric
-    }
 
     /// A format recommending metrics, two of which provide the same fact.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
@@ -1004,10 +994,10 @@ mod tests {
     impl Configurable for Phase {
         fn schema() -> Schema {
             Schema::new()
-                .field(Field::plugin::<FormatKind>("format", "Format"))
-                .field(Field::plugins::<MetricKind>("metrics", "Metrics").with_default(json!([])))
+                .field(Field::plugin::<dyn Format>("format", "Format"))
+                .field(Field::plugins::<dyn Metric>("metrics", "Metrics").with_default(json!([])))
                 .field(
-                    Field::plugin::<MetricKind>("tie_break", "Tie break")
+                    Field::plugin::<dyn Metric>("tie_break", "Tie break")
                         .optional()
                         .with_default(Value::Null),
                 )

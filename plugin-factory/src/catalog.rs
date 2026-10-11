@@ -1,13 +1,13 @@
 //! Every plugin a program has linked in, so that it can be found without being named.
 //!
-//! A plugin axis is a [`PluginKind`], declared with [`plugin_kind!`](crate::plugin_kind) next to
-//! the trait of the axis. A plugin registers itself for its axis with one [`PluginEntry`], which
-//! describes it and states what it has to be told. Registration is
+//! A plugin axis is a trait declared with [`axis`](crate::axis), named by its trait object, which
+//! implements [`Axis`]. A plugin registers itself for its axis with [`register`](crate::register),
+//! as one [`PluginEntry`], which describes it and states what it has to be told. Registration is
 //! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
 //! defining the axis.
 //!
 //! A program reads the catalog to settle a fact a composite requires but none of its plugins
-//! provides, see [`resolve`], and to offer the plugins of a kind to choose from.
+//! provides, see [`resolve`], and to offer the plugins of an axis to choose from.
 
 use std::{
     any::TypeId,
@@ -27,15 +27,49 @@ use crate::{
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
-/// register in.
+/// register in, implemented for the trait object, e.g. `dyn Metric`.
 ///
-/// Implemented for the type that [`plugin_kind!`](crate::plugin_kind) declares, which is also the
-/// only way to get the registry.
-pub trait PluginKind: Sized + 'static {
-    /// The plugin trait of the axis, e.g. `dyn MetricsCalculator`. Every axis trait has [`Plugin`]
-    /// as a supertrait, so that any plugin can be asked what it declares.
-    type Object: ?Sized + Plugin;
-
+/// Implemented by [`axis`](crate::axis) alone, which is also the only way to get the registry.
+/// The trait of an axis has [`Plugin`] as a supertrait, so that any plugin can be asked what it
+/// declares; a trait without it does not compile as an axis:
+///
+/// ```compile_fail
+/// #[plugin_factory::axis]
+/// pub trait Seeding: std::fmt::Debug {}
+/// ```
+///
+/// # Examples
+/// ```
+/// use plugin_factory::{Plugin, axis, catalog::Axis, register};
+/// use serde::{Deserialize, Serialize};
+///
+/// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
+/// #[axis]
+/// pub trait Seeding: Plugin {
+///     fn seed(&self);
+/// }
+///
+/// #[derive(Debug, Serialize, Deserialize, Plugin)]
+/// #[plugin(
+///     id = "my_crate::by_rank",
+///     label = "by rank",
+///     description = "the best entrant is seeded first"
+/// )]
+/// struct ByRank;
+///
+/// #[register]
+/// impl Seeding for ByRank {
+///     fn seed(&self) {}
+/// }
+///
+/// # fn main() {
+/// assert_eq!(
+///     <dyn Seeding>::entry("my_crate::by_rank").unwrap().label(),
+///     "by rank"
+/// );
+/// # }
+/// ```
+pub trait Axis: Plugin {
     /// Every plugin registered for this axis, in no particular order.
     fn entries() -> impl Iterator<Item = &'static PluginEntry>;
 
@@ -46,106 +80,11 @@ pub trait PluginKind: Sized + 'static {
     }
 }
 
-/// The trait object of a plugin axis, i.e. [`PluginKind::Object`] seen from the other side.
-///
-/// Implemented for the trait object that [`plugin_kind!`](crate::plugin_kind) declares an axis
-/// for, so that a trait has at most one axis.
-pub trait PluginObject: Plugin {
-    /// The axis whose plugins this is the trait object of.
-    type Kind: PluginKind<Object = Self>;
-
-    /// This plugin as a plugin of no particular axis.
-    fn as_plugin(&self) -> &dyn Plugin;
-}
-
-/// Declares the plugin axis of the trait `$object`: the type `$kind` implementing [`PluginKind`],
-/// which is at the same time the registry of the axis — one value of it is one registered plugin,
-/// built by `$kind::register` and submitted with `inventory::submit!` — and [`PluginObject`] for
-/// `dyn $object`.
-///
-/// Generating that type is what the macro exists for: `inventory` collects by type, and only a
-/// type of the crate declaring the collection can be collected, so an axis brings its own. It is
-/// also where the trait of the axis is written out, so that registering a plugin takes no
-/// turbofish and no import besides the axis itself.
-///
-/// # Examples
-/// ```
-/// use plugin_factory::{Plugin, inventory, plugin_kind};
-/// use serde::Deserialize;
-///
-/// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
-/// pub trait Seeding: Plugin {
-///     fn seed(&self);
-/// }
-///
-/// plugin_kind! {
-///     /// The seedings, i.e. the axis of [`Seeding`].
-///     pub SeedingKind for dyn Seeding
-/// }
-///
-/// #[derive(Debug, Deserialize, Plugin)]
-/// #[plugin(
-///     id = "my_crate::by_rank",
-///     label = "by rank",
-///     description = "the best entrant is seeded first"
-/// )]
-/// struct ByRank;
-///
-/// impl Seeding for ByRank {
-///     fn seed(&self) {}
-/// }
-///
-/// inventory::submit! {
-///     SeedingKind::register::<ByRank>()
-/// }
-/// # fn main() {}
-/// ```
-#[macro_export]
-macro_rules! plugin_kind {
-    ($(#[$attribute:meta])* $visibility:vis $kind:ident for dyn $object:path) => {
-        $(#[$attribute])*
-        $visibility struct $kind($crate::catalog::PluginEntry);
-
-        impl $kind {
-            /// Registers the plugin `P` for this axis, which is configured by answering its
-            /// schema, see `Configurable::schema`.
-            pub const fn register<P>() -> Self
-            where
-                P: $crate::PluginType + $object,
-            {
-                Self($crate::catalog::PluginEntry::new::<P>())
-            }
-        }
-
-        $crate::inventory::collect!($kind);
-
-        impl $crate::catalog::PluginObject for dyn $object {
-            type Kind = $kind;
-
-            fn as_plugin(&self) -> &dyn $crate::Plugin {
-                self
-            }
-        }
-
-        impl $crate::catalog::PluginKind for $kind {
-            type Object = dyn $object;
-
-            fn entries() -> impl ::core::iter::Iterator<
-                Item = &'static $crate::catalog::PluginEntry,
-            > {
-                ::core::iter::IntoIterator::into_iter($crate::inventory::iter::<Self>)
-                    .map(|registered| &registered.0)
-            }
-        }
-    };
-}
-
 /// One plugin as it is registered in the catalog.
 ///
-/// Everything in it comes from the plugin's type, so registering one takes no strings; created
-/// through the axis itself, see [`plugin_kind!`](crate::plugin_kind). An entry describes the
-/// plugin but does not build it: a plugin is built as a plugin of its kind, see
-/// [`PluginConfig::build`].
+/// Everything in it comes from the plugin's type, so registering one takes no strings; submitted
+/// by [`register`](crate::register). An entry describes the plugin but does not build it: a
+/// plugin is built as a plugin of its axis, see [`PluginConfig::build`].
 pub struct PluginEntry {
     id: &'static str,
     label: &'static str,
@@ -223,13 +162,13 @@ impl PluginEntry {
         (self.schema)()
     }
 
-    /// The kinds of plugin the fields of the plugin's schema take, in schema order, a kind once
-    /// per field taking it.
-    pub fn sub_kinds(&self) -> Vec<Kind> {
+    /// The axes of the plugins the fields of the plugin's schema take, in schema order, an axis
+    /// once per field taking it.
+    pub fn sub_axes(&self) -> Vec<AnyAxis> {
         self.schema()
             .fields()
             .iter()
-            .filter_map(|field| field.kind().plugin_kind())
+            .filter_map(|field| field.kind().axis())
             .collect()
     }
 
@@ -268,43 +207,42 @@ fn instantiate<P: PluginType>(config: &Value) -> Result<Box<dyn Plugin>, ConfigE
     Ok(Box::new(config::deserialize::<P>(config)?))
 }
 
-/// A [`PluginKind`] as a value, i.e. the kind of plugin a field takes, see
+/// An [`Axis`] as a value, i.e. the axis of the plugins a field takes, see
 /// [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin), through which its registered plugins
-/// can be browsed without naming the kind.
+/// can be browsed without naming the axis.
 ///
-/// Two values are equal if they are of the same kind.
+/// Two values are equal if they are of the same axis.
 #[derive(Clone, Copy)]
-pub struct Kind {
+pub struct AnyAxis {
     id: TypeId,
     entries: fn() -> Box<dyn Iterator<Item = &'static PluginEntry>>,
 }
 
-impl Kind {
-    /// The kind `K`.
-    pub const fn of<K: PluginKind>() -> Self {
+impl AnyAxis {
+    /// The axis `A`, e.g. `AnyAxis::of::<dyn Metric>()`.
+    pub const fn of<A: Axis + ?Sized>() -> Self {
         Self {
-            id: TypeId::of::<K>(),
-            entries: entries_of::<K>,
+            id: TypeId::of::<A>(),
+            entries: entries_of::<A>,
         }
     }
 
-    /// Every plugin registered for this kind, in no particular order, see
-    /// [`PluginKind::entries`].
+    /// Every plugin registered for this axis, in no particular order, see [`Axis::entries`].
     pub fn entries(&self) -> impl Iterator<Item = &'static PluginEntry> {
         (self.entries)()
     }
 
-    /// The plugin registered for this kind with the id `id`, or [`None`] if none is, see
-    /// [`PluginKind::entry`].
+    /// The plugin registered for this axis with the id `id`, or [`None`] if none is, see
+    /// [`Axis::entry`].
     pub fn entry(&self, id: &str) -> Option<&'static PluginEntry> {
         self.entries().find(|entry| entry.id() == id)
     }
 
-    /// `plugin` as a plugin of this kind with its config completed, see
+    /// `plugin` as a plugin of this axis with its config completed, see
     /// [`PluginEntry::complete`], written as [`PluginConfig`] writes a plugin answer.
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this kind is registered with the id
+    /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this axis is registered with the id
     /// of `plugin`, and whatever completing its config fails with otherwise.
     pub fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
         let entry = self
@@ -316,7 +254,7 @@ impl Kind {
         ])))
     }
 
-    /// `plugin` as a plugin of this kind with its config checked but not completed, see
+    /// `plugin` as a plugin of this axis with its config checked but not completed, see
     /// [`Schema::check`], written as [`PluginConfig`] writes a plugin answer.
     ///
     /// # Errors
@@ -329,18 +267,18 @@ impl Kind {
         Ok(PluginConfig::new(plugin.plugin(), checked).into())
     }
 
-    /// The types of the facts the plugins of this kind provide, i.e. what a slot for this kind
+    /// The types of the facts the plugins of this axis provide, i.e. what a slot for this axis
     /// could contribute while it is still to be filled, see [`OpenFacts`].
     ///
-    /// Includes what the plugins of their [sub-kinds](PluginEntry::sub_kinds) provide,
+    /// Includes what the plugins of their [sub-axes](PluginEntry::sub_axes) provide,
     /// transitively, since a plugin filling the slot can have slots of its own. Read from the
     /// static declarations, so it holds whatever the plugins end up configured with.
     pub fn facts(&self) -> OpenFacts {
         let mut visited = vec![*self];
         let mut pending = vec![*self];
         let mut facts = Vec::new();
-        while let Some(kind) = pending.pop() {
-            for entry in kind.entries() {
+        while let Some(axis) = pending.pop() {
+            for entry in axis.entries() {
                 facts.extend(
                     entry
                         .declaration()
@@ -348,11 +286,11 @@ impl Kind {
                         .iter()
                         .map(ProvidedFact::type_id),
                 );
-                for sub_kind in entry.sub_kinds() {
-                    // kinds can nest each other, so each is visited once
-                    if !visited.contains(&sub_kind) {
-                        visited.push(sub_kind);
-                        pending.push(sub_kind);
+                for sub_axis in entry.sub_axes() {
+                    // axes can nest each other, so each is visited once
+                    if !visited.contains(&sub_axis) {
+                        visited.push(sub_axis);
+                        pending.push(sub_axis);
                     }
                 }
             }
@@ -361,45 +299,48 @@ impl Kind {
     }
 }
 
-fn entries_of<K: PluginKind>() -> Box<dyn Iterator<Item = &'static PluginEntry>> {
-    Box::new(K::entries())
+fn entries_of<A: Axis + ?Sized>() -> Box<dyn Iterator<Item = &'static PluginEntry>> {
+    Box::new(A::entries())
 }
 
-impl PartialEq for Kind {
+impl PartialEq for AnyAxis {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for Kind {}
+impl Eq for AnyAxis {}
 
-impl Debug for Kind {
+impl Debug for AnyAxis {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("Kind").field(&self.id).finish()
+        formatter.debug_tuple("AnyAxis").field(&self.id).finish()
     }
 }
 
-/// A composite of plugins that a plugin of kind `K` may be added to, see [`add_provider_of`].
+/// A composite of plugins that a plugin of the axis `A` may be added to, see
+/// [`add_provider_of`].
 ///
-/// A composite with a single slot for a kind — a phase is played in one format — leaves the impl
-/// for that kind out, so that nothing can be added to it.
-pub trait Accepts<K: PluginKind> {
+/// A composite with a single slot for an axis — a phase is played in one format — leaves the impl
+/// for that axis out, so that nothing can be added to it.
+pub trait Accepts<A: Axis + ?Sized> {
     /// Adds `plugin` to the composite.
-    fn add(&mut self, plugin: Box<K::Object>);
+    fn add(&mut self, plugin: Box<A>);
 }
 
-/// Adds a plugin providing a fact of type `fact` to `composite`, if exactly one plugin of kind `K`
-/// is registered that provides it and needs no configuration.
+/// Adds a plugin providing a fact of type `fact` to `composite`, if exactly one plugin of the
+/// axis `A` is registered that provides it and needs no configuration.
 ///
 /// Adds nothing if none does, or if several do: which of them to use is then not a program's
 /// choice to make, and the fact stays unprovided.
-pub fn add_provider_of<K: PluginKind, C: Accepts<K> + ?Sized>(composite: &mut C, fact: TypeId)
+pub fn add_provider_of<A, C>(composite: &mut C, fact: TypeId)
 where
-    Box<K::Object>: DeserializeOwned,
+    A: Axis + ?Sized,
+    C: Accepts<A> + ?Sized,
+    Box<A>: DeserializeOwned,
 {
-    let mut providers = providers_of::<K>(fact).filter_map(|entry| {
+    let mut providers = providers_of::<A>(fact).filter_map(|entry| {
         PluginConfig::new(entry.id(), Config::new())
-            .build::<K>()
+            .build::<A>()
             .ok()
     });
     if let Some(plugin) = providers.next()
@@ -409,12 +350,12 @@ where
     }
 }
 
-/// A composite of plugins as [`resolve`] sees it: what its plugins declare, and the kinds a plugin
+/// A composite of plugins as [`resolve`] sees it: what its plugins declare, and the axes a plugin
 /// may be added for.
 pub trait Composite: Sized + 'static {
-    /// The kinds of plugin the catalog may add to the composite, each with how it is added, see
-    /// [`Acceptor::of`]. A kind listed twice is never added, since which of its slots to add to is
-    /// not a program's choice to make.
+    /// The axes the catalog may add plugins of to the composite, each with how it is added, see
+    /// [`Acceptor::of`]. An axis listed twice is never added, since which of its slots to add to
+    /// is not a program's choice to make.
     const ACCEPTS: &'static [Acceptor<Self>];
 
     /// What the plugins of the composite declare, each named as the checks report it, see
@@ -422,39 +363,40 @@ pub trait Composite: Sized + 'static {
     fn declarations(&self) -> Vec<(String, Declaration)>;
 }
 
-/// A kind of plugin a [`Composite`] `C` accepts, see [`Composite::ACCEPTS`].
+/// An axis a [`Composite`] `C` accepts plugins of, see [`Composite::ACCEPTS`].
 pub struct Acceptor<C> {
-    kind: Kind,
+    axis: AnyAxis,
     add: fn(&mut C, &PluginEntry),
 }
 
 impl<C> Acceptor<C> {
-    /// The kind `K`, whose plugins are added to `C` through its [`Accepts`] impl.
-    pub const fn of<K: PluginKind>() -> Self
+    /// The axis `A`, whose plugins are added to `C` through its [`Accepts`] impl.
+    pub const fn of<A: Axis + ?Sized>() -> Self
     where
-        C: Accepts<K>,
-        Box<K::Object>: DeserializeOwned,
+        C: Accepts<A>,
+        Box<A>: DeserializeOwned,
     {
         Self {
-            kind: Kind::of::<K>(),
-            add: add_unasked::<K, C>,
+            axis: AnyAxis::of::<A>(),
+            add: add_unasked::<A, C>,
         }
     }
 
-    /// The kind.
-    pub fn kind(&self) -> Kind {
-        self.kind
+    /// The axis.
+    pub fn axis(&self) -> AnyAxis {
+        self.axis
     }
 }
 
-/// Adds the plugin of `entry`, a plugin of kind `K` that needs no configuration, to `composite`.
-fn add_unasked<K: PluginKind, C: Accepts<K>>(composite: &mut C, entry: &PluginEntry)
+/// Adds the plugin of `entry`, a plugin of the axis `A` that needs no configuration, to
+/// `composite`.
+fn add_unasked<A: Axis + ?Sized, C: Accepts<A>>(composite: &mut C, entry: &PluginEntry)
 where
-    Box<K::Object>: DeserializeOwned,
+    Box<A>: DeserializeOwned,
 {
     // the entry was found among the plugins that build unasked, so this fails only for a plugin
     // whose typetag name is not its id, which check_serialization reports
-    if let Ok(plugin) = PluginConfig::new(entry.id(), Config::new()).build::<K>() {
+    if let Ok(plugin) = PluginConfig::new(entry.id(), Config::new()).build::<A>() {
         composite.add(plugin);
     }
 }
@@ -462,7 +404,7 @@ where
 /// Adds a plugin to `composite` for every fact its plugins require and neither they nor `context`
 /// provide, including the facts the added plugins require themselves.
 ///
-/// A fact is settled only if exactly one registered plugin of all the kinds the composite
+/// A fact is settled only if exactly one registered plugin of all the axes the composite
 /// [accepts](Composite::ACCEPTS) provides it and needs no configuration; otherwise it stays
 /// unprovided, which [`check_facts`](crate::compatibility::check_facts) reports. Each fact is
 /// tried once. Plugins are added in the order their facts are first required in, so ordering
@@ -480,7 +422,7 @@ pub fn resolve<C: Composite>(context: &Declaration, composite: &mut C) {
         tried.push(fact);
         let mut providers = C::ACCEPTS.iter().flat_map(|acceptor| {
             acceptor
-                .kind
+                .axis
                 .entries()
                 .filter(|entry| {
                     entry.declaration().provides_type(fact)
@@ -496,22 +438,22 @@ pub fn resolve<C: Composite>(context: &Declaration, composite: &mut C) {
     }
 }
 
-/// Every registered plugin of kind `K` that provides a fact of type `fact`, whatever its
+/// Every registered plugin of the axis `A` that provides a fact of type `fact`, whatever its
 /// configuration.
-pub fn providers_of<K: PluginKind>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry> {
-    K::entries().filter(move |entry| entry.declaration().provides_type(fact))
+pub fn providers_of<A: Axis + ?Sized>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry> {
+    A::entries().filter(move |entry| entry.declaration().provides_type(fact))
 }
 
-/// The types of the facts the plugins of kind `K` provide, see [`Kind::facts`].
-pub fn facts_of_kind<K: PluginKind>() -> OpenFacts {
-    Kind::of::<K>().facts()
+/// The types of the facts the plugins of the axis `A` provide, see [`AnyAxis::facts`].
+pub fn facts_of_axis<A: Axis + ?Sized>() -> OpenFacts {
+    AnyAxis::of::<A>().facts()
 }
 
-/// Checks that the registered plugins of kind `K` serialize the way they are built: no two with
-/// the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"` with its
-/// [id](PluginType::ID) and by `"value"` with an object holding every field of its schema.
+/// Checks that the registered plugins of the axis `A` serialize the way they are built: no two
+/// with the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"` with
+/// its [id](PluginType::ID) and by `"value"` with an object holding every field of its schema.
 ///
-/// Meant for a test of the crate declaring the kind, since the id of a plugin persisted through
+/// Meant for a test of the crate declaring the axis, since the id of a plugin persisted through
 /// `typetag` is written a second time as the name of its `typetag` impl, unless the plugin is
 /// registered with [`register`](crate::register). Only plugins that need no
 /// configuration are built and serialized; the others are not checked beyond their id being
@@ -519,12 +461,12 @@ pub fn facts_of_kind<K: PluginKind>() -> OpenFacts {
 ///
 /// # Errors
 /// Returns the first mismatch found.
-pub fn check_serialization<K: PluginKind>() -> Result<(), SerializationMismatch>
+pub fn check_serialization<A: Axis + ?Sized>() -> Result<(), SerializationMismatch>
 where
-    Box<K::Object>: Serialize + DeserializeOwned,
+    Box<A>: Serialize + DeserializeOwned,
 {
     let mut ids = HashSet::new();
-    for entry in K::entries() {
+    for entry in A::entries() {
         let id = entry.id();
         if !ids.insert(id) {
             return Err(SerializationMismatch::DuplicateId { id });
@@ -534,7 +476,7 @@ where
             continue;
         }
         let plugin = PluginConfig::new(id, Config::new())
-            .build::<K>()
+            .build::<A>()
             .map_err(|error| SerializationMismatch::Undeserializable {
                 id,
                 reason: error.to_string(),
@@ -572,14 +514,14 @@ where
     Ok(())
 }
 
-/// Why the plugins of a kind do not serialize the way they are built, see
+/// Why the plugins of an axis do not serialize the way they are built, see
 /// [`check_serialization`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SerializationMismatch {
     #[error("several plugins are registered with the id {id}")]
     DuplicateId { id: &'static str },
     /// The plugin's completed config, tagged with its id, does not deserialize as a plugin of its
-    /// kind, e.g. because its `typetag` name is not its id.
+    /// axis, e.g. because its `typetag` name is not its id.
     #[error("{id} cannot be built from its completed config: {reason}")]
     Undeserializable { id: &'static str, reason: String },
     #[error("{id} cannot be serialized: {reason}")]
@@ -608,6 +550,8 @@ mod tests {
 
     use super::*;
     use crate::{
+        __private::Register,
+        axis,
         compatibility::{OpenFacts, declaration_of},
         register,
         schema::{Configurable, Field},
@@ -634,13 +578,8 @@ mod tests {
     struct Unknown;
 
     /// A plugin axis with no behavior at all, so that a test plugin is its declaration.
-    #[typetag::serde(tag = "type", content = "value")]
+    #[axis]
     trait Tested: Plugin {}
-
-    plugin_kind! {
-        /// The axis of [`Tested`].
-        TestedKind for dyn Tested
-    }
 
     /// The only plugin providing [`Settled`], and one of the two providing [`Shared`].
     #[derive(Debug, Serialize, Deserialize, Plugin)]
@@ -714,26 +653,21 @@ mod tests {
     #[register]
     impl Tested for ConfiguredProvider {}
 
-    /// A fact only a plugin of [`NestedKind`] provides.
+    /// A fact only a plugin of [`Nested`] provides.
     #[derive(Debug)]
     struct Deep;
 
-    /// A plugin axis whose plugins only ever fill a field of a plugin of [`TestedKind`].
-    #[typetag::serde(tag = "type", content = "value")]
+    /// A plugin axis whose plugins only ever fill a field of a plugin of [`Tested`].
+    #[axis]
     trait Nested: Plugin {}
 
-    plugin_kind! {
-        /// The axis of [`Nested`].
-        NestedKind for dyn Nested
-    }
-
-    /// A plugin with a field taking a plugin or nothing, of a kind its own kind takes nowhere
+    /// A plugin with a field taking a plugin or nothing, of an axis its own axis takes nowhere
     /// else.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "wrapper",
         label = "wrapper",
-        description = "a plugin with a slot of another kind"
+        description = "a plugin with a slot of another axis"
     )]
     struct Wrapper {
         #[plugin(label = "Nested")]
@@ -743,8 +677,8 @@ mod tests {
     #[register]
     impl Tested for Wrapper {}
 
-    /// The plugin providing [`Deep`], with a field of the kind its wrapper is of, so that the two
-    /// kinds nest each other.
+    /// The plugin providing [`Deep`], with a field of the axis its wrapper is of, so that the two
+    /// axes nest each other.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "deep_provider",
@@ -770,7 +704,7 @@ mod tests {
     #[derive(Debug)]
     struct Downstream;
 
-    /// A fact a plugin of [`TestedKind`] and one of [`NestedKind`] provide unasked.
+    /// A fact a plugin of [`Tested`] and one of [`Nested`] provide unasked.
     #[derive(Debug)]
     struct Crosswise;
 
@@ -817,11 +751,11 @@ mod tests {
     #[register]
     impl Tested for Handwritten {}
 
-    /// A collection that every plugin of [`TestedKind`] can be added to.
+    /// A collection that every plugin of [`Tested`] can be added to.
     #[derive(Debug, Default)]
     struct Plugins(Vec<Box<dyn Tested>>);
 
-    impl Accepts<TestedKind> for Plugins {
+    impl Accepts<dyn Tested> for Plugins {
         fn add(&mut self, plugin: Box<dyn Tested>) {
             self.0.push(plugin);
         }
@@ -838,13 +772,13 @@ mod tests {
     /// The composite the plugin providing a fact of the type of `fact` is added to.
     fn with_provider_of(fact: &dyn Any) -> Plugins {
         let mut composite = Plugins::default();
-        add_provider_of::<TestedKind, _>(&mut composite, fact.type_id());
+        add_provider_of::<dyn Tested, _>(&mut composite, fact.type_id());
         composite
     }
 
     /// The entry of the plugin `P`.
     fn entry_of<P: PluginType>() -> &'static PluginEntry {
-        TestedKind::entry(P::ID).expect("the plugin is registered")
+        <dyn Tested>::entry(P::ID).expect("the plugin is registered")
     }
 
     #[test]
@@ -869,31 +803,33 @@ mod tests {
         );
         // a built plugin is boxed behind the trait of the axis, so its Debug form is what a test
         // can compare
-        let built = configured(Config::new().with("rounds", 5)).build::<TestedKind>();
+        let built = configured(Config::new().with("rounds", 5)).build::<dyn Tested>();
         assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider { rounds: 5 })");
-        assert!(configured(Config::new()).build::<TestedKind>().is_err());
+        assert!(configured(Config::new()).build::<dyn Tested>().is_err());
     }
 
     #[test]
-    fn a_plugin_of_another_kind_is_not_built() {
+    fn a_plugin_of_another_axis_is_not_built() {
         assert_eq!(
             PluginConfig::of::<DeepProvider>(Config::new())
-                .build::<TestedKind>()
+                .build::<dyn Tested>()
                 .err(),
             Some(ConfigError::UnknownPlugin { path: Path::ROOT })
         );
     }
 
     #[test]
-    fn a_kind_as_a_value_finds_the_entries_of_the_kind() {
-        let kind = Kind::of::<TestedKind>();
+    fn an_axis_as_a_value_finds_the_entries_of_the_axis() {
+        let axis = AnyAxis::of::<dyn Tested>();
 
-        assert_eq!(kind.entries().count(), TestedKind::entries().count());
+        assert_eq!(axis.entries().count(), <dyn Tested>::entries().count());
         assert_eq!(
-            kind.entry("wrapper").map(PluginEntry::label),
+            axis.entry("wrapper").map(PluginEntry::label),
             Some("wrapper")
         );
-        assert!(kind.entry("deep_provider").is_none());
+        assert!(axis.entry("deep_provider").is_none());
+        assert_eq!(axis, AnyAxis::of::<dyn Tested>());
+        assert_ne!(axis, AnyAxis::of::<dyn Nested>());
     }
 
     #[test]
@@ -932,7 +868,7 @@ mod tests {
 
     #[test]
     fn an_id_no_plugin_is_registered_with_has_no_entry() {
-        assert!(TestedKind::entry("unregistered").is_none());
+        assert!(<dyn Tested>::entry("unregistered").is_none());
     }
 
     #[test]
@@ -968,10 +904,10 @@ mod tests {
 
     #[test]
     fn a_fact_is_provided_by_every_plugin_declaring_it() {
-        let mut providers: Vec<_> = providers_of::<TestedKind>(TypeId::of::<Shared>())
+        let mut providers: Vec<_> = providers_of::<dyn Tested>(TypeId::of::<Shared>())
             .map(PluginEntry::label)
             .collect();
-        // the entries of a kind come in no particular order
+        // the entries of an axis come in no particular order
         providers.sort_unstable();
 
         assert_eq!(providers, ["configured provider", "only provider"]);
@@ -979,13 +915,13 @@ mod tests {
 
     #[test]
     fn every_plugin_of_the_axis_is_registered_once() {
-        assert_eq!(TestedKind::entries().count(), 7);
-        assert_eq!(check_serialization::<TestedKind>(), Ok(()));
-        assert_eq!(check_serialization::<NestedKind>(), Ok(()));
+        assert_eq!(<dyn Tested>::entries().count(), 7);
+        assert_eq!(check_serialization::<dyn Tested>(), Ok(()));
+        assert_eq!(check_serialization::<dyn Nested>(), Ok(()));
     }
 
     #[test]
-    fn the_facts_of_a_kind_are_what_its_plugins_and_theirs_provide() {
+    fn the_facts_of_an_axis_are_what_its_plugins_and_theirs_provide() {
         let facts = OpenFacts::from_iter([
             TypeId::of::<Settled>(),
             TypeId::of::<Ambiguous>(),
@@ -996,25 +932,25 @@ mod tests {
             TypeId::of::<Crosswise>(),
         ]);
 
-        // the two kinds nest each other, so either one could contribute everything
-        assert_eq!(facts_of_kind::<TestedKind>(), facts);
-        assert_eq!(facts_of_kind::<NestedKind>(), facts);
+        // the two axes nest each other, so either one could contribute everything
+        assert_eq!(facts_of_axis::<dyn Tested>(), facts);
+        assert_eq!(facts_of_axis::<dyn Nested>(), facts);
     }
 
-    /// A composite accepting plugins of both kinds, whose own requirements are `requires`.
+    /// A composite accepting plugins of both axes, whose own requirements are `requires`.
     struct Resolved {
         requires: fn(&mut Declaration),
         tested: Vec<Box<dyn Tested>>,
         nested: Vec<Box<dyn Nested>>,
     }
 
-    impl Accepts<TestedKind> for Resolved {
+    impl Accepts<dyn Tested> for Resolved {
         fn add(&mut self, plugin: Box<dyn Tested>) {
             self.tested.push(plugin);
         }
     }
 
-    impl Accepts<NestedKind> for Resolved {
+    impl Accepts<dyn Nested> for Resolved {
         fn add(&mut self, plugin: Box<dyn Nested>) {
             self.nested.push(plugin);
         }
@@ -1022,7 +958,7 @@ mod tests {
 
     impl Composite for Resolved {
         const ACCEPTS: &'static [Acceptor<Self>] =
-            &[Acceptor::of::<TestedKind>(), Acceptor::of::<NestedKind>()];
+            &[Acceptor::of::<dyn Tested>(), Acceptor::of::<dyn Nested>()];
 
         fn declarations(&self) -> Vec<(String, Declaration)> {
             iter::once(("requirements".to_owned(), Declaration::of(self.requires)))
@@ -1033,7 +969,7 @@ mod tests {
     }
 
     /// The [`Debug`] forms of the plugins [`resolve`] adds to a composite requiring `requires`
-    /// with `context`, those of [`TestedKind`] first.
+    /// with `context`, those of [`Tested`] first.
     fn resolved(context: &Declaration, requires: fn(&mut Declaration)) -> Vec<String> {
         let mut composite = Resolved {
             requires,
@@ -1057,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn resolving_adds_a_provider_of_any_accepted_kind() {
+    fn resolving_adds_a_provider_of_any_accepted_axis() {
         assert_eq!(
             resolved(&Declaration::new(), |declaration| {
                 declaration.require::<Deep>("the deep fact", None);
@@ -1067,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn resolving_leaves_a_fact_provided_by_plugins_of_two_kinds_unprovided() {
+    fn resolving_leaves_a_fact_provided_by_plugins_of_two_axes_unprovided() {
         assert!(
             resolved(&Declaration::new(), |declaration| {
                 declaration.require::<Crosswise>("the crosswise fact", None);
@@ -1104,13 +1040,8 @@ mod tests {
 
     /// An axis whose plugins are tagged with something other than their ids, so that
     /// [`check_serialization`] has a mismatch to find.
-    #[typetag::serde(tag = "type", content = "value")]
+    #[axis]
     trait Mistagged: Plugin {}
-
-    plugin_kind! {
-        /// The axis of [`Mistagged`].
-        MistaggedKind for dyn Mistagged
-    }
 
     /// A plugin written by hand, which is what makes its tag differ from its id.
     #[derive(Debug, Serialize, Deserialize)]
@@ -1134,13 +1065,13 @@ mod tests {
     impl Mistagged for Renamed {}
 
     inventory::submit! {
-        MistaggedKind::register::<Renamed>()
+        <dyn Mistagged as Register<Renamed>>::REGISTRY
     }
 
     #[test]
     fn a_plugin_tagged_with_something_other_than_its_id_is_a_mismatch() {
         assert!(matches!(
-            check_serialization::<MistaggedKind>(),
+            check_serialization::<dyn Mistagged>(),
             Err(SerializationMismatch::Undeserializable { id: "renamed", .. })
         ));
     }

@@ -6,19 +6,16 @@
 //! program looking for a plugin finds it. A [`Builder`](builder::Builder) holds a composite of
 //! plugins while it is being configured.
 //!
-//! A plugin is usually derived, which reads its schema from its fields and their `serde`
-//! attributes, and registered with [`register`], which tags it for `typetag` with its id:
+//! An axis of plugins is a trait declared with [`axis`]. A plugin is usually derived, which reads
+//! its schema from its fields and their `serde` attributes, and registered with [`register`],
+//! which tags it for `typetag` with its id:
 //!
 //! ```
-//! use plugin_factory::{Plugin, plugin_kind, register};
+//! use plugin_factory::{Plugin, axis, register};
 //! use serde::{Deserialize, Serialize};
 //!
-//! #[typetag::serde(tag = "type", content = "value")]
+//! #[axis]
 //! pub trait Seeding: Plugin {}
-//!
-//! plugin_kind! {
-//!     pub SeedingKind for dyn Seeding
-//! }
 //!
 //! #[derive(Debug, Serialize, Deserialize, Plugin)]
 //! #[plugin(
@@ -35,8 +32,8 @@
 //! #[register]
 //! impl Seeding for Random {}
 //! # fn main() {
-//! # use plugin_factory::catalog::PluginKind;
-//! # assert_eq!(SeedingKind::entry("my_crate::random").unwrap().label(), "random");
+//! # use plugin_factory::catalog::Axis;
+//! # assert_eq!(<dyn Seeding>::entry("my_crate::random").unwrap().label(), "random");
 //! # }
 //! ```
 
@@ -56,24 +53,39 @@ pub mod schema;
 /// Re-exported so that a crate registering a plugin in the [catalog] does not have to depend on
 /// `inventory` itself.
 pub use inventory;
-pub use plugin_factory_derive::{Plugin, register};
+pub use plugin_factory_derive::{Plugin, axis, register};
 
-/// What the code [`derive@Plugin`] and [`register`] generate refers to, and what a plugin behind
-/// a `dyn` is asked through. Not part of the API.
+/// What the code [`derive@Plugin`], [`axis`] and [`register`] generate refers to, and what a
+/// plugin behind a `dyn` is asked through. Not part of the API.
 #[doc(hidden)]
 pub mod __private {
     pub use serde;
     use serde_json::value::Serializer;
 
     use crate::{
-        Plugin, PluginType, compatibility::Declaration, config::Value, schema::Configurable,
+        Plugin, PluginType, catalog::Axis, compatibility::Declaration, config::Value,
+        schema::Configurable,
     };
+
+    /// How the plugin `P` is registered for an axis: the value of the axis's registry that
+    /// [`register`](crate::register) submits. Implemented by [`axis`](crate::axis) for every
+    /// plugin of the axis.
+    pub trait Register<P>: Axis {
+        /// The registry of the axis, a type of the crate declaring it.
+        type Registry: 'static;
+
+        /// The entry of `P`.
+        const REGISTRY: Self::Registry;
+    }
 
     /// What only the type of a plugin knows, asked of a plugin behind a `dyn`. Implemented for
     /// every [`PluginType`].
     pub trait Erased {
         /// The plugin's [`PluginType::ID`].
         fn id(&self) -> &'static str;
+
+        /// The plugin as a plugin of no particular axis.
+        fn as_plugin(&self) -> &dyn Plugin;
 
         /// Adds everything the plugin declares to `declaration`: its static declaration, what its
         /// configuration declares, and then what its sub-plugins declare, recursively.
@@ -86,6 +98,10 @@ pub mod __private {
     impl<T: PluginType> Erased for T {
         fn id(&self) -> &'static str {
             T::ID
+        }
+
+        fn as_plugin(&self) -> &dyn Plugin {
+            self
         }
 
         // qualified throughout, since a plugin may have inherent functions of the same names
@@ -130,9 +146,9 @@ pub trait Plugin: Debug + __private::Erased + 'static {
     fn declare(&self, _: &mut Declaration) {}
 
     /// The plugins this configuration suggests for the composite it is part of, which is what a
-    /// field taking plugins of their kind offers as its default; nothing by default.
+    /// field taking plugins of their axis offers as its default; nothing by default.
     ///
-    /// A recommendation of a plugin of a kind the composite takes nowhere has no effect.
+    /// A recommendation of a plugin of an axis the composite takes nowhere has no effect.
     fn recommends(&self) -> Vec<PluginConfig> {
         Vec::new()
     }
@@ -144,7 +160,7 @@ pub trait Plugin: Debug + __private::Erased + 'static {
 /// A plugin is configured through its [`Configurable`] impl, which is also where the plugins it
 /// is made of come from.
 pub trait PluginType: Plugin + Configurable {
-    /// What identifies the plugin among the plugins of its kind, in a config as in a saved file,
+    /// What identifies the plugin among the plugins of its axis, in a config as in a saved file,
     /// e.g. `"my_crate::points"`. Never change it once configurations naming it are saved.
     ///
     /// A plugin persisted through `typetag` has to be tagged with this id, which [`register`]

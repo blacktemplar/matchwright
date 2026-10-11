@@ -5,17 +5,17 @@
 use std::{any::TypeId, iter};
 
 use plugin_factory::{
-    Plugin, PluginType,
+    Plugin, PluginType, axis,
     builder::{Builder, FinishError, Problem},
     catalog::{
-        Acceptor, Accepts, Composite, Kind, PluginKind, check_serialization, facts_of_kind,
+        Acceptor, Accepts, AnyAxis, Axis, Composite, check_serialization, facts_of_axis,
         providers_of, resolve,
     },
     compatibility::{
         Condition, Declaration, Incompatibility, OpenFacts, check_facts, declaration_of, order,
     },
     config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
-    plugin_kind, register,
+    register,
     schema::{Configurable, Field, Schema},
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -42,22 +42,12 @@ struct Points;
 struct Matches;
 
 /// How the matches of a phase are scheduled.
-#[typetag::serde(tag = "type", content = "value")]
+#[axis]
 trait Format: Plugin {}
 
-plugin_kind! {
-    /// The axis of [`Format`].
-    FormatKind for dyn Format
-}
-
 /// What is calculated for an entrant.
-#[typetag::serde(tag = "type", content = "value")]
+#[axis]
 trait Metric: Plugin {}
-
-plugin_kind! {
-    /// The axis of [`Metric`].
-    MetricKind for dyn Metric
-}
 
 /// A format recommending metrics, two of which provide the same fact.
 #[derive(Debug, Serialize, Deserialize, Plugin)]
@@ -290,26 +280,26 @@ impl Configurable for Phase {
     fn schema() -> Schema {
         Schema::new()
             .field(
-                Field::plugin::<FormatKind>("format", "Format")
+                Field::plugin::<dyn Format>("format", "Format")
                     .described("how the matches are scheduled"),
             )
-            .field(Field::plugins::<MetricKind>("metrics", "Metrics").with_default(json!([])))
+            .field(Field::plugins::<dyn Metric>("metrics", "Metrics").with_default(json!([])))
             .field(
-                Field::plugin::<MetricKind>("tie_break", "Tie break")
+                Field::plugin::<dyn Metric>("tie_break", "Tie break")
                     .optional()
                     .with_default(Value::Null),
             )
     }
 }
 
-impl Accepts<MetricKind> for Phase {
+impl Accepts<dyn Metric> for Phase {
     fn add(&mut self, plugin: Box<dyn Metric>) {
         self.metrics.push(plugin);
     }
 }
 
 impl Composite for Phase {
-    const ACCEPTS: &'static [Acceptor<Self>] = &[Acceptor::of::<MetricKind>()];
+    const ACCEPTS: &'static [Acceptor<Self>] = &[Acceptor::of::<dyn Metric>()];
 
     fn declarations(&self) -> Vec<(String, Declaration)> {
         iter::once(declaration_of(&*self.format))
@@ -378,25 +368,25 @@ fn assert_conflict(builder: &Builder<Phase>, at: &str, id: &str, conflict: Incom
     assert_eq!(candidate.conflict(), Some(&conflict));
 }
 
-/// The ids of the plugins of `kind`, sorted.
-fn ids(kind: Kind) -> Vec<&'static str> {
-    let mut ids: Vec<_> = kind.entries().map(|entry| entry.id()).collect();
+/// The ids of the plugins of `axis`, sorted.
+fn ids(axis: AnyAxis) -> Vec<&'static str> {
+    let mut ids: Vec<_> = axis.entries().map(|entry| entry.id()).collect();
     ids.sort_unstable();
     ids
 }
 
 #[test]
 fn every_plugin_serializes_as_it_is_built() {
-    assert_eq!(check_serialization::<FormatKind>(), Ok(()));
-    assert_eq!(check_serialization::<MetricKind>(), Ok(()));
+    assert_eq!(check_serialization::<dyn Format>(), Ok(()));
+    assert_eq!(check_serialization::<dyn Metric>(), Ok(()));
 }
 
 #[test]
 fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
-    let kinds: Vec<_> = Phase::schema()
+    let axes: Vec<_> = Phase::schema()
         .fields()
         .iter()
-        .map(|field| (field.name(), field.kind().plugin_kind().unwrap()))
+        .map(|field| (field.name(), field.kind().axis().unwrap()))
         .collect();
     let metrics = [
         "full::buchholz",
@@ -408,17 +398,17 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
     ];
 
     assert_eq!(
-        kinds.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        axes.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
         ["format", "metrics", "tie_break"]
     );
     assert_eq!(
-        ids(kinds[0].1),
+        ids(axes[0].1),
         ["full::doubles", "full::knockout", "full::round_robin"]
     );
-    assert_eq!(ids(kinds[1].1), metrics);
-    assert_eq!(ids(kinds[2].1), metrics);
+    assert_eq!(ids(axes[1].1), metrics);
+    assert_eq!(ids(axes[2].1), metrics);
 
-    let wins = kinds[1].1.entry("full::wins").unwrap();
+    let wins = axes[1].1.entry("full::wins").unwrap();
     let schema = wins.schema();
     let counts_byes = schema.field_named("counts_byes").unwrap();
     assert_eq!(wins.label(), "wins");
@@ -434,24 +424,24 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
     );
     assert_eq!(counts_byes.default_value(), Some(&json!(false)));
     assert_eq!(
-        MetricKind::entry("full::combined").unwrap().sub_kinds(),
-        [Kind::of::<MetricKind>()]
+        <dyn Metric>::entry("full::combined").unwrap().sub_axes(),
+        [AnyAxis::of::<dyn Metric>()]
     );
 }
 
 #[test]
-fn the_catalog_tells_what_a_kind_provides_before_anything_is_configured() {
-    let mut providers: Vec<_> = providers_of::<MetricKind>(TypeId::of::<Points>())
+fn the_catalog_tells_what_an_axis_provides_before_anything_is_configured() {
+    let mut providers: Vec<_> = providers_of::<dyn Metric>(TypeId::of::<Points>())
         .map(|entry| entry.id())
         .collect();
     providers.sort_unstable();
-    let buchholz = MetricKind::entry("full::buchholz").unwrap().declaration();
-    let wins = MetricKind::entry("full::wins").unwrap();
+    let buchholz = <dyn Metric>::entry("full::buchholz").unwrap().declaration();
+    let wins = <dyn Metric>::entry("full::wins").unwrap();
 
     assert_eq!(providers, ["full::score", "full::wins"]);
-    assert!(facts_of_kind::<FormatKind>().contains(TypeId::of::<Eliminating>()));
-    assert!(facts_of_kind::<FormatKind>().contains(TypeId::of::<Byes>()));
-    assert!(!facts_of_kind::<MetricKind>().contains(TypeId::of::<Byes>()));
+    assert!(facts_of_axis::<dyn Format>().contains(TypeId::of::<Eliminating>()));
+    assert!(facts_of_axis::<dyn Format>().contains(TypeId::of::<Byes>()));
+    assert!(!facts_of_axis::<dyn Metric>().contains(TypeId::of::<Byes>()));
     assert_eq!(
         buchholz
             .required()
@@ -766,9 +756,9 @@ fn a_saved_phase_loads_as_it_was_built() {
 
 #[test]
 fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
-    let metric = |plugin: PluginConfig| plugin.build::<MetricKind>().unwrap();
+    let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
     let mut phase = Phase {
-        format: plugin::<Knockout>().build::<FormatKind>().unwrap(),
+        format: plugin::<Knockout>().build::<dyn Format>().unwrap(),
         metrics: vec![metric(plugin::<Buchholz>())],
         tie_break: None,
     };

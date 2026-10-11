@@ -1,10 +1,25 @@
 //! The derive macro of `plugin-factory`, re-exported by it; use it from there.
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, ItemImpl, parse_macro_input};
+use syn::{DeriveInput, ItemImpl, ItemTrait, parse_macro_input};
 
+mod axis;
 mod derive;
 mod register;
+
+/// Declares the annotated trait a plugin axis: tags it for `typetag` adjacently, by `"type"` and
+/// `"value"`, and implements `Axis` for its trait object, which is how the axis is named from
+/// then on, e.g. `dyn Metric`.
+///
+/// Takes no arguments. The trait needs `Plugin` as a supertrait, must not be generic and must not
+/// carry a `typetag` attribute of its own; the crate declaring it has to depend on `typetag`.
+#[proc_macro_attribute]
+pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
+    let arguments = proc_macro2::TokenStream::from(arguments);
+    axis::expand(arguments, parse_macro_input!(input as ItemTrait))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Implements `Plugin`, `Configurable` and `PluginType` for a struct: its id, label and
 /// description from `#[plugin(..)]` on the struct, and its schema and the plugins it holds from
@@ -45,8 +60,8 @@ pub fn derive_plugin(input: TokenStream) -> TokenStream {
 /// Registers a plugin for the axis whose trait the annotated impl implements: tags it for
 /// `typetag` with its `PluginType::ID` and submits it to the catalog of the axis.
 ///
-/// Takes no arguments. The axis has to be declared with `plugin_kind!` and its trait to be
-/// `#[typetag::serde]`, and the crate using it has to depend on `typetag`.
+/// Takes no arguments. The axis has to be declared with `axis`, and the crate using it has to
+/// depend on `typetag`.
 #[proc_macro_attribute]
 pub fn register(arguments: TokenStream, input: TokenStream) -> TokenStream {
     let arguments = proc_macro2::TokenStream::from(arguments);

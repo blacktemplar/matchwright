@@ -3,11 +3,11 @@
 use std::any::TypeId;
 
 use plugin_factory::{
-    Plugin, PluginType,
-    catalog::{Kind, PluginEntry, PluginKind, check_serialization},
+    Plugin, PluginType, axis,
+    catalog::{AnyAxis, Axis, PluginEntry, check_serialization},
     compatibility::Declaration,
     config::{Config, ConfigError, Path, PluginConfig, Value},
-    plugin_kind, register,
+    register,
     schema::{Configurable, Field, FieldKind, FieldType},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
@@ -15,13 +15,8 @@ use serde_json::json;
 
 /// A plugin axis whose plugins report what they are configured with, so that a built plugin can
 /// be checked without being downcast.
-#[typetag::serde(tag = "type", content = "value")]
+#[axis]
 trait Derived: Plugin {}
-
-plugin_kind! {
-    /// The axis of [`Derived`].
-    DerivedKind for dyn Derived
-}
 
 /// A fact every [`Points`] provides.
 #[derive(Debug)]
@@ -184,7 +179,7 @@ impl Derived for Ranker {}
 
 /// The entry of the plugin `P`.
 fn entry_of<P: PluginType>() -> &'static PluginEntry {
-    DerivedKind::entry(P::ID).expect("the plugin is registered")
+    <dyn Derived>::entry(P::ID).expect("the plugin is registered")
 }
 
 /// The field `name` of the schema of the plugin `P`.
@@ -209,18 +204,18 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(Points::LABEL, "points");
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), "points per result");
-    assert_eq!(DerivedKind::entries().count(), 3);
+    assert_eq!(<dyn Derived>::entries().count(), 3);
 }
 
 #[test]
 fn derived_plugins_serialize_as_they_are_built() {
-    assert_eq!(check_serialization::<DerivedKind>(), Ok(()));
+    assert_eq!(check_serialization::<dyn Derived>(), Ok(()));
 }
 
 #[test]
 fn a_built_plugin_is_tagged_with_its_id() {
     let built = PluginConfig::of::<Unit>(Config::new())
-        .build::<DerivedKind>()
+        .build::<dyn Derived>()
         .unwrap();
 
     assert_eq!(
@@ -252,7 +247,7 @@ fn a_field_is_described_by_its_attribute() {
 
 #[test]
 fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
-    let plugin = FieldKind::plugin::<DerivedKind>();
+    let plugin = FieldKind::plugin::<dyn Derived>();
 
     assert_eq!(field_of::<Points>("for_win").kind(), &FieldKind::Decimal);
     assert_eq!(field_of::<Points>("byes").kind(), &FieldKind::Bool);
@@ -271,8 +266,8 @@ fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
         &FieldKind::optional(plugin)
     );
     assert_eq!(
-        entry_of::<Ranker>().sub_kinds(),
-        [Kind::of::<DerivedKind>(); 3]
+        entry_of::<Ranker>().sub_axes(),
+        [AnyAxis::of::<dyn Derived>(); 3]
     );
 }
 
@@ -305,7 +300,7 @@ fn a_struct_default_is_the_default_of_every_field() {
 #[test]
 fn a_derived_plugin_is_built_from_its_defaults_and_answers() {
     let built = PluginConfig::of::<Points>(points_config().with("share", 20))
-        .build::<DerivedKind>()
+        .build::<dyn Derived>()
         .unwrap();
 
     assert_eq!(
@@ -327,7 +322,7 @@ fn an_answer_the_field_type_rejects_is_rejected() {
 
     assert_eq!(
         PluginConfig::of::<Points>(config)
-            .build::<DerivedKind>()
+            .build::<dyn Derived>()
             .err(),
         Some(ConfigError::Rejected {
             path: Path::of("for_win"),
@@ -377,7 +372,7 @@ fn the_plugins_in_the_fields_are_the_plugins_it_holds() {
 #[test]
 fn a_recommendation_is_forwarded_to_the_function_given() {
     let built = PluginConfig::of::<Points>(points_config())
-        .build::<DerivedKind>()
+        .build::<dyn Derived>()
         .unwrap();
 
     assert_eq!(

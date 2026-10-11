@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::{
     PluginType,
-    catalog::{Kind, PluginKind},
+    catalog::{AnyAxis, Axis},
 };
 
 /// One plugin as the answer to a field, i.e. which plugin it is and how it is configured.
@@ -56,25 +56,26 @@ impl PluginConfig {
         &self.config
     }
 
-    /// The plugin this configures, as a plugin of the kind `K`, where every field its config
-    /// leaves unanswered is answered by the default of the field, and likewise for the plugins
-    /// answering its fields, see [`Schema::complete`](crate::schema::Schema::complete).
+    /// The plugin this configures, as a plugin of the axis `A`, e.g. `build::<dyn Metric>()`,
+    /// where every field its config leaves unanswered is answered by the default of the field,
+    /// and likewise for the plugins answering its fields, see
+    /// [`Schema::complete`](crate::schema::Schema::complete).
     ///
     /// The plugin is deserialized from the completed answer through the `Deserialize` impl of
-    /// `Box<K::Object>`, i.e. the way a saved plugin is loaded, so that impl has to know the
-    /// plugin by its id, see [`check_serialization`](crate::catalog::check_serialization).
+    /// `Box<A>`, i.e. the way a saved plugin is loaded, so that impl has to know the plugin by
+    /// its id, see [`check_serialization`](crate::catalog::check_serialization).
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownPlugin`] if no plugin of kind `K` is registered with this id,
-    /// [`ConfigError::Unanswered`] if a field without a default is unanswered,
+    /// Returns [`ConfigError::UnknownPlugin`] if no plugin of the axis `A` is registered with
+    /// this id, [`ConfigError::Unanswered`] if a field without a default is unanswered,
     /// [`ConfigError::Rejected`] if deserializing the completed answer fails, and whatever
     /// completing the config fails with otherwise. The path of the error addresses a field of
     /// this config, i.e. it is relative to the plugin.
-    pub fn build<K: PluginKind>(&self) -> Result<Box<K::Object>, ConfigError>
+    pub fn build<A: Axis + ?Sized>(&self) -> Result<Box<A>, ConfigError>
     where
-        Box<K::Object>: DeserializeOwned,
+        Box<A>: DeserializeOwned,
     {
-        deserialize_plugin(&Kind::of::<K>().complete(self)?)
+        deserialize_plugin(&AnyAxis::of::<A>().complete(self)?)
     }
 
     /// The plugin configured by `answer`, or [`None`] if `answer` is not a plugin.
@@ -162,7 +163,7 @@ pub(crate) fn deserialize<P: DeserializeOwned>(config: &Value) -> Result<P, Conf
 }
 
 /// The plugin `P` deserialized from `answer`, a completed plugin answer as
-/// [`Kind::complete`] writes it, i.e. still tagged with its id.
+/// [`AnyAxis::complete`] writes it, i.e. still tagged with its id.
 ///
 /// # Errors
 /// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
@@ -325,7 +326,7 @@ pub enum ConfigError {
         expected: &'static str,
         found: &'static str,
     },
-    #[error("the plugin answering {path} is not registered for the kind of the field")]
+    #[error("the plugin answering {path} is not registered for the axis of the field")]
     UnknownPlugin { path: Path },
     /// The plugin's `Deserialize` impl rejected the answer, e.g. through a custom error.
     #[error("{path} is rejected: {reason}")]
