@@ -46,9 +46,22 @@ pub trait PluginKind: Sized + 'static {
     }
 }
 
+/// The trait object of a plugin axis, i.e. [`PluginKind::Object`] seen from the other side.
+///
+/// Implemented for the trait object that [`plugin_kind!`](crate::plugin_kind) declares an axis
+/// for, so that a trait has at most one axis.
+pub trait PluginObject: Plugin {
+    /// The axis whose plugins this is the trait object of.
+    type Kind: PluginKind<Object = Self>;
+
+    /// This plugin as a plugin of no particular axis.
+    fn as_plugin(&self) -> &dyn Plugin;
+}
+
 /// Declares the plugin axis of the trait `$object`: the type `$kind` implementing [`PluginKind`],
 /// which is at the same time the registry of the axis — one value of it is one registered plugin,
-/// built by `$kind::register` and submitted with `inventory::submit!`.
+/// built by `$kind::register` and submitted with `inventory::submit!` — and [`PluginObject`] for
+/// `dyn $object`.
 ///
 /// Generating that type is what the macro exists for: `inventory` collects by type, and only a
 /// type of the crate declaring the collection can be collected, so an axis brings its own. It is
@@ -114,6 +127,14 @@ macro_rules! plugin_kind {
         }
 
         $crate::inventory::collect!($kind);
+
+        impl $crate::catalog::PluginObject for dyn $object {
+            type Kind = $kind;
+
+            fn as_plugin(&self) -> &dyn $crate::Plugin {
+                self
+            }
+        }
 
         impl $crate::catalog::PluginKind for $kind {
             type Object = dyn $object;
@@ -500,7 +521,8 @@ pub fn facts_of_kind<K: PluginKind>() -> OpenFacts {
 /// [id](Plugin::id) and by `"value"` with an object holding every field of its schema.
 ///
 /// Meant for a test of the crate declaring the kind, since the id of a plugin persisted through
-/// `typetag` is written a second time as the name of its `typetag` impl. Only plugins that need no
+/// `typetag` is written a second time as the name of its `typetag` impl, unless the plugin is
+/// registered with [`register`](crate::register). Only plugins that need no
 /// configuration are built and serialized; the others are not checked beyond their id being
 /// unique.
 ///

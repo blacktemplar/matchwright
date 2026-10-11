@@ -1,7 +1,7 @@
 # Development plan
 
-Status: the compatibility layer, the catalog, the schemas, the builder and
-resolution are implemented. Everything here is about this crate alone; what a consumer does
+Status: the compatibility layer, the catalog, the schemas, the builder,
+resolution and the derive macro are implemented. Everything here is about this crate alone; what a consumer does
 with it is out of scope, see [Not in this crate](#not-in-this-crate).
 
 ## What the crate is for
@@ -111,6 +111,11 @@ traits.
   Each plugin of the tree counts with its own declaration (static plus `dyn`
   from its completed config, or static alone if it does not complete yet), its
   sub-plugins being placed in the tree themselves.
+- `#[derive(Plugin)]` and `#[register]`, from the proc-macro crate
+  `plugin-factory-derive` and re-exported, see
+  [step 5](#5-a-derive-macro-done). `schema::FieldType` is what a field's type
+  answers, and `catalog::PluginObject`, implemented by `plugin_kind!` for the
+  trait object, leads from a trait object back to its kind.
 
 ### Identity and persistence
 
@@ -129,13 +134,14 @@ parameters may be a unit struct: the entry checks whether the type
 deserializes from `null`, and if so its completed config is written as `null`,
 as serde writes a unit struct.
 
-The id (`Plugin::id`) is therefore written twice, once as the id and once as
-the `typetag` name, since `typetag` exposes a name neither by type nor through
-a public registry. Building fails if they differ, and
+A plugin written by hand therefore writes the id (`Plugin::id`) twice, once as
+the id and once as the `typetag` name, since `typetag` exposes a name neither
+by type nor through a public registry. Building fails if they differ, and
 `check_serialization::<K>()` reports it, plus unique ids and that every schema
 field is serialized under its name; a consumer calls it in a test per kind. It
-only builds and serializes plugins that need no configuration. The derive macro (step 5) removes the duplication by
-emitting both from one attribute.
+only builds and serializes plugins that need no configuration. A derived
+plugin writes the id once: the derive puts it in a constant, and `#[register]`
+hands `typetag` that constant as the name, which it accepts as an expression.
 
 ## Steps
 
@@ -216,20 +222,47 @@ assertion where `declaration_of` and `PluginEntry::declaration_for` are used,
 off any hot path. The second half
 stays a documented contract.
 
-### 5. A derive macro
+### 5. A derive macro (done)
 
-For the registration boilerplate — `id`, `label`, `description`, and the
-schema of a plugin derived from its fields and their serde attributes, so that
-field names and defaults are not written next to the struct a second time —
-once the entry shape has stopped moving. It also emits the `typetag` name from
-the id, so that the id is written once. Separate crate.
+`#[derive(Plugin)]` in the proc-macro crate `plugin-factory-derive`. `id`,
+`label` and `description` come from `#[plugin(..)]` on the struct;
+`static_declare`, `dyn_declare` and `recommends`, which stay code, are
+functions named there that the generated methods forward to, so `Plugin`
+keeps its shape and a plugin is derived or written by hand, never half each.
+
+The schema comes from the fields `serde` deserializes, read from `serde`'s own
+attributes so that nothing is written twice: the name is the field's or its
+`rename`, the default whatever `serde` fills a missing field with
+(`#[serde(default)]` on the field or the struct, `None` for an `Option` not
+deserialized by a function of its own), serialized as the field is, through
+its `serialize_with` if it has one. A field's kind and the plugins it holds
+come from its type through `FieldType`, implemented for the scalars,
+`Box<dyn Trait>` of an axis trait, `Option` and `Vec`; a newtype that checks its
+value implements it itself. The fields holding plugins are the sub-plugins.
+A label per field is required, a description optional. What would make the
+fields differ from what is deserialized — `flatten`, `rename_all`,
+`transparent`, `from`/`try_from` on the struct, an asymmetric `rename` — does
+not compile.
+
+`#[register]` goes on the impl of the axis trait: it adds
+`#[typetag::serde(name = <id constant>)]` and submits the entry to the kind of
+the trait, found through `PluginObject`, so that a derived plugin also needs no
+`inventory::submit!`.
 
 ## Open questions
 
-- **Schema and struct can drift.** Until step 5, a field's name and default are
-  written in the schema and the struct. `check_serialization` catches a schema
-  field the struct does not serialize; a field the struct has and the schema
-  lacks fails at build as a missing field.
+- **Schema and struct can drift** for a plugin written by hand, whose field
+  names and defaults are written in the schema and the struct.
+  `check_serialization` catches a schema field the struct does not serialize; a
+  field the struct has and the schema lacks fails at build as a missing field.
+- **A composite is not derived.** It implements `Configurable` by hand; the
+  derive's schema half would serve it as well, without the `Plugin` half.
+- **The derive names the crate `::plugin_factory`**, so a dependency renamed
+  in `Cargo.toml` breaks it; `serde` solves this with `#[serde(crate = "..")]`.
+- **A struct deserialized through `try_from` cannot be derived**, though
+  validating in `try_from` is what [Identity and
+  persistence](#identity-and-persistence) recommends. The schema would have to
+  come from the type it is converted from.
 - **Who owns the UI text.** `&'static str` from the plugin means the crate ships
   one language; localisation would wrap it, keyed by entry id.
 - **Recommendation conflicts.** Two configured plugins recommending different
@@ -279,8 +312,8 @@ the id, so that the id is written once. Separate crate.
 - **The crate does not reimplement `typetag`.** A plugin is built through the
   consumer's `Deserialize` impl of `Box<K::Object>`, and the catalog deserializes
   the concrete type it registered only to ask it for its declaration, so it
-  needs no tag registry of its own; the cost is the id written twice until
-  step 5.
+  needs no tag registry of its own; the cost is the id written twice by a
+  plugin that is not derived.
 - **A plugin does not add itself to a composite.** `Accepts<K>` sits on the
   composite, so "this slot takes one plugin and nothing may be added to it" is
   expressible by leaving the impl out.
@@ -295,4 +328,6 @@ program happens to link in.
 The crate stands on its own so that it can be moved out of the workspace it
 currently sits in: its `Cargo.toml` declares its version, edition, license and
 dependency versions itself rather than inheriting them, it depends on no crate
-of that workspace, and every test uses an axis and plugins of its own.
+of that workspace but its derive crate `plugin-factory-derive`, which moves
+with it and is set up the same way, and every test uses an axis and plugins of
+its own.

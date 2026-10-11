@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     Plugin,
-    catalog::{Kind, PluginKind},
+    catalog::{Kind, PluginKind, PluginObject},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
 };
 
@@ -35,6 +35,86 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 impl<P: Plugin + DeserializeOwned> Configurable for P {
     fn schema() -> Schema {
         <P as Plugin>::schema()
+    }
+}
+
+/// A type a field of a derived plugin can have, see [`derive@Plugin`]: what kind of answer it
+/// takes and which plugins it holds.
+///
+/// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
+/// a plugin axis, and `Option` and `Vec` of any of them. A type that deserializes from one of
+/// these answers, such as a newtype checking its value, implements it to be a field.
+pub trait FieldType {
+    /// The kind of answer a field of this type takes.
+    fn kind() -> FieldKind;
+
+    /// What `serde` deserializes a missing field of this type as, which is the default of the
+    /// field, or [`None`] if a missing field is an error; only an `Option` has one.
+    fn missing() -> Option<Value> {
+        None
+    }
+
+    /// Adds the plugins `self` holds to `plugins`; none by default.
+    fn plugins<'a>(&'a self, _plugins: &mut Vec<&'a dyn Plugin>) {}
+}
+
+impl FieldType for bool {
+    fn kind() -> FieldKind {
+        FieldKind::Bool
+    }
+}
+
+/// Implements [`FieldType`] for each of the types, as answered by `$kind`.
+macro_rules! field_types {
+    ($kind:ident: $($type:ty),*) => {
+        $(
+            impl FieldType for $type {
+                fn kind() -> FieldKind {
+                    FieldKind::$kind
+                }
+            }
+        )*
+    };
+}
+
+field_types!(Integer: i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+field_types!(Decimal: f32, f64);
+
+impl<O: PluginObject + ?Sized> FieldType for Box<O> {
+    fn kind() -> FieldKind {
+        FieldKind::plugin::<O::Kind>()
+    }
+
+    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
+        plugins.push(self.as_ref().as_plugin());
+    }
+}
+
+impl<T: FieldType> FieldType for Option<T> {
+    fn kind() -> FieldKind {
+        FieldKind::optional(T::kind())
+    }
+
+    fn missing() -> Option<Value> {
+        Some(Value::Null)
+    }
+
+    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
+        if let Some(answer) = self {
+            answer.plugins(plugins);
+        }
+    }
+}
+
+impl<T: FieldType> FieldType for Vec<T> {
+    fn kind() -> FieldKind {
+        FieldKind::list(T::kind())
+    }
+
+    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
+        for answer in self {
+            answer.plugins(plugins);
+        }
     }
 }
 

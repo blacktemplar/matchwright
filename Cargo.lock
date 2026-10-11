@@ -809,11 +809,21 @@ name = "plugin-factory"
 version = "0.1.0"
 dependencies = [
  "inventory",
+ "plugin-factory-derive",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "thiserror",
  "typetag",
+]
+
+[[package]]
+name = "plugin-factory-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

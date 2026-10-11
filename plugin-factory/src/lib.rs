@@ -5,6 +5,42 @@
 //! [`compatibility`]. It registers itself in the [`catalog`], which is where a program looking for
 //! a plugin finds it. A [`Builder`](builder::Builder) holds a composite of plugins while it is
 //! being configured.
+//!
+//! A plugin is usually derived, which reads its schema from its fields and their `serde`
+//! attributes, and registered with [`register`], which tags it for `typetag` with its id:
+//!
+//! ```
+//! use std::fmt::Debug;
+//!
+//! use plugin_factory::{Plugin, plugin_kind, register};
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[typetag::serde(tag = "type", content = "value")]
+//! pub trait Seeding: Plugin + Debug {}
+//!
+//! plugin_kind! {
+//!     pub SeedingKind for dyn Seeding
+//! }
+//!
+//! #[derive(Debug, Serialize, Deserialize, Plugin)]
+//! #[plugin(
+//!     id = "my_crate::random",
+//!     label = "random",
+//!     description = "entrants are shuffled"
+//! )]
+//! struct Random {
+//!     #[serde(default)]
+//!     #[plugin(label = "Keep the top seeds")]
+//!     keep_top: u32,
+//! }
+//!
+//! #[register]
+//! impl Seeding for Random {}
+//! # fn main() {
+//! # use plugin_factory::catalog::PluginKind;
+//! # assert_eq!(SeedingKind::entry("my_crate::random").unwrap().label(), "random");
+//! # }
+//! ```
 
 use crate::{compatibility::Declaration, config::PluginConfig, schema::Schema};
 
@@ -17,6 +53,33 @@ pub mod schema;
 /// Re-exported so that a crate registering a plugin in the [catalog] does not have to depend on
 /// `inventory` itself.
 pub use inventory;
+pub use plugin_factory_derive::{Plugin, register};
+
+/// What the code [`derive@Plugin`] and [`register`] generate refers to. Not part of the API.
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+    use serde_json::value::Serializer;
+
+    use crate::config::Value;
+
+    /// The id of a derived plugin as a constant, which is what `typetag` takes as a name.
+    pub trait PluginId {
+        const ID: &'static str;
+    }
+
+    /// The default `value` of a field, written by `serialize` as the field is serialized.
+    ///
+    /// # Panics
+    /// Panics if `value` cannot be written as JSON.
+    pub fn default_value<T>(
+        value: &T,
+        serialize: impl FnOnce(&T, Serializer) -> Result<Value, serde_json::Error>,
+    ) -> Value {
+        serialize(value, Serializer)
+            .unwrap_or_else(|error| panic!("the default of a field cannot be written: {error}"))
+    }
+}
 
 /// Everything a plugin declares, i.e. what it and its sub-plugins provide and require.
 ///
@@ -37,6 +100,7 @@ impl<T: Plugin> TotalDeclare for T {
     }
 }
 
+/// A plugin of some axis, see [`catalog`]. Usually derived, see [`derive@Plugin`].
 pub trait Plugin: TotalDeclare + 'static {
     /// What identifies the plugin among the plugins of its kind, in a config as in a saved file,
     /// e.g. `"my_crate::points"`. Never change it once configurations naming it are saved.

@@ -1,0 +1,385 @@
+//! Plugins derived rather than written by hand, on an axis of their own.
+
+use std::{any::TypeId, fmt::Debug};
+
+use plugin_factory::{
+    Plugin,
+    catalog::{Kind, PluginEntry, PluginKind, check_serialization},
+    compatibility::Declaration,
+    config::{Config, ConfigError, Path, PluginConfig, Value},
+    plugin_kind, register,
+    schema::{Field, FieldKind, FieldType},
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+use serde_json::json;
+
+/// A plugin axis whose plugins report what they are configured with, so that a built plugin can
+/// be checked without being downcast.
+#[typetag::serde(tag = "type", content = "value")]
+trait Derived: Plugin + Debug {}
+
+plugin_kind! {
+    /// The axis of [`Derived`].
+    DerivedKind for dyn Derived
+}
+
+/// A fact every [`Points`] provides.
+#[derive(Debug)]
+struct Scored;
+
+/// A fact [`Points`] provides if it counts byes.
+#[derive(Debug)]
+struct ByesCounted;
+
+/// A fact [`Points`] requires.
+#[derive(Debug)]
+struct Matches;
+
+/// A number of points that cannot be negative, a field type of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "f64")]
+struct NonNegative(f64);
+
+impl TryFrom<f64> for NonNegative {
+    type Error = &'static str;
+
+    fn try_from(points: f64) -> Result<Self, Self::Error> {
+        if points < 0.0 {
+            return Err("the points cannot be negative");
+        }
+        Ok(Self(points))
+    }
+}
+
+impl FieldType for NonNegative {
+    fn kind() -> FieldKind {
+        FieldKind::Decimal
+    }
+}
+
+/// A plugin with a field of every way to get a default and one without.
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "derive::points",
+    label = "points",
+    description = "points per result",
+    static_declare = Self::declare,
+    dyn_declare = Self::declare_configured,
+    recommends = Self::recommend
+)]
+struct Points {
+    #[serde(default = "one")]
+    #[plugin(
+        label = "Points for a win",
+        description = "what winning a match is worth"
+    )]
+    for_win: NonNegative,
+    #[serde(rename = "byes")]
+    #[plugin(label = "Count byes")]
+    counts_byes: bool,
+    #[serde(default)]
+    #[plugin(label = "Rounds")]
+    rounds: u32,
+    #[plugin(label = "Points for a bye")]
+    for_bye: Option<f64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[plugin(label = "Cap")]
+    cap: Option<i64>,
+    #[serde(with = "percent", default = "half")]
+    #[plugin(label = "Share in percent")]
+    share: f64,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    cache: Vec<String>,
+}
+
+fn one() -> NonNegative {
+    NonNegative(1.0)
+}
+
+fn half() -> f64 {
+    0.5
+}
+
+/// A share written as a percentage.
+mod percent {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(share: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        (share * 100.0).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        let percent = f64::deserialize(deserializer)?;
+        if !(0.0..=100.0).contains(&percent) {
+            return Err(D::Error::custom("a share is between 0 and 100 percent"));
+        }
+        Ok(percent / 100.0)
+    }
+}
+
+impl Points {
+    fn declare(declaration: &mut Declaration) {
+        declaration
+            .provide(Scored)
+            .require::<Matches>("the matches", None);
+    }
+
+    fn declare_configured(&self, declaration: &mut Declaration) {
+        if self.counts_byes {
+            declaration.provide(ByesCounted);
+        }
+    }
+
+    fn recommend(&self) -> Vec<PluginConfig> {
+        vec![PluginConfig::of::<Unit>(Config::new())]
+    }
+}
+
+#[register]
+impl Derived for Points {}
+
+/// A plugin without parameters.
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "derive::unit",
+    label = "unit",
+    description = "a plugin without parameters"
+)]
+struct Unit;
+
+#[register]
+impl Derived for Unit {}
+
+/// A plugin made of other plugins, whose defaults come from its `Default` impl.
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[serde(default)]
+#[plugin(
+    id = "derive::ranker",
+    label = "ranker",
+    description = "a plugin made of plugins"
+)]
+struct Ranker {
+    #[plugin(label = "Rank by")]
+    by: Box<dyn Derived>,
+    #[plugin(label = "Tie breakers")]
+    tie_breakers: Vec<Box<dyn Derived>>,
+    #[plugin(label = "Fall back to")]
+    fallback: Option<Box<dyn Derived>>,
+}
+
+impl Default for Ranker {
+    fn default() -> Self {
+        Self {
+            by: Box::new(Unit),
+            tie_breakers: Vec::new(),
+            fallback: None,
+        }
+    }
+}
+
+#[register]
+impl Derived for Ranker {}
+
+/// The entry of the plugin `P`.
+fn entry_of<P: Plugin>() -> &'static PluginEntry {
+    DerivedKind::entry(P::id()).expect("the plugin is registered")
+}
+
+/// The field `name` of the schema of the plugin `P`.
+fn field_of<P: Plugin>(name: &str) -> Field {
+    entry_of::<P>()
+        .schema()
+        .field_named(name)
+        .cloned()
+        .expect("the schema has the field")
+}
+
+/// A config of [`Points`] answering what has no default.
+fn points_config() -> Config {
+    Config::new().with("byes", true).with("cap", Value::Null)
+}
+
+#[test]
+fn a_derived_plugin_is_registered_under_its_id() {
+    let entry = entry_of::<Points>();
+
+    assert_eq!(Points::id(), "derive::points");
+    assert_eq!(entry.label(), "points");
+    assert_eq!(entry.description(), "points per result");
+    assert_eq!(DerivedKind::entries().count(), 3);
+}
+
+#[test]
+fn derived_plugins_serialize_as_they_are_built() {
+    assert_eq!(check_serialization::<DerivedKind>(), Ok(()));
+}
+
+#[test]
+fn a_built_plugin_is_tagged_with_its_id() {
+    let built = PluginConfig::of::<Unit>(Config::new())
+        .build::<DerivedKind>()
+        .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&built).unwrap(),
+        json!({"type": "derive::unit", "value": null})
+    );
+}
+
+#[test]
+fn the_schema_has_the_fields_serde_deserializes_in_their_order() {
+    let schema = entry_of::<Points>().schema();
+    let names: Vec<_> = schema.fields().iter().map(Field::name).collect();
+
+    assert_eq!(
+        names,
+        ["for_win", "byes", "rounds", "for_bye", "cap", "share"]
+    );
+    assert!(entry_of::<Unit>().schema().fields().is_empty());
+}
+
+#[test]
+fn a_field_is_described_by_its_attribute() {
+    let field = field_of::<Points>("for_win");
+
+    assert_eq!(field.label(), "Points for a win");
+    assert_eq!(field.description(), Some("what winning a match is worth"));
+    assert_eq!(field_of::<Points>("byes").description(), None);
+}
+
+#[test]
+fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
+    let plugin = FieldKind::plugin::<DerivedKind>();
+
+    assert_eq!(field_of::<Points>("for_win").kind(), &FieldKind::Decimal);
+    assert_eq!(field_of::<Points>("byes").kind(), &FieldKind::Bool);
+    assert_eq!(field_of::<Points>("rounds").kind(), &FieldKind::Integer);
+    assert_eq!(
+        field_of::<Points>("for_bye").kind(),
+        &FieldKind::optional(FieldKind::Decimal)
+    );
+    assert_eq!(field_of::<Ranker>("by").kind(), &plugin);
+    assert_eq!(
+        field_of::<Ranker>("tie_breakers").kind(),
+        &FieldKind::list(plugin.clone())
+    );
+    assert_eq!(
+        field_of::<Ranker>("fallback").kind(),
+        &FieldKind::optional(plugin)
+    );
+    assert_eq!(
+        entry_of::<Ranker>().sub_kinds(),
+        [Kind::of::<DerivedKind>(); 3]
+    );
+}
+
+#[test]
+fn a_field_defaults_to_what_serde_fills_it_with() {
+    let default = |name| field_of::<Points>(name).default_value().cloned();
+
+    assert_eq!(default("for_win"), Some(json!(1.0)));
+    assert_eq!(default("byes"), None);
+    assert_eq!(default("rounds"), Some(json!(0)));
+    assert_eq!(default("for_bye"), Some(Value::Null));
+    // an option deserialized by a function of its own has to be there
+    assert_eq!(default("cap"), None);
+    // written as the field is serialized
+    assert_eq!(default("share"), Some(json!(50.0)));
+}
+
+#[test]
+fn a_struct_default_is_the_default_of_every_field() {
+    let default = |name| field_of::<Ranker>(name).default_value().cloned();
+
+    assert_eq!(
+        default("by"),
+        Some(json!({"type": "derive::unit", "value": null}))
+    );
+    assert_eq!(default("tie_breakers"), Some(json!([])));
+    assert_eq!(default("fallback"), Some(Value::Null));
+}
+
+#[test]
+fn a_derived_plugin_is_built_from_its_defaults_and_answers() {
+    let built = PluginConfig::of::<Points>(points_config().with("share", 20))
+        .build::<DerivedKind>()
+        .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&built).unwrap(),
+        json!({"type": "derive::points", "value": {
+            "for_win": 1.0,
+            "byes": true,
+            "rounds": 0,
+            "for_bye": null,
+            "cap": null,
+            "share": 20.0,
+        }})
+    );
+}
+
+#[test]
+fn an_answer_the_field_type_rejects_is_rejected() {
+    let config = points_config().with("for_win", -1.0);
+
+    assert_eq!(
+        PluginConfig::of::<Points>(config)
+            .build::<DerivedKind>()
+            .err(),
+        Some(ConfigError::Rejected {
+            path: Path::of("for_win"),
+            reason: "the points cannot be negative".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn the_declaration_is_forwarded_to_the_functions_given() {
+    let entry = entry_of::<Points>();
+    let configured = entry.declaration_for(&points_config()).unwrap();
+    let uncounted = entry
+        .declaration_for(&points_config().with("byes", false))
+        .unwrap();
+
+    assert!(entry.declaration().provides_type(TypeId::of::<Scored>()));
+    assert!(
+        !entry
+            .declaration()
+            .provides_type(TypeId::of::<ByesCounted>())
+    );
+    assert!(configured.provides_type(TypeId::of::<ByesCounted>()));
+    assert!(!uncounted.provides_type(TypeId::of::<ByesCounted>()));
+}
+
+#[test]
+fn the_plugins_in_the_fields_are_the_sub_plugins() {
+    let config = Config::new()
+        .with("by", PluginConfig::of::<Points>(points_config()))
+        .with(
+            "fallback",
+            PluginConfig::of::<Points>(points_config().with("byes", false)),
+        );
+    let built = PluginConfig::of::<Ranker>(config)
+        .build::<DerivedKind>()
+        .unwrap();
+    let declaration = entry_of::<Ranker>()
+        .declaration_for(&Config::new().with("by", PluginConfig::of::<Points>(points_config())))
+        .unwrap();
+
+    assert_eq!(built.sub_plugins().unwrap().count(), 2);
+    assert!(declaration.provides_type(TypeId::of::<ByesCounted>()));
+}
+
+#[test]
+fn a_recommendation_is_forwarded_to_the_function_given() {
+    let built = PluginConfig::of::<Points>(points_config())
+        .build::<DerivedKind>()
+        .unwrap();
+
+    assert_eq!(
+        built.recommends(),
+        [PluginConfig::of::<Unit>(Config::new())]
+    );
+    assert!(Unit.recommends().is_empty());
+}
