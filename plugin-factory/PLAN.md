@@ -1,8 +1,8 @@
 # Development plan
 
-Status: the compatibility layer and the catalog are implemented, the schemas and
-the builder are not. Everything here is about this crate alone; what a consumer
-does with it is out of scope, see [Not in this crate](#not-in-this-crate).
+Status: the compatibility layer, the catalog and the schemas are implemented, the
+builder is not. Everything here is about this crate alone; what a consumer does
+with it is out of scope, see [Not in this crate](#not-in-this-crate).
 
 ## What the crate is for
 
@@ -37,6 +37,9 @@ traits.
   configuration provides and requires on top, and the values.
 - **open** — a fact type that a slot still to be filled could provide, so that a
   requirement of it that nothing provides yet is not decided.
+- **schema** — the fields one plugin or composite has to be told, each taking an
+  answer of one kind and, unless it has to be answered, offering a default. The
+  answers to it are a **config**, keyed by field name.
 
 ## Implemented
 
@@ -45,37 +48,43 @@ traits.
   `check_addition(…, addition, open)`; `order`, `unprovided`, `declaration_of`;
   `OpenFacts` with `NOTHING`.
 - `catalog`: `PluginKind` and `plugin_kind!`; `PluginEntry<K>` holding `id`,
-  `label`, `description`, `declare` and an optional constructor, all as
-  const-storable function pointers; `Accepts<K>`, `providers_of`,
-  `add_provider_of`, `facts_of_kind`.
+  `label`, `description`, `declare`, `schema` and `build`, all as const-storable
+  function pointers; `Accepts<K>`, `providers_of`, `add_provider_of`,
+  `facts_of_kind`.
 - `Plugin` with
   `label`/`description`/`static_declare`/`dyn_declare`/`sub_plugins`, and
   `TotalDeclare`, which walks the sub-plugins so a composite plugin forwards
   nothing by hand.
+- `schema`: `Configurable` with `schema()`, `build(&Config)` and a defaulted
+  `recommends()`; `Schema`/`Field`/`FieldKind`. A field takes yes or no, a whole
+  number, a number, one plugin of a kind, a list of answers of one kind
+  (`List`, so that "several plugins of a kind" is a list of plugins) or an answer
+  of one kind or nothing (`Optional`), the last two nesting as deep as they like;
+  `Field::optional`/`Field::repeated` wrap what a field takes, and its default
+  with it. `Schema::complete` answers every unanswered field by the default of
+  the field, which is what makes "needs no configuration" mean "every field has a
+  default", and checks answers and defaults alike against the kind of their
+  field. `PluginEntry::build` completes a config against the schema before
+  building, so a `Configurable` reads answers that are all there and a nested
+  plugin is completed against its own schema.
+- `config`: `Value`/`Config`/`PluginConfig`, the tree of answers keyed by field
+  name, where a plugin answering a field is named by the id of its entry and
+  built through the catalog, so that nothing is downcast; `ConfigError` with the
+  `Path` of what it is about, which a nested error is prefixed with on its way
+  out, so that an answer of the wrong kind inside a list is reported as
+  `weights[1]`. `Config::read` reads an answer as the Rust type of the parameter
+  it configures — `Answer` is implemented for `bool`, `i64`, `f64` and for
+  `Option`/`Vec` of those, so a plugin writes `config.read("rounds")?` and the
+  kind follows from its own field; a plugin answer is read by
+  `plugin`/`plugins`/`optional_plugin`, which take the kind to build it as. A
+  whole number answers a decimal field. Not serde-serializable, see
+  [Open questions](#open-questions).
 
 ## Steps
 
 Each one is shippable on its own.
 
-### 1. Schemas
-
-`Configurable` with `schema()`, `build(&Config)` and a defaulted `recommends()`;
-`Schema`/`Field`/`FieldKind` (bool, integer, decimal, one plugin of a kind,
-several plugins of a kind); `Value`/`Config`/`PluginConfig` as a
-serde-serializable tree of answers keyed by field name; `ConfigError` carrying
-the `Path` of what it is about.
-
-`PluginEntry` then stores `schema` and `build` instead of its constructor, and
-two things that are stand-ins today disappear:
-
-- **`with_default` and the `default` field.** "Needs no configuration" becomes
-  "every field of the schema has a default", and `create_default()` becomes
-  `build(&Config::default())`. The registration of a plugin that needs no
-  configuration then names its type once instead of twice.
-- **nothing else constructs a plugin**, so `add_provider_of` keeps working
-  throughout.
-
-### 2. Erased kinds
+### 1. Erased kinds
 
 `Kind` (`Kind::of::<K>()`) so a schema can say "a plugin of this kind", and
 `EntryView`, the object-safe view of an entry a UI browses through — label,
@@ -87,13 +96,13 @@ take, which is what makes openness transitive: a slot still to be filled can be
 filled with a plugin that has slots of its own. Until then `facts_of_kind`
 covers one level and the gap is a documented approximation.
 
-### 3. The builder
+### 2. The builder
 
-`Builder<T>` over one answer tree, `Path` addressing a field in it, and the
-queries a UI renders from: `questions()`, `default(path)`, `candidates(path)`,
-`issues()`, plus `set` and `finish`. `Candidate` says "fits" or "conflicts,
-because …"; `Issue` is something currently wrong, anchored to the field where it
-gets fixed.
+`Builder<T>` over one answer tree, addressed by the `Path` a config error
+carries, and the queries a UI renders from: `questions()`, `default(path)`,
+`candidates(path)`, `issues()`, plus `set` and `finish`. `Candidate` says "fits"
+or "conflicts, because …"; `Issue` is something currently wrong, anchored to the
+field where it gets fixed.
 
 The rules the queries follow, which the compatibility layer already supports:
 
@@ -112,16 +121,16 @@ The rules the queries follow, which the compatibility layer already supports:
 - **Defaults come from the plugin or from its siblings' recommendations**, never
   from a table in the consumer.
 
-### 4. A generic resolution loop
+### 3. A generic resolution loop
 
 Today a consumer writes the loop itself: `unprovided` → `add_provider_of` per
 kind → repeat, since an added plugin can require facts of its own → `order`.
 Lifting it here needs a composite to be describable (its declarations, and which
-kinds it `Accepts`), which step 2's `Kind` makes possible. Optional: the loop is
+kinds it `Accepts`), which step 1's `Kind` makes possible. Optional: the loop is
 six lines, and a consumer that wants a different policy should be able to write
 its own.
 
-### 5. Enforce the static/dynamic contract
+### 4. Enforce the static/dynamic contract
 
 The filter reads an entry's **static** declaration, so it is sound only if, for
 every configuration of the plugin:
@@ -138,7 +147,7 @@ assert that it provides no fact type the static declaration did not. One
 assertion where `declaration_of` is used, off any hot path. The second half
 stays a documented contract.
 
-### 6. A derive macro
+### 5. A derive macro
 
 For the registration boilerplate — `label`, `description`, and the schema and
 `build` of a plugin whose fields are plain scalars — once the entry shape has
@@ -147,9 +156,11 @@ stopped moving. Separate crate.
 ## Open questions
 
 - **What identifies an entry.** `TypeId` today, which is fine in-process and
-  useless in a file. If a saved answer tree is a supported format, ids and field
-  names need a stability contract and the id goes back to being a namespaced
-  string.
+  useless in a file, so a `PluginConfig` names a plugin by `TypeId` and an answer
+  tree has no serde impls: it lives between a UI and a constructor and goes no
+  further. If a saved answer tree is a supported format, ids and field names need
+  a stability contract and the id goes back to being a namespaced string, which
+  is what the serde impls wait for.
 - **Who owns the UI text.** `&'static str` from the plugin means the crate ships
   one language; localisation would wrap it, keyed by entry id.
 - **Recommendation conflicts.** Two configured plugins recommending different

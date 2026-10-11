@@ -2,8 +2,9 @@
 //!
 //! A plugin axis is a [`PluginKind`], declared with [`plugin_kind!`](crate::plugin_kind) next to
 //! the trait of the axis. A plugin registers itself for its axis with one [`PluginEntry`], which
-//! describes it and, unless it has to be configured, creates it. Registration is open: a plugin of
-//! a third-party crate ends up in the same catalog as the ones of the crate defining the axis.
+//! describes it, states what it has to be told and builds it from the answers. Registration is
+//! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
+//! defining the axis.
 //!
 //! A program reads the catalog to settle a fact a composite requires but none of its plugins
 //! provides, see [`add_provider_of`], and to offer the plugins of a kind to choose from.
@@ -13,6 +14,8 @@ use std::any::TypeId;
 use crate::{
     Plugin,
     compatibility::{Declaration, ProvidedFact},
+    config::{Config, ConfigError},
+    schema::{Configurable, Schema},
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
@@ -40,7 +43,12 @@ pub trait PluginKind: Sized + 'static {
 ///
 /// # Examples
 /// ```
-/// use plugin_factory::{Plugin, inventory, plugin_kind};
+/// use plugin_factory::{
+///     Plugin,
+///     config::{Config, ConfigError},
+///     inventory, plugin_kind,
+///     schema::{Configurable, Schema},
+/// };
 ///
 /// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
 /// pub trait Seeding: Plugin {
@@ -65,42 +73,63 @@ pub trait PluginKind: Sized + 'static {
 ///     }
 /// }
 ///
+/// impl Configurable for ByRank {
+///     fn schema() -> Schema {
+///         Schema::new()
+///     }
+///
+///     fn build(_: &Config) -> Result<Self, ConfigError> {
+///         Ok(Self)
+///     }
+/// }
+///
 /// impl Seeding for ByRank {
 ///     fn seed(&self) {}
 /// }
 ///
 /// inventory::submit! {
-///     SeedingKind::register::<ByRank>().with_default(|| Box::new(ByRank))
+///     SeedingKind::register::<ByRank>()
 /// }
 /// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! plugin_kind {
-    ($(#[$attribute:meta])* $visibility:vis $kind:ident for $object:ty) => {
+    ($(#[$attribute:meta])* $visibility:vis $kind:ident for dyn $object:path) => {
         $(#[$attribute])*
         $visibility struct $kind($crate::catalog::PluginEntry<$kind>);
 
         impl $kind {
-            /// Registers the plugin `P` for this axis; a plugin that needs no configuration adds
-            /// [`with_default`](Self::with_default).
-            pub const fn register<P: $crate::Plugin>() -> Self {
-                Self($crate::catalog::PluginEntry::new::<P>())
+            /// Registers the plugin `P` for this axis, which is configured by answering the
+            /// schema of its `Configurable` impl.
+            pub const fn register<P>() -> Self
+            where
+                P: $crate::schema::Configurable + $object,
+            {
+                Self($crate::catalog::PluginEntry::new::<P>(Self::build::<P>))
             }
 
-            /// This registration for a plugin that `default` creates with its default
-            /// configuration, see [`PluginEntry::with_default`].
-            pub const fn with_default(
-                self,
-                default: fn() -> ::std::boxed::Box<$object>,
-            ) -> Self {
-                Self(self.0.with_default(default))
+            /// Builds the plugin `P` as a plugin of this axis, which is what the entry of `P`
+            /// holds.
+            // the entry holds a plain function pointer, so coercing `P` to the trait object of
+            // the axis needs a named generic function to point at
+            #[doc(hidden)]
+            pub fn build<P>(
+                config: &$crate::config::Config,
+            ) -> ::core::result::Result<
+                ::std::boxed::Box<dyn $object>,
+                $crate::config::ConfigError,
+            >
+            where
+                P: $crate::schema::Configurable + $object,
+            {
+                ::core::result::Result::Ok(::std::boxed::Box::new(P::build(config)?))
             }
         }
 
         $crate::inventory::collect!($kind);
 
         impl $crate::catalog::PluginKind for $kind {
-            type Object = $object;
+            type Object = dyn $object;
 
             fn entries() -> impl ::core::iter::Iterator<
                 Item = &'static $crate::catalog::PluginEntry<Self>,
@@ -121,26 +150,23 @@ pub struct PluginEntry<K: PluginKind> {
     label: fn() -> &'static str,
     description: fn() -> &'static str,
     declare: fn(&mut Declaration),
-    default: Option<fn() -> Box<K::Object>>,
+    schema: fn() -> Schema,
+    build: fn(&Config) -> Result<Box<K::Object>, ConfigError>,
 }
 
 impl<K: PluginKind> PluginEntry<K> {
-    /// The entry of the plugin `P`, which has to be configured in order to be created.
-    pub const fn new<P: Plugin>() -> Self {
+    /// The entry of the plugin `P`, built from the answers to its schema by `build`.
+    pub const fn new<P: Plugin + Configurable>(
+        build: fn(&Config) -> Result<Box<K::Object>, ConfigError>,
+    ) -> Self {
         Self {
             id: TypeId::of::<P>(),
             label: P::label,
             description: P::description,
             declare: P::static_declare,
-            default: None,
+            schema: P::schema,
+            build,
         }
-    }
-
-    /// This entry for a plugin that `default` creates with its default configuration, which is
-    /// what lets a program create it unasked, see [`add_provider_of`].
-    pub const fn with_default(mut self, default: fn() -> Box<K::Object>) -> Self {
-        self.default = Some(default);
-        self
     }
 
     /// What identifies the plugin, i.e. the type of the plugin this is the entry of.
@@ -164,9 +190,24 @@ impl<K: PluginKind> PluginEntry<K> {
         Declaration::of(self.declare)
     }
 
-    /// The plugin with its default configuration, or [`None`] if it has to be configured.
-    pub fn create_default(&self) -> Option<Box<K::Object>> {
-        Some(self.default?())
+    /// What has to be answered in order to create the plugin, see
+    /// [`Configurable::schema`]. Built on every call.
+    pub fn schema(&self) -> Schema {
+        (self.schema)()
+    }
+
+    /// The plugin as `config` configures it, where every field of its schema that `config` leaves
+    /// unanswered is answered by the default of the field.
+    ///
+    /// A plugin every field of whose schema has a default needs no configuration, so that
+    /// [`Config::new`] creates it, see [`add_provider_of`].
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::Unanswered`] if a field without a default is unanswered, and
+    /// whatever completing `config` or building the plugin from it fails with otherwise, see
+    /// [`Schema::complete`].
+    pub fn build(&self, config: &Config) -> Result<Box<K::Object>, ConfigError> {
+        (self.build)(&self.schema().complete(config)?)
     }
 }
 
@@ -185,7 +226,8 @@ pub trait Accepts<K: PluginKind> {
 /// Adds nothing if none does, or if several do: which of them to use is then not a program's
 /// choice to make, and the fact stays unprovided.
 pub fn add_provider_of<K: PluginKind, C: Accepts<K> + ?Sized>(composite: &mut C, fact: TypeId) {
-    let mut providers = providers_of::<K>(fact).filter_map(PluginEntry::create_default);
+    let mut providers =
+        providers_of::<K>(fact).filter_map(|entry| entry.build(&Config::new()).ok());
     if let Some(plugin) = providers.next()
         && providers.next().is_none()
     {
@@ -221,7 +263,7 @@ mod tests {
     use std::{any::Any, fmt::Debug};
 
     use super::*;
-    use crate::compatibility::OpenFacts;
+    use crate::{compatibility::OpenFacts, schema::Field};
 
     /// A fact exactly one registered plugin provides unasked.
     #[derive(Debug)]
@@ -270,10 +312,20 @@ mod tests {
         }
     }
 
+    impl Configurable for OnlyProvider {
+        fn schema() -> Schema {
+            Schema::new()
+        }
+
+        fn build(_: &Config) -> Result<Self, ConfigError> {
+            Ok(Self)
+        }
+    }
+
     impl Tested for OnlyProvider {}
 
     inventory::submit! {
-        TestedKind::register::<OnlyProvider>().with_default(|| Box::new(OnlyProvider))
+        TestedKind::register::<OnlyProvider>()
     }
 
     /// One of the two plugins providing [`Ambiguous`].
@@ -294,10 +346,20 @@ mod tests {
         }
     }
 
+    impl Configurable for OneProvider {
+        fn schema() -> Schema {
+            Schema::new()
+        }
+
+        fn build(_: &Config) -> Result<Self, ConfigError> {
+            Ok(Self)
+        }
+    }
+
     impl Tested for OneProvider {}
 
     inventory::submit! {
-        TestedKind::register::<OneProvider>().with_default(|| Box::new(OneProvider))
+        TestedKind::register::<OneProvider>()
     }
 
     /// The other plugin providing [`Ambiguous`].
@@ -318,15 +380,26 @@ mod tests {
         }
     }
 
+    impl Configurable for AnotherProvider {
+        fn schema() -> Schema {
+            Schema::new()
+        }
+
+        fn build(_: &Config) -> Result<Self, ConfigError> {
+            Ok(Self)
+        }
+    }
+
     impl Tested for AnotherProvider {}
 
     inventory::submit! {
-        TestedKind::register::<AnotherProvider>().with_default(|| Box::new(AnotherProvider))
+        TestedKind::register::<AnotherProvider>()
     }
 
-    /// A plugin that has to be configured, so that the catalog cannot create it.
+    /// A plugin with a field without a default, so that the catalog cannot create it. The answer
+    /// is only read in its [`Debug`] form, since a boxed plugin cannot be downcast.
     #[derive(Debug)]
-    struct ConfiguredProvider;
+    struct ConfiguredProvider(#[expect(dead_code, reason = "read as part of the Debug form")] i64);
 
     impl Plugin for ConfiguredProvider {
         fn label() -> &'static str {
@@ -339,6 +412,16 @@ mod tests {
 
         fn static_declare(declaration: &mut Declaration) {
             declaration.provide(Configured).provide(Shared);
+        }
+    }
+
+    impl Configurable for ConfiguredProvider {
+        fn schema() -> Schema {
+            Schema::new().field(Field::integer("rounds", "Rounds"))
+        }
+
+        fn build(config: &Config) -> Result<Self, ConfigError> {
+            Ok(Self(config.read("rounds")?))
         }
     }
 
@@ -387,6 +470,22 @@ mod tests {
         assert_eq!(entry.label(), OnlyProvider::label());
         assert_eq!(entry.description(), OnlyProvider::description());
         assert!(entry.declaration().provides_type(TypeId::of::<Settled>()));
+        assert!(entry.schema().fields().is_empty());
+    }
+
+    #[test]
+    fn an_entry_builds_its_plugin_from_the_answers_to_its_schema() {
+        let entry = entry_of::<ConfiguredProvider>();
+
+        assert_eq!(
+            entry.schema().fields().iter().map(Field::name).next(),
+            Some("rounds")
+        );
+        // a built plugin is boxed behind the trait of the axis, so its Debug form is what a test
+        // can compare
+        let built = entry.build(&Config::new().with("rounds", 5i64));
+        assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider(5))");
+        assert!(entry.build(&Config::new()).is_err());
     }
 
     #[test]

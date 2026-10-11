@@ -1,13 +1,16 @@
 //! Plugins that describe themselves, so that a program configuring them never names one.
 //!
-//! A [`Plugin`] says what to call it and what it provides to and requires of the composite it is
-//! part of, see [`compatibility`]. It registers itself in the [`catalog`], which is where a
-//! program looking for a plugin finds it.
+//! A [`Plugin`] says what to call it, what it has to be told in order to be built, see [`schema`]
+//! and [`config`], and what it provides to and requires of the composite it is part of, see
+//! [`compatibility`]. It registers itself in the [`catalog`], which is where a program looking for
+//! a plugin finds it.
 
 use crate::compatibility::Declaration;
 
 pub mod catalog;
 pub mod compatibility;
+pub mod config;
+pub mod schema;
 
 /// Re-exported so that a crate registering a plugin in the [catalog] does not have to depend on
 /// `inventory` itself.
