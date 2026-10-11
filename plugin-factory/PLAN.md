@@ -102,8 +102,9 @@ struct Phase {
 }
 
 // a UI
+// renders by walking Phase::schema() along builder.answers(), see step 6
 let mut builder = Builder::<Phase>::new(context);
-builder.questions();                     // every field, answered or not
+builder.default(&"metrics".parse()?)?;  // what the field offers, recommendations included
 builder.candidates(&"metrics[1]".parse()?)?;
 builder.set(&"format".parse()?, PluginConfig::of::<Knockout>().with("third_place", true))?;
 builder.issues();
@@ -117,12 +118,35 @@ check(&context, &phase.plugins())?;
 let order = order(&phase.plugins())?;
 ```
 
-Roughly 25 public items remain: `Plugin`, `PluginType`, `Configurable`,
-`FieldType`, `Axis`, `AnyAxis`, `PluginEntry`, the derives `Plugin` and
-`Configurable`, the attributes `axis` and `register`; `Declaration`, `Fact`,
-`Requirement`, `Incompatibility`, `check`, `order`; `Schema`, `Field`,
-`FieldKind`; `Config`, `PluginConfig`, `Value`, `Path`, `Segment`,
-`ConfigError`; `Builder`, `Question`, `Candidate`, `Issue`, `Problem`.
+The whole public API, about 25 items:
+
+- **Defining plugins:** `#[axis]`, `#[register]`, `#[derive(Plugin)]`,
+  `#[derive(Configurable)]`; `Plugin` (`declare`, `recommends`), `PluginType`
+  (`ID`, `LABEL`, `DESCRIPTION`, `declare_static`), `Configurable` (`schema`,
+  `plugins`), `FieldType` (`kind`, `missing`, `plugins`).
+- **Facts:** `Declaration` (`new`, `of`, `provide`, `require`,
+  `require_that`), write-only for a user; `Incompatibility`
+  (`FactProvidedTwice`, `FactProvidedByContext`, `FactNotProvided`,
+  `ConditionNotMet`, `CyclicRequirements`); `check(context, plugins)`,
+  `order(plugins)`.
+- **Catalog:** `Axis` on `dyn Trait` (`entries`, `entry`), `AnyAxis` (`of`,
+  `entries`, `entry`), `PluginEntry` (`id`, `label`, `description`, `schema`).
+- **Schemas:** `Schema` (`fields`, `field_named`), `Field` (`name`, `label`,
+  `description`, `kind`, `default_value`), `FieldKind` (`Bool`, `Integer`,
+  `Decimal`, `Plugin(AnyAxis)`, `List`, `Optional`), all read-only.
+- **Configs:** `Value`; `Config` (`new`, `with`, `get`); `PluginConfig`
+  (`of`, `new`, `with`, `plugin`, `config`, `build`); `Path` (`ROOT`, `field`,
+  `index`, `segments`, `Display`, `FromStr`); `Segment` (`Field`, `Index`), to
+  read a path; `ConfigError` (`UnknownField`, `Unanswered`, `WrongKind`,
+  `UnknownPlugin`, `Rejected`, `path`).
+- **Builder:** `Builder` (`new`, `from_built`, `answers`, `default`,
+  `candidates`, `issues`, `set`, `unset`, `finish`), `Candidate` (`entry`,
+  `conflict`), `Issue` (`path`, `problem`), `Problem` (`Invalid`,
+  `Incompatible`, `Unprovided`).
+
+This is deliberately the smallest API that keeps the functionality; anything
+a consumer turns out to need — reading declarations, writing a schema by hand —
+is added back when it does.
 
 ## Vocabulary
 
@@ -133,7 +157,7 @@ Roughly 25 public items remain: `Plugin`, `PluginType`, `Configurable`,
   `Axis`; erased it is an `AnyAxis`. The word *kind* is reserved for
   `FieldKind`, the kind of answer a field takes.
 - **composite** — what plugins are configured into: a `Configurable` that is
-  not a plugin, usually derived. Its fields are its **slots**.
+  not a plugin, derived. Its fields are its **slots**.
 - **context**, **fact**, **declaration** (static and configured), **open**,
   **schema**, **config** — as before: facts are `'static + Debug + Sync` types,
   the context is what holds before any plugin is chosen and cannot be provided
@@ -157,7 +181,7 @@ pub trait Plugin: Debug + __private::Erased + 'static {
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     fn schema() -> Schema;
     /// The plugins held by the fields, in schema order.
-    fn plugins<'a>(&'a self, _: &mut Vec<&'a dyn Plugin>) {}
+    fn plugins(&self) -> Vec<&dyn Plugin> { Vec::new() }
 }
 
 pub trait PluginType: Plugin + Configurable {
@@ -219,9 +243,8 @@ With the id a constant and the tagging generated, the mismatches
   hidden registry), which makes `entry(id)` a lookup instead of a scan, and
   panics there if two entries share an id, naming the id and both types
   (`std::any::type_name`, stored in the entry).
-- Remove `check_serialization` and `SerializationMismatch`. A hand-written
-  `Configurable` whose schema does not match its serde impl is a documented
-  contract violation; it fails at build with `ConfigError::Rejected`.
+- Remove `check_serialization` and `SerializationMismatch`. A schema can no
+  longer drift from its struct, since `Configurable` is only derived (step 4).
 - Unit structs: the derive knows from the syntax whether a plugin is a unit
   struct and sets a hidden `PluginType::IS_UNIT` constant, replacing
   `deserializes_from_null` probing at runtime.
@@ -233,10 +256,17 @@ With the id a constant and the tagging generated, the mismatches
 attributes. A composite then writes no `Schema` by hand, and its `plugins()` is
 what the runtime checks take (step 5).
 
-With hand-written schemas rare, trim `Field` to `Field::new` plus `described`,
-`with_default` and `optional`: remove `Field::bool`, `integer`, `decimal`,
-`plugin`, `plugins`, `repeated` and `FieldKind::plugins`. `repeated` wrapping
-an existing default into a one-element list goes with it.
+`Configurable` is only derived, for plugins and composites alike; implementing
+it by hand is unsupported. So schemas become read-only for a user:
+
+- `Field::new`, `described`, `with_default` and `optional` become
+  `#[doc(hidden)]`, for the derive alone; `Field::bool`, `integer`, `decimal`,
+  `plugin`, `plugins`, `repeated` and `FieldKind::plugins` are removed, and with
+  `repeated` its wrapping of a default into a one-element list.
+- `Schema::new` and `Schema::field` become `#[doc(hidden)]`; `Schema::complete`
+  becomes crate-internal.
+- `FieldKind`'s constructors `list` and `optional` stay, as a `FieldType` impl
+  of a newtype may need them.
 
 ### 5. Check a built composite through its plugins
 
@@ -252,10 +282,18 @@ What only the builder and the catalog need becomes crate-internal:
 `OpenFacts`, and the `(String, Declaration)` tuples, which become an internal
 named struct.
 
-`Declaration` keeps `provide`, `require`, `require_that` (step 7),
-`provides(TypeId)`, `provided()` as `&dyn Fact`s and `required()` as
-`Requirement`s, a read-only view (today's `RequiredFact`) a UI can show.
-`ProvidedFact` goes.
+A user only writes declarations; why plugins do not fit is told by
+`Incompatibility`, `Candidate::conflict` and `Problem`. So:
+
+- `Declaration` keeps `new`, `of`, `provide`, `require` and `require_that`
+  (step 7). `provides_type`, `provided`, `required`, `ProvidedFact` and
+  `RequiredFact` become crate-internal.
+- `PluginEntry::declaration`, `declaration_for` and `complete` become
+  crate-internal.
+- `Fact` becomes `__private`: it is implemented for every
+  `'static + Debug + Sync` type and only appeared in the API through
+  `provided()`. The bounds of `provide`/`require` spell it out.
+- `Incompatibility::OutOfOrder` goes; nothing constructs it.
 
 ### 6. Resolve and finish in the builder
 
@@ -270,7 +308,17 @@ Resolution moves onto the answer tree, which removes `resolve`,
   single slot is never added to, an axis in two list fields is never resolved.
 - Only root-level fields count, as `Accepts` was implemented by the composite
   alone; a list inside a plugin (`Combined::parts`) is never added to.
-- `finish` on a copy of the answers: accept the defaults in question order,
+- `Question` and `Builder::questions` go. A UI renders from the schema: for
+  each field of `T::schema()` it reads the answer from `builder.answers()`,
+  and for a plugin answer it recurses into
+  `field_axis.entry(id).schema()`, building the `Path` with `field` and
+  `index` as it goes.
+  That walk is documented on `Builder` with an example. The builder keeps it
+  internally (`Tree`), for open facts, for where an `Unprovided` issue goes
+  and for the order of defaults in `finish`; what the schema cannot tell a UI
+  is a field's actual default, which stays `Builder::default(path)`.
+- `finish` on a copy of the answers: accept the defaults depth first in schema
+  order,
   resolve, repeat until nothing changes, then report. It returns
   `Result<T, Vec<Issue>>`, the issues being those of `issues()` with nothing
   open. `FinishError` goes.
@@ -286,8 +334,15 @@ Resolution moves onto the answer tree, which removes `resolve`,
   `.with(field, answer)` answers a field, as on `Config`.
 - `impl FromStr for Path`, the inverse of its `Display`
   (`"metrics[1].for_win"`); the tests' own `path` helpers go.
-- Remove `facts_of_kind` (it is `AnyAxis::facts`) and `PluginEntry::sub_kinds`
-  from the public API.
+- `Path::field(name)` and `Path::index(position)` extend a path;
+  `Path::of`, `then` and `starts_with` become crate-internal, and `Segment`
+  is only read, through `Path::segments`.
+- `Config` keeps `new`, `with` and `get`; `set`, `unset` and `answers` become
+  crate-internal, since the builder holds the answers being edited.
+- Remove `facts_of_kind`; `AnyAxis::facts` and `PluginEntry::sub_kinds` become
+  crate-internal.
+- Remove `Candidate::fits`, which is `conflict().is_none()`.
+- The `inventory` re-export moves to `__private`; only generated code uses it.
 - The derive's `#[plugin(description = ..)]` on the struct becomes optional, as
   it is on a field.
 
@@ -305,7 +360,7 @@ None of this changes the API.
   `Result<Box<dyn Plugin>, ConfigError>` per placed plugin; `issues`, defaults
   and declarations read it instead of calling `instance` again, and
   `Placed::declaration`/`configured_declaration` merge. `finish` stops
-  rebuilding every default for every remaining question.
+  rebuilding every default for every remaining unanswered field.
 - **Cache the facts of an axis.** The transitive closure `AnyAxis::facts`
   computes is constant for a program; keep it in the registry's `OnceLock`.
   `candidates` asks for it per entry and sub-axis.
@@ -320,10 +375,14 @@ None of this changes the API.
 
 - Hand-written test plugins in `catalog.rs`, `schema.rs`, `builder.rs` and
   `compatibility.rs` become derived where the test is not about writing one by
-  hand; one hand-written plugin with `#[register]` stays, covering step 1's
-  claim that it writes its id once.
+  hand; one plugin with hand-written `Plugin` and `PluginType` impls (and a
+  derived `Configurable`) stays, covering step 1's claim that it writes its id
+  once. Tests of the crate itself may still build a `Schema` through the
+  hidden constructors where a hand-made schema is the point, e.g. a default
+  of the wrong kind.
 - `tests/workflow.rs` follows the target above: derived composite,
-  `finish` resolving, `from_built`, `check`/`order` on `plugins()`.
+  `finish` resolving, `from_built`, `check`/`order` on `plugins()`, and the
+  documented schema walk in place of `questions()`.
 - `tests/derive.rs` gains `Configurable` and loses `check_serialization`.
 - Compile-fail cases (missing `Plugin` supertrait on an axis, a typetag
   attribute next to `#[axis]`, a generic axis) are unit tests of the macro
@@ -337,9 +396,6 @@ None of this changes the API.
   "nothing is answered behind the operator's back"; not reporting it is
   consistent with `finish` accepting defaults. Leaning towards reporting it as
   `Unprovided` with the single provider, which is what a UI would set anyway.
-- **Should a `Question` carry its default**, so that a form renders from
-  `questions()` alone? Costs a default computation per field on every call,
-  which is cheap only once step 8 builds each plugin once.
 - **The derive names the crate `::plugin_factory`**; a renamed dependency
   breaks it. `#[plugin(crate = "..")]` as serde does, if needed.
 - **A struct deserialized through `try_from` cannot be derived.** The schema
@@ -370,6 +426,10 @@ None of this changes the API.
   JSON between a UI and the catalog.
 - **The crate does not reimplement `typetag`.** `#[axis]` and `#[register]`
   emit `typetag` attributes; the crate keeps no tag registry of its own.
+- **The smallest API first.** A user writes declarations and reads schemas
+  but neither reads declarations nor writes schemas, and `Configurable` is
+  only derived. Each of these is added back when a consumer needs it, not
+  before.
 - **One way into the catalog.** `#[register]`, for derived and hand-written
   plugins; this is what makes the serialization checks unnecessary.
 - **A composite says what may be added to it through its schema**: a root
