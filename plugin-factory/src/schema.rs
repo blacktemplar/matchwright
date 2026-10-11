@@ -109,7 +109,7 @@ impl Schema {
 ///
 /// A field with a default can be left unanswered; a [`Configurable`] all of whose fields have one
 /// needs no configuration and can be created unasked, see
-/// [`PluginEntry::build`](crate::catalog::PluginEntry::build).
+/// [`PluginConfig::build`].
 #[derive(Debug, Clone)]
 pub struct Field {
     name: &'static str,
@@ -255,6 +255,16 @@ impl FieldKind {
     /// An answer of the kind `answer` or nothing.
     pub fn optional(answer: Self) -> Self {
         Self::Optional(Box::new(answer))
+    }
+
+    /// The kind of plugin this kind of answer is made of, through lists and optional answers, or
+    /// [`None`] if it takes no plugin.
+    pub fn plugin_kind(&self) -> Option<Kind> {
+        match self {
+            Self::Plugin(kind) => Some(*kind),
+            Self::List(inner) | Self::Optional(inner) => inner.plugin_kind(),
+            Self::Bool | Self::Integer | Self::Decimal => None,
+        }
     }
 
     /// `answer` with the config of every plugin in it completed against the schema of that
@@ -549,14 +559,14 @@ mod tests {
     inventory::submit! { ConfiguredKind::register::<Ranker>() }
 
     /// The entry of the plugin `P`.
-    fn entry_of<P: Plugin>() -> &'static PluginEntry<ConfiguredKind> {
+    fn entry_of<P: Plugin>() -> &'static PluginEntry {
         ConfiguredKind::entry(P::id()).expect("the plugin is registered")
     }
 
     /// The summary of the plugin `P` as `config` configures it.
     fn built<P: Plugin>(config: Config) -> Result<String, ConfigError> {
-        entry_of::<P>()
-            .build(&config)
+        PluginConfig::of::<P>(config)
+            .build::<ConfiguredKind>()
             .map(|plugin| plugin.summary())
     }
 
@@ -575,6 +585,11 @@ mod tests {
             Some(&FieldKind::optional(kind))
         );
         assert!(schema.field_named("losses").is_none());
+        assert_eq!(
+            entry_of::<Ranker>().sub_kinds(),
+            [Kind::of::<ConfiguredKind>(); 3]
+        );
+        assert!(entry_of::<Points>().sub_kinds().is_empty());
     }
 
     #[test]
@@ -843,7 +858,9 @@ mod tests {
             )
             .with("fallback", PluginConfig::of::<Matches>(Config::new()));
         let completed = Ranker::schema().complete(&config).unwrap();
-        let built = entry_of::<Ranker>().build(&config).unwrap();
+        let built = PluginConfig::of::<Ranker>(config)
+            .build::<ConfiguredKind>()
+            .unwrap();
 
         assert_eq!(
             completed.get("fallback"),

@@ -15,7 +15,10 @@ use serde_json::Map;
 pub use serde_json::Value;
 use thiserror::Error;
 
-use crate::{Plugin, catalog::PluginKind};
+use crate::{
+    Plugin,
+    catalog::{Kind, PluginKind},
+};
 
 /// One plugin as the answer to a field, i.e. which plugin it is and how it is configured.
 ///
@@ -53,16 +56,25 @@ impl PluginConfig {
         &self.config
     }
 
-    /// The plugin this configures, as a plugin of the kind `K`.
+    /// The plugin this configures, as a plugin of the kind `K`, where every field its config
+    /// leaves unanswered is answered by the default of the field, and likewise for the plugins
+    /// answering its fields, see [`Schema::complete`](crate::schema::Schema::complete).
+    ///
+    /// The plugin is deserialized from the completed answer through the `Deserialize` impl of
+    /// `Box<K::Object>`, i.e. the way a saved plugin is loaded, so that impl has to know the
+    /// plugin by its id, see [`check_serialization`](crate::catalog::check_serialization).
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of kind `K` is registered with this id,
-    /// and whatever configuring the plugin fails with otherwise. The path of the error addresses a
-    /// field of this config, i.e. it is relative to the plugin.
-    pub fn build<K: PluginKind>(&self) -> Result<Box<K::Object>, ConfigError> {
-        K::entry(&self.plugin)
-            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?
-            .build(&self.config)
+    /// [`ConfigError::Unanswered`] if a field without a default is unanswered,
+    /// [`ConfigError::Rejected`] if deserializing the completed answer fails, and whatever
+    /// completing the config fails with otherwise. The path of the error addresses a field of
+    /// this config, i.e. it is relative to the plugin.
+    pub fn build<K: PluginKind>(&self) -> Result<Box<K::Object>, ConfigError>
+    where
+        Box<K::Object>: DeserializeOwned,
+    {
+        deserialize_plugin(&Kind::of::<K>().complete(self)?)
     }
 
     /// The plugin configured by `answer`, or [`None`] if `answer` is not a plugin.
@@ -141,15 +153,27 @@ impl Config {
 }
 
 /// The plugin `P` deserialized from `config`, a completed config as
-/// [`PluginEntry::complete`](crate::catalog::PluginEntry::complete) writes it, which is how the
-/// catalog builds a plugin, see [`plugin_kind!`](crate::plugin_kind).
+/// [`PluginEntry::complete`](crate::catalog::PluginEntry::complete) writes it.
 ///
 /// # Errors
 /// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
-#[doc(hidden)]
-pub fn deserialize<P: DeserializeOwned>(config: &Value) -> Result<P, ConfigError> {
-    serde_path_to_error::deserialize(config).map_err(|error| ConfigError::Rejected {
-        path: Path::of_deserialized(error.path()),
+pub(crate) fn deserialize<P: DeserializeOwned>(config: &Value) -> Result<P, ConfigError> {
+    deserialize_at(config, true)
+}
+
+/// The plugin `P` deserialized from `answer`, a completed plugin answer as
+/// [`Kind::complete`] writes it, i.e. still tagged with its id.
+///
+/// # Errors
+/// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
+fn deserialize_plugin<P: DeserializeOwned>(answer: &Value) -> Result<P, ConfigError> {
+    deserialize_at(answer, false)
+}
+
+/// `T` deserialized from `value`, which is a config if `is_config` and a plugin answer otherwise.
+fn deserialize_at<T: DeserializeOwned>(value: &Value, is_config: bool) -> Result<T, ConfigError> {
+    serde_path_to_error::deserialize(value).map_err(|error| ConfigError::Rejected {
+        path: Path::of_deserialized(error.path(), is_config),
         reason: error.inner().to_string(),
     })
 }
@@ -208,15 +232,15 @@ impl Path {
         self.0.insert(0, segment);
     }
 
-    /// The path of what deserializing a config failed at, where `deserialized` is where in the
-    /// config as a [`Value`] that is.
-    fn of_deserialized(deserialized: &serde_path_to_error::Path) -> Self {
+    /// The path of what deserializing a config, or a plugin answer unless `is_config`, failed at,
+    /// where `deserialized` is where in it as a [`Value`] that is.
+    fn of_deserialized(deserialized: &serde_path_to_error::Path, is_config: bool) -> Self {
         use serde_path_to_error::Segment as Deserialized;
 
         // a config holds answers, a list holds answers, and a plugin answer holds its config under
         // "value"; its "type" is left out like anything not addressable as a field
         let mut path = Self::ROOT;
-        let mut in_config = true;
+        let mut in_config = is_config;
         for segment in deserialized.iter() {
             match segment {
                 Deserialized::Map { key } if in_config => {
@@ -422,10 +446,32 @@ mod tests {
         let error = serde_path_to_error::deserialize::<_, Ranker>(&config).unwrap_err();
 
         assert_eq!(
-            Path::of_deserialized(error.path()),
+            Path::of_deserialized(error.path(), true),
             Path::of("tie_breakers")
                 .then(Segment::Index(0))
                 .then(Segment::field("for_win"))
+        );
+    }
+
+    #[test]
+    fn the_path_of_a_deserialization_error_in_a_plugin_answer_is_relative_to_the_plugin() {
+        let answer = serde_json::json!({"type": "points", "value": {"for_win": -1.0}});
+        #[derive(Debug, Deserialize)]
+        struct Points {
+            #[serde(rename = "for_win")]
+            _for_win: u32,
+        }
+        #[derive(Debug, Deserialize)]
+        struct Tagged {
+            #[serde(rename = "value")]
+            _value: Points,
+        }
+
+        let error = serde_path_to_error::deserialize::<_, Tagged>(&answer).unwrap_err();
+
+        assert_eq!(
+            Path::of_deserialized(error.path(), false),
+            Path::of("for_win")
         );
     }
 }

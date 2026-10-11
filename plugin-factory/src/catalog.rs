@@ -2,7 +2,7 @@
 //!
 //! A plugin axis is a [`PluginKind`], declared with [`plugin_kind!`](crate::plugin_kind) next to
 //! the trait of the axis. A plugin registers itself for its axis with one [`PluginEntry`], which
-//! describes it, states what it has to be told and builds it from the answers. Registration is
+//! describes it and states what it has to be told. Registration is
 //! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
 //! defining the axis.
 //!
@@ -15,13 +15,13 @@ use std::{
     fmt::{self, Debug, Formatter},
 };
 
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Map;
 use thiserror::Error;
 
 use crate::{
     Plugin,
-    compatibility::{Declaration, ProvidedFact},
+    compatibility::{Declaration, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
     schema::{Configurable, Schema},
 };
@@ -37,11 +37,11 @@ pub trait PluginKind: Sized + 'static {
     type Object: ?Sized + Plugin;
 
     /// Every plugin registered for this axis, in no particular order.
-    fn entries() -> impl Iterator<Item = &'static PluginEntry<Self>>;
+    fn entries() -> impl Iterator<Item = &'static PluginEntry>;
 
     /// The plugin registered for this axis with the id `id`, see [`Plugin::id`], or [`None`] if
     /// none is.
-    fn entry(id: &str) -> Option<&'static PluginEntry<Self>> {
+    fn entry(id: &str) -> Option<&'static PluginEntry> {
         Self::entries().find(|entry| entry.id() == id)
     }
 }
@@ -109,7 +109,7 @@ pub trait PluginKind: Sized + 'static {
 macro_rules! plugin_kind {
     ($(#[$attribute:meta])* $visibility:vis $kind:ident for dyn $object:path) => {
         $(#[$attribute])*
-        $visibility struct $kind($crate::catalog::PluginEntry<$kind>);
+        $visibility struct $kind($crate::catalog::PluginEntry);
 
         impl $kind {
             /// Registers the plugin `P` for this axis, which is configured by answering the
@@ -118,26 +118,7 @@ macro_rules! plugin_kind {
             where
                 P: $crate::schema::Configurable + $object,
             {
-                Self($crate::catalog::PluginEntry::new::<P>(Self::build::<P>))
-            }
-
-            /// Builds the plugin `P` as a plugin of this axis, which is what the entry of `P`
-            /// holds.
-            // the entry holds a plain function pointer, so coercing `P` to the trait object of
-            // the axis needs a named generic function to point at
-            #[doc(hidden)]
-            pub fn build<P>(
-                config: &$crate::config::Value,
-            ) -> ::core::result::Result<
-                ::std::boxed::Box<dyn $object>,
-                $crate::config::ConfigError,
-            >
-            where
-                P: $crate::schema::Configurable + $object,
-            {
-                ::core::result::Result::Ok(::std::boxed::Box::new(
-                    $crate::config::deserialize::<P>(config)?,
-                ))
+                Self($crate::catalog::PluginEntry::new::<P>())
             }
         }
 
@@ -147,7 +128,7 @@ macro_rules! plugin_kind {
             type Object = dyn $object;
 
             fn entries() -> impl ::core::iter::Iterator<
-                Item = &'static $crate::catalog::PluginEntry<Self>,
+                Item = &'static $crate::catalog::PluginEntry,
             > {
                 ::core::iter::IntoIterator::into_iter($crate::inventory::iter::<Self>)
                     .map(|registered| &registered.0)
@@ -156,34 +137,33 @@ macro_rules! plugin_kind {
     };
 }
 
-/// One plugin of the axis `K`, as it is registered in the catalog.
+/// One plugin as it is registered in the catalog.
 ///
 /// Everything in it comes from the plugin's type, so registering one takes no strings; created
-/// through the axis itself, see [`plugin_kind!`](crate::plugin_kind).
-pub struct PluginEntry<K: PluginKind> {
+/// through the axis itself, see [`plugin_kind!`](crate::plugin_kind). An entry describes the
+/// plugin but does not build it: a plugin is built as a plugin of its kind, see
+/// [`PluginConfig::build`].
+pub struct PluginEntry {
     id: fn() -> &'static str,
     label: fn() -> &'static str,
     description: fn() -> &'static str,
     declare: fn(&mut Declaration),
+    configured_declare: fn(&Value) -> Result<Declaration, ConfigError>,
     schema: fn() -> Schema,
     is_unit: fn() -> bool,
-    build: fn(&Value) -> Result<Box<K::Object>, ConfigError>,
 }
 
-impl<K: PluginKind> PluginEntry<K> {
-    /// The entry of the plugin `P`, built from its completed config by `build`, see
-    /// [`Self::complete`].
-    pub const fn new<P: Plugin + Configurable>(
-        build: fn(&Value) -> Result<Box<K::Object>, ConfigError>,
-    ) -> Self {
+impl PluginEntry {
+    /// The entry of the plugin `P`.
+    pub const fn new<P: Plugin + Configurable>() -> Self {
         Self {
             id: P::id,
             label: P::label,
             description: P::description,
             declare: P::static_declare,
+            configured_declare: configured_declaration::<P>,
             schema: P::schema,
             is_unit: config::deserializes_from_null::<P>,
-            build,
         }
     }
 
@@ -208,30 +188,41 @@ impl<K: PluginKind> PluginEntry<K> {
         Declaration::of(self.declare)
     }
 
+    /// What the plugin as `config` configures it provides and requires, its sub-plugins included,
+    /// see [`TotalDeclare`](crate::TotalDeclare): the [static declaration](Self::declaration) and
+    /// what this configuration adds to it.
+    ///
+    /// Builds the plugin from `config` completed, see [`Self::complete`], and drops it again.
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed
+    /// config, and whatever completing `config` fails with otherwise.
+    pub fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
+        (self.configured_declare)(&self.complete(config)?)
+    }
+
     /// What has to be answered in order to create the plugin, see
     /// [`Configurable::schema`]. Built on every call.
     pub fn schema(&self) -> Schema {
         (self.schema)()
     }
 
-    /// The plugin as `config` configures it, where every field of its schema that `config` leaves
-    /// unanswered is answered by the default of the field, and likewise for the plugins answering
-    /// its fields.
-    ///
-    /// A plugin every field of whose schema has a default needs no configuration, so that
-    /// [`Config::new`] creates it, see [`add_provider_of`].
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if a field without a default is unanswered,
-    /// [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed config,
-    /// and whatever completing `config` fails with otherwise, see [`Schema::complete`].
-    pub fn build(&self, config: &Config) -> Result<Box<K::Object>, ConfigError> {
-        (self.build)(&self.complete(config)?)
+    /// The kinds of plugin the fields of the plugin's schema take, in schema order, a kind once
+    /// per field taking it.
+    pub fn sub_kinds(&self) -> Vec<Kind> {
+        self.schema()
+            .fields()
+            .iter()
+            .filter_map(|field| field.kind().plugin_kind())
+            .collect()
     }
 
     /// `config` completed against the schema of the plugin, see [`Schema::complete`], as the
     /// value the plugin is deserialized from: the object of its answers, or `null` for a plugin
     /// that is a unit struct, which is how serde writes one.
+    ///
+    /// A plugin every field of whose schema has a default needs no configuration, i.e. completes
+    /// [`Config::new`], see [`add_provider_of`].
     ///
     /// # Errors
     /// Returns whatever completing `config` fails with, see [`Schema::complete`].
@@ -246,14 +237,26 @@ impl<K: PluginKind> PluginEntry<K> {
     }
 }
 
+/// What the plugin `P` deserialized from `config`, its completed config, declares, see
+/// [`PluginEntry::declaration_for`].
+fn configured_declaration<P: Plugin + Configurable>(
+    config: &Value,
+) -> Result<Declaration, ConfigError> {
+    let plugin = config::deserialize::<P>(config)?;
+    Ok(Declaration::of(|declaration| {
+        plugin.total_declare(declaration);
+    }))
+}
+
 /// A [`PluginKind`] as a value, i.e. the kind of plugin a field takes, see
-/// [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin).
+/// [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin), through which its registered plugins
+/// can be browsed without naming the kind.
 ///
 /// Two values are equal if they are of the same kind.
 #[derive(Clone, Copy)]
 pub struct Kind {
     id: TypeId,
-    complete: fn(&PluginConfig) -> Result<Value, ConfigError>,
+    entries: fn() -> Box<dyn Iterator<Item = &'static PluginEntry>>,
 }
 
 impl Kind {
@@ -261,8 +264,20 @@ impl Kind {
     pub const fn of<K: PluginKind>() -> Self {
         Self {
             id: TypeId::of::<K>(),
-            complete: complete::<K>,
+            entries: entries_of::<K>,
         }
+    }
+
+    /// Every plugin registered for this kind, in no particular order, see
+    /// [`PluginKind::entries`].
+    pub fn entries(&self) -> impl Iterator<Item = &'static PluginEntry> {
+        (self.entries)()
+    }
+
+    /// The plugin registered for this kind with the id `id`, or [`None`] if none is, see
+    /// [`PluginKind::entry`].
+    pub fn entry(&self, id: &str) -> Option<&'static PluginEntry> {
+        self.entries().find(|entry| entry.id() == id)
     }
 
     /// `plugin` as a plugin of this kind with its config completed, see
@@ -272,16 +287,49 @@ impl Kind {
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this kind is registered with the id
     /// of `plugin`, and whatever completing its config fails with otherwise.
     pub fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
-        (self.complete)(plugin)
+        let entry = self
+            .entry(plugin.plugin())
+            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
+        Ok(Value::Object(Map::from_iter([
+            ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
+            ("value".to_owned(), entry.complete(plugin.config())?),
+        ])))
+    }
+
+    /// The types of the facts the plugins of this kind provide, i.e. what a slot for this kind
+    /// could contribute while it is still to be filled, see [`OpenFacts`].
+    ///
+    /// Includes what the plugins of their [sub-kinds](PluginEntry::sub_kinds) provide,
+    /// transitively, since a plugin filling the slot can have slots of its own. Read from the
+    /// static declarations, so it holds whatever the plugins end up configured with.
+    pub fn facts(&self) -> OpenFacts {
+        let mut visited = vec![*self];
+        let mut pending = vec![*self];
+        let mut facts = Vec::new();
+        while let Some(kind) = pending.pop() {
+            for entry in kind.entries() {
+                facts.extend(
+                    entry
+                        .declaration()
+                        .provided()
+                        .iter()
+                        .map(ProvidedFact::type_id),
+                );
+                for sub_kind in entry.sub_kinds() {
+                    // kinds can nest each other, so each is visited once
+                    if !visited.contains(&sub_kind) {
+                        visited.push(sub_kind);
+                        pending.push(sub_kind);
+                    }
+                }
+            }
+        }
+        facts.into_iter().collect()
     }
 }
 
-fn complete<K: PluginKind>(plugin: &PluginConfig) -> Result<Value, ConfigError> {
-    let entry = K::entry(plugin.plugin()).ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
-    Ok(Value::Object(Map::from_iter([
-        ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
-        ("value".to_owned(), entry.complete(plugin.config())?),
-    ])))
+fn entries_of<K: PluginKind>() -> Box<dyn Iterator<Item = &'static PluginEntry>> {
+    Box::new(K::entries())
 }
 
 impl PartialEq for Kind {
@@ -312,9 +360,15 @@ pub trait Accepts<K: PluginKind> {
 ///
 /// Adds nothing if none does, or if several do: which of them to use is then not a program's
 /// choice to make, and the fact stays unprovided.
-pub fn add_provider_of<K: PluginKind, C: Accepts<K> + ?Sized>(composite: &mut C, fact: TypeId) {
-    let mut providers =
-        providers_of::<K>(fact).filter_map(|entry| entry.build(&Config::new()).ok());
+pub fn add_provider_of<K: PluginKind, C: Accepts<K> + ?Sized>(composite: &mut C, fact: TypeId)
+where
+    Box<K::Object>: DeserializeOwned,
+{
+    let mut providers = providers_of::<K>(fact).filter_map(|entry| {
+        PluginConfig::new(entry.id(), Config::new())
+            .build::<K>()
+            .ok()
+    });
     if let Some(plugin) = providers.next()
         && providers.next().is_none()
     {
@@ -324,38 +378,29 @@ pub fn add_provider_of<K: PluginKind, C: Accepts<K> + ?Sized>(composite: &mut C,
 
 /// Every registered plugin of kind `K` that provides a fact of type `fact`, whatever its
 /// configuration.
-pub fn providers_of<K: PluginKind>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry<K>> {
+pub fn providers_of<K: PluginKind>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry> {
     K::entries().filter(move |entry| entry.declaration().provides_type(fact))
 }
 
-/// The types of the facts the registered plugins of kind `K` provide, i.e. what a slot for that
-/// kind could contribute while it is still to be filled, see
-/// [`OpenFacts`](crate::compatibility::OpenFacts).
-pub fn facts_of_kind<K: PluginKind>() -> impl Iterator<Item = TypeId> {
-    K::entries().flat_map(|entry| {
-        entry
-            .declaration()
-            .provided()
-            .iter()
-            .map(ProvidedFact::type_id)
-            // collected because the declaration is built per call and the ids outlive it
-            .collect::<Vec<_>>()
-    })
+/// The types of the facts the plugins of kind `K` provide, see [`Kind::facts`].
+pub fn facts_of_kind<K: PluginKind>() -> OpenFacts {
+    Kind::of::<K>().facts()
 }
 
-/// Checks that the registered plugins of kind `K` serialize the way the catalog builds them: no
-/// two with the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"`
-/// with its [id](Plugin::id) and by `"value"` with an object holding every field of its schema.
+/// Checks that the registered plugins of kind `K` serialize the way they are built: no two with
+/// the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"` with its
+/// [id](Plugin::id) and by `"value"` with an object holding every field of its schema.
 ///
 /// Meant for a test of the crate declaring the kind, since the id of a plugin persisted through
 /// `typetag` is written a second time as the name of its `typetag` impl. Only plugins that need no
-/// configuration are serialized; the others are not checked beyond their id being unique.
+/// configuration are built and serialized; the others are not checked beyond their id being
+/// unique.
 ///
 /// # Errors
 /// Returns the first mismatch found.
 pub fn check_serialization<K: PluginKind>() -> Result<(), SerializationMismatch>
 where
-    Box<K::Object>: Serialize,
+    Box<K::Object>: Serialize + DeserializeOwned,
 {
     let mut ids = HashSet::new();
     for entry in K::entries() {
@@ -363,9 +408,16 @@ where
         if !ids.insert(id) {
             return Err(SerializationMismatch::DuplicateId { id });
         }
-        let Ok(plugin) = entry.build(&Config::new()) else {
+        // a plugin that has to be configured cannot be built unasked, which is no mismatch
+        if entry.complete(&Config::new()).is_err() {
             continue;
-        };
+        }
+        let plugin = PluginConfig::new(id, Config::new())
+            .build::<K>()
+            .map_err(|error| SerializationMismatch::Undeserializable {
+                id,
+                reason: error.to_string(),
+            })?;
         let serialized = serde_json::to_value(&plugin).map_err(|error| {
             SerializationMismatch::Unserializable {
                 id,
@@ -399,12 +451,16 @@ where
     Ok(())
 }
 
-/// Why the plugins of a kind do not serialize the way the catalog builds them, see
+/// Why the plugins of a kind do not serialize the way they are built, see
 /// [`check_serialization`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SerializationMismatch {
     #[error("several plugins are registered with the id {id}")]
     DuplicateId { id: &'static str },
+    /// The plugin's completed config, tagged with its id, does not deserialize as a plugin of its
+    /// kind, e.g. because its `typetag` name is not its id.
+    #[error("{id} cannot be built from its completed config: {reason}")]
+    Undeserializable { id: &'static str, reason: String },
     #[error("{id} cannot be serialized: {reason}")]
     Unserializable { id: &'static str, reason: String },
     #[error("{id} is not tagged adjacently by \"type\" and \"value\": {serialized}")]
@@ -605,6 +661,107 @@ mod tests {
         TestedKind::register::<ConfiguredProvider>()
     }
 
+    /// A fact only a plugin of [`NestedKind`] provides.
+    #[derive(Debug)]
+    struct Deep;
+
+    /// A plugin axis whose plugins only ever fill a field of a plugin of [`TestedKind`].
+    #[typetag::serde(tag = "type", content = "value")]
+    trait Nested: Plugin + Debug {}
+
+    plugin_kind! {
+        /// The axis of [`Nested`].
+        NestedKind for dyn Nested
+    }
+
+    /// A plugin with a field taking a plugin or nothing, of a kind its own kind takes nowhere
+    /// else.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Wrapper {
+        nested: Option<Box<dyn Nested>>,
+    }
+
+    impl Plugin for Wrapper {
+        fn id() -> &'static str {
+            "wrapper"
+        }
+
+        fn label() -> &'static str {
+            "wrapper"
+        }
+
+        fn description() -> &'static str {
+            "a plugin with a slot of another kind"
+        }
+
+        fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {
+            Some(Box::new(
+                self.nested
+                    .iter()
+                    .map(|nested| nested.as_ref() as &dyn Plugin),
+            ))
+        }
+    }
+
+    impl Configurable for Wrapper {
+        fn schema() -> Schema {
+            Schema::new().field(
+                Field::plugin::<NestedKind>("nested", "Nested")
+                    .optional()
+                    .with_default(Value::Null),
+            )
+        }
+    }
+
+    #[typetag::serde(name = "wrapper")]
+    impl Tested for Wrapper {}
+
+    inventory::submit! {
+        TestedKind::register::<Wrapper>()
+    }
+
+    /// The plugin providing [`Deep`], with a field of the kind its wrapper is of, so that the two
+    /// kinds nest each other.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct DeepProvider {
+        inner: Option<Box<dyn Tested>>,
+    }
+
+    impl Plugin for DeepProvider {
+        fn id() -> &'static str {
+            "deep_provider"
+        }
+
+        fn label() -> &'static str {
+            "deep provider"
+        }
+
+        fn description() -> &'static str {
+            "the one plugin providing the deep fact"
+        }
+
+        fn static_declare(declaration: &mut Declaration) {
+            declaration.provide(Deep);
+        }
+    }
+
+    impl Configurable for DeepProvider {
+        fn schema() -> Schema {
+            Schema::new().field(
+                Field::plugin::<TestedKind>("inner", "Inner")
+                    .optional()
+                    .with_default(Value::Null),
+            )
+        }
+    }
+
+    #[typetag::serde(name = "deep_provider")]
+    impl Nested for DeepProvider {}
+
+    inventory::submit! {
+        NestedKind::register::<DeepProvider>()
+    }
+
     /// A composite that every plugin of [`TestedKind`] can be added to.
     #[derive(Debug, Default)]
     struct Composite(Vec<Box<dyn Tested>>);
@@ -631,7 +788,7 @@ mod tests {
     }
 
     /// The entry of the plugin `P`.
-    fn entry_of<P: Plugin>() -> &'static PluginEntry<TestedKind> {
+    fn entry_of<P: Plugin>() -> &'static PluginEntry {
         TestedKind::entry(P::id()).expect("the plugin is registered")
     }
 
@@ -647,8 +804,9 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_builds_its_plugin_from_the_answers_to_its_schema() {
+    fn a_plugin_is_built_from_the_answers_to_its_schema() {
         let entry = entry_of::<ConfiguredProvider>();
+        let configured = |config| PluginConfig::of::<ConfiguredProvider>(config);
 
         assert_eq!(
             entry.schema().fields().iter().map(Field::name).next(),
@@ -656,9 +814,65 @@ mod tests {
         );
         // a built plugin is boxed behind the trait of the axis, so its Debug form is what a test
         // can compare
-        let built = entry.build(&Config::new().with("rounds", 5));
+        let built = configured(Config::new().with("rounds", 5)).build::<TestedKind>();
         assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider { rounds: 5 })");
-        assert!(entry.build(&Config::new()).is_err());
+        assert!(configured(Config::new()).build::<TestedKind>().is_err());
+    }
+
+    #[test]
+    fn a_plugin_of_another_kind_is_not_built() {
+        assert_eq!(
+            PluginConfig::of::<DeepProvider>(Config::new())
+                .build::<TestedKind>()
+                .err(),
+            Some(ConfigError::UnknownPlugin { path: Path::ROOT })
+        );
+    }
+
+    #[test]
+    fn a_kind_as_a_value_finds_the_entries_of_the_kind() {
+        let kind = Kind::of::<TestedKind>();
+
+        assert_eq!(kind.entries().count(), TestedKind::entries().count());
+        assert_eq!(
+            kind.entry("wrapper").map(PluginEntry::label),
+            Some("wrapper")
+        );
+        assert!(kind.entry("deep_provider").is_none());
+    }
+
+    #[test]
+    fn a_configured_declaration_includes_the_sub_plugins() {
+        let entry = entry_of::<Wrapper>();
+        let wrapping =
+            Config::new().with("nested", PluginConfig::of::<DeepProvider>(Config::new()));
+        let deep = TypeId::of::<Deep>();
+
+        assert!(!entry.declaration().provides_type(deep));
+        assert!(
+            !entry
+                .declaration_for(&Config::new())
+                .unwrap()
+                .provides_type(deep)
+        );
+        assert!(
+            entry
+                .declaration_for(&wrapping)
+                .unwrap()
+                .provides_type(deep)
+        );
+    }
+
+    #[test]
+    fn a_configured_declaration_of_an_incomplete_config_is_an_error() {
+        assert_eq!(
+            entry_of::<ConfiguredProvider>()
+                .declaration_for(&Config::new())
+                .err(),
+            Some(ConfigError::Unanswered {
+                path: Path::of("rounds"),
+            })
+        );
     }
 
     #[test]
@@ -710,21 +924,24 @@ mod tests {
 
     #[test]
     fn every_plugin_of_the_axis_is_registered_once() {
-        assert_eq!(TestedKind::entries().count(), 4);
+        assert_eq!(TestedKind::entries().count(), 5);
         assert_eq!(check_serialization::<TestedKind>(), Ok(()));
+        assert_eq!(check_serialization::<NestedKind>(), Ok(()));
     }
 
     #[test]
-    fn the_facts_of_a_kind_are_what_its_plugins_provide() {
-        assert_eq!(
-            facts_of_kind::<TestedKind>().collect::<OpenFacts>(),
-            OpenFacts::from_iter([
-                TypeId::of::<Settled>(),
-                TypeId::of::<Ambiguous>(),
-                TypeId::of::<Configured>(),
-                TypeId::of::<Shared>(),
-            ])
-        );
+    fn the_facts_of_a_kind_are_what_its_plugins_and_theirs_provide() {
+        let facts = OpenFacts::from_iter([
+            TypeId::of::<Settled>(),
+            TypeId::of::<Ambiguous>(),
+            TypeId::of::<Configured>(),
+            TypeId::of::<Shared>(),
+            TypeId::of::<Deep>(),
+        ]);
+
+        // the two kinds nest each other, so either one could contribute everything
+        assert_eq!(facts_of_kind::<TestedKind>(), facts);
+        assert_eq!(facts_of_kind::<NestedKind>(), facts);
     }
 
     /// An axis whose plugins are tagged with something other than their ids, so that
@@ -769,12 +986,9 @@ mod tests {
 
     #[test]
     fn a_plugin_tagged_with_something_other_than_its_id_is_a_mismatch() {
-        assert_eq!(
+        assert!(matches!(
             check_serialization::<MistaggedKind>(),
-            Err(SerializationMismatch::WrongTag {
-                id: "renamed",
-                tag: "original".to_owned(),
-            })
-        );
+            Err(SerializationMismatch::Undeserializable { id: "renamed", .. })
+        ));
     }
 }

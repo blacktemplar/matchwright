@@ -48,12 +48,18 @@ traits.
   `check_addition(…, addition, open)`; `order`, `unprovided`, `declaration_of`;
   `OpenFacts` with `NOTHING`.
 - `catalog`: `PluginKind` (with `entry(id)`) and `plugin_kind!`;
-  `PluginEntry<K>` holding `id`, `label`, `description`, `declare`, `schema`
-  and `build`, all as const-storable function pointers; `Kind`, a kind as a
-  value, which a field taking plugins holds so that a nested config can be
-  completed against the schema of its plugin; `Accepts<K>`, `providers_of`,
-  `add_provider_of`, `facts_of_kind`; `check_serialization`, see
-  [Identity and persistence](#identity-and-persistence).
+  `PluginEntry`, not generic over its kind, holding `id`, `label`,
+  `description`, the static declaration, `schema` and the declaration of a
+  configured instance (`declaration_for`, which builds the plugin from its
+  completed config, asks it with its sub-plugins and drops it), all as
+  const-storable function pointers, plus `sub_kinds`, the kinds its plugin
+  fields take. An entry does not build: see
+  [Identity and persistence](#identity-and-persistence). `Kind`, a kind as a
+  value, which a field taking plugins holds: it lists and finds the entries of
+  the kind, completes a nested plugin answer, and collects the `facts` its
+  plugins provide, transitively through their sub-kinds, so that openness covers
+  a slot to be filled with a plugin that has slots of its own. `Accepts<K>`,
+  `providers_of`, `add_provider_of`, `facts_of_kind`; `check_serialization`.
 - `Plugin` with
   `id`/`label`/`description`/`static_declare`/`dyn_declare`/`sub_plugins`, and
   `TotalDeclare`, which walks the sub-plugins so a composite plugin forwards
@@ -68,11 +74,11 @@ traits.
   every unanswered field by the default of the field, recursing into the config
   of every plugin answer, which is what makes "needs no configuration" mean
   "every field has a default", and checks answers and defaults alike against the
-  kind of their field. `PluginEntry::build` completes a config and deserializes
-  the plugin from it.
+  kind of their field.
 - `config`: `Config`, a JSON object of answers keyed by field name, each a
   `serde_json::Value`; `PluginConfig`, a plugin answer, written
-  `{"type": id, "value": config}`; `ConfigError` with the `Path` of what it is
+  `{"type": id, "value": config}`, and `PluginConfig::build::<K>`, the one way
+  to build a plugin; `ConfigError` with the `Path` of what it is
   about, which a nested error is prefixed with on its way out, so that an answer
   of the wrong kind inside a list is reported as `weights[1]`. What a plugin's
   `Deserialize` impl rejects is `ConfigError::Rejected`, its path taken from
@@ -84,37 +90,36 @@ traits.
 A plugin is a serde type. It is built by deserializing its completed config, so
 its `Deserialize` impl is the only place that reads answers, and validation
 lives there too (`deserialize_with`, `try_from`), which also rejects an invalid
-saved plugin. A nested plugin field is a `Box<dyn K>` and deserializes through
-the consumer's `typetag` impl, so a config is exactly what `typetag` writes
-for a plugin tagged adjacently with `tag = "type", content = "value"`: a built
-plugin serializes as the completed config it was built from. A plugin without
+saved plugin. A plugin is built as a `Box<K::Object>`, i.e. through the
+consumer's `typetag` impl, exactly as a saved one is loaded and as a nested
+plugin field is deserialized: `PluginConfig::build::<K>` completes the answer,
+still tagged with its id, and deserializes the box from it. So a config is
+exactly what `typetag` writes for a plugin tagged adjacently with
+`tag = "type", content = "value"`, and a built plugin serializes as the
+completed config it was built from. A composite is built the same way, by
+deserializing its completed answer tree at its typed root. A plugin without
 parameters may be a unit struct: the entry checks whether the type
 deserializes from `null`, and if so its completed config is written as `null`,
 as serde writes a unit struct.
 
 The id (`Plugin::id`) is therefore written twice, once as the id and once as
 the `typetag` name, since `typetag` exposes a name neither by type nor through
-a public registry. `check_serialization::<K>()` checks the two against each
-other, plus unique ids and that every schema field is serialized under its
-name; a consumer calls it in a test per kind. It only serializes plugins that
-need no configuration. The derive macro (step 5) removes the duplication by
+a public registry. Building fails if they differ, and
+`check_serialization::<K>()` reports it, plus unique ids and that every schema
+field is serialized under its name; a consumer calls it in a test per kind. It
+only builds and serializes plugins that need no configuration. The derive macro (step 5) removes the duplication by
 emitting both from one attribute.
 
 ## Steps
 
 Each one is shippable on its own.
 
-### 1. Erased kinds
+### 1. Erased kinds (done)
 
-`Kind` (`Kind::of::<K>()`) exists already, holding the kind's `TypeId` and how
-to find the schema of one of its plugins. Still to come is `EntryView`, the object-safe view of an entry a UI browses through — label,
-description, static declaration, schema, and building an instance *into* a
-composite, so that construction stays typed and nothing is downcast.
-
-With `Kind` in place, an entry can also report the kinds its own plugin fields
-take, which is what makes openness transitive: a slot still to be filled can be
-filled with a plugin that has slots of its own. Until then `facts_of_kind`
-covers one level and the gap is a documented approximation.
+A UI holding a kind as a value (`Kind`) browses its entries, reads their
+schemas and declarations, and follows the kinds their plugin fields take; see
+[Implemented](#implemented). No object-safe view of an entry was needed: only
+building mentioned `K`, and building moved to deserialization.
 
 ### 2. The builder
 
@@ -122,7 +127,8 @@ covers one level and the gap is a documented approximation.
 carries, and the queries a UI renders from: `questions()`, `default(path)`,
 `candidates(path)`, `issues()`, plus `set` and `finish`. `Candidate` says "fits"
 or "conflicts, because …"; `Issue` is something currently wrong, anchored to the
-field where it gets fixed.
+field where it gets fixed. `finish` completes the answer tree and deserializes
+`T` from it, so a composite is built the way a saved one is loaded.
 
 The rules the queries follow, which the compatibility layer already supports:
 
@@ -164,7 +170,8 @@ every configuration of the plugin:
 
 The first half is checkable: when a declaration is taken from an instance,
 assert that it provides no fact type the static declaration did not. One
-assertion where `declaration_of` is used, off any hot path. The second half
+assertion where `declaration_of` and `PluginEntry::declaration_for` are used,
+off any hot path. The second half
 stays a documented contract.
 
 ### 5. A derive macro
@@ -208,9 +215,10 @@ the id, so that the id is written once. Separate crate.
 - **Optimism about open slots only.** Hiding a plugin that would have worked is
   the expensive mistake; offering one that later turns out not to fit costs a
   revised answer. The strict check stays the authority.
-- **No untyped bags.** A kind's constructor returns `Box<K::Object>`, so nothing
-  is downcast; one global registry returning `Box<dyn Any>` is rejected for that
-  reason.
+- **No untyped bags.** A plugin is built as `Box<K::Object>`, deserialized at a
+  position whose kind is known, so nothing is downcast; one global registry
+  returning `Box<dyn Any>` is rejected for that reason, and so is an entry
+  building into a composite behind an erased interface.
 - **A plugin is identified by a namespaced string id**, a persistence contract
   like a `typetag` name. `TypeId` stays for facts and kinds, which never leave
   the process.
@@ -219,9 +227,11 @@ the id, so that the id is written once. Separate crate.
   such as postcard keep working; a `serde_json::Value` inside saved data would
   need `deserialize_any`. The answer tree is JSON and lives between a UI and the
   catalog, though it happens to be what `typetag` writes to JSON.
-- **The crate does not reimplement `typetag`.** The catalog deserializes the
-  concrete type it registered, so it needs no tag registry of its own; the cost
-  is the id written twice until step 5.
+- **The crate does not reimplement `typetag`.** A plugin is built through the
+  consumer's `Deserialize` impl of `Box<K::Object>`, and the catalog deserializes
+  the concrete type it registered only to ask it for its declaration, so it
+  needs no tag registry of its own; the cost is the id written twice until
+  step 5.
 - **A plugin does not add itself to a composite.** `Accepts<K>` sits on the
   composite, so "this slot takes one plugin and nothing may be added to it" is
   expressible by leaving the impl out.
