@@ -9,12 +9,20 @@
 //! A program reads the catalog to settle a fact a composite requires but none of its plugins
 //! provides, see [`add_provider_of`], and to offer the plugins of a kind to choose from.
 
-use std::any::TypeId;
+use std::{
+    any::TypeId,
+    collections::HashSet,
+    fmt::{self, Debug, Formatter},
+};
+
+use serde::Serialize;
+use serde_json::Map;
+use thiserror::Error;
 
 use crate::{
     Plugin,
     compatibility::{Declaration, ProvidedFact},
-    config::{Config, ConfigError},
+    config::{self, Config, ConfigError, Path, PluginConfig, Value},
     schema::{Configurable, Schema},
 };
 
@@ -30,6 +38,12 @@ pub trait PluginKind: Sized + 'static {
 
     /// Every plugin registered for this axis, in no particular order.
     fn entries() -> impl Iterator<Item = &'static PluginEntry<Self>>;
+
+    /// The plugin registered for this axis with the id `id`, see [`Plugin::id`], or [`None`] if
+    /// none is.
+    fn entry(id: &str) -> Option<&'static PluginEntry<Self>> {
+        Self::entries().find(|entry| entry.id() == id)
+    }
 }
 
 /// Declares the plugin axis of the trait `$object`: the type `$kind` implementing [`PluginKind`],
@@ -44,11 +58,10 @@ pub trait PluginKind: Sized + 'static {
 /// # Examples
 /// ```
 /// use plugin_factory::{
-///     Plugin,
-///     config::{Config, ConfigError},
-///     inventory, plugin_kind,
+///     Plugin, inventory, plugin_kind,
 ///     schema::{Configurable, Schema},
 /// };
+/// use serde::Deserialize;
 ///
 /// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
 /// pub trait Seeding: Plugin {
@@ -60,10 +73,14 @@ pub trait PluginKind: Sized + 'static {
 ///     pub SeedingKind for dyn Seeding
 /// }
 ///
-/// #[derive(Debug)]
+/// #[derive(Debug, Deserialize)]
 /// struct ByRank;
 ///
 /// impl Plugin for ByRank {
+///     fn id() -> &'static str {
+///         "my_crate::by_rank"
+///     }
+///
 ///     fn label() -> &'static str {
 ///         "by rank"
 ///     }
@@ -76,10 +93,6 @@ pub trait PluginKind: Sized + 'static {
 /// impl Configurable for ByRank {
 ///     fn schema() -> Schema {
 ///         Schema::new()
-///     }
-///
-///     fn build(_: &Config) -> Result<Self, ConfigError> {
-///         Ok(Self)
 ///     }
 /// }
 ///
@@ -114,7 +127,7 @@ macro_rules! plugin_kind {
             // the axis needs a named generic function to point at
             #[doc(hidden)]
             pub fn build<P>(
-                config: &$crate::config::Config,
+                config: &$crate::config::Value,
             ) -> ::core::result::Result<
                 ::std::boxed::Box<dyn $object>,
                 $crate::config::ConfigError,
@@ -122,7 +135,9 @@ macro_rules! plugin_kind {
             where
                 P: $crate::schema::Configurable + $object,
             {
-                ::core::result::Result::Ok(::std::boxed::Box::new(P::build(config)?))
+                ::core::result::Result::Ok(::std::boxed::Box::new(
+                    $crate::config::deserialize::<P>(config)?,
+                ))
             }
         }
 
@@ -146,32 +161,35 @@ macro_rules! plugin_kind {
 /// Everything in it comes from the plugin's type, so registering one takes no strings; created
 /// through the axis itself, see [`plugin_kind!`](crate::plugin_kind).
 pub struct PluginEntry<K: PluginKind> {
-    id: TypeId,
+    id: fn() -> &'static str,
     label: fn() -> &'static str,
     description: fn() -> &'static str,
     declare: fn(&mut Declaration),
     schema: fn() -> Schema,
-    build: fn(&Config) -> Result<Box<K::Object>, ConfigError>,
+    is_unit: fn() -> bool,
+    build: fn(&Value) -> Result<Box<K::Object>, ConfigError>,
 }
 
 impl<K: PluginKind> PluginEntry<K> {
-    /// The entry of the plugin `P`, built from the answers to its schema by `build`.
+    /// The entry of the plugin `P`, built from its completed config by `build`, see
+    /// [`Self::complete`].
     pub const fn new<P: Plugin + Configurable>(
-        build: fn(&Config) -> Result<Box<K::Object>, ConfigError>,
+        build: fn(&Value) -> Result<Box<K::Object>, ConfigError>,
     ) -> Self {
         Self {
-            id: TypeId::of::<P>(),
+            id: P::id,
             label: P::label,
             description: P::description,
             declare: P::static_declare,
             schema: P::schema,
+            is_unit: config::deserializes_from_null::<P>,
             build,
         }
     }
 
-    /// What identifies the plugin, i.e. the type of the plugin this is the entry of.
-    pub fn id(&self) -> TypeId {
-        self.id
+    /// What identifies the plugin, see [`Plugin::id`].
+    pub fn id(&self) -> &'static str {
+        (self.id)()
     }
 
     /// What an operator picking a plugin reads.
@@ -197,17 +215,86 @@ impl<K: PluginKind> PluginEntry<K> {
     }
 
     /// The plugin as `config` configures it, where every field of its schema that `config` leaves
-    /// unanswered is answered by the default of the field.
+    /// unanswered is answered by the default of the field, and likewise for the plugins answering
+    /// its fields.
     ///
     /// A plugin every field of whose schema has a default needs no configuration, so that
     /// [`Config::new`] creates it, see [`add_provider_of`].
     ///
     /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if a field without a default is unanswered, and
-    /// whatever completing `config` or building the plugin from it fails with otherwise, see
-    /// [`Schema::complete`].
+    /// Returns [`ConfigError::Unanswered`] if a field without a default is unanswered,
+    /// [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed config,
+    /// and whatever completing `config` fails with otherwise, see [`Schema::complete`].
     pub fn build(&self, config: &Config) -> Result<Box<K::Object>, ConfigError> {
-        (self.build)(&self.schema().complete(config)?)
+        (self.build)(&self.complete(config)?)
+    }
+
+    /// `config` completed against the schema of the plugin, see [`Schema::complete`], as the
+    /// value the plugin is deserialized from: the object of its answers, or `null` for a plugin
+    /// that is a unit struct, which is how serde writes one.
+    ///
+    /// # Errors
+    /// Returns whatever completing `config` fails with, see [`Schema::complete`].
+    pub fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
+        let completed = self.schema().complete(config)?;
+        // only a plugin whose schema has no fields can be a unit struct, and since a completed
+        // config answers every field, that is the one whose completed config is empty
+        if completed.answers().next().is_none() && (self.is_unit)() {
+            return Ok(Value::Null);
+        }
+        Ok(completed.into())
+    }
+}
+
+/// A [`PluginKind`] as a value, i.e. the kind of plugin a field takes, see
+/// [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin).
+///
+/// Two values are equal if they are of the same kind.
+#[derive(Clone, Copy)]
+pub struct Kind {
+    id: TypeId,
+    complete: fn(&PluginConfig) -> Result<Value, ConfigError>,
+}
+
+impl Kind {
+    /// The kind `K`.
+    pub const fn of<K: PluginKind>() -> Self {
+        Self {
+            id: TypeId::of::<K>(),
+            complete: complete::<K>,
+        }
+    }
+
+    /// `plugin` as a plugin of this kind with its config completed, see
+    /// [`PluginEntry::complete`], written as [`PluginConfig`] writes a plugin answer.
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this kind is registered with the id
+    /// of `plugin`, and whatever completing its config fails with otherwise.
+    pub fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
+        (self.complete)(plugin)
+    }
+}
+
+fn complete<K: PluginKind>(plugin: &PluginConfig) -> Result<Value, ConfigError> {
+    let entry = K::entry(plugin.plugin()).ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
+    Ok(Value::Object(Map::from_iter([
+        ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
+        ("value".to_owned(), entry.complete(plugin.config())?),
+    ])))
+}
+
+impl PartialEq for Kind {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Kind {}
+
+impl Debug for Kind {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("Kind").field(&self.id).finish()
     }
 }
 
@@ -256,11 +343,91 @@ pub fn facts_of_kind<K: PluginKind>() -> impl Iterator<Item = TypeId> {
     })
 }
 
+/// Checks that the registered plugins of kind `K` serialize the way the catalog builds them: no
+/// two with the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"`
+/// with its [id](Plugin::id) and by `"value"` with an object holding every field of its schema.
+///
+/// Meant for a test of the crate declaring the kind, since the id of a plugin persisted through
+/// `typetag` is written a second time as the name of its `typetag` impl. Only plugins that need no
+/// configuration are serialized; the others are not checked beyond their id being unique.
+///
+/// # Errors
+/// Returns the first mismatch found.
+pub fn check_serialization<K: PluginKind>() -> Result<(), SerializationMismatch>
+where
+    Box<K::Object>: Serialize,
+{
+    let mut ids = HashSet::new();
+    for entry in K::entries() {
+        let id = entry.id();
+        if !ids.insert(id) {
+            return Err(SerializationMismatch::DuplicateId { id });
+        }
+        let Ok(plugin) = entry.build(&Config::new()) else {
+            continue;
+        };
+        let serialized = serde_json::to_value(&plugin).map_err(|error| {
+            SerializationMismatch::Unserializable {
+                id,
+                reason: error.to_string(),
+            }
+        })?;
+        let answer = PluginConfig::from_answer(&serialized).ok_or_else(|| {
+            SerializationMismatch::NotAdjacentlyTagged {
+                id,
+                serialized: serialized.to_string(),
+            }
+        })?;
+        if answer.plugin() != id {
+            return Err(SerializationMismatch::WrongTag {
+                id,
+                tag: answer.plugin().to_owned(),
+            });
+        }
+        if let Some(field) = entry
+            .schema()
+            .fields()
+            .iter()
+            .find(|field| answer.config().get(field.name()).is_none())
+        {
+            return Err(SerializationMismatch::FieldNotSerialized {
+                id,
+                field: field.name(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Why the plugins of a kind do not serialize the way the catalog builds them, see
+/// [`check_serialization`].
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SerializationMismatch {
+    #[error("several plugins are registered with the id {id}")]
+    DuplicateId { id: &'static str },
+    #[error("{id} cannot be serialized: {reason}")]
+    Unserializable { id: &'static str, reason: String },
+    #[error("{id} is not tagged adjacently by \"type\" and \"value\": {serialized}")]
+    NotAdjacentlyTagged {
+        id: &'static str,
+        serialized: String,
+    },
+    #[error("{id} is serialized with the tag {tag}")]
+    WrongTag { id: &'static str, tag: String },
+    #[error("{id} does not serialize the field {field} of its schema")]
+    FieldNotSerialized {
+        id: &'static str,
+        field: &'static str,
+    },
+}
+
 /// The catalog itself, tested on an axis of its own so that it does not depend on what the plugins
 /// of a program happen to register.
 #[cfg(test)]
 mod tests {
     use std::{any::Any, fmt::Debug};
+
+    use serde::{Deserialize, Serialize};
 
     use super::*;
     use crate::{compatibility::OpenFacts, schema::Field};
@@ -287,6 +454,7 @@ mod tests {
 
     /// A plugin axis with no behavior at all, so that a test plugin is its declaration. [`Debug`]
     /// is what names a plugin in an error message, so an axis asks for it.
+    #[typetag::serde(tag = "type", content = "value")]
     trait Tested: Plugin + Debug {}
 
     plugin_kind! {
@@ -295,10 +463,14 @@ mod tests {
     }
 
     /// The only plugin providing [`Settled`], and one of the two providing [`Shared`].
-    #[derive(Debug)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct OnlyProvider;
 
     impl Plugin for OnlyProvider {
+        fn id() -> &'static str {
+            "only_provider"
+        }
+
         fn label() -> &'static str {
             "only provider"
         }
@@ -316,12 +488,9 @@ mod tests {
         fn schema() -> Schema {
             Schema::new()
         }
-
-        fn build(_: &Config) -> Result<Self, ConfigError> {
-            Ok(Self)
-        }
     }
 
+    #[typetag::serde(name = "only_provider")]
     impl Tested for OnlyProvider {}
 
     inventory::submit! {
@@ -329,10 +498,14 @@ mod tests {
     }
 
     /// One of the two plugins providing [`Ambiguous`].
-    #[derive(Debug)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct OneProvider;
 
     impl Plugin for OneProvider {
+        fn id() -> &'static str {
+            "one_provider"
+        }
+
         fn label() -> &'static str {
             "one provider"
         }
@@ -350,12 +523,9 @@ mod tests {
         fn schema() -> Schema {
             Schema::new()
         }
-
-        fn build(_: &Config) -> Result<Self, ConfigError> {
-            Ok(Self)
-        }
     }
 
+    #[typetag::serde(name = "one_provider")]
     impl Tested for OneProvider {}
 
     inventory::submit! {
@@ -363,10 +533,14 @@ mod tests {
     }
 
     /// The other plugin providing [`Ambiguous`].
-    #[derive(Debug)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct AnotherProvider;
 
     impl Plugin for AnotherProvider {
+        fn id() -> &'static str {
+            "another_provider"
+        }
+
         fn label() -> &'static str {
             "another provider"
         }
@@ -384,12 +558,9 @@ mod tests {
         fn schema() -> Schema {
             Schema::new()
         }
-
-        fn build(_: &Config) -> Result<Self, ConfigError> {
-            Ok(Self)
-        }
     }
 
+    #[typetag::serde(name = "another_provider")]
     impl Tested for AnotherProvider {}
 
     inventory::submit! {
@@ -398,10 +569,16 @@ mod tests {
 
     /// A plugin with a field without a default, so that the catalog cannot create it. The answer
     /// is only read in its [`Debug`] form, since a boxed plugin cannot be downcast.
-    #[derive(Debug)]
-    struct ConfiguredProvider(#[expect(dead_code, reason = "read as part of the Debug form")] i64);
+    #[derive(Debug, Serialize, Deserialize)]
+    struct ConfiguredProvider {
+        rounds: i64,
+    }
 
     impl Plugin for ConfiguredProvider {
+        fn id() -> &'static str {
+            "configured_provider"
+        }
+
         fn label() -> &'static str {
             "configured provider"
         }
@@ -419,12 +596,9 @@ mod tests {
         fn schema() -> Schema {
             Schema::new().field(Field::integer("rounds", "Rounds"))
         }
-
-        fn build(config: &Config) -> Result<Self, ConfigError> {
-            Ok(Self(config.read("rounds")?))
-        }
     }
 
+    #[typetag::serde(name = "configured_provider")]
     impl Tested for ConfiguredProvider {}
 
     inventory::submit! {
@@ -458,15 +632,14 @@ mod tests {
 
     /// The entry of the plugin `P`.
     fn entry_of<P: Plugin>() -> &'static PluginEntry<TestedKind> {
-        TestedKind::entries()
-            .find(|entry| entry.id() == TypeId::of::<P>())
-            .expect("the plugin is registered")
+        TestedKind::entry(P::id()).expect("the plugin is registered")
     }
 
     #[test]
     fn an_entry_describes_the_plugin_it_registers() {
         let entry = entry_of::<OnlyProvider>();
 
+        assert_eq!(entry.id(), "only_provider");
         assert_eq!(entry.label(), OnlyProvider::label());
         assert_eq!(entry.description(), OnlyProvider::description());
         assert!(entry.declaration().provides_type(TypeId::of::<Settled>()));
@@ -483,9 +656,14 @@ mod tests {
         );
         // a built plugin is boxed behind the trait of the axis, so its Debug form is what a test
         // can compare
-        let built = entry.build(&Config::new().with("rounds", 5i64));
-        assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider(5))");
+        let built = entry.build(&Config::new().with("rounds", 5));
+        assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider { rounds: 5 })");
         assert!(entry.build(&Config::new()).is_err());
+    }
+
+    #[test]
+    fn an_id_no_plugin_is_registered_with_has_no_entry() {
+        assert!(TestedKind::entry("unregistered").is_none());
     }
 
     #[test]
@@ -532,13 +710,8 @@ mod tests {
 
     #[test]
     fn every_plugin_of_the_axis_is_registered_once() {
-        let mut ids: Vec<_> = TestedKind::entries().map(PluginEntry::id).collect();
-        let registered = ids.len();
-        ids.sort();
-        ids.dedup();
-
-        assert_eq!(registered, 4);
-        assert_eq!(ids.len(), registered);
+        assert_eq!(TestedKind::entries().count(), 4);
+        assert_eq!(check_serialization::<TestedKind>(), Ok(()));
     }
 
     #[test]
@@ -551,6 +724,57 @@ mod tests {
                 TypeId::of::<Configured>(),
                 TypeId::of::<Shared>(),
             ])
+        );
+    }
+
+    /// An axis whose plugins are tagged with something other than their ids, so that
+    /// [`check_serialization`] has a mismatch to find.
+    #[typetag::serde(tag = "type", content = "value")]
+    trait Mistagged: Plugin + Debug {}
+
+    plugin_kind! {
+        /// The axis of [`Mistagged`].
+        MistaggedKind for dyn Mistagged
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Renamed;
+
+    impl Plugin for Renamed {
+        fn id() -> &'static str {
+            "renamed"
+        }
+
+        fn label() -> &'static str {
+            "renamed"
+        }
+
+        fn description() -> &'static str {
+            "a plugin whose typetag name is not its id"
+        }
+    }
+
+    impl Configurable for Renamed {
+        fn schema() -> Schema {
+            Schema::new()
+        }
+    }
+
+    #[typetag::serde(name = "original")]
+    impl Mistagged for Renamed {}
+
+    inventory::submit! {
+        MistaggedKind::register::<Renamed>()
+    }
+
+    #[test]
+    fn a_plugin_tagged_with_something_other_than_its_id_is_a_mismatch() {
+        assert_eq!(
+            check_serialization::<MistaggedKind>(),
+            Err(SerializationMismatch::WrongTag {
+                id: "renamed",
+                tag: "original".to_owned(),
+            })
         );
     }
 }

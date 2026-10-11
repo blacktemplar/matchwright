@@ -461,6 +461,10 @@ mod tests {
     struct Leaf;
 
     impl Plugin for Leaf {
+        fn id() -> &'static str {
+            "leaf"
+        }
+
         fn label() -> &'static str {
             "leaf"
         }
@@ -479,6 +483,10 @@ mod tests {
     struct Composite(Leaf);
 
     impl Plugin for Composite {
+        fn id() -> &'static str {
+            "composite"
+        }
+
         fn label() -> &'static str {
             "composite"
         }

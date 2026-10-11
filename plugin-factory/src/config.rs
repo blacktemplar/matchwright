@@ -1,200 +1,51 @@
 //! The answers a plugin is configured with, i.e. what a program asking the questions of a
 //! [`Schema`](crate::schema::Schema) collects.
 //!
-//! A [`Config`] holds one [`Value`] per field of a schema, keyed by the name of the field. An
-//! answer is a scalar, a plugin, a list of answers of one kind or an answer that may be nothing,
-//! so that a config is a tree as deep as the plugins and lists are nested. A plugin reads its
-//! answers as the Rust types of its parameters, see [`Config::read`] and [`Answer`]; everything
-//! that can go wrong while configuring is a [`ConfigError`] and carries the [`Path`] of the field
-//! it is about.
+//! A [`Config`] holds one JSON [`Value`] per field of a schema, keyed by the name of the field. An
+//! answer is a scalar, a plugin, see [`PluginConfig`], a list of answers of one kind or an answer
+//! that may be nothing, so that a config is a tree as deep as the plugins and lists are nested. A
+//! plugin is built from its config by deserializing it, so it reads its answers through its own
+//! `Deserialize` impl; everything that can go wrong while configuring is a [`ConfigError`] and
+//! carries the [`Path`] of the field it is about.
 
-use std::{
-    any::TypeId,
-    fmt::{self, Display, Formatter},
-};
+use std::fmt::{self, Display, Formatter};
 
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde_json::Map;
+pub use serde_json::Value;
 use thiserror::Error;
 
-use crate::{
-    catalog::PluginKind,
-    schema::{Configurable, FieldKind},
-};
-
-/// The answer to one field of a schema.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// The answer to a [`FieldKind::Bool`] field.
-    Bool(bool),
-    /// The answer to a [`FieldKind::Integer`] field.
-    Integer(i64),
-    /// The answer to a [`FieldKind::Decimal`] field.
-    Decimal(f64),
-    /// The answer to a [`FieldKind::Plugin`] field.
-    Plugin(PluginConfig),
-    /// The answers to a [`FieldKind::List`] field, in the order they were given in.
-    List(Vec<Value>),
-    /// The answer to a [`FieldKind::Optional`] field, which may be nothing.
-    Optional(Option<Box<Value>>),
-}
-
-impl Value {
-    /// The answer of a [`FieldKind::Optional`] field that answers it with nothing.
-    pub const NOTHING: Self = Self::Optional(None);
-
-    /// The answer of a [`FieldKind::List`] field that answers it with no answer at all.
-    pub const EMPTY_LIST: Self = Self::List(Vec::new());
-
-    /// What this kind of answer is called in an error message, as in `FieldKind::name`.
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::Bool(_) => "yes or no",
-            Self::Integer(_) => "a whole number",
-            Self::Decimal(_) => "a number",
-            Self::Plugin(_) => "one plugin",
-            Self::List(_) => "a list",
-            Self::Optional(None) => "nothing",
-            Self::Optional(Some(_)) => "an optional answer",
-        }
-    }
-}
-
-impl From<bool> for Value {
-    fn from(answer: bool) -> Self {
-        Self::Bool(answer)
-    }
-}
-
-impl From<i64> for Value {
-    fn from(answer: i64) -> Self {
-        Self::Integer(answer)
-    }
-}
-
-impl From<f64> for Value {
-    fn from(answer: f64) -> Self {
-        Self::Decimal(answer)
-    }
-}
-
-impl From<PluginConfig> for Value {
-    fn from(answer: PluginConfig) -> Self {
-        Self::Plugin(answer)
-    }
-}
-
-impl<T: Into<Value>> From<Vec<T>> for Value {
-    fn from(answers: Vec<T>) -> Self {
-        Self::List(answers.into_iter().map(Into::into).collect())
-    }
-}
-
-impl<T: Into<Value>> From<Option<T>> for Value {
-    fn from(answer: Option<T>) -> Self {
-        Self::Optional(answer.map(|answer| Box::new(answer.into())))
-    }
-}
-
-/// A Rust type one answer reads as, i.e. the type of a parameter a plugin is configured with.
-///
-/// Implemented for `bool`, `i64` and `f64`, for `Option<T>` of those, which reads a field that may
-/// be answered with nothing, and for `Vec<T>`, which reads a field taking a list. The plugins
-/// answering a field are read with [`Config::plugin`], [`Config::plugins`] and
-/// [`Config::optional_plugin`] instead, since building one takes the kind it is of.
-pub trait Answer: Sized {
-    /// The kind of field this answers.
-    fn kind() -> FieldKind;
-
-    /// This from `answer`, or [`None`] if `answer` is not one a field of [`Self::kind`] takes.
-    fn read(answer: &Value) -> Option<Self>;
-}
-
-impl Answer for bool {
-    fn kind() -> FieldKind {
-        FieldKind::Bool
-    }
-
-    fn read(answer: &Value) -> Option<Self> {
-        match answer {
-            Value::Bool(answer) => Some(*answer),
-            _ => None,
-        }
-    }
-}
-
-impl Answer for i64 {
-    fn kind() -> FieldKind {
-        FieldKind::Integer
-    }
-
-    fn read(answer: &Value) -> Option<Self> {
-        match answer {
-            Value::Integer(answer) => Some(*answer),
-            _ => None,
-        }
-    }
-}
-
-impl Answer for f64 {
-    fn kind() -> FieldKind {
-        FieldKind::Decimal
-    }
-
-    fn read(answer: &Value) -> Option<Self> {
-        match answer {
-            Value::Decimal(answer) => Some(*answer),
-            // a whole number answers a decimal field
-            Value::Integer(answer) => Some(*answer as Self),
-            _ => None,
-        }
-    }
-}
-
-impl<T: Answer> Answer for Option<T> {
-    fn kind() -> FieldKind {
-        FieldKind::optional(T::kind())
-    }
-
-    fn read(answer: &Value) -> Option<Self> {
-        match answer {
-            Value::Optional(None) => Some(None),
-            Value::Optional(Some(answer)) => T::read(answer).map(Some),
-            _ => None,
-        }
-    }
-}
-
-impl<T: Answer> Answer for Vec<T> {
-    fn kind() -> FieldKind {
-        FieldKind::list(T::kind())
-    }
-
-    fn read(answer: &Value) -> Option<Self> {
-        match answer {
-            Value::List(answers) => answers.iter().map(T::read).collect(),
-            _ => None,
-        }
-    }
-}
+use crate::{Plugin, catalog::PluginKind};
 
 /// One plugin as the answer to a field, i.e. which plugin it is and how it is configured.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// As a [`Value`] it is the object `{"type": id, "value": config}`, which is how `typetag`
+/// writes a plugin tagged adjacently with `tag = "type", content = "value"`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginConfig {
-    plugin: TypeId,
+    #[serde(rename = "type")]
+    plugin: String,
+    #[serde(rename = "value")]
     config: Config,
 }
 
 impl PluginConfig {
     /// The plugin `P` configured by `config`.
-    pub fn of<P: Configurable>(config: Config) -> Self {
+    pub fn of<P: Plugin>(config: Config) -> Self {
+        Self::new(P::id(), config)
+    }
+
+    /// The plugin with the id `plugin` configured by `config`, see [`Plugin::id`].
+    pub fn new(plugin: impl Into<String>, config: Config) -> Self {
         Self {
-            plugin: TypeId::of::<P>(),
+            plugin: plugin.into(),
             config,
         }
     }
 
-    /// The id of the plugin this configures, see [`PluginEntry::id`](crate::catalog::PluginEntry).
-    pub fn plugin(&self) -> TypeId {
-        self.plugin
+    /// The id of the plugin this configures, see [`Plugin::id`].
+    pub fn plugin(&self) -> &str {
+        &self.plugin
     }
 
     /// The answers the plugin is configured with.
@@ -209,24 +60,54 @@ impl PluginConfig {
     /// and whatever configuring the plugin fails with otherwise. The path of the error addresses a
     /// field of this config, i.e. it is relative to the plugin.
     pub fn build<K: PluginKind>(&self) -> Result<Box<K::Object>, ConfigError> {
-        let entry = K::entries()
-            .find(|entry| entry.id() == self.plugin)
-            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
-        entry.build(&self.config)
+        K::entry(&self.plugin)
+            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?
+            .build(&self.config)
+    }
+
+    /// The plugin configured by `answer`, or [`None`] if `answer` is not a plugin.
+    pub(crate) fn from_answer(answer: &Value) -> Option<Self> {
+        Self::deserialize(answer).ok()
+    }
+}
+
+impl From<PluginConfig> for Value {
+    fn from(answer: PluginConfig) -> Self {
+        let PluginConfig { plugin, config } = answer;
+        Self::Object(Map::from_iter([
+            ("type".to_owned(), Self::String(plugin)),
+            ("value".to_owned(), Self::Object(config.0)),
+        ]))
     }
 }
 
 /// The answers one plugin is configured with, by the name of the field each answers.
 ///
 /// A config that answers every field of a schema configures the plugin of that schema, see
-/// [`Schema::complete`](crate::schema::Schema::complete); the default one answers nothing.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct Config(Vec<(String, Value)>);
+/// [`Schema::complete`](crate::schema::Schema::complete); the default one answers nothing. As a
+/// [`Value`] it is the object of those answers; `null` deserializes as the config answering
+/// nothing, which is how the config of a unit struct is written, see
+/// [`Configurable`](crate::schema::Configurable).
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct Config(Map<String, Value>);
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::deserialize(deserializer).map(|answers| Self(answers.unwrap_or_default()))
+    }
+}
+
+impl From<Config> for Value {
+    fn from(config: Config) -> Self {
+        Self::Object(config.0)
+    }
+}
 
 impl Config {
     /// A config answering nothing.
-    pub const fn new() -> Self {
-        Self(Vec::new())
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// This config with `field` answered by `answer`, replacing an answer it holds already.
@@ -238,128 +119,58 @@ impl Config {
 
     /// Answers `field` with `answer`, replacing an answer this config holds already.
     pub fn set(&mut self, field: impl Into<String>, answer: impl Into<Value>) {
-        let (field, answer) = (field.into(), answer.into());
-        match self.0.iter_mut().find(|(name, _)| *name == field) {
-            Some((_, answered)) => *answered = answer,
-            None => self.0.push((field, answer)),
-        }
+        self.0.insert(field.into(), answer.into());
     }
 
     /// Removes the answer to `field`, so that it is unanswered again.
     pub fn unset(&mut self, field: &str) {
-        self.0.retain(|(name, _)| name != field);
+        self.0.remove(field);
     }
 
     /// The answer to `field`, or [`None`] if it is unanswered.
+    ///
+    /// A field answered with nothing, i.e. with [`Value::Null`], is answered.
     pub fn get(&self, field: &str) -> Option<&Value> {
-        self.0
-            .iter()
-            .find_map(|(name, answer)| (name == field).then_some(answer))
+        self.0.get(field)
     }
 
-    /// Every field this config answers with its answer, in the order they were answered in.
+    /// Every field this config answers with its answer, in no particular order.
     pub fn answers(&self) -> impl Iterator<Item = (&str, &Value)> {
         self.0.iter().map(|(name, answer)| (name.as_str(), answer))
     }
-
-    /// The answer to `field` as the Rust type `T` reads it, e.g. `f64` for a field taking a
-    /// number, `Option<f64>` for one that may be answered with nothing and `Vec<f64>` for one
-    /// taking a list of numbers.
-    ///
-    /// A field answered with nothing is answered; one with no answer at all is unanswered,
-    /// whatever its kind.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if the field is unanswered, and
-    /// [`ConfigError::WrongKind`] if it is answered by something `T` does not read, anchored to
-    /// where in a nested answer the mismatch is.
-    pub fn read<T: Answer>(&self, field: &str) -> Result<T, ConfigError> {
-        let answer = self.answer(field)?;
-        T::read(answer).ok_or_else(|| {
-            T::kind()
-                .reject(answer)
-                .unwrap_or_else(|| wrong_kind(&T::kind(), answer))
-                .within(Segment::field(field))
-        })
-    }
-
-    /// The plugin of kind `K` that answers `field`.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if the field is unanswered,
-    /// [`ConfigError::WrongKind`] if it is answered by something else, and whatever building the
-    /// plugin fails with otherwise.
-    pub fn plugin<K: PluginKind>(&self, field: &str) -> Result<Box<K::Object>, ConfigError> {
-        plugin_from::<K>(self.answer(field)?).map_err(|error| error.within(Segment::field(field)))
-    }
-
-    /// The plugin of kind `K` that answers `field`, or [`None`] if it is answered with nothing.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if the field is unanswered,
-    /// [`ConfigError::WrongKind`] if it is answered by something else, and whatever building the
-    /// plugin fails with otherwise.
-    pub fn optional_plugin<K: PluginKind>(
-        &self,
-        field: &str,
-    ) -> Result<Option<Box<K::Object>>, ConfigError> {
-        let answer = self.answer(field)?;
-        match answer {
-            Value::Optional(None) => Ok(None),
-            Value::Optional(Some(plugin)) => plugin_from::<K>(plugin).map(Some),
-            _ => Err(wrong_kind(
-                &FieldKind::optional(FieldKind::plugin::<K>()),
-                answer,
-            )),
-        }
-        .map_err(|error| error.within(Segment::field(field)))
-    }
-
-    /// The plugins of kind `K` that answer `field`, in the order they were given in.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::Unanswered`] if the field is unanswered,
-    /// [`ConfigError::WrongKind`] if it is answered by something else, and whatever building the
-    /// first plugin that cannot be built fails with otherwise.
-    pub fn plugins<K: PluginKind>(&self, field: &str) -> Result<Vec<Box<K::Object>>, ConfigError> {
-        let answer = self.answer(field)?;
-        match answer {
-            Value::List(answers) => answers
-                .iter()
-                .enumerate()
-                .map(|(position, answer)| {
-                    plugin_from::<K>(answer).map_err(|error| error.within(Segment::Index(position)))
-                })
-                .collect(),
-            _ => Err(wrong_kind(&FieldKind::plugins::<K>(), answer)),
-        }
-        .map_err(|error| error.within(Segment::field(field)))
-    }
-
-    /// The answer to `field`, whatever kind it is of.
-    fn answer(&self, field: &str) -> Result<&Value, ConfigError> {
-        self.get(field).ok_or_else(|| ConfigError::Unanswered {
-            path: Path::of(field),
-        })
-    }
 }
 
-/// The plugin of kind `K` that `answer` configures, with the paths of its errors relative to the
-/// field `answer` is the answer to.
-fn plugin_from<K: PluginKind>(answer: &Value) -> Result<Box<K::Object>, ConfigError> {
+/// The plugin `P` deserialized from `config`, a completed config as
+/// [`PluginEntry::complete`](crate::catalog::PluginEntry::complete) writes it, which is how the
+/// catalog builds a plugin, see [`plugin_kind!`](crate::plugin_kind).
+///
+/// # Errors
+/// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
+#[doc(hidden)]
+pub fn deserialize<P: DeserializeOwned>(config: &Value) -> Result<P, ConfigError> {
+    serde_path_to_error::deserialize(config).map_err(|error| ConfigError::Rejected {
+        path: Path::of_deserialized(error.path()),
+        reason: error.inner().to_string(),
+    })
+}
+
+/// Whether `P` deserializes from `null`, i.e. is a unit struct, whose config is then written as
+/// `null` rather than as an empty object.
+pub(crate) fn deserializes_from_null<P: DeserializeOwned>() -> bool {
+    serde_json::from_value::<P>(Value::Null).is_ok()
+}
+
+/// What `answer` is called in an error message, as the kind of answer it is.
+pub(crate) fn name_of(answer: &Value) -> &'static str {
     match answer {
-        Value::Plugin(plugin) => plugin.build::<K>(),
-        _ => Err(wrong_kind(&FieldKind::plugin::<K>(), answer)),
-    }
-}
-
-/// The error of a field taking an answer of kind `expected` being answered by `found`, as the
-/// config holding that field sees it, i.e. to be prefixed by the field.
-fn wrong_kind(expected: &FieldKind, found: &Value) -> ConfigError {
-    ConfigError::WrongKind {
-        path: Path::ROOT,
-        expected: expected.name(),
-        found: found.name(),
+        Value::Null => "nothing",
+        Value::Bool(_) => "yes or no",
+        Value::Number(number) if number.is_i64() => "a whole number",
+        Value::Number(_) => "a number",
+        Value::String(_) => "text",
+        Value::Array(_) => "a list",
+        Value::Object(_) if PluginConfig::from_answer(answer).is_some() => "one plugin",
+        Value::Object(_) => "an object",
     }
 }
 
@@ -395,6 +206,31 @@ impl Path {
     /// config further out.
     fn prepend(&mut self, segment: Segment) {
         self.0.insert(0, segment);
+    }
+
+    /// The path of what deserializing a config failed at, where `deserialized` is where in the
+    /// config as a [`Value`] that is.
+    fn of_deserialized(deserialized: &serde_path_to_error::Path) -> Self {
+        use serde_path_to_error::Segment as Deserialized;
+
+        // a config holds answers, a list holds answers, and a plugin answer holds its config under
+        // "value"; its "type" is left out like anything not addressable as a field
+        let mut path = Self::ROOT;
+        let mut in_config = true;
+        for segment in deserialized.iter() {
+            match segment {
+                Deserialized::Map { key } if in_config => {
+                    path = path.then(Segment::field(key.as_str()));
+                    in_config = false;
+                }
+                Deserialized::Map { key } if key == "value" => in_config = true,
+                Deserialized::Seq { index } if !in_config => {
+                    path = path.then(Segment::Index(*index));
+                }
+                _ => break,
+            }
+        }
+        path
     }
 }
 
@@ -445,29 +281,12 @@ pub enum ConfigError {
     },
     #[error("the plugin answering {path} is not registered for the kind of the field")]
     UnknownPlugin { path: Path },
+    /// The plugin's `Deserialize` impl rejected the answer, e.g. through a custom error.
     #[error("{path} is rejected: {reason}")]
     Rejected { path: Path, reason: String },
 }
 
 impl ConfigError {
-    /// The error of a plugin rejecting the answer to its field `field` because of `reason`, e.g.
-    /// "the points for a win cannot be negative".
-    pub fn rejected(field: &str, reason: impl Into<String>) -> Self {
-        Self::Rejected {
-            path: Path::of(field),
-            reason: reason.into(),
-        }
-    }
-
-    /// The error of a plugin rejecting its configuration as a whole because of `reason`, i.e. one
-    /// that belongs to no single field.
-    pub fn rejected_config(reason: impl Into<String>) -> Self {
-        Self::Rejected {
-            path: Path::ROOT,
-            reason: reason.into(),
-        }
-    }
-
     /// What this error is about.
     pub fn path(&self) -> &Path {
         match self {
@@ -513,9 +332,12 @@ mod tests {
 
     #[test]
     fn an_error_seen_from_further_out_is_prefixed_by_the_field_it_is_in() {
-        let error = ConfigError::rejected("points_for_win", "cannot be negative")
-            .within(Segment::Index(1))
-            .within(Segment::field("metrics"));
+        let error = ConfigError::Rejected {
+            path: Path::of("points_for_win"),
+            reason: "cannot be negative".to_owned(),
+        }
+        .within(Segment::Index(1))
+        .within(Segment::field("metrics"));
 
         assert_eq!(error.path(), &nested());
         assert_eq!(
@@ -536,14 +358,11 @@ mod tests {
     fn an_answer_replaces_the_one_of_the_same_field() {
         let config = Config::new()
             .with("points_for_win", 1.0)
-            .with("rounds", 3i64)
+            .with("rounds", 3)
             .with("points_for_win", 2.0);
 
-        assert_eq!(config.read("points_for_win"), Ok(2.0));
-        assert_eq!(
-            config.answers().map(|(field, _)| field).collect::<Vec<_>>(),
-            ["points_for_win", "rounds"]
-        );
+        assert_eq!(config.get("points_for_win"), Some(&Value::from(2.0)));
+        assert_eq!(config.answers().count(), 2);
     }
 
     #[test]
@@ -551,93 +370,62 @@ mod tests {
         let mut config = Config::new().with("third_place_match", true);
         config.unset("third_place_match");
 
+        assert_eq!(config.get("third_place_match"), None);
+    }
+
+    #[test]
+    fn a_field_answered_with_nothing_is_answered() {
+        let config = Config::new().with("points_for_bye", Value::Null);
+
+        assert_eq!(config.get("points_for_bye"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn a_plugin_answer_is_written_as_typetag_writes_an_adjacently_tagged_plugin() {
+        let answer = PluginConfig::new("points", Config::new().with("for_win", 2.0));
+
         assert_eq!(
-            config.read::<bool>("third_place_match"),
-            Err(ConfigError::Unanswered {
-                path: Path::of("third_place_match"),
-            })
+            Value::from(answer.clone()),
+            serde_json::json!({"type": "points", "value": {"for_win": 2.0}})
+        );
+        assert_eq!(
+            serde_json::to_value(&answer).ok(),
+            Some(Value::from(answer.clone()))
+        );
+        assert_eq!(
+            PluginConfig::from_answer(&Value::from(answer.clone())),
+            Some(answer)
         );
     }
 
     #[test]
-    fn an_answer_of_another_kind_is_an_error() {
-        let config = Config::new().with("rounds", true);
+    fn the_path_of_a_deserialization_error_leaves_out_how_plugins_are_written() {
+        let config = serde_json::json!({
+            "tie_breakers": [{"type": "points", "value": {"for_win": -1.0}}]
+        });
+        #[derive(Debug, Deserialize)]
+        struct Points {
+            #[serde(rename = "for_win")]
+            _for_win: u32,
+        }
+        #[derive(Debug, Deserialize)]
+        struct Tagged {
+            #[serde(rename = "value")]
+            _value: Points,
+        }
+        #[derive(Debug, Deserialize)]
+        struct Ranker {
+            #[serde(rename = "tie_breakers")]
+            _tie_breakers: Vec<Tagged>,
+        }
+
+        let error = serde_path_to_error::deserialize::<_, Ranker>(&config).unwrap_err();
 
         assert_eq!(
-            config.read::<i64>("rounds"),
-            Err(ConfigError::WrongKind {
-                path: Path::of("rounds"),
-                expected: "a whole number",
-                found: "yes or no",
-            })
-        );
-    }
-
-    #[test]
-    fn a_whole_number_answers_a_decimal_field() {
-        let config = Config::new().with("points_for_win", 1i64);
-
-        assert_eq!(config.read("points_for_win"), Ok(1.0));
-    }
-
-    #[test]
-    fn a_field_that_may_be_answered_with_nothing_reads_as_an_option() {
-        let config = Config::new()
-            .with("points_for_bye", Some(0.5))
-            .with("points_for_loss", Value::NOTHING);
-
-        assert_eq!(config.read("points_for_bye"), Ok(Some(0.5)));
-        assert_eq!(config.read::<Option<f64>>("points_for_loss"), Ok(None));
-    }
-
-    #[test]
-    fn an_answer_that_is_not_optional_does_not_answer_an_optional_field() {
-        let config = Config::new().with("points_for_bye", 0.5);
-
-        assert_eq!(
-            config.read::<Option<f64>>("points_for_bye"),
-            Err(ConfigError::WrongKind {
-                path: Path::of("points_for_bye"),
-                expected: "an optional answer",
-                found: "a number",
-            })
-        );
-    }
-
-    #[test]
-    fn a_field_taking_a_list_reads_as_a_vec() {
-        let config = Config::new().with("weights", vec![1.0, 0.5]);
-
-        assert_eq!(config.read("weights"), Ok(vec![1.0, 0.5]));
-        assert_eq!(
-            config
-                .read::<Vec<f64>>("weights")
-                .map(|weights| weights.len()),
-            Ok(2)
-        );
-    }
-
-    #[test]
-    fn an_answer_of_another_kind_in_a_list_is_reported_by_its_position() {
-        let config = Config::new().with("weights", vec![Value::Decimal(1.0), Value::Bool(true)]);
-
-        assert_eq!(
-            config.read::<Vec<f64>>("weights"),
-            Err(ConfigError::WrongKind {
-                path: Path::of("weights").then(Segment::Index(1)),
-                expected: "a number",
-                found: "yes or no",
-            })
-        );
-    }
-
-    #[test]
-    fn a_list_and_an_optional_answer_nest() {
-        let config = Config::new().with("rounds_per_phase", vec![Some(3i64), None]);
-
-        assert_eq!(
-            config.read("rounds_per_phase"),
-            Ok(vec![Some(3i64), None::<i64>])
+            Path::of_deserialized(error.path()),
+            Path::of("tie_breakers")
+                .then(Segment::Index(0))
+                .then(Segment::field("for_win"))
         );
     }
 }

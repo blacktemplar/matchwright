@@ -36,6 +36,15 @@ impl<T: Plugin> TotalDeclare for T {
 }
 
 pub trait Plugin: TotalDeclare + 'static {
+    /// What identifies the plugin among the plugins of its kind, in a config as in a saved file,
+    /// e.g. `"my_crate::points"`. Never change it once configurations naming it are saved.
+    ///
+    /// A plugin persisted through `typetag` has to be tagged with this id, see
+    /// [`check_serialization`](catalog::check_serialization).
+    fn id() -> &'static str
+    where
+        Self: Sized;
+
     fn label() -> &'static str
     where
         Self: Sized;
