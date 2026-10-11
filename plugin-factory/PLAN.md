@@ -1,7 +1,7 @@
 # Development plan
 
-Status: the compatibility layer, the catalog, the schemas and the builder are
-implemented. Everything here is about this crate alone; what a consumer does
+Status: the compatibility layer, the catalog, the schemas, the builder and
+resolution are implemented. Everything here is about this crate alone; what a consumer does
 with it is out of scope, see [Not in this crate](#not-in-this-crate).
 
 ## What the crate is for
@@ -60,6 +60,9 @@ traits.
   plugins provide, transitively through their sub-kinds, so that openness covers
   a slot to be filled with a plugin that has slots of its own. `Accepts<K>`,
   `providers_of`, `add_provider_of`, `facts_of_kind`; `check_serialization`.
+  `Composite` (its `declarations` and `ACCEPTS`, a list of `Acceptor::of::<K>()`,
+  each type-checked against `Accepts<K>`) and `resolve(context, composite)`, see
+  [step 3](#3-a-generic-resolution-loop-done).
 - `Plugin` with
   `id`/`label`/`description`/`static_declare`/`dyn_declare`/`schema`/`recommends`/`sub_plugins`
   (`schema` and `recommends` default to nothing), and `TotalDeclare`, which
@@ -176,14 +179,24 @@ The rules the queries follow, which the compatibility layer already supports:
   candidate would wins over the schema default (the first for a single field,
   all that fit together for a list).
 
-### 3. A generic resolution loop
+### 3. A generic resolution loop (done)
 
-Today a consumer writes the loop itself: `unprovided` → `add_provider_of` per
-kind → repeat, since an added plugin can require facts of its own → `order`.
-Lifting it here needs a composite to be describable (its declarations, and which
-kinds it `Accepts`), which step 1's `Kind` makes possible. Optional: the loop is
-six lines, and a consumer that wants a different policy should be able to write
-its own.
+`resolve(context, composite)` runs the loop a consumer used to write itself:
+the first fact required and provided neither by a plugin nor by the context,
+tried once each, gets a provider, and the loop repeats, since an added plugin
+can require facts of its own. A composite describes itself through `Composite`:
+its declarations, and `ACCEPTS`, the kinds a plugin may be added for, each an
+`Acceptor::of::<K>()` that only compiles if the composite `Accepts<K>`.
+
+A fact is settled only if exactly one plugin needing no configuration provides
+it **across all accepted kinds**, not per kind as `add_provider_of` counts: two
+kinds with one provider each would otherwise both add theirs and provide the
+fact twice. Facts the context provides are skipped, since a provider of one
+could only conflict with the context.
+
+`order` stays with the consumer: which slot is a list whose plugins run in
+order is not something `Composite` says. `add_provider_of`/`providers_of` stay
+public for a consumer that wants a different policy.
 
 ### 4. Enforce the static/dynamic contract
 
@@ -228,11 +241,12 @@ the id, so that the id is written once. Separate crate.
   `declaration_of` asks for it explicitly rather than `Plugin` requiring it, so
   each axis decides. Simpler would be `Plugin: Debug`.
 - **`finish` and automatic resolution.** `finish` checks with nothing open, so a
-  required fact that resolution (step 3) would settle — exactly one provider
-  needing no configuration — fails `finish` instead, and shows as an
-  `Unprovided` issue before. Either the builder runs resolution before its
-  final check, or a consumer resolves first (e.g. by setting the single
-  provider an `Unprovided` issue names).
+  required fact that `resolve` would settle — exactly one provider needing no
+  configuration — fails `finish` instead, and shows as an `Unprovided` issue
+  before; `resolve` works on a built composite and so cannot run first. Either
+  the builder resolves on its answer tree before its final check (appending
+  the provider to the answered list field of its kind), or a consumer does so
+  by setting the single provider an `Unprovided` issue names.
 - **Conditions cannot capture**, being `fn(&T) -> bool`, which is what keeps
   `require::<F>(name, None)` inferable. Fine so far.
 

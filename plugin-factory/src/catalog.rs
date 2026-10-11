@@ -7,7 +7,7 @@
 //! defining the axis.
 //!
 //! A program reads the catalog to settle a fact a composite requires but none of its plugins
-//! provides, see [`add_provider_of`], and to offer the plugins of a kind to choose from.
+//! provides, see [`resolve`], and to offer the plugins of a kind to choose from.
 
 use std::{
     any::TypeId,
@@ -21,7 +21,7 @@ use thiserror::Error;
 
 use crate::{
     Plugin,
-    compatibility::{Declaration, OpenFacts, ProvidedFact},
+    compatibility::{self, Declaration, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
     schema::{Configurable, Schema},
 };
@@ -397,6 +397,93 @@ where
     }
 }
 
+/// A composite of plugins as [`resolve`] sees it: what its plugins declare, and the kinds a plugin
+/// may be added for.
+pub trait Composite: Sized + 'static {
+    /// The kinds of plugin the catalog may add to the composite, each with how it is added, see
+    /// [`Acceptor::of`]. A kind listed twice is never added, since which of its slots to add to is
+    /// not a program's choice to make.
+    const ACCEPTS: &'static [Acceptor<Self>];
+
+    /// What the plugins of the composite declare, each named as the checks report it, see
+    /// [`declaration_of`](crate::compatibility::declaration_of).
+    fn declarations(&self) -> Vec<(String, Declaration)>;
+}
+
+/// A kind of plugin a [`Composite`] `C` accepts, see [`Composite::ACCEPTS`].
+pub struct Acceptor<C> {
+    kind: Kind,
+    add: fn(&mut C, &PluginEntry),
+}
+
+impl<C> Acceptor<C> {
+    /// The kind `K`, whose plugins are added to `C` through its [`Accepts`] impl.
+    pub const fn of<K: PluginKind>() -> Self
+    where
+        C: Accepts<K>,
+        Box<K::Object>: DeserializeOwned,
+    {
+        Self {
+            kind: Kind::of::<K>(),
+            add: add_unasked::<K, C>,
+        }
+    }
+
+    /// The kind.
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+}
+
+/// Adds the plugin of `entry`, a plugin of kind `K` that needs no configuration, to `composite`.
+fn add_unasked<K: PluginKind, C: Accepts<K>>(composite: &mut C, entry: &PluginEntry)
+where
+    Box<K::Object>: DeserializeOwned,
+{
+    // the entry was found among the plugins that build unasked, so this fails only for a plugin
+    // whose typetag name is not its id, which check_serialization reports
+    if let Ok(plugin) = PluginConfig::new(entry.id(), Config::new()).build::<K>() {
+        composite.add(plugin);
+    }
+}
+
+/// Adds a plugin to `composite` for every fact its plugins require and neither they nor `context`
+/// provide, including the facts the added plugins require themselves.
+///
+/// A fact is settled only if exactly one registered plugin of all the kinds the composite
+/// [accepts](Composite::ACCEPTS) provides it and needs no configuration; otherwise it stays
+/// unprovided, which [`check_facts`](crate::compatibility::check_facts) reports. Each fact is
+/// tried once. Plugins are added in the order their facts are first required in, so ordering
+/// them by what they require of each other is left to the caller, see
+/// [`order`](crate::compatibility::order).
+pub fn resolve<C: Composite>(context: &Declaration, composite: &mut C) {
+    let mut tried = Vec::new();
+    loop {
+        let declarations = composite.declarations();
+        let Some(fact) = compatibility::unprovided(&declarations)
+            .find(|&fact| !context.provides_type(fact) && !tried.contains(&fact))
+        else {
+            return;
+        };
+        tried.push(fact);
+        let mut providers = C::ACCEPTS.iter().flat_map(|acceptor| {
+            acceptor
+                .kind
+                .entries()
+                .filter(|entry| {
+                    entry.declaration().provides_type(fact)
+                        && entry.instance(&Config::new()).is_ok()
+                })
+                .map(move |entry| (acceptor, entry))
+        });
+        if let Some((acceptor, entry)) = providers.next()
+            && providers.next().is_none()
+        {
+            (acceptor.add)(composite, entry);
+        }
+    }
+}
+
 /// Every registered plugin of kind `K` that provides a fact of type `fact`, whatever its
 /// configuration.
 pub fn providers_of<K: PluginKind>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry> {
@@ -502,12 +589,15 @@ pub enum SerializationMismatch {
 /// of a program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::{any::Any, fmt::Debug};
+    use std::{any::Any, fmt::Debug, iter};
 
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::{compatibility::OpenFacts, schema::Field};
+    use crate::{
+        compatibility::{OpenFacts, declaration_of},
+        schema::Field,
+    };
 
     /// A fact exactly one registered plugin provides unasked.
     #[derive(Debug)]
@@ -740,7 +830,7 @@ mod tests {
         }
 
         fn static_declare(declaration: &mut Declaration) {
-            declaration.provide(Deep);
+            declaration.provide(Deep).provide(Crosswise);
         }
 
         fn schema() -> Schema {
@@ -759,17 +849,57 @@ mod tests {
         NestedKind::register::<DeepProvider>()
     }
 
-    /// A composite that every plugin of [`TestedKind`] can be added to.
-    #[derive(Debug, Default)]
-    struct Composite(Vec<Box<dyn Tested>>);
+    /// A fact only [`Chained`] provides.
+    #[derive(Debug)]
+    struct Downstream;
 
-    impl Accepts<TestedKind> for Composite {
+    /// A fact a plugin of [`TestedKind`] and one of [`NestedKind`] provide unasked.
+    #[derive(Debug)]
+    struct Crosswise;
+
+    /// The only plugin providing [`Downstream`], requiring what [`OnlyProvider`] provides.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Chained;
+
+    impl Plugin for Chained {
+        fn id() -> &'static str {
+            "chained"
+        }
+
+        fn label() -> &'static str {
+            "chained"
+        }
+
+        fn description() -> &'static str {
+            "a plugin requiring the settled fact"
+        }
+
+        fn static_declare(declaration: &mut Declaration) {
+            declaration
+                .provide(Downstream)
+                .provide(Crosswise)
+                .require::<Settled>("the settled fact", None);
+        }
+    }
+
+    #[typetag::serde(name = "chained")]
+    impl Tested for Chained {}
+
+    inventory::submit! {
+        TestedKind::register::<Chained>()
+    }
+
+    /// A collection that every plugin of [`TestedKind`] can be added to.
+    #[derive(Debug, Default)]
+    struct Plugins(Vec<Box<dyn Tested>>);
+
+    impl Accepts<TestedKind> for Plugins {
         fn add(&mut self, plugin: Box<dyn Tested>) {
             self.0.push(plugin);
         }
     }
 
-    impl Composite {
+    impl Plugins {
         /// The [`Debug`] forms of the plugins added to it, since a boxed plugin cannot be
         /// downcast.
         fn plugins(&self) -> Vec<String> {
@@ -778,8 +908,8 @@ mod tests {
     }
 
     /// The composite the plugin providing a fact of the type of `fact` is added to.
-    fn with_provider_of(fact: &dyn Any) -> Composite {
-        let mut composite = Composite::default();
+    fn with_provider_of(fact: &dyn Any) -> Plugins {
+        let mut composite = Plugins::default();
         add_provider_of::<TestedKind, _>(&mut composite, fact.type_id());
         composite
     }
@@ -921,7 +1051,7 @@ mod tests {
 
     #[test]
     fn every_plugin_of_the_axis_is_registered_once() {
-        assert_eq!(TestedKind::entries().count(), 5);
+        assert_eq!(TestedKind::entries().count(), 6);
         assert_eq!(check_serialization::<TestedKind>(), Ok(()));
         assert_eq!(check_serialization::<NestedKind>(), Ok(()));
     }
@@ -934,11 +1064,114 @@ mod tests {
             TypeId::of::<Configured>(),
             TypeId::of::<Shared>(),
             TypeId::of::<Deep>(),
+            TypeId::of::<Downstream>(),
+            TypeId::of::<Crosswise>(),
         ]);
 
         // the two kinds nest each other, so either one could contribute everything
         assert_eq!(facts_of_kind::<TestedKind>(), facts);
         assert_eq!(facts_of_kind::<NestedKind>(), facts);
+    }
+
+    /// A composite accepting plugins of both kinds, whose own requirements are `requires`.
+    struct Resolved {
+        requires: fn(&mut Declaration),
+        tested: Vec<Box<dyn Tested>>,
+        nested: Vec<Box<dyn Nested>>,
+    }
+
+    impl Accepts<TestedKind> for Resolved {
+        fn add(&mut self, plugin: Box<dyn Tested>) {
+            self.tested.push(plugin);
+        }
+    }
+
+    impl Accepts<NestedKind> for Resolved {
+        fn add(&mut self, plugin: Box<dyn Nested>) {
+            self.nested.push(plugin);
+        }
+    }
+
+    impl Composite for Resolved {
+        const ACCEPTS: &'static [Acceptor<Self>] =
+            &[Acceptor::of::<TestedKind>(), Acceptor::of::<NestedKind>()];
+
+        fn declarations(&self) -> Vec<(String, Declaration)> {
+            iter::once(("requirements".to_owned(), Declaration::of(self.requires)))
+                .chain(self.tested.iter().map(|plugin| declaration_of(&**plugin)))
+                .chain(self.nested.iter().map(|plugin| declaration_of(&**plugin)))
+                .collect()
+        }
+    }
+
+    /// The [`Debug`] forms of the plugins [`resolve`] adds to a composite requiring `requires`
+    /// with `context`, those of [`TestedKind`] first.
+    fn resolved(context: &Declaration, requires: fn(&mut Declaration)) -> Vec<String> {
+        let mut composite = Resolved {
+            requires,
+            tested: Vec::new(),
+            nested: Vec::new(),
+        };
+        resolve(context, &mut composite);
+        let tested = composite.tested.iter().map(|plugin| format!("{plugin:?}"));
+        let nested = composite.nested.iter().map(|plugin| format!("{plugin:?}"));
+        tested.chain(nested).collect()
+    }
+
+    #[test]
+    fn resolving_adds_the_providers_of_what_the_added_plugins_require() {
+        assert_eq!(
+            resolved(&Declaration::new(), |declaration| {
+                declaration.require::<Downstream>("the downstream fact", None);
+            }),
+            [format!("{Chained:?}"), format!("{OnlyProvider:?}")]
+        );
+    }
+
+    #[test]
+    fn resolving_adds_a_provider_of_any_accepted_kind() {
+        assert_eq!(
+            resolved(&Declaration::new(), |declaration| {
+                declaration.require::<Deep>("the deep fact", None);
+            }),
+            [format!("{:?}", DeepProvider { inner: None })]
+        );
+    }
+
+    #[test]
+    fn resolving_leaves_a_fact_provided_by_plugins_of_two_kinds_unprovided() {
+        assert!(
+            resolved(&Declaration::new(), |declaration| {
+                declaration.require::<Crosswise>("the crosswise fact", None);
+            })
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn resolving_adds_nothing_for_a_fact_the_context_provides() {
+        let context = Declaration::of(|declaration| {
+            declaration.provide(Settled);
+        });
+
+        assert!(
+            resolved(&context, |declaration| {
+                declaration.require::<Settled>("the settled fact", None);
+            })
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn resolving_leaves_an_ambiguous_fact_unprovided_and_settles_the_others() {
+        assert_eq!(
+            resolved(&Declaration::new(), |declaration| {
+                declaration
+                    .require::<Ambiguous>("the ambiguous fact", None)
+                    .require::<Settled>("the settled fact", None);
+            }),
+            [format!("{OnlyProvider:?}")]
+        );
     }
 
     /// An axis whose plugins are tagged with something other than their ids, so that
