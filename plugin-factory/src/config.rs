@@ -16,7 +16,7 @@ pub use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    Plugin,
+    PluginType,
     catalog::{Kind, PluginKind},
 };
 
@@ -34,11 +34,11 @@ pub struct PluginConfig {
 
 impl PluginConfig {
     /// The plugin `P` configured by `config`.
-    pub fn of<P: Plugin>(config: Config) -> Self {
-        Self::new(P::id(), config)
+    pub fn of<P: PluginType>(config: Config) -> Self {
+        Self::new(P::ID, config)
     }
 
-    /// The plugin with the id `plugin` configured by `config`, see [`Plugin::id`].
+    /// The plugin with the id `plugin` configured by `config`, see [`PluginType::ID`].
     pub fn new(plugin: impl Into<String>, config: Config) -> Self {
         Self {
             plugin: plugin.into(),
@@ -46,7 +46,7 @@ impl PluginConfig {
         }
     }
 
-    /// The id of the plugin this configures, see [`Plugin::id`].
+    /// The id of the plugin this configures, see [`PluginType::ID`].
     pub fn plugin(&self) -> &str {
         &self.plugin
     }

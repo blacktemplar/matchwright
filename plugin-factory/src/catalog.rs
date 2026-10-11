@@ -20,10 +20,10 @@ use serde_json::Map;
 use thiserror::Error;
 
 use crate::{
-    Plugin,
+    Plugin, PluginType,
     compatibility::{self, Declaration, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
-    schema::{Configurable, Schema},
+    schema::Schema,
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
@@ -39,8 +39,8 @@ pub trait PluginKind: Sized + 'static {
     /// Every plugin registered for this axis, in no particular order.
     fn entries() -> impl Iterator<Item = &'static PluginEntry>;
 
-    /// The plugin registered for this axis with the id `id`, see [`Plugin::id`], or [`None`] if
-    /// none is.
+    /// The plugin registered for this axis with the id `id`, see [`PluginType::ID`], or [`None`]
+    /// if none is.
     fn entry(id: &str) -> Option<&'static PluginEntry> {
         Self::entries().find(|entry| entry.id() == id)
     }
@@ -83,22 +83,13 @@ pub trait PluginObject: Plugin {
 ///     pub SeedingKind for dyn Seeding
 /// }
 ///
-/// #[derive(Debug, Deserialize)]
+/// #[derive(Debug, Deserialize, Plugin)]
+/// #[plugin(
+///     id = "my_crate::by_rank",
+///     label = "by rank",
+///     description = "the best entrant is seeded first"
+/// )]
 /// struct ByRank;
-///
-/// impl Plugin for ByRank {
-///     fn id() -> &'static str {
-///         "my_crate::by_rank"
-///     }
-///
-///     fn label() -> &'static str {
-///         "by rank"
-///     }
-///
-///     fn description() -> &'static str {
-///         "the best entrant is seeded first"
-///     }
-/// }
 ///
 /// impl Seeding for ByRank {
 ///     fn seed(&self) {}
@@ -117,10 +108,10 @@ macro_rules! plugin_kind {
 
         impl $kind {
             /// Registers the plugin `P` for this axis, which is configured by answering its
-            /// schema, see `Plugin::schema`.
+            /// schema, see `Configurable::schema`.
             pub const fn register<P>() -> Self
             where
-                P: $crate::schema::Configurable + $object,
+                P: $crate::PluginType + $object,
             {
                 Self($crate::catalog::PluginEntry::new::<P>())
             }
@@ -156,9 +147,9 @@ macro_rules! plugin_kind {
 /// plugin but does not build it: a plugin is built as a plugin of its kind, see
 /// [`PluginConfig::build`].
 pub struct PluginEntry {
-    id: fn() -> &'static str,
-    label: fn() -> &'static str,
-    description: fn() -> &'static str,
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
     declare: fn(&mut Declaration),
     instantiate: fn(&Value) -> Result<Box<dyn Plugin>, ConfigError>,
     schema: fn() -> Schema,
@@ -167,42 +158,42 @@ pub struct PluginEntry {
 
 impl PluginEntry {
     /// The entry of the plugin `P`.
-    pub const fn new<P: Plugin + Configurable>() -> Self {
+    pub const fn new<P: PluginType>() -> Self {
         Self {
-            id: P::id,
-            label: P::label,
-            description: P::description,
-            declare: P::static_declare,
+            id: P::ID,
+            label: P::LABEL,
+            description: P::DESCRIPTION,
+            declare: P::declare_static,
             instantiate: instantiate::<P>,
-            schema: <P as Plugin>::schema,
+            schema: P::schema,
             is_unit: config::deserializes_from_null::<P>,
         }
     }
 
-    /// What identifies the plugin, see [`Plugin::id`].
+    /// What identifies the plugin, see [`PluginType::ID`].
     pub fn id(&self) -> &'static str {
-        (self.id)()
+        self.id
     }
 
     /// What an operator picking a plugin reads.
     pub fn label(&self) -> &'static str {
-        (self.label)()
+        self.label
     }
 
     /// What an operator picking a plugin reads about what it does.
     pub fn description(&self) -> &'static str {
-        (self.description)()
+        self.description
     }
 
     /// What the plugin provides and requires whatever its configuration, see
-    /// [`Plugin::static_declare`]. Built on every call.
+    /// [`PluginType::declare_static`]. Built on every call.
     pub fn declaration(&self) -> Declaration {
         Declaration::of(self.declare)
     }
 
-    /// What the plugin as `config` configures it provides and requires, its sub-plugins included,
-    /// see [`TotalDeclare`](crate::TotalDeclare): the [static declaration](Self::declaration) and
-    /// what this configuration adds to it.
+    /// What the plugin as `config` configures it provides and requires, its sub-plugins included:
+    /// the [static declaration](Self::declaration), what this configuration adds to it, see
+    /// [`Plugin::declare`], and what the plugins in its fields declare.
     ///
     /// Builds the plugin from `config` completed, see [`Self::complete`], and drops it again.
     ///
@@ -212,7 +203,7 @@ impl PluginEntry {
     pub fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
         let instance = self.instance(config)?;
         Ok(Declaration::of(|declaration| {
-            instance.total_declare(declaration);
+            instance.declare_all(declaration);
         }))
     }
 
@@ -227,7 +218,7 @@ impl PluginEntry {
     }
 
     /// What has to be answered in order to create the plugin, see
-    /// [`Plugin::schema`]. Built on every call.
+    /// [`Configurable::schema`](crate::schema::Configurable::schema). Built on every call.
     pub fn schema(&self) -> Schema {
         (self.schema)()
     }
@@ -273,7 +264,7 @@ impl Debug for PluginEntry {
 
 /// The plugin `P` deserialized from `config`, its completed config, see
 /// [`PluginEntry::instance`].
-fn instantiate<P: Plugin + Configurable>(config: &Value) -> Result<Box<dyn Plugin>, ConfigError> {
+fn instantiate<P: PluginType>(config: &Value) -> Result<Box<dyn Plugin>, ConfigError> {
     Ok(Box::new(config::deserialize::<P>(config)?))
 }
 
@@ -518,7 +509,7 @@ pub fn facts_of_kind<K: PluginKind>() -> OpenFacts {
 
 /// Checks that the registered plugins of kind `K` serialize the way they are built: no two with
 /// the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"` with its
-/// [id](Plugin::id) and by `"value"` with an object holding every field of its schema.
+/// [id](PluginType::ID) and by `"value"` with an object holding every field of its schema.
 ///
 /// Meant for a test of the crate declaring the kind, since the id of a plugin persisted through
 /// `typetag` is written a second time as the name of its `typetag` impl, unless the plugin is
@@ -611,14 +602,15 @@ pub enum SerializationMismatch {
 /// of a program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::{any::Any, fmt::Debug, iter};
+    use std::{any::Any, iter};
 
     use serde::{Deserialize, Serialize};
 
     use super::*;
     use crate::{
         compatibility::{OpenFacts, declaration_of},
-        schema::Field,
+        register,
+        schema::{Configurable, Field},
     };
 
     /// A fact exactly one registered plugin provides unasked.
@@ -641,10 +633,9 @@ mod tests {
     #[derive(Debug)]
     struct Unknown;
 
-    /// A plugin axis with no behavior at all, so that a test plugin is its declaration. [`Debug`]
-    /// is what names a plugin in an error message, so an axis asks for it.
+    /// A plugin axis with no behavior at all, so that a test plugin is its declaration.
     #[typetag::serde(tag = "type", content = "value")]
-    trait Tested: Plugin + Debug {}
+    trait Tested: Plugin {}
 
     plugin_kind! {
         /// The axis of [`Tested`].
@@ -652,127 +643,76 @@ mod tests {
     }
 
     /// The only plugin providing [`Settled`], and one of the two providing [`Shared`].
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "only_provider",
+        label = "only provider",
+        description = "the one plugin providing the settled fact",
+        declare_static = Self::declare_static
+    )]
     struct OnlyProvider;
 
-    impl Plugin for OnlyProvider {
-        fn id() -> &'static str {
-            "only_provider"
-        }
-
-        fn label() -> &'static str {
-            "only provider"
-        }
-
-        fn description() -> &'static str {
-            "the one plugin providing the settled fact"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
+    impl OnlyProvider {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Settled).provide(Shared);
         }
     }
 
-    #[typetag::serde(name = "only_provider")]
+    #[register]
     impl Tested for OnlyProvider {}
 
-    inventory::submit! {
-        TestedKind::register::<OnlyProvider>()
-    }
-
     /// One of the two plugins providing [`Ambiguous`].
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "one_provider",
+        label = "one provider",
+        description = "a plugin providing the ambiguous fact",
+        declare_static = provides_ambiguous
+    )]
     struct OneProvider;
 
-    impl Plugin for OneProvider {
-        fn id() -> &'static str {
-            "one_provider"
-        }
-
-        fn label() -> &'static str {
-            "one provider"
-        }
-
-        fn description() -> &'static str {
-            "a plugin providing the ambiguous fact"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
-            declaration.provide(Ambiguous);
-        }
-    }
-
-    #[typetag::serde(name = "one_provider")]
+    #[register]
     impl Tested for OneProvider {}
 
-    inventory::submit! {
-        TestedKind::register::<OneProvider>()
-    }
-
     /// The other plugin providing [`Ambiguous`].
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "another_provider",
+        label = "another provider",
+        description = "the other plugin providing the ambiguous fact",
+        declare_static = provides_ambiguous
+    )]
     struct AnotherProvider;
 
-    impl Plugin for AnotherProvider {
-        fn id() -> &'static str {
-            "another_provider"
-        }
-
-        fn label() -> &'static str {
-            "another provider"
-        }
-
-        fn description() -> &'static str {
-            "the other plugin providing the ambiguous fact"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
-            declaration.provide(Ambiguous);
-        }
-    }
-
-    #[typetag::serde(name = "another_provider")]
+    #[register]
     impl Tested for AnotherProvider {}
 
-    inventory::submit! {
-        TestedKind::register::<AnotherProvider>()
+    fn provides_ambiguous(declaration: &mut Declaration) {
+        declaration.provide(Ambiguous);
     }
 
     /// A plugin with a field without a default, so that the catalog cannot create it. The answer
     /// is only read in its [`Debug`] form, since a boxed plugin cannot be downcast.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "configured_provider",
+        label = "configured provider",
+        description = "a plugin that has to be configured",
+        declare_static = Self::declare_static
+    )]
     struct ConfiguredProvider {
+        #[plugin(label = "Rounds")]
         rounds: i64,
     }
 
-    impl Plugin for ConfiguredProvider {
-        fn id() -> &'static str {
-            "configured_provider"
-        }
-
-        fn label() -> &'static str {
-            "configured provider"
-        }
-
-        fn description() -> &'static str {
-            "a plugin that has to be configured"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
+    impl ConfiguredProvider {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Configured).provide(Shared);
         }
-
-        fn schema() -> Schema {
-            Schema::new().field(Field::integer("rounds", "Rounds"))
-        }
     }
 
-    #[typetag::serde(name = "configured_provider")]
+    #[register]
     impl Tested for ConfiguredProvider {}
-
-    inventory::submit! {
-        TestedKind::register::<ConfiguredProvider>()
-    }
 
     /// A fact only a plugin of [`NestedKind`] provides.
     #[derive(Debug)]
@@ -780,7 +720,7 @@ mod tests {
 
     /// A plugin axis whose plugins only ever fill a field of a plugin of [`TestedKind`].
     #[typetag::serde(tag = "type", content = "value")]
-    trait Nested: Plugin + Debug {}
+    trait Nested: Plugin {}
 
     plugin_kind! {
         /// The axis of [`Nested`].
@@ -789,87 +729,42 @@ mod tests {
 
     /// A plugin with a field taking a plugin or nothing, of a kind its own kind takes nowhere
     /// else.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "wrapper",
+        label = "wrapper",
+        description = "a plugin with a slot of another kind"
+    )]
     struct Wrapper {
+        #[plugin(label = "Nested")]
         nested: Option<Box<dyn Nested>>,
     }
 
-    impl Plugin for Wrapper {
-        fn id() -> &'static str {
-            "wrapper"
-        }
-
-        fn label() -> &'static str {
-            "wrapper"
-        }
-
-        fn description() -> &'static str {
-            "a plugin with a slot of another kind"
-        }
-
-        fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {
-            Some(Box::new(
-                self.nested
-                    .iter()
-                    .map(|nested| nested.as_ref() as &dyn Plugin),
-            ))
-        }
-
-        fn schema() -> Schema {
-            Schema::new().field(
-                Field::plugin::<NestedKind>("nested", "Nested")
-                    .optional()
-                    .with_default(Value::Null),
-            )
-        }
-    }
-
-    #[typetag::serde(name = "wrapper")]
+    #[register]
     impl Tested for Wrapper {}
-
-    inventory::submit! {
-        TestedKind::register::<Wrapper>()
-    }
 
     /// The plugin providing [`Deep`], with a field of the kind its wrapper is of, so that the two
     /// kinds nest each other.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "deep_provider",
+        label = "deep provider",
+        description = "the one plugin providing the deep fact",
+        declare_static = Self::declare_static
+    )]
     struct DeepProvider {
+        #[plugin(label = "Inner")]
         inner: Option<Box<dyn Tested>>,
     }
 
-    impl Plugin for DeepProvider {
-        fn id() -> &'static str {
-            "deep_provider"
-        }
-
-        fn label() -> &'static str {
-            "deep provider"
-        }
-
-        fn description() -> &'static str {
-            "the one plugin providing the deep fact"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
+    impl DeepProvider {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Deep).provide(Crosswise);
         }
-
-        fn schema() -> Schema {
-            Schema::new().field(
-                Field::plugin::<TestedKind>("inner", "Inner")
-                    .optional()
-                    .with_default(Value::Null),
-            )
-        }
     }
 
-    #[typetag::serde(name = "deep_provider")]
+    #[register]
     impl Nested for DeepProvider {}
-
-    inventory::submit! {
-        NestedKind::register::<DeepProvider>()
-    }
 
     /// A fact only [`Chained`] provides.
     #[derive(Debug)]
@@ -880,23 +775,17 @@ mod tests {
     struct Crosswise;
 
     /// The only plugin providing [`Downstream`], requiring what [`OnlyProvider`] provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "chained",
+        label = "chained",
+        description = "a plugin requiring the settled fact",
+        declare_static = Self::declare_static
+    )]
     struct Chained;
 
-    impl Plugin for Chained {
-        fn id() -> &'static str {
-            "chained"
-        }
-
-        fn label() -> &'static str {
-            "chained"
-        }
-
-        fn description() -> &'static str {
-            "a plugin requiring the settled fact"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
+    impl Chained {
+        fn declare_static(declaration: &mut Declaration) {
             declaration
                 .provide(Downstream)
                 .provide(Crosswise)
@@ -904,12 +793,29 @@ mod tests {
         }
     }
 
-    #[typetag::serde(name = "chained")]
+    #[register]
     impl Tested for Chained {}
 
-    inventory::submit! {
-        TestedKind::register::<Chained>()
+    /// A plugin written by hand rather than derived, registered as a derived one is.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Handwritten;
+
+    impl Plugin for Handwritten {}
+
+    impl Configurable for Handwritten {
+        fn schema() -> Schema {
+            Schema::new()
+        }
     }
+
+    impl PluginType for Handwritten {
+        const ID: &'static str = "handwritten";
+        const LABEL: &'static str = "handwritten";
+        const DESCRIPTION: &'static str = "a plugin written by hand";
+    }
+
+    #[register]
+    impl Tested for Handwritten {}
 
     /// A collection that every plugin of [`TestedKind`] can be added to.
     #[derive(Debug, Default)]
@@ -937,8 +843,8 @@ mod tests {
     }
 
     /// The entry of the plugin `P`.
-    fn entry_of<P: Plugin>() -> &'static PluginEntry {
-        TestedKind::entry(P::id()).expect("the plugin is registered")
+    fn entry_of<P: PluginType>() -> &'static PluginEntry {
+        TestedKind::entry(P::ID).expect("the plugin is registered")
     }
 
     #[test]
@@ -946,8 +852,8 @@ mod tests {
         let entry = entry_of::<OnlyProvider>();
 
         assert_eq!(entry.id(), "only_provider");
-        assert_eq!(entry.label(), OnlyProvider::label());
-        assert_eq!(entry.description(), OnlyProvider::description());
+        assert_eq!(entry.label(), OnlyProvider::LABEL);
+        assert_eq!(entry.description(), OnlyProvider::DESCRIPTION);
         assert!(entry.declaration().provides_type(TypeId::of::<Settled>()));
         assert!(entry.schema().fields().is_empty());
     }
@@ -1073,7 +979,7 @@ mod tests {
 
     #[test]
     fn every_plugin_of_the_axis_is_registered_once() {
-        assert_eq!(TestedKind::entries().count(), 6);
+        assert_eq!(TestedKind::entries().count(), 7);
         assert_eq!(check_serialization::<TestedKind>(), Ok(()));
         assert_eq!(check_serialization::<NestedKind>(), Ok(()));
     }
@@ -1199,28 +1105,29 @@ mod tests {
     /// An axis whose plugins are tagged with something other than their ids, so that
     /// [`check_serialization`] has a mismatch to find.
     #[typetag::serde(tag = "type", content = "value")]
-    trait Mistagged: Plugin + Debug {}
+    trait Mistagged: Plugin {}
 
     plugin_kind! {
         /// The axis of [`Mistagged`].
         MistaggedKind for dyn Mistagged
     }
 
+    /// A plugin written by hand, which is what makes its tag differ from its id.
     #[derive(Debug, Serialize, Deserialize)]
     struct Renamed;
 
-    impl Plugin for Renamed {
-        fn id() -> &'static str {
-            "renamed"
-        }
+    impl Plugin for Renamed {}
 
-        fn label() -> &'static str {
-            "renamed"
+    impl Configurable for Renamed {
+        fn schema() -> Schema {
+            Schema::new()
         }
+    }
 
-        fn description() -> &'static str {
-            "a plugin whose typetag name is not its id"
-        }
+    impl PluginType for Renamed {
+        const ID: &'static str = "renamed";
+        const LABEL: &'static str = "renamed";
+        const DESCRIPTION: &'static str = "a plugin whose typetag name is not its id";
     }
 
     #[typetag::serde(name = "original")]

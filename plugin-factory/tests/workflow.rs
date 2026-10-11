@@ -2,10 +2,10 @@
 //! program browses the catalog, an operator configures a phase with the builder, the phase is
 //! built, saved and loaded again, and what a phase built elsewhere lacks is resolved.
 
-use std::{any::TypeId, fmt::Debug, iter};
+use std::{any::TypeId, iter};
 
 use plugin_factory::{
-    Plugin,
+    Plugin, PluginType,
     builder::{Builder, FinishError, Problem},
     catalog::{
         Acceptor, Accepts, Composite, Kind, PluginKind, check_serialization, facts_of_kind,
@@ -43,7 +43,7 @@ struct Matches;
 
 /// How the matches of a phase are scheduled.
 #[typetag::serde(tag = "type", content = "value")]
-trait Format: Plugin + Debug {}
+trait Format: Plugin {}
 
 plugin_kind! {
     /// The axis of [`Format`].
@@ -52,7 +52,7 @@ plugin_kind! {
 
 /// What is calculated for an entrant.
 #[typetag::serde(tag = "type", content = "value")]
-trait Metric: Plugin + Debug {}
+trait Metric: Plugin {}
 
 plugin_kind! {
     /// The axis of [`Metric`].
@@ -65,8 +65,8 @@ plugin_kind! {
     id = "full::round_robin",
     label = "round robin",
     description = "everyone plays everyone",
-    static_declare = Self::declare,
-    recommends = Self::recommend
+    declare_static = Self::declare_static,
+    recommends = Self::recommends
 )]
 struct RoundRobin {
     #[serde(default = "one_round")]
@@ -79,11 +79,11 @@ fn one_round() -> u32 {
 }
 
 impl RoundRobin {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.provide(Byes);
     }
 
-    fn recommend(&self) -> Vec<PluginConfig> {
+    fn recommends(&self) -> Vec<PluginConfig> {
         vec![plugin::<Wins>(), plugin::<MatchCount>(), plugin::<Score>()]
     }
 }
@@ -97,7 +97,7 @@ impl Format for RoundRobin {}
     id = "full::knockout",
     label = "knockout",
     description = "the loser of a match is out",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct Knockout {
     #[serde(default)]
@@ -106,7 +106,7 @@ struct Knockout {
 }
 
 impl Knockout {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.provide(Eliminating);
     }
 }
@@ -120,12 +120,12 @@ impl Format for Knockout {}
     id = "full::doubles",
     label = "doubles",
     description = "pairs play pairs",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct Doubles;
 
 impl Doubles {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.require(
             "the entrants per ranking",
             Some(Condition::new(
@@ -145,8 +145,8 @@ impl Format for Doubles {}
     id = "full::wins",
     label = "wins",
     description = "points per win",
-    static_declare = Self::declare,
-    dyn_declare = Self::declare_configured
+    declare_static = Self::declare_static,
+    declare = Self::declare
 )]
 struct Wins {
     #[serde(default = "one_point", deserialize_with = "non_negative")]
@@ -170,11 +170,11 @@ fn non_negative<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Er
 }
 
 impl Wins {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.provide(Points);
     }
 
-    fn declare_configured(&self, declaration: &mut Declaration) {
+    fn declare(&self, declaration: &mut Declaration) {
         if self.counts_byes {
             declaration.require::<Byes>("byes", None);
         }
@@ -190,12 +190,12 @@ impl Metric for Wins {}
     id = "full::score",
     label = "score",
     description = "the points scored",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct Score;
 
 impl Score {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.provide(Points);
     }
 }
@@ -209,12 +209,12 @@ impl Metric for Score {}
     id = "full::match_count",
     label = "match count",
     description = "the matches played",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct MatchCount;
 
 impl MatchCount {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.provide(Matches);
     }
 }
@@ -228,12 +228,12 @@ impl Metric for MatchCount {}
     id = "full::buchholz",
     label = "buchholz",
     description = "the points of the opponents",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct Buchholz;
 
 impl Buchholz {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
             .require::<Points>("points", None)
             .require::<Matches>("the matches", None);
@@ -249,12 +249,12 @@ impl Metric for Buchholz {}
     id = "full::losses",
     label = "losses",
     description = "the matches lost",
-    static_declare = Self::declare
+    declare_static = Self::declare_static
 )]
 struct Losses;
 
 impl Losses {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration.require::<Eliminating>("eliminations", None);
     }
 }
@@ -344,7 +344,7 @@ fn path(text: &str) -> Path {
 }
 
 /// The plugin `P` with nothing answered.
-fn plugin<P: Plugin>() -> PluginConfig {
+fn plugin<P: PluginType>() -> PluginConfig {
     PluginConfig::of::<P>(Config::new())
 }
 

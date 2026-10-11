@@ -5,7 +5,7 @@ use syn::{
     Type, ext::IdentExt, meta::ParseNestedMeta, token::Paren,
 };
 
-/// The `Plugin` impl of the struct `input`, and the id `register` reads.
+/// The `Plugin`, `Configurable` and `PluginType` impls of the struct `input`.
 pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
         return Err(Error::new_spanned(
@@ -37,22 +37,22 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
         id,
         label,
         description,
-        static_declare,
-        dyn_declare,
+        declare_static,
+        declare,
         recommends,
         default,
     } = &container;
-    let static_declare = static_declare.as_ref().map(|static_declare| {
+    let declare_static = declare_static.as_ref().map(|declare_static| {
         quote! {
-            fn static_declare(declaration: &mut ::plugin_factory::compatibility::Declaration) {
-                (#static_declare)(declaration)
+            fn declare_static(declaration: &mut ::plugin_factory::compatibility::Declaration) {
+                (#declare_static)(declaration)
             }
         }
     });
-    let dyn_declare = dyn_declare.as_ref().map(|dyn_declare| {
+    let declare = declare.as_ref().map(|declare| {
         quote! {
-            fn dyn_declare(&self, declaration: &mut ::plugin_factory::compatibility::Declaration) {
-                (#dyn_declare)(self, declaration)
+            fn declare(&self, declaration: &mut ::plugin_factory::compatibility::Declaration) {
+                (#declare)(self, declaration)
             }
         }
     });
@@ -63,53 +63,41 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             }
         }
     });
-    // a plugin without fields keeps the defaults, so that it reads as one written by hand would
-    let schema_and_sub_plugins = (!fields.is_empty()).then(|| {
-        let schema_fields = fields
-            .iter()
-            .map(|field| field.schema_field(default.as_ref()));
+    let schema_fields = fields
+        .iter()
+        .map(|field| field.schema_field(default.as_ref()));
+    // a plugin without fields keeps the default, so that it reads as one written by hand would
+    let plugins = (!fields.is_empty()).then(|| {
         let field_names = fields.iter().map(|field| &field.ident);
         quote! {
-            fn schema() -> ::plugin_factory::schema::Schema {
-                ::plugin_factory::schema::Schema::new() #(.field(#schema_fields))*
-            }
-
-            fn sub_plugins(
-                &self,
-            ) -> ::std::option::Option<
-                ::std::boxed::Box<
-                    dyn ::std::iter::Iterator<Item = &dyn ::plugin_factory::Plugin> + '_,
-                >,
-            > {
+            fn plugins(&self) -> ::std::vec::Vec<&dyn ::plugin_factory::Plugin> {
                 let mut plugins = ::std::vec::Vec::new();
                 #(::plugin_factory::schema::FieldType::plugins(&self.#field_names, &mut plugins);)*
-                ::std::option::Option::Some(::std::boxed::Box::new(plugins.into_iter()))
+                plugins
             }
         }
     });
 
     Ok(quote! {
-        impl ::plugin_factory::__private::PluginId for #plugin {
-            const ID: &'static str = #id;
+        impl ::plugin_factory::Plugin for #plugin {
+            #declare
+            #recommends
         }
 
-        impl ::plugin_factory::Plugin for #plugin {
-            fn id() -> &'static str {
-                <Self as ::plugin_factory::__private::PluginId>::ID
+        impl ::plugin_factory::schema::Configurable for #plugin {
+            fn schema() -> ::plugin_factory::schema::Schema {
+                ::plugin_factory::schema::Schema::new() #(.field(#schema_fields))*
             }
 
-            fn label() -> &'static str {
-                #label
-            }
+            #plugins
+        }
 
-            fn description() -> &'static str {
-                #description
-            }
+        impl ::plugin_factory::PluginType for #plugin {
+            const ID: &'static str = #id;
+            const LABEL: &'static str = #label;
+            const DESCRIPTION: &'static str = #description;
 
-            #static_declare
-            #dyn_declare
-            #recommends
-            #schema_and_sub_plugins
+            #declare_static
         }
     })
 }
@@ -119,8 +107,8 @@ struct Container {
     id: LitStr,
     label: LitStr,
     description: LitStr,
-    static_declare: Option<Expr>,
-    dyn_declare: Option<Expr>,
+    declare_static: Option<Expr>,
+    declare: Option<Expr>,
     recommends: Option<Expr>,
     /// `#[serde(default)]` on the struct.
     default: Option<SerdeDefault>,
@@ -131,8 +119,8 @@ impl Container {
         let mut id = None;
         let mut label = None;
         let mut description = None;
-        let mut static_declare = None;
-        let mut dyn_declare = None;
+        let mut declare_static = None;
+        let mut declare = None;
         let mut recommends = None;
         for attribute in attributes(&input.attrs, "plugin") {
             attribute.parse_nested_meta(|meta| {
@@ -142,16 +130,16 @@ impl Container {
                     set_once(&mut label, &meta, meta.value()?.parse()?)
                 } else if meta.path.is_ident("description") {
                     set_once(&mut description, &meta, meta.value()?.parse()?)
-                } else if meta.path.is_ident("static_declare") {
-                    set_once(&mut static_declare, &meta, meta.value()?.parse()?)
-                } else if meta.path.is_ident("dyn_declare") {
-                    set_once(&mut dyn_declare, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("declare_static") {
+                    set_once(&mut declare_static, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("declare") {
+                    set_once(&mut declare, &meta, meta.value()?.parse()?)
                 } else if meta.path.is_ident("recommends") {
                     set_once(&mut recommends, &meta, meta.value()?.parse()?)
                 } else {
                     Err(meta.error(
-                        "expected `id`, `label`, `description`, `static_declare`, `dyn_declare` \
-                         or `recommends`",
+                        "expected `id`, `label`, `description`, `declare_static`, `declare` or \
+                         `recommends`",
                     ))
                 }
             })?;
@@ -188,8 +176,8 @@ impl Container {
             id: required(id, "id")?,
             label: required(label, "label")?,
             description: required(description, "description")?,
-            static_declare,
-            dyn_declare,
+            declare_static,
+            declare,
             recommends,
             default,
         })

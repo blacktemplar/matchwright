@@ -3,9 +3,8 @@
 //!
 //! A [`Configurable`] states its questions as a [`Schema`] — a list of [`Field`]s, each taking an
 //! answer of one [`FieldKind`] and offering a default — and is deserialized from the answers, see
-//! [`Config`]. A plugin states its schema in [`Plugin::schema`] and registers in the
-//! [catalog](crate::catalog) with it, so that a program reads the questions of a plugin before it
-//! is chosen and never names one.
+//! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
+//! program reads the questions of a plugin before it is chosen and never names one.
 
 use serde::de::DeserializeOwned;
 
@@ -18,8 +17,7 @@ use crate::{
 /// Something configured by answering the fields of its [`Schema`]: a plugin, or the composite a
 /// program configures plugins into.
 ///
-/// Implemented for every [`Plugin`] with a `Deserialize` impl, through [`Plugin::schema`]; a
-/// composite implements it itself.
+/// Derived for a plugin, see [`derive@Plugin`](crate::Plugin); a composite implements it itself.
 ///
 /// It is built by deserializing a config that answers every field of its schema, see
 /// [`Schema::complete`], so its `Deserialize` impl has to read each field under the name the
@@ -30,11 +28,12 @@ use crate::{
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     /// What has to be answered in order to build it.
     fn schema() -> Schema;
-}
 
-impl<P: Plugin + DeserializeOwned> Configurable for P {
-    fn schema() -> Schema {
-        <P as Plugin>::schema()
+    /// The plugins held by its fields, in schema order; none by default.
+    ///
+    /// For a plugin, what they declare is part of what it declares.
+    fn plugins(&self) -> Vec<&dyn Plugin> {
+        Vec::new()
     }
 }
 
@@ -454,22 +453,20 @@ impl FieldKind {
 /// depend on what the plugins of a program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
-
     use serde::{Deserialize, Deserializer, Serialize, de::Error};
     use serde_json::json;
 
     use super::*;
     use crate::{
-        Plugin,
+        Plugin, PluginType,
         catalog::{PluginEntry, check_serialization},
-        inventory, plugin_kind,
+        plugin_kind, register,
     };
 
     /// A plugin axis whose plugins are nothing but their configuration, reported as a summary so
     /// that a built plugin can be checked without being downcast.
     #[typetag::serde(tag = "type", content = "value")]
-    trait Configured: Plugin + Debug {
+    trait Configured: Plugin {
         fn summary(&self) -> String;
     }
 
@@ -480,13 +477,45 @@ mod tests {
 
     /// A plugin with a field of every scalar kind and one that may be answered with nothing, all
     /// with a default.
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "points",
+        label = "points",
+        description = "a plugin with a parameter of every scalar kind",
+        recommends = Self::recommends
+    )]
     struct Points {
-        #[serde(deserialize_with = "non_negative")]
+        #[serde(default = "one", deserialize_with = "non_negative")]
+        #[plugin(
+            label = "Points for a win",
+            description = "what winning a match is worth"
+        )]
         for_win: f64,
+        #[serde(default = "three")]
+        #[plugin(label = "Rounds")]
         rounds: i64,
+        #[serde(default = "yes")]
+        #[plugin(label = "Count byes")]
         counts_byes: bool,
+        #[serde(default = "half")]
+        #[plugin(label = "Points for a bye")]
         for_bye: Option<f64>,
+    }
+
+    fn one() -> f64 {
+        1.0
+    }
+
+    fn three() -> i64 {
+        3
+    }
+
+    fn yes() -> bool {
+        true
+    }
+
+    fn half() -> Option<f64> {
+        Some(0.5)
     }
 
     fn non_negative<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -497,41 +526,13 @@ mod tests {
         Ok(points)
     }
 
-    impl Plugin for Points {
-        fn id() -> &'static str {
-            "points"
-        }
-
-        fn label() -> &'static str {
-            "points"
-        }
-
-        fn description() -> &'static str {
-            "a plugin with a parameter of every scalar kind"
-        }
-
-        fn schema() -> Schema {
-            Schema::new()
-                .field(
-                    Field::decimal("for_win", "Points for a win")
-                        .described("what winning a match is worth")
-                        .with_default(1.0),
-                )
-                .field(Field::integer("rounds", "Rounds").with_default(3))
-                .field(Field::bool("counts_byes", "Count byes").with_default(true))
-                .field(
-                    Field::decimal("for_bye", "Points for a bye")
-                        .with_default(0.5)
-                        .optional(),
-                )
-        }
-
+    impl Points {
         fn recommends(&self) -> Vec<PluginConfig> {
             vec![PluginConfig::of::<Matches>(Config::new())]
         }
     }
 
-    #[typetag::serde(name = "points")]
+    #[register]
     impl Configured for Points {
         fn summary(&self) -> String {
             let Self {
@@ -545,68 +546,39 @@ mod tests {
         }
     }
 
-    inventory::submit! { ConfiguredKind::register::<Points>() }
-
     /// A plugin asking for nothing.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "matches",
+        label = "matches",
+        description = "a plugin without parameters"
+    )]
     struct Matches;
 
-    impl Plugin for Matches {
-        fn id() -> &'static str {
-            "matches"
-        }
-
-        fn label() -> &'static str {
-            "matches"
-        }
-
-        fn description() -> &'static str {
-            "a plugin without parameters"
-        }
-    }
-
-    #[typetag::serde(name = "matches")]
+    #[register]
     impl Configured for Matches {
         fn summary(&self) -> String {
             "matches".to_owned()
         }
     }
 
-    inventory::submit! { ConfiguredKind::register::<Matches>() }
-
     /// A plugin with a field without a default, so that it has to be configured, and one taking a
     /// list of numbers.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "threshold",
+        label = "threshold",
+        description = "a plugin that has to be configured"
+    )]
     struct Threshold {
+        #[plugin(label = "Matches at least")]
         least: i64,
+        #[serde(default)]
+        #[plugin(label = "Weight per round")]
         weights: Vec<f64>,
     }
 
-    impl Plugin for Threshold {
-        fn id() -> &'static str {
-            "threshold"
-        }
-
-        fn label() -> &'static str {
-            "threshold"
-        }
-
-        fn description() -> &'static str {
-            "a plugin that has to be configured"
-        }
-
-        fn schema() -> Schema {
-            Schema::new()
-                .field(Field::integer("least", "Matches at least"))
-                .field(
-                    Field::decimal("weights", "Weight per round")
-                        .repeated()
-                        .with_default(json!([])),
-                )
-        }
-    }
-
-    #[typetag::serde(name = "threshold")]
+    #[register]
     impl Configured for Threshold {
         fn summary(&self) -> String {
             let Self { least, weights } = self;
@@ -614,49 +586,30 @@ mod tests {
         }
     }
 
-    inventory::submit! { ConfiguredKind::register::<Threshold>() }
-
     /// A plugin made of other plugins, i.e. one with a field taking one plugin, one taking a list
     /// of them and one taking a plugin or nothing.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "ranker",
+        label = "ranker",
+        description = "a plugin made of other plugins"
+    )]
     struct Ranker {
+        #[serde(default = "matches")]
+        #[plugin(label = "Rank by")]
         by: Box<dyn Configured>,
+        #[serde(default)]
+        #[plugin(label = "Tie breakers")]
         tie_breakers: Vec<Box<dyn Configured>>,
+        #[plugin(label = "Fall back to")]
         fallback: Option<Box<dyn Configured>>,
     }
 
-    impl Plugin for Ranker {
-        fn id() -> &'static str {
-            "ranker"
-        }
-
-        fn label() -> &'static str {
-            "ranker"
-        }
-
-        fn description() -> &'static str {
-            "a plugin made of other plugins"
-        }
-
-        fn schema() -> Schema {
-            Schema::new()
-                .field(
-                    Field::plugin::<ConfiguredKind>("by", "Rank by")
-                        .with_default(PluginConfig::of::<Matches>(Config::new())),
-                )
-                .field(
-                    Field::plugins::<ConfiguredKind>("tie_breakers", "Tie breakers")
-                        .with_default(json!([])),
-                )
-                .field(
-                    Field::plugin::<ConfiguredKind>("fallback", "Fall back to")
-                        .optional()
-                        .with_default(Value::Null),
-                )
-        }
+    fn matches() -> Box<dyn Configured> {
+        Box::new(Matches)
     }
 
-    #[typetag::serde(name = "ranker")]
+    #[register]
     impl Configured for Ranker {
         fn summary(&self) -> String {
             let tie_breakers: Vec<_> = self
@@ -675,15 +628,13 @@ mod tests {
         }
     }
 
-    inventory::submit! { ConfiguredKind::register::<Ranker>() }
-
     /// The entry of the plugin `P`.
-    fn entry_of<P: Plugin>() -> &'static PluginEntry {
-        ConfiguredKind::entry(P::id()).expect("the plugin is registered")
+    fn entry_of<P: PluginType>() -> &'static PluginEntry {
+        ConfiguredKind::entry(P::ID).expect("the plugin is registered")
     }
 
     /// The summary of the plugin `P` as `config` configures it.
-    fn built<P: Plugin>(config: Config) -> Result<String, ConfigError> {
+    fn built<P: PluginType>(config: Config) -> Result<String, ConfigError> {
         PluginConfig::of::<P>(config)
             .build::<ConfiguredKind>()
             .map(|plugin| plugin.summary())
@@ -691,7 +642,7 @@ mod tests {
 
     #[test]
     fn a_field_taking_plugins_knows_the_kind_it_takes() {
-        let schema = <Ranker as Plugin>::schema();
+        let schema = Ranker::schema();
         let kind = FieldKind::plugin::<ConfiguredKind>();
 
         assert_eq!(schema.field_named("by").map(Field::kind), Some(&kind));
@@ -976,7 +927,7 @@ mod tests {
                 PluginConfig::of::<Points>(Config::new().with("for_win", 2.0)),
             )
             .with("fallback", PluginConfig::of::<Matches>(Config::new()));
-        let completed = <Ranker as Plugin>::schema().complete(&config).unwrap();
+        let completed = Ranker::schema().complete(&config).unwrap();
         let built = PluginConfig::of::<Ranker>(config)
             .build::<ConfiguredKind>()
             .unwrap();

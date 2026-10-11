@@ -1,7 +1,8 @@
 //! What plugins provide to and require of the composite they are part of, and the checks deciding
 //! whether they fit together.
 //!
-//! A plugin states its facts in [`Plugin::static_declare`] and [`Plugin::dyn_declare`].
+//! A plugin states its facts in [`PluginType::declare_static`](crate::PluginType::declare_static)
+//! and [`Plugin::declare`].
 //! [`check_facts`] decides whether a set of plugins fits together, and [`check_addition`] whether
 //! one more plugin may be added to a set that is still being configured, see [`OpenFacts`].
 
@@ -234,10 +235,10 @@ pub enum Incompatibility {
 
 /// What `plugin` declares with the configuration it has, together with its name as the checks
 /// report it.
-pub fn declaration_of<P: Plugin + Debug + ?Sized>(plugin: &P) -> (String, Declaration) {
+pub fn declaration_of<P: Plugin + ?Sized>(plugin: &P) -> (String, Declaration) {
     (
         format!("{plugin:?}"),
-        Declaration::of(|declaration| plugin.total_declare(declaration)),
+        Declaration::of(|declaration| plugin.declare_all(declaration)),
     )
 }
 
@@ -437,9 +438,13 @@ impl<'a> Facts<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::iter;
+    use serde::Deserialize;
 
     use super::*;
+    use crate::{
+        PluginType,
+        schema::{Configurable, Schema},
+    };
 
     #[derive(Debug)]
     struct Annotated;
@@ -472,51 +477,45 @@ mod tests {
     }
 
     /// A plugin providing [`Annotated`], used as the sub-plugin of [`Composite`].
-    #[derive(Debug)]
+    #[derive(Debug, Deserialize, Plugin)]
+    #[plugin(
+        id = "leaf",
+        label = "leaf",
+        description = "a plugin providing an annotation",
+        declare_static = Self::declare_static
+    )]
     struct Leaf;
 
-    impl Plugin for Leaf {
-        fn id() -> &'static str {
-            "leaf"
-        }
-
-        fn label() -> &'static str {
-            "leaf"
-        }
-
-        fn description() -> &'static str {
-            "a plugin providing an annotation"
-        }
-
-        fn static_declare(declaration: &mut Declaration) {
+    impl Leaf {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Annotated);
         }
     }
 
-    /// A plugin made of a [`Leaf`], i.e. what a ranker made of other rankers is.
-    #[derive(Debug)]
+    /// A plugin made of a [`Leaf`], i.e. what a ranker made of other rankers is, written by hand.
+    #[derive(Debug, Deserialize)]
     struct Composite(Leaf);
 
     impl Plugin for Composite {
-        fn id() -> &'static str {
-            "composite"
-        }
-
-        fn label() -> &'static str {
-            "composite"
-        }
-
-        fn description() -> &'static str {
-            "a plugin made of a leaf"
-        }
-
-        fn dyn_declare(&self, declaration: &mut Declaration) {
+        fn declare(&self, declaration: &mut Declaration) {
             declaration.require::<Derived>("a derived fact", None);
         }
+    }
 
-        fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {
-            Some(Box::new(iter::once(&self.0 as &dyn Plugin)))
+    impl Configurable for Composite {
+        fn schema() -> Schema {
+            Schema::new()
         }
+
+        fn plugins(&self) -> Vec<&dyn Plugin> {
+            vec![&self.0]
+        }
+    }
+
+    impl PluginType for Composite {
+        const ID: &'static str = "composite";
+        const LABEL: &'static str = "composite";
+        const DESCRIPTION: &'static str = "a plugin made of a leaf";
     }
 
     #[test]
@@ -524,6 +523,7 @@ mod tests {
         let (name, declaration) = declaration_of(&Composite(Leaf));
 
         assert_eq!(name, format!("{:?}", Composite(Leaf)));
+        assert_eq!((&Composite(Leaf) as &dyn Plugin).id(), "composite");
         assert!(declaration.provides_type(TypeId::of::<Annotated>()));
         assert_eq!(
             declaration.required().iter().map(RequiredFact::name).next(),

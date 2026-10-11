@@ -2,6 +2,8 @@
 
 This file provides guidance to AI agents when working with code in this repository.
 
+> **Edit files only with the Edit/Write tools.** Never change files through shell scripts (`python`, `sed`, `awk`, heredocs, ...), not even for large or repetitive changes: split them into several Edit calls instead. See *Working style*.
+
 ## Commands
 
 Verify changes by running the hooks from `.pre-commit-config.yaml` (CI runs the same ones) rather than the individual cargo commands:
@@ -51,7 +53,7 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 
 ## Working style
 
-- Prefer tools and commands that are already allowed, plus the normal Read/Edit/Write tools, over anything that triggers a new permission prompt. For example, edit files with the Edit tool rather than `sed`, and run the existing commands as they are rather than wrapping them in new pipelines. Only ask for a new permission when there's no reasonable alternative.
+- Prefer tools and commands that are already allowed, plus the normal Read/Edit/Write tools, over anything that triggers a new permission prompt. For example, edit files with the Edit tool rather than `sed` or a `python` script, and run the existing commands as they are rather than wrapping them in new pipelines. Only ask for a new permission when there's no reasonable alternative.
 
 ## Conventions
 

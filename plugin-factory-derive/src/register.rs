@@ -7,7 +7,7 @@ pub fn expand(arguments: TokenStream, input: ItemImpl) -> Result<TokenStream> {
     if !arguments.is_empty() {
         return Err(Error::new_spanned(
             arguments,
-            "`register` takes no arguments; the id is given by `#[plugin(id = \"...\")]`",
+            "`register` takes no arguments; the id is the plugin's `PluginType::ID`",
         ));
     }
     if !input.generics.params.is_empty() {
@@ -25,7 +25,7 @@ pub fn expand(arguments: TokenStream, input: ItemImpl) -> Result<TokenStream> {
     let plugin = &input.self_ty;
     // typetag takes any constant expression as the name, which is what keeps the id in one place
     Ok(quote! {
-        #[typetag::serde(name = <#plugin as ::plugin_factory::__private::PluginId>::ID)]
+        #[typetag::serde(name = <#plugin as ::plugin_factory::PluginType>::ID)]
         #input
 
         ::plugin_factory::inventory::submit! {

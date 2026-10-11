@@ -1,14 +1,14 @@
 //! Plugins derived rather than written by hand, on an axis of their own.
 
-use std::{any::TypeId, fmt::Debug};
+use std::any::TypeId;
 
 use plugin_factory::{
-    Plugin,
+    Plugin, PluginType,
     catalog::{Kind, PluginEntry, PluginKind, check_serialization},
     compatibility::Declaration,
     config::{Config, ConfigError, Path, PluginConfig, Value},
     plugin_kind, register,
-    schema::{Field, FieldKind, FieldType},
+    schema::{Configurable, Field, FieldKind, FieldType},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 use serde_json::json;
@@ -16,7 +16,7 @@ use serde_json::json;
 /// A plugin axis whose plugins report what they are configured with, so that a built plugin can
 /// be checked without being downcast.
 #[typetag::serde(tag = "type", content = "value")]
-trait Derived: Plugin + Debug {}
+trait Derived: Plugin {}
 
 plugin_kind! {
     /// The axis of [`Derived`].
@@ -63,9 +63,9 @@ impl FieldType for NonNegative {
     id = "derive::points",
     label = "points",
     description = "points per result",
-    static_declare = Self::declare,
-    dyn_declare = Self::declare_configured,
-    recommends = Self::recommend
+    declare_static = Self::declare_static,
+    declare = Self::declare,
+    recommends = Self::recommends
 )]
 struct Points {
     #[serde(default = "one")]
@@ -118,20 +118,21 @@ mod percent {
     }
 }
 
+// named as the functions of the traits they are forwarded to, which they take precedence over
 impl Points {
-    fn declare(declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(Scored)
             .require::<Matches>("the matches", None);
     }
 
-    fn declare_configured(&self, declaration: &mut Declaration) {
+    fn declare(&self, declaration: &mut Declaration) {
         if self.counts_byes {
             declaration.provide(ByesCounted);
         }
     }
 
-    fn recommend(&self) -> Vec<PluginConfig> {
+    fn recommends(&self) -> Vec<PluginConfig> {
         vec![PluginConfig::of::<Unit>(Config::new())]
     }
 }
@@ -182,12 +183,12 @@ impl Default for Ranker {
 impl Derived for Ranker {}
 
 /// The entry of the plugin `P`.
-fn entry_of<P: Plugin>() -> &'static PluginEntry {
-    DerivedKind::entry(P::id()).expect("the plugin is registered")
+fn entry_of<P: PluginType>() -> &'static PluginEntry {
+    DerivedKind::entry(P::ID).expect("the plugin is registered")
 }
 
 /// The field `name` of the schema of the plugin `P`.
-fn field_of<P: Plugin>(name: &str) -> Field {
+fn field_of<P: PluginType>(name: &str) -> Field {
     entry_of::<P>()
         .schema()
         .field_named(name)
@@ -204,7 +205,8 @@ fn points_config() -> Config {
 fn a_derived_plugin_is_registered_under_its_id() {
     let entry = entry_of::<Points>();
 
-    assert_eq!(Points::id(), "derive::points");
+    assert_eq!(Points::ID, "derive::points");
+    assert_eq!(Points::LABEL, "points");
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), "points per result");
     assert_eq!(DerivedKind::entries().count(), 3);
@@ -353,21 +355,22 @@ fn the_declaration_is_forwarded_to_the_functions_given() {
 }
 
 #[test]
-fn the_plugins_in_the_fields_are_the_sub_plugins() {
-    let config = Config::new()
-        .with("by", PluginConfig::of::<Points>(points_config()))
-        .with(
-            "fallback",
-            PluginConfig::of::<Points>(points_config().with("byes", false)),
-        );
-    let built = PluginConfig::of::<Ranker>(config)
-        .build::<DerivedKind>()
-        .unwrap();
+fn the_plugins_in_the_fields_are_the_plugins_it_holds() {
+    let points = json!({"type": "derive::points", "value": {"byes": true, "cap": null}});
+    let ranker: Ranker = serde_json::from_value(json!({
+        "by": points,
+        "tie_breakers": [{"type": "derive::unit", "value": null}],
+    }))
+    .unwrap();
     let declaration = entry_of::<Ranker>()
         .declaration_for(&Config::new().with("by", PluginConfig::of::<Points>(points_config())))
         .unwrap();
 
-    assert_eq!(built.sub_plugins().unwrap().count(), 2);
+    assert_eq!(
+        format!("{:?}", ranker.plugins()),
+        format!("[{:?}, {:?}]", ranker.by, Unit)
+    );
+    assert!(Unit.plugins().is_empty());
     assert!(declaration.provides_type(TypeId::of::<ByesCounted>()));
 }
 

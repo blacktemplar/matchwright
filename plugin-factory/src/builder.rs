@@ -709,7 +709,7 @@ impl Placed {
     fn declaration(&self) -> (String, Declaration) {
         let mut declaration = self.entry.declaration();
         if let Ok(instance) = self.entry.instance(&self.config) {
-            instance.dyn_declare(&mut declaration);
+            instance.declare(&mut declaration);
         }
         (self.name(), declaration)
     }
@@ -721,7 +721,7 @@ impl Placed {
             .instance(&self.config)
             .map_err(|error| self.path.prefix(error))?;
         let mut declaration = self.entry.declaration();
-        instance.dyn_declare(&mut declaration);
+        instance.declare(&mut declaration);
         Ok((self.name(), declaration))
     }
 
@@ -735,35 +735,11 @@ impl Placed {
 /// program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
-
     use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
     use serde_json::json;
 
     use super::*;
-    use crate::{Plugin, compatibility::Condition, inventory, plugin_kind};
-
-    /// Implements [`Plugin`] for `$plugin` with `$id` as its id and label, and with `$item`s as
-    /// the rest of the impl.
-    macro_rules! plugin {
-        ($plugin:ty, $id:literal $(, $item:item)*) => {
-            impl Plugin for $plugin {
-                fn id() -> &'static str {
-                    $id
-                }
-
-                fn label() -> &'static str {
-                    $id
-                }
-
-                fn description() -> &'static str {
-                    "a plugin of the builder's tests"
-                }
-
-                $($item)*
-            }
-        };
-    }
+    use crate::{Plugin, PluginType, compatibility::Condition, plugin_kind, register};
 
     #[derive(Debug)]
     struct Points;
@@ -780,7 +756,7 @@ mod tests {
 
     /// How the matches of a phase are scheduled.
     #[typetag::serde(tag = "type", content = "value")]
-    trait Format: Plugin + Debug {}
+    trait Format: Plugin {}
 
     plugin_kind! {
         /// The axis of [`Format`].
@@ -789,7 +765,7 @@ mod tests {
 
     /// What is calculated for an entrant.
     #[typetag::serde(tag = "type", content = "value")]
-    trait Metric: Plugin + Debug {}
+    trait Metric: Plugin {}
 
     plugin_kind! {
         /// The axis of [`Metric`].
@@ -797,12 +773,16 @@ mod tests {
     }
 
     /// A format recommending metrics, two of which provide the same fact.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "round_robin",
+        label = "round_robin",
+        description = "a plugin of the builder's tests",
+        recommends = Self::recommends
+    )]
     struct RoundRobin;
 
-    plugin!(
-        RoundRobin,
-        "round_robin",
+    impl RoundRobin {
         fn recommends(&self) -> Vec<PluginConfig> {
             vec![
                 PluginConfig::of::<MatchCount>(Config::new()),
@@ -810,60 +790,65 @@ mod tests {
                 PluginConfig::of::<Score>(Config::new()),
             ]
         }
-    );
+    }
 
-    #[typetag::serde(name = "round_robin")]
+    #[register]
     impl Format for RoundRobin {}
 
-    inventory::submit! { FormatKind::register::<RoundRobin>() }
-
     /// A format with a parameter, providing a fact no metric provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "knockout",
+        label = "knockout",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Knockout {
+        #[serde(default)]
+        #[plugin(label = "Third place")]
         third_place: bool,
     }
 
-    plugin!(
-        Knockout,
-        "knockout",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Knockout {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Eliminating);
-        },
-        fn schema() -> Schema {
-            Schema::new().field(Field::bool("third_place", "Third place").with_default(false))
         }
-    );
+    }
 
-    #[typetag::serde(name = "knockout")]
+    #[register]
     impl Format for Knockout {}
 
-    inventory::submit! { FormatKind::register::<Knockout>() }
-
     /// A format providing a fact the context provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "doubles",
+        label = "doubles",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Doubles;
 
-    plugin!(
-        Doubles,
-        "doubles",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Doubles {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(EntrantsPerRanking(2));
         }
-    );
+    }
 
-    #[typetag::serde(name = "doubles")]
+    #[register]
     impl Format for Doubles {}
 
-    inventory::submit! { FormatKind::register::<Doubles>() }
-
     /// A format with a condition on the fact the context provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "monster",
+        label = "monster",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Monster;
 
-    plugin!(
-        Monster,
-        "monster",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Monster {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.require(
                 "the entrants per ranking",
                 Some(Condition::new(
@@ -872,34 +857,51 @@ mod tests {
                 )),
             );
         }
-    );
+    }
 
-    #[typetag::serde(name = "monster")]
+    #[register]
     impl Format for Monster {}
 
-    inventory::submit! { FormatKind::register::<Monster>() }
-
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "match_count",
+        label = "match_count",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct MatchCount;
 
-    plugin!(
-        MatchCount,
-        "match_count",
-        fn static_declare(declaration: &mut Declaration) {
+    impl MatchCount {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Matches);
         }
-    );
+    }
 
-    #[typetag::serde(name = "match_count")]
+    #[register]
     impl Metric for MatchCount {}
 
-    inventory::submit! { MetricKind::register::<MatchCount>() }
-
     /// A metric with a parameter it validates.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "wins",
+        label = "wins",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Wins {
-        #[serde(deserialize_with = "non_negative")]
+        #[serde(default = "one", deserialize_with = "non_negative")]
+        #[plugin(label = "Points for a win")]
         for_win: f64,
+    }
+
+    impl Wins {
+        fn declare_static(declaration: &mut Declaration) {
+            declaration.provide(Points);
+        }
+    }
+
+    fn one() -> f64 {
+        1.0
     }
 
     fn non_negative<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -910,110 +912,83 @@ mod tests {
         Ok(points)
     }
 
-    plugin!(
-        Wins,
-        "wins",
-        fn static_declare(declaration: &mut Declaration) {
-            declaration.provide(Points);
-        },
-        fn schema() -> Schema {
-            Schema::new().field(Field::decimal("for_win", "Points for a win").with_default(1.0))
-        }
-    );
-
-    #[typetag::serde(name = "wins")]
+    #[register]
     impl Metric for Wins {}
 
-    inventory::submit! { MetricKind::register::<Wins>() }
-
     /// A metric providing what [`Wins`] provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "score",
+        label = "score",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Score;
 
-    plugin!(
-        Score,
-        "score",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Score {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.provide(Points);
         }
-    );
+    }
 
-    #[typetag::serde(name = "score")]
+    #[register]
     impl Metric for Score {}
 
-    inventory::submit! { MetricKind::register::<Score>() }
-
     /// A metric requiring what other metrics provide.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "buchholz",
+        label = "buchholz",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Buchholz;
 
-    plugin!(
-        Buchholz,
-        "buchholz",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Buchholz {
+        fn declare_static(declaration: &mut Declaration) {
             declaration
                 .require::<Points>("points", None)
                 .require::<Matches>("matches", None);
         }
-    );
+    }
 
-    #[typetag::serde(name = "buchholz")]
+    #[register]
     impl Metric for Buchholz {}
 
-    inventory::submit! { MetricKind::register::<Buchholz>() }
-
     /// A metric requiring what only a format provides.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "losses",
+        label = "losses",
+        description = "a plugin of the builder's tests",
+        declare_static = Self::declare_static
+    )]
     struct Losses;
 
-    plugin!(
-        Losses,
-        "losses",
-        fn static_declare(declaration: &mut Declaration) {
+    impl Losses {
+        fn declare_static(declaration: &mut Declaration) {
             declaration.require::<Eliminating>("eliminations", None);
         }
-    );
+    }
 
-    #[typetag::serde(name = "losses")]
+    #[register]
     impl Metric for Losses {}
 
-    inventory::submit! { MetricKind::register::<Losses>() }
-
     /// A metric made of metrics, so that plugins nest.
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "combined",
+        label = "combined",
+        description = "a metric made of metrics"
+    )]
     struct Combined {
+        #[serde(default)]
+        #[plugin(label = "Parts")]
         parts: Vec<Box<dyn Metric>>,
     }
 
-    impl Plugin for Combined {
-        fn id() -> &'static str {
-            "combined"
-        }
-
-        fn label() -> &'static str {
-            "combined"
-        }
-
-        fn description() -> &'static str {
-            "a metric made of metrics"
-        }
-
-        fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {
-            Some(Box::new(
-                self.parts.iter().map(|part| part.as_ref() as &dyn Plugin),
-            ))
-        }
-
-        fn schema() -> Schema {
-            Schema::new()
-                .field(Field::plugins::<MetricKind>("parts", "Parts").with_default(json!([])))
-        }
-    }
-
-    #[typetag::serde(name = "combined")]
+    #[register]
     impl Metric for Combined {}
-
-    inventory::submit! { MetricKind::register::<Combined>() }
 
     /// The composite: one format, any number of metrics, and a metric or none.
     #[derive(Debug, Deserialize)]
@@ -1060,7 +1035,7 @@ mod tests {
     }
 
     /// The plugin `P` with nothing answered.
-    fn plugin<P: Plugin>() -> PluginConfig {
+    fn plugin<P: PluginType>() -> PluginConfig {
         PluginConfig::of::<P>(Config::new())
     }
 

@@ -1,22 +1,20 @@
 //! Plugins that describe themselves, so that a program configuring them never names one.
 //!
-//! A [`Plugin`] says what to call it, what it has to be told in order to be built, see [`schema`]
-//! and [`config`], and what it provides to and requires of the composite it is part of, see
-//! [`compatibility`]. It registers itself in the [`catalog`], which is where a program looking for
-//! a plugin finds it. A [`Builder`](builder::Builder) holds a composite of plugins while it is
-//! being configured.
+//! A plugin, see [`PluginType`], says what to call it, what it has to be told in order to be
+//! built, see [`schema`] and [`config`], and what it provides to and requires of the composite it
+//! is part of, see [`compatibility`]. It registers itself in the [`catalog`], which is where a
+//! program looking for a plugin finds it. A [`Builder`](builder::Builder) holds a composite of
+//! plugins while it is being configured.
 //!
 //! A plugin is usually derived, which reads its schema from its fields and their `serde`
 //! attributes, and registered with [`register`], which tags it for `typetag` with its id:
 //!
 //! ```
-//! use std::fmt::Debug;
-//!
 //! use plugin_factory::{Plugin, plugin_kind, register};
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[typetag::serde(tag = "type", content = "value")]
-//! pub trait Seeding: Plugin + Debug {}
+//! pub trait Seeding: Plugin {}
 //!
 //! plugin_kind! {
 //!     pub SeedingKind for dyn Seeding
@@ -42,7 +40,12 @@
 //! # }
 //! ```
 
-use crate::{compatibility::Declaration, config::PluginConfig, schema::Schema};
+use std::fmt::Debug;
+
+use crate::{compatibility::Declaration, config::PluginConfig, schema::Configurable};
+
+// so that the code the derive generates for the crate's own tests names it as any other crate does
+extern crate self as plugin_factory;
 
 pub mod builder;
 pub mod catalog;
@@ -55,17 +58,48 @@ pub mod schema;
 pub use inventory;
 pub use plugin_factory_derive::{Plugin, register};
 
-/// What the code [`derive@Plugin`] and [`register`] generate refers to. Not part of the API.
+/// What the code [`derive@Plugin`] and [`register`] generate refers to, and what a plugin behind
+/// a `dyn` is asked through. Not part of the API.
 #[doc(hidden)]
 pub mod __private {
     pub use serde;
     use serde_json::value::Serializer;
 
-    use crate::config::Value;
+    use crate::{
+        Plugin, PluginType, compatibility::Declaration, config::Value, schema::Configurable,
+    };
 
-    /// The id of a derived plugin as a constant, which is what `typetag` takes as a name.
-    pub trait PluginId {
-        const ID: &'static str;
+    /// What only the type of a plugin knows, asked of a plugin behind a `dyn`. Implemented for
+    /// every [`PluginType`].
+    pub trait Erased {
+        /// The plugin's [`PluginType::ID`].
+        fn id(&self) -> &'static str;
+
+        /// Adds everything the plugin declares to `declaration`: its static declaration, what its
+        /// configuration declares, and then what its sub-plugins declare, recursively.
+        fn declare_all(&self, declaration: &mut Declaration);
+
+        /// The plugins held by its fields, see [`Configurable::plugins`].
+        fn sub_plugins(&self) -> Vec<&dyn Plugin>;
+    }
+
+    impl<T: PluginType> Erased for T {
+        fn id(&self) -> &'static str {
+            T::ID
+        }
+
+        // qualified throughout, since a plugin may have inherent functions of the same names
+        fn declare_all(&self, declaration: &mut Declaration) {
+            <T as PluginType>::declare_static(declaration);
+            Plugin::declare(self, declaration);
+            for sub_plugin in Configurable::plugins(self) {
+                sub_plugin.declare_all(declaration);
+            }
+        }
+
+        fn sub_plugins(&self) -> Vec<&dyn Plugin> {
+            Configurable::plugins(self)
+        }
     }
 
     /// The default `value` of a field, written by `serialize` as the field is serialized.
@@ -81,73 +115,19 @@ pub mod __private {
     }
 }
 
-/// Everything a plugin declares, i.e. what it and its sub-plugins provide and require.
+/// A plugin of some axis as it is asked behind a `dyn`, see [`catalog`]: what its configuration
+/// declares and recommends. Everything about its type is in [`PluginType`].
 ///
-/// Implemented for every [`Plugin`], and the part of a declaration that a plugin behind a `dyn`
-/// can still be asked for.
-pub trait TotalDeclare {
-    /// Adds what this plugin and its sub-plugins declare to `declaration`.
-    fn total_declare(&self, declaration: &mut Declaration);
-}
-
-impl<T: Plugin> TotalDeclare for T {
-    fn total_declare(&self, declaration: &mut Declaration) {
-        T::static_declare(declaration);
-        self.dyn_declare(declaration);
-        for sub_plugin in self.sub_plugins().into_iter().flatten() {
-            sub_plugin.total_declare(declaration);
-        }
-    }
-}
-
-/// A plugin of some axis, see [`catalog`]. Usually derived, see [`derive@Plugin`].
-pub trait Plugin: TotalDeclare + 'static {
-    /// What identifies the plugin among the plugins of its kind, in a config as in a saved file,
-    /// e.g. `"my_crate::points"`. Never change it once configurations naming it are saved.
-    ///
-    /// A plugin persisted through `typetag` has to be tagged with this id, see
-    /// [`check_serialization`](catalog::check_serialization).
-    fn id() -> &'static str
-    where
-        Self: Sized;
-
-    fn label() -> &'static str
-    where
-        Self: Sized;
-
-    fn description() -> &'static str
-    where
-        Self: Sized;
-
-    /// Declares the facts this plugin provides to and requires of the phase it is part of, see
-    /// [`Declaration`].
-    ///
-    /// Every configuration of the plugin provides the facts declared here and requires the facts
-    /// declared here, so that a program can read this declaration from the [catalog] before the
-    /// plugin is configured.
-    fn static_declare(_: &mut Declaration)
-    where
-        Self: Sized,
-    {
-    }
-
-    /// Declares the facts the configuration this plugin has provides and requires on top of
-    /// [`Self::static_declare`], and the values of the facts declared there.
+/// Usually derived, see [`derive@Plugin`]. The [`Debug`] form is what names the plugin in an
+/// [`Incompatibility`](compatibility::Incompatibility).
+pub trait Plugin: Debug + __private::Erased + 'static {
+    /// Declares the facts this configuration provides and requires on top of
+    /// [`PluginType::declare_static`], and the values of the facts declared there; nothing by
+    /// default.
     ///
     /// The declaration must depend on the plugin's configuration alone, since it is made before
-    /// the phase exists.
-    fn dyn_declare(&self, _: &mut Declaration) {}
-
-    /// What has to be answered in order to build the plugin, see [`schema`]; nothing by default.
-    ///
-    /// The plugin is built by deserializing a config answering every field of its schema, see
-    /// [`Configurable`](schema::Configurable), which every plugin with a `Deserialize` impl is.
-    fn schema() -> Schema
-    where
-        Self: Sized,
-    {
-        Schema::new()
-    }
+    /// the composite exists.
+    fn declare(&self, _: &mut Declaration) {}
 
     /// The plugins this configuration suggests for the composite it is part of, which is what a
     /// field taking plugins of their kind offers as its default; nothing by default.
@@ -156,9 +136,30 @@ pub trait Plugin: TotalDeclare + 'static {
     fn recommends(&self) -> Vec<PluginConfig> {
         Vec::new()
     }
+}
 
-    /// The plugins this plugin is made of, whose declarations are part of its own.
-    fn sub_plugins(&self) -> Option<Box<dyn Iterator<Item = &dyn Plugin> + '_>> {
-        None
-    }
+/// What a plugin is as a type: what identifies and describes it, and what every configuration of
+/// it declares. Usually derived, see [`derive@Plugin`].
+///
+/// A plugin is configured through its [`Configurable`] impl, which is also where the plugins it
+/// is made of come from.
+pub trait PluginType: Plugin + Configurable {
+    /// What identifies the plugin among the plugins of its kind, in a config as in a saved file,
+    /// e.g. `"my_crate::points"`. Never change it once configurations naming it are saved.
+    ///
+    /// A plugin persisted through `typetag` has to be tagged with this id, which [`register`]
+    /// does.
+    const ID: &'static str;
+
+    /// What an operator picking a plugin reads.
+    const LABEL: &'static str;
+
+    /// What an operator picking a plugin reads about what it does.
+    const DESCRIPTION: &'static str;
+
+    /// Declares the facts every configuration of this plugin provides to and requires of the
+    /// composite it is part of, see [`Declaration`]; nothing by default.
+    ///
+    /// A program reads this declaration from the [catalog] before the plugin is configured.
+    fn declare_static(_: &mut Declaration) {}
 }
