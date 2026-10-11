@@ -10,14 +10,14 @@
 //! provides, see [`resolve`], and to offer the plugins of an axis to choose from.
 
 use std::{
-    any::TypeId,
-    collections::HashSet,
+    any::{self, TypeId},
+    collections::BTreeMap,
     fmt::{self, Debug, Formatter},
+    sync::OnceLock,
 };
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_json::Map;
-use thiserror::Error;
 
 use crate::{
     Plugin, PluginType,
@@ -70,21 +70,71 @@ use crate::{
 /// # }
 /// ```
 pub trait Axis: Plugin {
-    /// Every plugin registered for this axis, in no particular order.
-    fn entries() -> impl Iterator<Item = &'static PluginEntry>;
+    /// Every plugin registered for this axis, in the order of their ids.
+    ///
+    /// # Panics
+    /// Panics if two plugins are registered for this axis with the same id, see [`Self::entry`].
+    fn entries() -> impl Iterator<Item = &'static PluginEntry> {
+        Self::__index().values().copied()
+    }
 
     /// The plugin registered for this axis with the id `id`, see [`PluginType::ID`], or [`None`]
     /// if none is.
+    ///
+    /// # Panics
+    /// Panics if two plugins are registered for this axis with the same id, naming the id and
+    /// both plugins. Every access to the catalog of the axis checks this.
     fn entry(id: &str) -> Option<&'static PluginEntry> {
-        Self::entries().find(|entry| entry.id() == id)
+        Self::__index().get(id).copied()
+    }
+
+    /// The plugins registered for this axis by id, see [`Index`].
+    #[doc(hidden)]
+    fn __index() -> &'static BTreeMap<&'static str, &'static PluginEntry>;
+}
+
+/// The plugins registered for one axis by id, built on first access. Held by the code
+/// [`axis`](crate::axis) generates; not part of the API.
+#[doc(hidden)]
+pub struct Index(OnceLock<BTreeMap<&'static str, &'static PluginEntry>>);
+
+impl Index {
+    #[expect(clippy::new_without_default, reason = "only ever built in a static")]
+    pub const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// The plugins of `registered` by id, built from it on the first call only.
+    ///
+    /// # Panics
+    /// Panics if two of them share an id.
+    pub fn get(
+        &self,
+        registered: impl IntoIterator<Item = &'static PluginEntry>,
+    ) -> &BTreeMap<&'static str, &'static PluginEntry> {
+        self.0.get_or_init(|| {
+            let mut index = BTreeMap::new();
+            for entry in registered {
+                if let Some(other) = index.insert(entry.id, entry) {
+                    panic!(
+                        "the plugins {} and {} are both registered with the id {:?}",
+                        (other.type_name)(),
+                        (entry.type_name)(),
+                        entry.id,
+                    );
+                }
+            }
+            index
+        })
     }
 }
 
 /// One plugin as it is registered in the catalog.
 ///
 /// Everything in it comes from the plugin's type, so registering one takes no strings; submitted
-/// by [`register`](crate::register). An entry describes the plugin but does not build it: a
-/// plugin is built as a plugin of its axis, see [`PluginConfig::build`].
+/// by [`register`](crate::register), which is the only way into the catalog. An entry describes
+/// the plugin but does not build it: a plugin is built as a plugin of its axis, see
+/// [`PluginConfig::build`].
 pub struct PluginEntry {
     id: &'static str,
     label: &'static str,
@@ -92,11 +142,13 @@ pub struct PluginEntry {
     declare: fn(&mut Declaration),
     instantiate: fn(&Value) -> Result<Box<dyn Plugin>, ConfigError>,
     schema: fn() -> Schema,
-    is_unit: fn() -> bool,
+    is_unit: bool,
+    type_name: fn() -> &'static str,
 }
 
 impl PluginEntry {
-    /// The entry of the plugin `P`.
+    /// The entry of the plugin `P`, built by the code [`register`](crate::register) generates.
+    #[doc(hidden)]
     pub const fn new<P: PluginType>() -> Self {
         Self {
             id: P::ID,
@@ -105,7 +157,8 @@ impl PluginEntry {
             declare: P::declare_static,
             instantiate: instantiate::<P>,
             schema: P::schema,
-            is_unit: config::deserializes_from_null::<P>,
+            is_unit: P::IS_UNIT,
+            type_name: any::type_name::<P>,
         }
     }
 
@@ -183,9 +236,7 @@ impl PluginEntry {
     /// Returns whatever completing `config` fails with, see [`Schema::complete`].
     pub fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
         let completed = self.schema().complete(config)?;
-        // only a plugin whose schema has no fields can be a unit struct, and since a completed
-        // config answers every field, that is the one whose completed config is empty
-        if completed.answers().next().is_none() && (self.is_unit)() {
+        if self.is_unit {
             return Ok(Value::Null);
         }
         Ok(completed.into())
@@ -215,7 +266,7 @@ fn instantiate<P: PluginType>(config: &Value) -> Result<Box<dyn Plugin>, ConfigE
 #[derive(Clone, Copy)]
 pub struct AnyAxis {
     id: TypeId,
-    entries: fn() -> Box<dyn Iterator<Item = &'static PluginEntry>>,
+    index: fn() -> &'static BTreeMap<&'static str, &'static PluginEntry>,
 }
 
 impl AnyAxis {
@@ -223,19 +274,25 @@ impl AnyAxis {
     pub const fn of<A: Axis + ?Sized>() -> Self {
         Self {
             id: TypeId::of::<A>(),
-            entries: entries_of::<A>,
+            index: A::__index,
         }
     }
 
-    /// Every plugin registered for this axis, in no particular order, see [`Axis::entries`].
+    /// Every plugin registered for this axis, in the order of their ids, see [`Axis::entries`].
+    ///
+    /// # Panics
+    /// As [`Axis::entries`].
     pub fn entries(&self) -> impl Iterator<Item = &'static PluginEntry> {
-        (self.entries)()
+        (self.index)().values().copied()
     }
 
     /// The plugin registered for this axis with the id `id`, or [`None`] if none is, see
     /// [`Axis::entry`].
+    ///
+    /// # Panics
+    /// As [`Axis::entry`].
     pub fn entry(&self, id: &str) -> Option<&'static PluginEntry> {
-        self.entries().find(|entry| entry.id() == id)
+        (self.index)().get(id).copied()
     }
 
     /// `plugin` as a plugin of this axis with its config completed, see
@@ -297,10 +354,6 @@ impl AnyAxis {
         }
         facts.into_iter().collect()
     }
-}
-
-fn entries_of<A: Axis + ?Sized>() -> Box<dyn Iterator<Item = &'static PluginEntry>> {
-    Box::new(A::entries())
 }
 
 impl PartialEq for AnyAxis {
@@ -394,8 +447,8 @@ fn add_unasked<A: Axis + ?Sized, C: Accepts<A>>(composite: &mut C, entry: &Plugi
 where
     Box<A>: DeserializeOwned,
 {
-    // the entry was found among the plugins that build unasked, so this fails only for a plugin
-    // whose typetag name is not its id, which check_serialization reports
+    // the entry was found among the plugins that build unasked, and register tags a plugin with
+    // its id, so this does not fail
     if let Ok(plugin) = PluginConfig::new(entry.id(), Config::new()).build::<A>() {
         composite.add(plugin);
     }
@@ -449,97 +502,6 @@ pub fn facts_of_axis<A: Axis + ?Sized>() -> OpenFacts {
     AnyAxis::of::<A>().facts()
 }
 
-/// Checks that the registered plugins of the axis `A` serialize the way they are built: no two
-/// with the same id, and each as [`PluginConfig`] does, i.e. tagged adjacently by `"type"` with
-/// its [id](PluginType::ID) and by `"value"` with an object holding every field of its schema.
-///
-/// Meant for a test of the crate declaring the axis, since the id of a plugin persisted through
-/// `typetag` is written a second time as the name of its `typetag` impl, unless the plugin is
-/// registered with [`register`](crate::register). Only plugins that need no
-/// configuration are built and serialized; the others are not checked beyond their id being
-/// unique.
-///
-/// # Errors
-/// Returns the first mismatch found.
-pub fn check_serialization<A: Axis + ?Sized>() -> Result<(), SerializationMismatch>
-where
-    Box<A>: Serialize + DeserializeOwned,
-{
-    let mut ids = HashSet::new();
-    for entry in A::entries() {
-        let id = entry.id();
-        if !ids.insert(id) {
-            return Err(SerializationMismatch::DuplicateId { id });
-        }
-        // a plugin that has to be configured cannot be built unasked, which is no mismatch
-        if entry.complete(&Config::new()).is_err() {
-            continue;
-        }
-        let plugin = PluginConfig::new(id, Config::new())
-            .build::<A>()
-            .map_err(|error| SerializationMismatch::Undeserializable {
-                id,
-                reason: error.to_string(),
-            })?;
-        let serialized = serde_json::to_value(&plugin).map_err(|error| {
-            SerializationMismatch::Unserializable {
-                id,
-                reason: error.to_string(),
-            }
-        })?;
-        let answer = PluginConfig::from_answer(&serialized).ok_or_else(|| {
-            SerializationMismatch::NotAdjacentlyTagged {
-                id,
-                serialized: serialized.to_string(),
-            }
-        })?;
-        if answer.plugin() != id {
-            return Err(SerializationMismatch::WrongTag {
-                id,
-                tag: answer.plugin().to_owned(),
-            });
-        }
-        if let Some(field) = entry
-            .schema()
-            .fields()
-            .iter()
-            .find(|field| answer.config().get(field.name()).is_none())
-        {
-            return Err(SerializationMismatch::FieldNotSerialized {
-                id,
-                field: field.name(),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Why the plugins of an axis do not serialize the way they are built, see
-/// [`check_serialization`].
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum SerializationMismatch {
-    #[error("several plugins are registered with the id {id}")]
-    DuplicateId { id: &'static str },
-    /// The plugin's completed config, tagged with its id, does not deserialize as a plugin of its
-    /// axis, e.g. because its `typetag` name is not its id.
-    #[error("{id} cannot be built from its completed config: {reason}")]
-    Undeserializable { id: &'static str, reason: String },
-    #[error("{id} cannot be serialized: {reason}")]
-    Unserializable { id: &'static str, reason: String },
-    #[error("{id} is not tagged adjacently by \"type\" and \"value\": {serialized}")]
-    NotAdjacentlyTagged {
-        id: &'static str,
-        serialized: String,
-    },
-    #[error("{id} is serialized with the tag {tag}")]
-    WrongTag { id: &'static str, tag: String },
-    #[error("{id} does not serialize the field {field} of its schema")]
-    FieldNotSerialized {
-        id: &'static str,
-        field: &'static str,
-    },
-}
-
 /// The catalog itself, tested on an axis of its own so that it does not depend on what the plugins
 /// of a program happen to register.
 #[cfg(test)]
@@ -550,7 +512,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        __private::Register,
         axis,
         compatibility::{OpenFacts, declaration_of},
         register,
@@ -737,6 +698,9 @@ mod tests {
     impl Plugin for Handwritten {}
 
     impl Configurable for Handwritten {
+        // written by hand, the impl has to say what the derive reads from the syntax
+        const IS_UNIT: bool = true;
+
         fn schema() -> Schema {
             Schema::new()
         }
@@ -904,20 +868,46 @@ mod tests {
 
     #[test]
     fn a_fact_is_provided_by_every_plugin_declaring_it() {
-        let mut providers: Vec<_> = providers_of::<dyn Tested>(TypeId::of::<Shared>())
+        let providers: Vec<_> = providers_of::<dyn Tested>(TypeId::of::<Shared>())
             .map(PluginEntry::label)
             .collect();
-        // the entries of an axis come in no particular order
-        providers.sort_unstable();
 
         assert_eq!(providers, ["configured provider", "only provider"]);
     }
 
     #[test]
-    fn every_plugin_of_the_axis_is_registered_once() {
-        assert_eq!(<dyn Tested>::entries().count(), 7);
-        assert_eq!(check_serialization::<dyn Tested>(), Ok(()));
-        assert_eq!(check_serialization::<dyn Nested>(), Ok(()));
+    fn the_plugins_of_an_axis_come_in_the_order_of_their_ids() {
+        let ids: Vec<_> = <dyn Tested>::entries().map(PluginEntry::id).collect();
+
+        assert_eq!(
+            ids,
+            [
+                "another_provider",
+                "chained",
+                "configured_provider",
+                "handwritten",
+                "one_provider",
+                "only_provider",
+                "wrapper",
+            ]
+        );
+        assert!(
+            AnyAxis::of::<dyn Tested>()
+                .entries()
+                .map(PluginEntry::id)
+                .eq(ids)
+        );
+    }
+
+    #[test]
+    fn a_plugin_written_by_hand_is_built_by_its_id() {
+        let built = PluginConfig::of::<Handwritten>(Config::new()).build::<dyn Tested>();
+
+        assert_eq!(format!("{built:?}"), "Ok(Handwritten)");
+        assert_eq!(
+            serde_json::to_value(built.unwrap()).unwrap(),
+            serde_json::json!({"type": "handwritten", "value": null})
+        );
     }
 
     #[test]
@@ -1038,41 +1028,48 @@ mod tests {
         );
     }
 
-    /// An axis whose plugins are tagged with something other than their ids, so that
-    /// [`check_serialization`] has a mismatch to find.
+    /// An axis two of whose plugins share an id.
     #[axis]
-    trait Mistagged: Plugin {}
+    trait Clashing: Plugin {}
 
-    /// A plugin written by hand, which is what makes its tag differ from its id.
-    #[derive(Debug, Serialize, Deserialize)]
-    struct Renamed;
+    /// One of the two plugins registered with the id `clash`.
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "clash",
+        label = "first",
+        description = "the first plugin with the id"
+    )]
+    struct First;
 
-    impl Plugin for Renamed {}
+    #[register]
+    impl Clashing for First {}
 
-    impl Configurable for Renamed {
-        fn schema() -> Schema {
-            Schema::new()
-        }
-    }
+    /// The other plugin registered with the id `clash`.
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "clash",
+        label = "second",
+        description = "the second plugin with the id"
+    )]
+    struct Second;
 
-    impl PluginType for Renamed {
-        const ID: &'static str = "renamed";
-        const LABEL: &'static str = "renamed";
-        const DESCRIPTION: &'static str = "a plugin whose typetag name is not its id";
-    }
+    #[register]
+    impl Clashing for Second {}
 
-    #[typetag::serde(name = "original")]
-    impl Mistagged for Renamed {}
-
-    inventory::submit! {
-        <dyn Mistagged as Register<Renamed>>::REGISTRY
+    #[test]
+    #[should_panic(expected = "are both registered with the id \"clash\"")]
+    fn two_plugins_registered_with_the_same_id_panic_on_access() {
+        <dyn Clashing>::entry("clash");
     }
 
     #[test]
-    fn a_plugin_tagged_with_something_other_than_its_id_is_a_mismatch() {
-        assert!(matches!(
-            check_serialization::<dyn Mistagged>(),
-            Err(SerializationMismatch::Undeserializable { id: "renamed", .. })
-        ));
+    fn the_panic_on_a_shared_id_names_both_plugins() {
+        let message = std::panic::catch_unwind(|| <dyn Clashing>::entries().count())
+            .unwrap_err()
+            .downcast::<String>()
+            .unwrap();
+
+        assert!(message.contains(any::type_name::<First>()));
+        assert!(message.contains(any::type_name::<Second>()));
     }
 }

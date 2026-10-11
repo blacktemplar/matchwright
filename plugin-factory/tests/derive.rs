@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use plugin_factory::{
     Plugin, PluginType, axis,
-    catalog::{AnyAxis, Axis, PluginEntry, check_serialization},
+    catalog::{AnyAxis, Axis, PluginEntry},
     compatibility::Declaration,
     config::{Config, ConfigError, Path, PluginConfig, Value},
     register,
@@ -205,11 +205,6 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), "points per result");
     assert_eq!(<dyn Derived>::entries().count(), 3);
-}
-
-#[test]
-fn derived_plugins_serialize_as_they_are_built() {
-    assert_eq!(check_serialization::<dyn Derived>(), Ok(()));
 }
 
 #[test]

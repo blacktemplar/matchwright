@@ -21,11 +21,16 @@ use crate::{
 ///
 /// It is built by deserializing a config that answers every field of its schema, see
 /// [`Schema::complete`], so its `Deserialize` impl has to read each field under the name the
-/// schema gives it. A plugin without parameters may be a unit struct, which is deserialized from
-/// `null` rather than from an empty config. An answer it rejects, e.g. through
+/// schema gives it. A derived plugin without parameters may be a unit struct, which is
+/// deserialized from `null` rather than from an empty config. An answer it rejects, e.g. through
 /// `#[serde(deserialize_with = ..)]` or `#[serde(try_from = ..)]`, is reported as
 /// [`ConfigError::Rejected`] with the path of the answer.
 pub trait Configurable: Sized + DeserializeOwned + 'static {
+    /// Whether it is a unit struct, deserialized from `null`. Set by the derive; not part of the
+    /// API.
+    #[doc(hidden)]
+    const IS_UNIT: bool = false;
+
     /// What has to be answered in order to build it.
     fn schema() -> Schema;
 
@@ -458,11 +463,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        Plugin, PluginType, axis,
-        catalog::{PluginEntry, check_serialization},
-        register,
-    };
+    use crate::{Plugin, PluginType, axis, catalog::PluginEntry, register};
 
     /// A plugin axis whose plugins are nothing but their configuration, reported as a summary so
     /// that a built plugin can be checked without being downcast.
@@ -948,11 +949,6 @@ mod tests {
             entry_of::<Threshold>().complete(&Config::new().with("least", 2)),
             Ok(json!({"least": 2, "weights": []}))
         );
-    }
-
-    #[test]
-    fn the_plugins_of_the_axis_serialize_as_they_are_built() {
-        assert_eq!(check_serialization::<dyn Configured>(), Ok(()));
     }
 
     #[test]

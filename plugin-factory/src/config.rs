@@ -62,8 +62,8 @@ impl PluginConfig {
     /// [`Schema::complete`](crate::schema::Schema::complete).
     ///
     /// The plugin is deserialized from the completed answer through the `Deserialize` impl of
-    /// `Box<A>`, i.e. the way a saved plugin is loaded, so that impl has to know the plugin by
-    /// its id, see [`check_serialization`](crate::catalog::check_serialization).
+    /// `Box<A>`, i.e. the way a saved plugin is loaded, which knows the plugin by its id, see
+    /// [`register`](crate::register).
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of the axis `A` is registered with
@@ -177,12 +177,6 @@ fn deserialize_at<T: DeserializeOwned>(value: &Value, is_config: bool) -> Result
         path: Path::of_deserialized(error.path(), is_config),
         reason: error.inner().to_string(),
     })
-}
-
-/// Whether `P` deserializes from `null`, i.e. is a unit struct, whose config is then written as
-/// `null` rather than as an empty object.
-pub(crate) fn deserializes_from_null<P: DeserializeOwned>() -> bool {
-    serde_json::from_value::<P>(Value::Null).is_ok()
 }
 
 /// What `answer` is called in an error message, as the kind of answer it is.

@@ -39,13 +39,18 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
             ::plugin_factory::inventory::collect!(Registry);
 
             impl ::plugin_factory::catalog::Axis for dyn #axis {
-                fn entries() -> impl ::core::iter::Iterator<
-                    Item = &'static ::plugin_factory::catalog::PluginEntry,
+                fn __index() -> &'static ::std::collections::BTreeMap<
+                    &'static str,
+                    &'static ::plugin_factory::catalog::PluginEntry,
                 > {
-                    ::core::iter::IntoIterator::into_iter(
-                        ::plugin_factory::inventory::iter::<Registry>,
+                    static INDEX: ::plugin_factory::catalog::Index =
+                        ::plugin_factory::catalog::Index::new();
+                    INDEX.get(
+                        ::core::iter::IntoIterator::into_iter(
+                            ::plugin_factory::inventory::iter::<Registry>,
+                        )
+                        .map(|registered| &registered.0),
                     )
-                    .map(|registered| &registered.0)
                 }
             }
 

@@ -92,7 +92,7 @@ impl<T: Configurable> Builder<T> {
         if list {
             open.extend(axis.facts());
         }
-        let mut candidates: Vec<_> = axis
+        Ok(axis
             .entries()
             .map(|entry| {
                 let mut open = open.clone();
@@ -106,9 +106,7 @@ impl<T: Configurable> Builder<T> {
                 .err();
                 Candidate { entry, conflict }
             })
-            .collect();
-        candidates.sort_by_key(|candidate| candidate.entry.id());
-        Ok(candidates)
+            .collect())
     }
 
     /// Everything currently wrong with the answers, each at the path where it is fixed, in no
@@ -191,12 +189,11 @@ impl<T: Configurable> Builder<T> {
                 continue;
             }
             for (question, axis) in fields {
-                let mut providers: Vec<_> = axis
+                let providers: Vec<_> = axis
                     .entries()
                     .filter(|entry| entry.declaration().provides_type(fact))
                     .map(PluginEntry::id)
                     .collect();
-                providers.sort_unstable();
                 issues.push(Issue {
                     path: question.path.clone(),
                     problem: Problem::Unprovided {

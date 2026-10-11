@@ -20,6 +20,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
         ));
     };
     let container = Container::parse(input)?;
+    let is_unit = matches!(data.fields, Fields::Unit);
     let fields = match &data.fields {
         Fields::Named(fields) => collect(fields.named.iter().map(Field::parse))?,
         Fields::Unit => Vec::new(),
@@ -63,6 +64,12 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             }
         }
     });
+    // a unit struct deserializes from `null` rather than from an empty config
+    let is_unit = is_unit.then(|| {
+        quote!(
+            const IS_UNIT: bool = true;
+        )
+    });
     let schema_fields = fields
         .iter()
         .map(|field| field.schema_field(default.as_ref()));
@@ -85,6 +92,8 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         impl ::plugin_factory::schema::Configurable for #plugin {
+            #is_unit
+
             fn schema() -> ::plugin_factory::schema::Schema {
                 ::plugin_factory::schema::Schema::new() #(.field(#schema_fields))*
             }
@@ -499,6 +508,30 @@ mod tests {
                 struct Points;
             }),
             "given twice"
+        );
+    }
+
+    #[test]
+    fn only_a_unit_struct_is_deserialized_from_null() {
+        let is_unit = quote!(
+            const IS_UNIT: bool = true;
+        )
+        .to_string();
+        let expanded = |input: DeriveInput| expand(&input).unwrap().to_string();
+
+        assert!(
+            expanded(parse_quote! {
+                #[plugin(id = "points", label = "points", description = "points")]
+                struct Points;
+            })
+            .contains(&is_unit)
+        );
+        assert!(
+            !expanded(parse_quote! {
+                #[plugin(id = "points", label = "points", description = "points")]
+                struct Points {}
+            })
+            .contains(&is_unit)
         );
     }
 

@@ -1,6 +1,6 @@
 # Simplification plan
 
-Status: steps 1 and 2 done. The crate does everything it should, i.e. the catalog,
+Status: steps 1 to 3 done. The crate does everything it should, i.e. the catalog,
 schemas, configs, the compatibility checks, the builder, resolution and the
 derive are implemented and tested. This plan reduces it to its core without
 losing any of that: first the API a plugin author, a composite author and a UI
@@ -246,8 +246,13 @@ With the id a constant and the tagging generated, the mismatches
 - Remove `check_serialization` and `SerializationMismatch`. A schema can no
   longer drift from its struct, since `Configurable` is only derived (step 4).
 - Unit structs: the derive knows from the syntax whether a plugin is a unit
-  struct and sets a hidden `PluginType::IS_UNIT` constant, replacing
-  `deserializes_from_null` probing at runtime.
+  struct and sets a hidden `Configurable::IS_UNIT` constant, replacing
+  `deserializes_from_null` probing at runtime. It sits on `Configurable`
+  rather than `PluginType` because `Configurable` is the impl that is always
+  derived (step 4), so a plugin with a hand-written `PluginType` still gets it
+  right.
+- The entries of an axis come in the order of their ids, which the builder's
+  candidates and providers relied on sorting for.
 
 ### 4. Derive `Configurable` for a composite
 

@@ -7,10 +7,7 @@ use std::{any::TypeId, iter};
 use plugin_factory::{
     Plugin, PluginType, axis,
     builder::{Builder, FinishError, Problem},
-    catalog::{
-        Acceptor, Accepts, AnyAxis, Axis, Composite, check_serialization, facts_of_axis,
-        providers_of, resolve,
-    },
+    catalog::{Acceptor, Accepts, AnyAxis, Axis, Composite, facts_of_axis, providers_of, resolve},
     compatibility::{
         Condition, Declaration, Incompatibility, OpenFacts, check_facts, declaration_of, order,
     },
@@ -368,17 +365,9 @@ fn assert_conflict(builder: &Builder<Phase>, at: &str, id: &str, conflict: Incom
     assert_eq!(candidate.conflict(), Some(&conflict));
 }
 
-/// The ids of the plugins of `axis`, sorted.
+/// The ids of the plugins of `axis`, which come sorted.
 fn ids(axis: AnyAxis) -> Vec<&'static str> {
-    let mut ids: Vec<_> = axis.entries().map(|entry| entry.id()).collect();
-    ids.sort_unstable();
-    ids
-}
-
-#[test]
-fn every_plugin_serializes_as_it_is_built() {
-    assert_eq!(check_serialization::<dyn Format>(), Ok(()));
-    assert_eq!(check_serialization::<dyn Metric>(), Ok(()));
+    axis.entries().map(|entry| entry.id()).collect()
 }
 
 #[test]
