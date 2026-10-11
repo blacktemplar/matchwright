@@ -1,8 +1,14 @@
-# Development plan
+# Simplification plan
 
-Status: the compatibility layer, the catalog, the schemas, the builder,
-resolution and the derive macro are implemented. Everything here is about this crate alone; what a consumer does
-with it is out of scope, see [Not in this crate](#not-in-this-crate).
+Status: not started. The crate does everything it should, i.e. the catalog,
+schemas, configs, the compatibility checks, the builder, resolution and the
+derive are implemented and tested. This plan reduces it to its core without
+losing any of that: first the API a plugin author, a composite author and a UI
+see, which matters most, then the implementation behind it.
+
+Nothing outside the crate uses it yet, so every step may break the API freely.
+Each step leaves the crate green (`prek run --all-files`), and the tests move
+along with it rather than being rewritten at the end.
 
 ## What the crate is for
 
@@ -11,323 +17,372 @@ these, several of those, and answer whatever they ask for — should not have to
 know a single plugin. So a plugin describes itself: what to call it, what it
 needs to be told, and what it provides to and requires of the composite it ends
 up in. Plugins register themselves in a catalog, and a UI reads the catalog and
-those descriptions.
+those descriptions through a builder.
 
 Nothing in the crate knows what a composite *is*. It supplies the vocabulary,
-the registry and the checks; a consumer brings the composite and its plugin
+the registry and the checks; a consumer brings the composite and its axis
 traits.
+
+## Where the surface comes from
+
+About 45 public items and 8 methods on `Plugin`, for three reasons:
+
+- **Two ways to write a plugin.** Everything a hand-written plugin can get
+  wrong — the id written twice, the wrong tagging, a schema drifting from the
+  struct — has a runtime check (`check_serialization` and its six
+  `SerializationMismatch` variants) and a workaround (`__private::PluginId`).
+- **Axes exist twice.** Typed as a generated `FooKind` type with `PluginKind`
+  and `PluginObject`, and erased as `Kind`; a user names `MetricKind` where
+  they mean `dyn Metric`.
+- **Features with several entry points.** Resolution is `resolve`,
+  `add_provider_of` and `providers_of` plus `Composite`, `Accepts` and
+  `Acceptor`; the check of a finished composite is `FinishError` next to
+  `Issue`; the facts of an axis are `Kind::facts` and `facts_of_kind`.
+
+On top, `Plugin` mixes type-level functions (`where Self: Sized`) with methods
+on `&self`, which is what `TotalDeclare`, the blanket `Configurable` impl and
+the `<P as Plugin>::schema()` ambiguity are working around.
+
+## Target
+
+What using the crate looks like once every step is done:
+
+```rust
+// an axis: one attribute, named by its trait from then on
+#[plugin_factory::axis]
+pub trait Metric: Plugin {
+    fn calculate(&self);
+}
+
+// a plugin: one derive and one #[register]
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "my_crate::wins",
+    label = "wins",
+    description = "points per win",
+    declare_static = Self::declare_static,
+    declare = Self::declare,
+    recommends = Self::recommends
+)]
+struct Wins {
+    #[serde(default = "one")]
+    #[plugin(label = "Points for a win")]
+    for_win: f64,
+}
+
+impl Wins {
+    fn declare_static(declaration: &mut Declaration) {
+        declaration.provide(Points).require::<Matches>("the matches");
+    }
+
+    fn declare(&self, declaration: &mut Declaration) {
+        if self.for_win > 1.0 {
+            declaration.require_that::<EntrantsPerRanking>(
+                "the entrants per ranking",
+                "rankings of single players",
+                |entrants| entrants.0 == 1,
+            );
+        }
+    }
+}
+
+#[register]
+impl Metric for Wins {
+    fn calculate(&self) {}
+}
+
+// a composite: one derive
+#[derive(Serialize, Deserialize, Configurable)]
+struct Phase {
+    #[plugin(label = "Format")]
+    format: Box<dyn Format>,
+    #[serde(default)]
+    #[plugin(label = "Metrics")]
+    metrics: Vec<Box<dyn Metric>>,
+}
+
+// a UI
+let mut builder = Builder::<Phase>::new(context);
+builder.questions();                     // every field, answered or not
+builder.candidates(&"metrics[1]".parse()?)?;
+builder.set(&"format".parse()?, PluginConfig::of::<Knockout>().with("third_place", true))?;
+builder.issues();
+let phase = builder.finish()?;           // Result<Phase, Vec<Issue>>, resolves on the way
+
+// a composite built elsewhere, e.g. loaded
+let phase = Builder::from_built(context, &phase)?.finish()?;
+
+// at runtime
+check(&context, &phase.plugins())?;
+let order = order(&phase.plugins())?;
+```
+
+Roughly 25 public items remain: `Plugin`, `PluginType`, `Configurable`,
+`FieldType`, `Axis`, `AnyAxis`, `PluginEntry`, the derives `Plugin` and
+`Configurable`, the attributes `axis` and `register`; `Declaration`, `Fact`,
+`Requirement`, `Incompatibility`, `check`, `order`; `Schema`, `Field`,
+`FieldKind`; `Config`, `PluginConfig`, `Value`, `Path`, `Segment`,
+`ConfigError`; `Builder`, `Question`, `Candidate`, `Issue`, `Problem`.
 
 ## Vocabulary
 
-- **plugin** — a type implementing [`Plugin`](src/lib.rs) and one axis trait.
-- **kind** (axis) — a plugin trait together with the registry its plugins
-  register in, declared with `plugin_kind!`. A kind is `K`, its trait object
-  `K::Object`.
-- **composite** — what plugins are configured into. It has **slots**, each
-  taking one plugin or several of one kind.
-- **context** — what is already true of the composite before any plugin is
-  chosen, and what no plugin can change: providing a fact the context provides
-  is an error, as providing one another plugin provides is.
-- **fact** — a `'static + Debug + Sync` type, optionally with a value, that
-  plugins provide and require. Facts are the only thing compatibility is decided
-  on.
-- **declaration** — the facts one plugin provides and requires. The **static**
-  part holds for every configuration of the plugin and is readable from the
-  catalog before it is configured; the **dynamic** part adds what this
-  configuration provides and requires on top, and the values.
-- **open** — a fact type that a slot still to be filled could provide, so that a
-  requirement of it that nothing provides yet is not decided.
-- **schema** — the fields one plugin or composite has to be told, each taking an
-  answer of one kind and, unless it has to be answered, offering a default. The
-  answers to it are a **config**, keyed by field name.
-
-## Implemented
-
-- `compatibility`: `Fact`, `Declaration`, `Condition`,
-  `ProvidedFact`/`RequiredFact`; `check_facts(context, declarations, open)` and
-  `check_addition(…, addition, open)`; `order`, `unprovided`, `declaration_of`;
-  `OpenFacts` with `NOTHING`.
-- `catalog`: `PluginKind` (with `entry(id)`) and `plugin_kind!`;
-  `PluginEntry`, not generic over its kind, holding `id`, `label`,
-  `description`, the static declaration, `schema` and the declaration of a
-  configured instance (`declaration_for`, which builds the plugin from its
-  completed config, asks it with its sub-plugins and drops it), all as
-  const-storable function pointers, plus `sub_kinds`, the kinds its plugin
-  fields take. An entry does not build: see
-  [Identity and persistence](#identity-and-persistence). `Kind`, a kind as a
-  value, which a field taking plugins holds: it lists and finds the entries of
-  the kind, completes a nested plugin answer, and collects the `facts` its
-  plugins provide, transitively through their sub-kinds, so that openness covers
-  a slot to be filled with a plugin that has slots of its own. `Accepts<K>`,
-  `providers_of`, `add_provider_of`, `facts_of_kind`; `check_serialization`.
-  `Composite` (its `declarations` and `ACCEPTS`, a list of `Acceptor::of::<K>()`,
-  each type-checked against `Accepts<K>`) and `resolve(context, composite)`, see
-  [step 3](#3-a-generic-resolution-loop-done).
-- `Plugin` with
-  `id`/`label`/`description`/`static_declare`/`dyn_declare`/`schema`/`recommends`/`sub_plugins`
-  (`schema` and `recommends` default to nothing), and `TotalDeclare`, which
-  walks the sub-plugins so a composite plugin forwards nothing by hand.
-  `recommends` takes `&self`, so a built plugin behind `dyn Plugin` can be
-  asked for it.
-- `schema`: `Configurable: DeserializeOwned` with `schema()`, what the builder
-  builds; implemented for every `Plugin + DeserializeOwned` through
-  `Plugin::schema`, so only a composite implements it by hand. With both
-  traits in scope `P::schema()` is ambiguous for a plugin and is written
-  `<P as Plugin>::schema()`. `Schema`/`Field`/`FieldKind`. A field takes yes or no, a whole
-  number, a number, one plugin of a kind, a list of answers of one kind
-  (`List`, so that "several plugins of a kind" is a list of plugins) or an answer
-  of one kind or nothing (`Optional`, answered by the answer or by `null`), the
-  last two nesting as deep as they like; `Field::optional`/`Field::repeated` wrap
-  what a field takes, and a list its default with it. `Schema::complete` answers
-  every unanswered field by the default of the field, recursing into the config
-  of every plugin answer, which is what makes "needs no configuration" mean
-  "every field has a default", and checks answers and defaults alike against the
-  kind of their field.
-- `config`: `Config`, a JSON object of answers keyed by field name, each a
-  `serde_json::Value`; `PluginConfig`, a plugin answer, written
-  `{"type": id, "value": config}`, and `PluginConfig::build::<K>`, the one way
-  to build a plugin; `ConfigError` with the `Path` of what it is
-  about, which a nested error is prefixed with on its way out, so that an answer
-  of the wrong kind inside a list is reported as `weights[1]`. What a plugin's
-  `Deserialize` impl rejects is `ConfigError::Rejected`, its path taken from
-  `serde_path_to_error` with the `type`/`value` wrapping of plugin answers left
-  out. A whole number answers a decimal field.
-- `builder`: `Builder<T: Configurable>` over one answer tree with a context, see
-  [step 2](#2-the-builder-done) for the rules it follows. `questions()` is every
-  field of the tree, answered or not, depth first in schema order, each a
-  `Question` with its path, field and answer, so that a form renders the layout
-  and a wizard picks the first unanswered one. `set`/`unset` address a field or a
-  position in a list (one past the end appends; unsetting a position removes it).
-  `set` checks only the structure of an answer — field, kind, registered plugin,
-  via `Schema::check`, which is `complete` without filling defaults — so a plugin
-  answer may leave fields unanswered; what a plugin's `Deserialize` rejects is
-  an `Issue`. `Issue`s are `Invalid` (a rejected answer, at its field),
-  `Incompatible` (at the plugin, so both plugins providing one fact get one) and
-  `Unprovided` (a requirement nothing provides and no unanswered field could, at
-  every answered field whose kind could provide it, with the providing ids).
-  `finish` accepts each default in question order on a copy of the answers, as
-  an operator accepting each would, then checks with `OpenFacts::NOTHING` and
-  deserializes `T`; `FinishError` is a `ConfigError` or an `Incompatibility`.
-  Each plugin of the tree counts with its own declaration (static plus `dyn`
-  from its completed config, or static alone if it does not complete yet), its
-  sub-plugins being placed in the tree themselves.
-- `#[derive(Plugin)]` and `#[register]`, from the proc-macro crate
-  `plugin-factory-derive` and re-exported, see
-  [step 5](#5-a-derive-macro-done). `schema::FieldType` is what a field's type
-  answers, and `catalog::PluginObject`, implemented by `plugin_kind!` for the
-  trait object, leads from a trait object back to its kind.
-
-### Identity and persistence
-
-A plugin is a serde type. It is built by deserializing its completed config, so
-its `Deserialize` impl is the only place that reads answers, and validation
-lives there too (`deserialize_with`, `try_from`), which also rejects an invalid
-saved plugin. A plugin is built as a `Box<K::Object>`, i.e. through the
-consumer's `typetag` impl, exactly as a saved one is loaded and as a nested
-plugin field is deserialized: `PluginConfig::build::<K>` completes the answer,
-still tagged with its id, and deserializes the box from it. So a config is
-exactly what `typetag` writes for a plugin tagged adjacently with
-`tag = "type", content = "value"`, and a built plugin serializes as the
-completed config it was built from. A composite is built the same way, by
-deserializing its completed answer tree at its typed root. A plugin without
-parameters may be a unit struct: the entry checks whether the type
-deserializes from `null`, and if so its completed config is written as `null`,
-as serde writes a unit struct.
-
-A plugin written by hand therefore writes the id (`Plugin::id`) twice, once as
-the id and once as the `typetag` name, since `typetag` exposes a name neither
-by type nor through a public registry. Building fails if they differ, and
-`check_serialization::<K>()` reports it, plus unique ids and that every schema
-field is serialized under its name; a consumer calls it in a test per kind. It
-only builds and serializes plugins that need no configuration. A derived
-plugin writes the id once: the derive puts it in a constant, and `#[register]`
-hands `typetag` that constant as the name, which it accepts as an expression.
+- **plugin** — a type implementing `PluginType` (and so `Plugin` and
+  `Configurable`) and one axis trait. Usually derived.
+- **axis** — a plugin trait together with the registry its plugins register
+  in, declared with `#[axis]`. Typed it is `dyn Trait`, which implements
+  `Axis`; erased it is an `AnyAxis`. The word *kind* is reserved for
+  `FieldKind`, the kind of answer a field takes.
+- **composite** — what plugins are configured into: a `Configurable` that is
+  not a plugin, usually derived. Its fields are its **slots**.
+- **context**, **fact**, **declaration** (static and configured), **open**,
+  **schema**, **config** — as before: facts are `'static + Debug + Sync` types,
+  the context is what holds before any plugin is chosen and cannot be provided
+  again, the static declaration holds for every configuration and is readable
+  from the catalog, the configured one adds to it.
 
 ## Steps
 
-Each one is shippable on its own.
+### 1. Split `Plugin` by what it is asked on
 
-### 1. Erased kinds (done)
+`Plugin` keeps only what a built plugin behind `dyn` is asked; everything about
+the type moves to `PluginType`, and the schema to `Configurable` alone:
 
-A UI holding a kind as a value (`Kind`) browses its entries, reads their
-schemas and declarations, and follows the kinds their plugin fields take; see
-[Implemented](#implemented). No object-safe view of an entry was needed: only
-building mentioned `K`, and building moved to deserialization.
+```rust
+pub trait Plugin: Debug + __private::Erased + 'static {
+    /// What this configuration provides and requires on top of the static declaration.
+    fn declare(&self, _: &mut Declaration) {}
+    fn recommends(&self) -> Vec<PluginConfig> { Vec::new() }
+}
 
-### 2. The builder (done)
+pub trait Configurable: Sized + DeserializeOwned + 'static {
+    fn schema() -> Schema;
+    /// The plugins held by the fields, in schema order.
+    fn plugins<'a>(&'a self, _: &mut Vec<&'a dyn Plugin>) {}
+}
 
-`Builder<T>` over one answer tree, addressed by the `Path` a config error
-carries, and the queries a UI renders from: `questions()`, `default(path)`,
-`candidates(path)`, `issues()`, plus `set` and `finish`. `Candidate` says "fits"
-or "conflicts, because …"; `Issue` is something currently wrong, anchored to the
-field where it gets fixed. `finish` completes the answer tree and deserializes
-`T` from it, so a composite is built the way a saved one is loaded.
+pub trait PluginType: Plugin + Configurable {
+    const ID: &'static str;
+    const LABEL: &'static str;
+    const DESCRIPTION: &'static str;
+    fn declare_static(_: &mut Declaration) {}
+}
+```
 
-The rules the queries follow, which the compatibility layer already supports:
+`__private::Erased` is implemented for every `PluginType` by a blanket impl
+(the cycle `Plugin: Erased`, `impl<T: PluginType> Erased for T` is the one
+`TotalDeclare` relies on today). It gives a `&dyn Plugin` what only the type
+knows: `id()`, `declare_all()` (static, configured, then the sub-plugins'
+recursively) and `sub_plugins()`, forwarded to `Configurable::plugins`. So
+`sub_plugins` is never written by hand, and neither is the forwarding a
+composite plugin needed.
 
-- **A field is answered or not.** An answered field is given, whether it holds
-  one plugin or several; an unanswered one is a wildcard, and its kind's facts
-  are open. Accepting a default is answering, so nothing is ever recomputed
-  behind an operator's back.
-- **Candidates are per position.** For a candidate at some path, the plugins
-  occupying that path are left out and the candidate takes their place, so a
-  single slot does not conflict with what it replaces and a list does not
-  conflict with itself. A candidate for a whole list field is one of its
-  plugins, so the list's kind is open; at a position in the list the rest of it
-  is as answered. The candidate's own plugin fields are open too.
-- **A candidate conflicts iff `check_addition` says so**, with `open` computed
-  from the fields still unanswered. The filter is therefore the strict check
-  weakened by one argument, and `OpenFacts::NOTHING` at `finish` cannot let an
-  invalid composite through.
-- **Defaults come from the plugin or from its siblings' recommendations**, never
-  from a table in the consumer. Siblings are the plugins answering the other
-  fields of the same config; a recommendation of the field's kind that fits as a
-  candidate would wins over the schema default (the first for a single field,
-  all that fit together for a list).
+- Remove `TotalDeclare`, `__private::PluginId`, the blanket `Configurable`
+  impl, `Plugin::schema`, `Plugin::sub_plugins` and every `where Self: Sized`.
+- `PluginEntry` stores `&'static str` for id, label and description instead of
+  function pointers.
+- `#[register]` names the typetag tag `<P as PluginType>::ID`, so a plugin
+  written by hand also writes its id once.
+- Derive: emits `Plugin`, `Configurable` and `PluginType`. The attributes
+  become `declare_static`, `declare` and `recommends`. `plugins` is generated
+  from the fields through `FieldType::plugins`, as `sub_plugins` is today.
+- `Plugin: Debug` settles the open question of where `Debug` belongs: the
+  checks name plugins by it.
 
-### 3. A generic resolution loop (done)
+### 2. Name an axis by its trait object
 
-`resolve(context, composite)` runs the loop a consumer used to write itself:
-the first fact required and provided neither by a plugin nor by the context,
-tried once each, gets a provider, and the loop repeats, since an added plugin
-can require facts of its own. A composite describes itself through `Composite`:
-its declarations, and `ACCEPTS`, the kinds a plugin may be added for, each an
-`Acceptor::of::<K>()` that only compiles if the composite `Accepts<K>`.
+`#[axis]` on the trait replaces `plugin_kind!`:
 
-A fact is settled only if exactly one plugin needing no configuration provides
-it **across all accepted kinds**, not per kind as `add_provider_of` counts: two
-kinds with one provider each would otherwise both add theirs and provide the
-fact twice. Facts the context provides are skipped, since a provider of one
-could only conflict with the context.
+- It emits `#[::typetag::serde(tag = "type", content = "value")]` on the trait,
+  so the adjacent tagging the crate depends on can no longer be got wrong; the
+  trait must not carry its own `typetag` attribute.
+- It emits a hidden registry type, `inventory::collect!` for it, and
+  `impl Axis for dyn Trait`. `Axis` replaces `PluginKind` and `PluginObject`:
+  `entries()`, `entry(id)`, and the hidden constructor of a registry value
+  that `#[register]` submits.
+- `Axis: Plugin` as a bound of the impl makes a trait without the `Plugin`
+  supertrait fail to compile at the attribute.
+- `AnyAxis` (today's `Kind`) is the erased value `FieldKind::Plugin` holds,
+  `AnyAxis::of::<dyn Metric>()`.
+- Every `K: PluginKind` parameter becomes `A: Axis + ?Sized`:
+  `PluginConfig::build::<dyn Metric>()`, `FieldType for Box<A>`.
+- Generic traits are rejected by the attribute.
 
-`order` stays with the consumer: which slot is a list whose plugins run in
-order is not something `Composite` says. `add_provider_of`/`providers_of` stay
-public for a consumer that wants a different policy.
+### 3. Register through `#[register]` only
 
-### 4. Enforce the static/dynamic contract
+With the id a constant and the tagging generated, the mismatches
+`check_serialization` looks for can no longer arise for a registered plugin.
 
-The filter reads an entry's **static** declaration, so it is sound only if, for
-every configuration of the plugin:
+- `PluginEntry::new` and the registry constructor become `#[doc(hidden)]`;
+  `#[register]` is the one way into the catalog, for derived and hand-written
+  plugins alike.
+- Each axis builds a map from id to entry on first access (`OnceLock` in the
+  hidden registry), which makes `entry(id)` a lookup instead of a scan, and
+  panics there if two entries share an id, naming the id and both types
+  (`std::any::type_name`, stored in the entry).
+- Remove `check_serialization` and `SerializationMismatch`. A hand-written
+  `Configurable` whose schema does not match its serde impl is a documented
+  contract violation; it fails at build with `ConfigError::Rejected`.
+- Unit structs: the derive knows from the syntax whether a plugin is a unit
+  struct and sets a hidden `PluginType::IS_UNIT` constant, replacing
+  `deserializes_from_null` probing at runtime.
 
-- every fact type it provides is declared statically — otherwise a candidate is
-  hidden whose conflict would only have been real for some configurations, or
-  openness misses a provider;
-- every fact it requires *unconditionally* is declared statically, and anything
-  conditional is declared dynamically — more in the static part means more
-  filtering, which stays sound only while it is true of every configuration.
+### 4. Derive `Configurable` for a composite
 
-The first half is checkable: when a declaration is taken from an instance,
-assert that it provides no fact type the static declaration did not. One
-assertion where `declaration_of` and `PluginEntry::declaration_for` are used,
-off any hot path. The second half
-stays a documented contract.
+`#[derive(Configurable)]` is the schema half of `#[derive(Plugin)]`: schema and
+`plugins()` from the fields, with the same serde rules and the same field
+attributes. A composite then writes no `Schema` by hand, and its `plugins()` is
+what the runtime checks take (step 5).
 
-### 5. A derive macro (done)
+With hand-written schemas rare, trim `Field` to `Field::new` plus `described`,
+`with_default` and `optional`: remove `Field::bool`, `integer`, `decimal`,
+`plugin`, `plugins`, `repeated` and `FieldKind::plugins`. `repeated` wrapping
+an existing default into a one-element list goes with it.
 
-`#[derive(Plugin)]` in the proc-macro crate `plugin-factory-derive`. `id`,
-`label` and `description` come from `#[plugin(..)]` on the struct;
-`static_declare`, `dyn_declare` and `recommends`, which stay code, are
-functions named there that the generated methods forward to, so `Plugin`
-keeps its shape and a plugin is derived or written by hand, never half each.
+### 5. Check a built composite through its plugins
 
-The schema comes from the fields `serde` deserializes, read from `serde`'s own
-attributes so that nothing is written twice: the name is the field's or its
-`rename`, the default whatever `serde` fills a missing field with
-(`#[serde(default)]` on the field or the struct, `None` for an `Option` not
-deserialized by a function of its own), serialized as the field is, through
-its `serialize_with` if it has one. A field's kind and the plugins it holds
-come from its type through `FieldType`, implemented for the scalars,
-`Box<dyn Trait>` of an axis trait, `Option` and `Vec`; a newtype that checks its
-value implements it itself. The fields holding plugins are the sub-plugins.
-A label per field is required, a description optional. What would make the
-fields differ from what is deserialized — `flatten`, `rename_all`,
-`transparent`, `from`/`try_from` on the struct, an asymmetric `rename` — does
-not compile.
+The consumer's runtime API becomes two functions over `&[&dyn Plugin]`, naming
+plugins by `Debug`:
 
-`#[register]` goes on the impl of the axis trait: it adds
-`#[typetag::serde(name = <id constant>)]` and submits the entry to the kind of
-the trait, found through `PluginObject`, so that a derived plugin also needs no
-`inventory::submit!`.
+- `check(context: &Declaration, plugins: &[&dyn Plugin]) -> Result<(), Incompatibility>`,
+  today's `check_facts` with nothing open.
+- `order(plugins: &[&dyn Plugin]) -> Result<Vec<usize>, Incompatibility>`.
+
+What only the builder and the catalog need becomes crate-internal:
+`declaration_of`, `unprovided`, `check_addition`, `check_facts` with `open`,
+`OpenFacts`, and the `(String, Declaration)` tuples, which become an internal
+named struct.
+
+`Declaration` keeps `provide`, `require`, `require_that` (step 7),
+`provides(TypeId)`, `provided()` as `&dyn Fact`s and `required()` as
+`Requirement`s, a read-only view (today's `RequiredFact`) a UI can show.
+`ProvidedFact` goes.
+
+### 6. Resolve and finish in the builder
+
+Resolution moves onto the answer tree, which removes `resolve`,
+`add_provider_of`, `providers_of`, `Composite`, `Accepts` and `Acceptor`:
+
+- The builder knows the list fields of the root schema and their axes. A fact
+  required, provided neither by a plugin nor by the context, is settled iff
+  exactly one plugin needing no configuration, across the axes of those
+  fields, provides it, and its axis is taken by exactly one root list field
+  — the rules of today's `resolve`, with "accepts" read from the schema: a
+  single slot is never added to, an axis in two list fields is never resolved.
+- Only root-level fields count, as `Accepts` was implemented by the composite
+  alone; a list inside a plugin (`Combined::parts`) is never added to.
+- `finish` on a copy of the answers: accept the defaults in question order,
+  resolve, repeat until nothing changes, then report. It returns
+  `Result<T, Vec<Issue>>`, the issues being those of `issues()` with nothing
+  open. `FinishError` goes.
+- `Builder::from_built(context, &composite)` (`T: Serialize`) starts from a
+  built composite's answers, which are what it serializes to, so a composite
+  loaded or built elsewhere is resolved and checked by `from_built(..).finish()`.
+
+### 7. Smaller things a user writes
+
+- `require::<T>(name)` without a condition, and
+  `require_that::<T>(name, description, holds)` with one; `Condition` goes.
+- `PluginConfig::of::<P>()` and `PluginConfig::new(id)` answer nothing;
+  `.with(field, answer)` answers a field, as on `Config`.
+- `impl FromStr for Path`, the inverse of its `Display`
+  (`"metrics[1].for_win"`); the tests' own `path` helpers go.
+- Remove `facts_of_kind` (it is `AnyAxis::facts`) and `PluginEntry::sub_kinds`
+  from the public API.
+- The derive's `#[plugin(description = ..)]` on the struct becomes optional, as
+  it is on a field.
+
+### 8. Implementation
+
+None of this changes the API.
+
+- **One recursion over answers.** `Schema::complete`/`check`,
+  `FieldKind::complete`/`check`/`map_plugins`, `Kind::complete`/`check` and
+  `PluginEntry::complete` become one walk with a `fill_defaults` flag.
+- **Paths are built on the way down.** Pass the current `Path` into the walk
+  and create errors with their full path; `ConfigError::within`,
+  `Path::prefix`, `prepend` and `parent` go.
+- **Build each placed plugin once.** `Tree` stores
+  `Result<Box<dyn Plugin>, ConfigError>` per placed plugin; `issues`, defaults
+  and declarations read it instead of calling `instance` again, and
+  `Placed::declaration`/`configured_declaration` merge. `finish` stops
+  rebuilding every default for every remaining question.
+- **Cache the facts of an axis.** The transitive closure `AnyAxis::facts`
+  computes is constant for a program; keep it in the registry's `OnceLock`.
+  `candidates` asks for it per entry and sub-axis.
+- **`issues` reuses the check.** Run the internal check once per plugin and
+  route `FactNotProvided` to the fields that could provide the fact, instead of
+  the separate unprovided pass.
+- **One way to deserialize.** Drop the `is_config` flag of
+  `Path::of_deserialized` if deserializing everything in its tagged form keeps
+  the paths right; otherwise leave it.
+
+### Tests and docs, per step
+
+- Hand-written test plugins in `catalog.rs`, `schema.rs`, `builder.rs` and
+  `compatibility.rs` become derived where the test is not about writing one by
+  hand; one hand-written plugin with `#[register]` stays, covering step 1's
+  claim that it writes its id once.
+- `tests/workflow.rs` follows the target above: derived composite,
+  `finish` resolving, `from_built`, `check`/`order` on `plugins()`.
+- `tests/derive.rs` gains `Configurable` and loses `check_serialization`.
+- Compile-fail cases (missing `Plugin` supertrait on an axis, a typetag
+  attribute next to `#[axis]`, a generic axis) are unit tests of the macro
+  expansion, as the derive's are now.
+- The crate doc example in `lib.rs` and the doc of each changed item are
+  rewritten with the step that changes them.
 
 ## Open questions
 
-- **Schema and struct can drift** for a plugin written by hand, whose field
-  names and defaults are written in the schema and the struct.
-  `check_serialization` catches a schema field the struct does not serialize; a
-  field the struct has and the schema lacks fails at build as a missing field.
-- **A composite is not derived.** It implements `Configurable` by hand; the
-  derive's schema half would serve it as well, without the `Plugin` half.
-- **The derive names the crate `::plugin_factory`**, so a dependency renamed
-  in `Cargo.toml` breaks it; `serde` solves this with `#[serde(crate = "..")]`.
-- **A struct deserialized through `try_from` cannot be derived**, though
-  validating in `try_from` is what [Identity and
-  persistence](#identity-and-persistence) recommends. The schema would have to
-  come from the type it is converted from.
-- **Who owns the UI text.** `&'static str` from the plugin means the crate ships
-  one language; localisation would wrap it, keyed by entry id.
-- **Recommendation conflicts.** Two configured plugins recommending different
-  things for one single-plugin field: first in schema order wins, or do
-  recommendations need a weight?
-- **Should a candidate distinguish "fits" from "fits only if some open slot
-  provides X"**, so that a UI can sort rather than treat all candidates alike?
-- **Where `Debug` belongs.** The checks name plugins by their `Debug` form, and
-  `declaration_of` asks for it explicitly rather than `Plugin` requiring it, so
-  each axis decides. Simpler would be `Plugin: Debug`.
-- **`finish` and automatic resolution.** `finish` checks with nothing open, so a
-  required fact that `resolve` would settle — exactly one provider needing no
-  configuration — fails `finish` instead, and shows as an `Unprovided` issue
-  before; `resolve` works on a built composite and so cannot run first. Either
-  the builder resolves on its answer tree before its final check (appending
-  the provider to the answered list field of its kind), or a consumer does so
-  by setting the single provider an `Unprovided` issue names.
-- **Conditions cannot capture**, being `fn(&T) -> bool`, which is what keeps
-  `require::<F>(name, None)` inferable. Fine so far.
+- **Should `issues()` report what `finish` would resolve?** Reporting it keeps
+  "nothing is answered behind the operator's back"; not reporting it is
+  consistent with `finish` accepting defaults. Leaning towards reporting it as
+  `Unprovided` with the single provider, which is what a UI would set anyway.
+- **Should a `Question` carry its default**, so that a form renders from
+  `questions()` alone? Costs a default computation per field on every call,
+  which is cheap only once step 8 builds each plugin once.
+- **The derive names the crate `::plugin_factory`**; a renamed dependency
+  breaks it. `#[plugin(crate = "..")]` as serde does, if needed.
+- **A struct deserialized through `try_from` cannot be derived.** The schema
+  would have to come from the type it is converted from.
+- **Recommendation conflicts.** First in schema order wins; weights only if a
+  real case needs them.
+- **Who owns the UI text.** `&'static str` means one language; localisation
+  would wrap it, keyed by entry id and field path.
+- **Conditions cannot capture**, being `fn(&T) -> bool`. Fine so far.
 
 ## Decided
 
-- **No negative compatibility.** A plugin never declares what it is incompatible
-  *with*. Everything a filter needs beyond the positive facts is the one set of
-  open fact types.
-- **The context is immutable.** A plugin may not provide a fact its composite's
-  context provides, which makes every provided fact settled: `open` only ever
-  answers whether a fact *nothing* provides yet could still arrive, and a
-  condition on a provided fact is decided at once however the composite is
-  filled up. A plugin that would change what its own composite stands for has to
-  be a context of its own instead.
+- **No negative compatibility.** A plugin never declares what it is
+  incompatible *with*.
+- **The context is immutable.** A plugin may not provide a fact the context
+  provides, so every provided fact is settled.
 - **Optimism about open slots only.** Hiding a plugin that would have worked is
-  the expensive mistake; offering one that later turns out not to fit costs a
-  revised answer. The strict check stays the authority.
-- **No untyped bags.** A plugin is built as `Box<K::Object>`, deserialized at a
-  position whose kind is known, so nothing is downcast; one global registry
-  returning `Box<dyn Any>` is rejected for that reason, and so is an entry
-  building into a composite behind an erased interface.
+  the expensive mistake; the strict check stays the authority.
+- **The static/configured split of a declaration stays.** It is what makes
+  filtering candidates before they are configured sound, so it is the core and
+  not a simplification target; only its names change.
+- **No untyped bags.** A plugin is built as `Box<dyn Axis>`, deserialized at a
+  position whose axis is known; nothing is downcast.
 - **A plugin is identified by a namespaced string id**, a persistence contract
-  like a `typetag` name. `TypeId` stays for facts and kinds, which never leave
-  the process.
-- **Persistence stays with the typed plugin, not the answer tree.** A plugin is
-  saved by its own serde impl through `typetag`, so non-self-describing formats
-  such as postcard keep working; a `serde_json::Value` inside saved data would
-  need `deserialize_any`. The answer tree is JSON and lives between a UI and the
-  catalog, though it happens to be what `typetag` writes to JSON.
-- **The crate does not reimplement `typetag`.** A plugin is built through the
-  consumer's `Deserialize` impl of `Box<K::Object>`, and the catalog deserializes
-  the concrete type it registered only to ask it for its declaration, so it
-  needs no tag registry of its own; the cost is the id written twice by a
-  plugin that is not derived.
-- **A plugin does not add itself to a composite.** `Accepts<K>` sits on the
-  composite, so "this slot takes one plugin and nothing may be added to it" is
-  expressible by leaving the impl out.
+  like a `typetag` tag. `TypeId` stays for facts and axes.
+- **Persistence stays with the typed plugin**, through its serde impl and
+  `typetag`, so non-self-describing formats keep working; the answer tree is
+  JSON between a UI and the catalog.
+- **The crate does not reimplement `typetag`.** `#[axis]` and `#[register]`
+  emit `typetag` attributes; the crate keeps no tag registry of its own.
+- **One way into the catalog.** `#[register]`, for derived and hand-written
+  plugins; this is what makes the serialization checks unnecessary.
+- **A composite says what may be added to it through its schema**: a root
+  list field of an axis. A single slot is never added to.
 
 ## Not in this crate
 
-Porting a consumer onto it, its plugin traits, its composite and its UI. The
-crate is finished for a given step when the step's items are implemented and
-tested against an axis of its own, i.e. without depending on which plugins a
-program happens to link in.
+Porting a consumer onto it, its axis traits, its composite and its UI. A step
+is finished when its items are implemented and tested against axes of the
+crate's own.
 
-The crate stands on its own so that it can be moved out of the workspace it
-currently sits in: its `Cargo.toml` declares its version, edition, license and
-dependency versions itself rather than inheriting them, it depends on no crate
-of that workspace but its derive crate `plugin-factory-derive`, which moves
-with it and is set up the same way, and every test uses an axis and plugins of
-its own.
+The crate stands on its own so that it can be moved out of the workspace: its
+`Cargo.toml` declares version, edition, license and dependency versions itself,
+it depends on no crate of the workspace but `plugin-factory-derive`, which
+moves with it and is set up the same way, and every test uses axes and plugins
+of its own.
