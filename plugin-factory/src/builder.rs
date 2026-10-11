@@ -214,9 +214,11 @@ impl<T: Configurable> Builder<T> {
     /// checked here but reported as an [issue](Self::issues).
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers, and
-    /// otherwise the errors of [`Schema::complete`] other than [`ConfigError::Unanswered`], with
-    /// paths seen from the root. Nothing is changed then.
+    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers or the
+    /// answer answers a field a schema does not have, [`ConfigError::WrongKind`] if an answer is
+    /// not one its field takes, and [`ConfigError::UnknownPlugin`] if a plugin in it is not
+    /// registered for the axis of its field, with paths seen from the root. Nothing is changed
+    /// then.
     pub fn set(&mut self, path: &Path, answer: impl Into<Value>) -> Result<(), ConfigError> {
         set_in(&T::schema(), &mut self.answers, path, &answer.into())
     }
@@ -978,27 +980,15 @@ mod tests {
     impl Metric for Combined {}
 
     /// The composite: one format, any number of metrics, and a metric or none.
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Configurable)]
     struct Phase {
-        #[expect(dead_code, reason = "read through Debug")]
+        #[plugin(label = "Format")]
         format: Box<dyn Format>,
-        #[expect(dead_code, reason = "read through Debug")]
+        #[serde(default)]
+        #[plugin(label = "Metrics")]
         metrics: Vec<Box<dyn Metric>>,
-        #[expect(dead_code, reason = "read through Debug")]
+        #[plugin(label = "Tie break")]
         tie_break: Option<Box<dyn Metric>>,
-    }
-
-    impl Configurable for Phase {
-        fn schema() -> Schema {
-            Schema::new()
-                .field(Field::plugin::<dyn Format>("format", "Format"))
-                .field(Field::plugins::<dyn Metric>("metrics", "Metrics").with_default(json!([])))
-                .field(
-                    Field::plugin::<dyn Metric>("tie_break", "Tie break")
-                        .optional()
-                        .with_default(Value::Null),
-                )
-        }
     }
 
     /// A builder of a phase of single players.

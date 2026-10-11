@@ -8,10 +8,11 @@
 //!
 //! An axis of plugins is a trait declared with [`axis`]. A plugin is usually derived, which reads
 //! its schema from its fields and their `serde` attributes, and registered with [`register`],
-//! which tags it for `typetag` with its id:
+//! which tags it for `typetag` with its id. A composite derives its schema the same way, see
+//! [`derive@schema::Configurable`]:
 //!
 //! ```
-//! use plugin_factory::{Plugin, axis, register};
+//! use plugin_factory::{Plugin, axis, register, schema::Configurable};
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[axis]
@@ -31,9 +32,16 @@
 //!
 //! #[register]
 //! impl Seeding for Random {}
+//!
+//! #[derive(Deserialize, Configurable)]
+//! struct Phase {
+//!     #[plugin(label = "Seeding")]
+//!     seeding: Box<dyn Seeding>,
+//! }
 //! # fn main() {
 //! # use plugin_factory::catalog::Axis;
 //! # assert_eq!(<dyn Seeding>::entry("my_crate::random").unwrap().label(), "random");
+//! # assert_eq!(Phase::schema().fields()[0].name(), "seeding");
 //! # }
 //! ```
 

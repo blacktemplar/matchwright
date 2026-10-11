@@ -225,15 +225,18 @@ impl PluginEntry {
             .collect()
     }
 
-    /// `config` completed against the schema of the plugin, see [`Schema::complete`], as the
-    /// value the plugin is deserialized from: the object of its answers, or `null` for a plugin
-    /// that is a unit struct, which is how serde writes one.
+    /// `config` completed against the schema of the plugin, i.e. every field it leaves unanswered
+    /// answered by its default, as the value the plugin is deserialized from: the object of its
+    /// answers, or `null` for a plugin that is a unit struct, which is how serde writes one.
     ///
     /// A plugin every field of whose schema has a default needs no configuration, i.e. completes
     /// [`Config::new`], see [`add_provider_of`].
     ///
     /// # Errors
-    /// Returns whatever completing `config` fails with, see [`Schema::complete`].
+    /// Returns [`ConfigError::UnknownField`] if `config` answers a field the schema does not
+    /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
+    /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
+    /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered.
     pub fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
         let completed = self.schema().complete(config)?;
         if self.is_unit {
@@ -691,20 +694,12 @@ mod tests {
     #[register]
     impl Tested for Chained {}
 
-    /// A plugin written by hand rather than derived, registered as a derived one is.
-    #[derive(Debug, Serialize, Deserialize)]
+    /// A plugin whose `Plugin` and `PluginType` are written by hand rather than derived,
+    /// registered as a derived one is.
+    #[derive(Debug, Serialize, Deserialize, Configurable)]
     struct Handwritten;
 
     impl Plugin for Handwritten {}
-
-    impl Configurable for Handwritten {
-        // written by hand, the impl has to say what the derive reads from the syntax
-        const IS_UNIT: bool = true;
-
-        fn schema() -> Schema {
-            Schema::new()
-        }
-    }
 
     impl PluginType for Handwritten {
         const ID: &'static str = "handwritten";

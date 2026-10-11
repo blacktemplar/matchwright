@@ -438,13 +438,10 @@ impl<'a> Facts<'a> {
 
 #[cfg(test)]
 mod tests {
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::{
-        PluginType,
-        schema::{Configurable, Schema},
-    };
+    use crate::{axis, register};
 
     #[derive(Debug)]
     struct Annotated;
@@ -476,8 +473,12 @@ mod tests {
         OpenFacts::from_iter([TypeId::of::<T>()])
     }
 
+    /// The axis of the plugins a [`Composite`] is made of.
+    #[axis]
+    trait Part: Plugin {}
+
     /// A plugin providing [`Annotated`], used as the sub-plugin of [`Composite`].
-    #[derive(Debug, Deserialize, Plugin)]
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "leaf",
         label = "leaf",
@@ -492,38 +493,37 @@ mod tests {
         }
     }
 
-    /// A plugin made of a [`Leaf`], i.e. what a ranker made of other rankers is, written by hand.
-    #[derive(Debug, Deserialize)]
-    struct Composite(Leaf);
+    #[register]
+    impl Part for Leaf {}
 
-    impl Plugin for Composite {
+    /// A plugin made of a part, i.e. what a ranker made of other rankers is.
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "composite",
+        label = "composite",
+        description = "a plugin made of a part",
+        declare = Self::declare
+    )]
+    struct Composite {
+        #[plugin(label = "Part")]
+        part: Box<dyn Part>,
+    }
+
+    impl Composite {
         fn declare(&self, declaration: &mut Declaration) {
             declaration.require::<Derived>("a derived fact", None);
         }
     }
 
-    impl Configurable for Composite {
-        fn schema() -> Schema {
-            Schema::new()
-        }
-
-        fn plugins(&self) -> Vec<&dyn Plugin> {
-            vec![&self.0]
-        }
-    }
-
-    impl PluginType for Composite {
-        const ID: &'static str = "composite";
-        const LABEL: &'static str = "composite";
-        const DESCRIPTION: &'static str = "a plugin made of a leaf";
-    }
-
     #[test]
     fn the_declaration_of_a_plugin_includes_what_its_sub_plugins_declare() {
-        let (name, declaration) = declaration_of(&Composite(Leaf));
+        let composite = Composite {
+            part: Box::new(Leaf),
+        };
+        let (name, declaration) = declaration_of(&composite);
 
-        assert_eq!(name, format!("{:?}", Composite(Leaf)));
-        assert_eq!((&Composite(Leaf) as &dyn Plugin).id(), "composite");
+        assert_eq!(name, format!("{composite:?}"));
+        assert_eq!((&composite as &dyn Plugin).id(), "composite");
         assert!(declaration.provides_type(TypeId::of::<Annotated>()));
         assert_eq!(
             declaration.required().iter().map(RequiredFact::name).next(),

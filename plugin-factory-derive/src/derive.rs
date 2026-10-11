@@ -6,33 +6,8 @@ use syn::{
 };
 
 /// The `Plugin`, `Configurable` and `PluginType` impls of the struct `input`.
-pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
-    if !input.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            &input.generics,
-            "a plugin cannot be derived for a generic struct",
-        ));
-    }
-    let Data::Struct(data) = &input.data else {
-        return Err(Error::new_spanned(
-            &input.ident,
-            "a plugin can only be derived for a struct",
-        ));
-    };
-    let container = Container::parse(input)?;
-    let is_unit = matches!(data.fields, Fields::Unit);
-    let fields = match &data.fields {
-        Fields::Named(fields) => collect(fields.named.iter().map(Field::parse))?,
-        Fields::Unit => Vec::new(),
-        Fields::Unnamed(_) => {
-            return Err(Error::new_spanned(
-                &data.fields,
-                "a plugin can only be derived for a struct with named fields or none",
-            ));
-        }
-    };
-    let fields: Vec<_> = fields.into_iter().flatten().collect();
-
+pub fn expand_plugin(input: &DeriveInput) -> Result<TokenStream> {
+    let configurable = configurable(input, "plugin")?;
     let plugin = &input.ident;
     let Container {
         id,
@@ -41,8 +16,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
         declare_static,
         declare,
         recommends,
-        default,
-    } = &container;
+    } = Container::parse(input)?;
     let declare_static = declare_static.as_ref().map(|declare_static| {
         quote! {
             fn declare_static(declaration: &mut ::plugin_factory::compatibility::Declaration) {
@@ -64,6 +38,68 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             }
         }
     });
+
+    Ok(quote! {
+        impl ::plugin_factory::Plugin for #plugin {
+            #declare
+            #recommends
+        }
+
+        #configurable
+
+        impl ::plugin_factory::PluginType for #plugin {
+            const ID: &'static str = #id;
+            const LABEL: &'static str = #label;
+            const DESCRIPTION: &'static str = #description;
+
+            #declare_static
+        }
+    })
+}
+
+/// The `Configurable` impl of the struct `input`, a composite.
+pub fn expand_configurable(input: &DeriveInput) -> Result<TokenStream> {
+    if let Some(attribute) = attributes(&input.attrs, "plugin").next() {
+        return Err(Error::new_spanned(
+            attribute,
+            "a composite takes no `#[plugin(..)]` on the struct; derive `Plugin` for a plugin",
+        ));
+    }
+    configurable(input, "composite")
+}
+
+/// The `Configurable` impl of the struct `input`, a `what` (a plugin or a composite), as its fields
+/// and their `serde` attributes describe it.
+fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
+    if !input.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &input.generics,
+            format!("a {what} cannot be derived for a generic struct"),
+        ));
+    }
+    let Data::Struct(data) = &input.data else {
+        return Err(Error::new_spanned(
+            &input.ident,
+            format!("a {what} can only be derived for a struct"),
+        ));
+    };
+    let default = container_default(input, what)?;
+    let is_unit = matches!(data.fields, Fields::Unit);
+    let fields = match &data.fields {
+        Fields::Named(fields) => {
+            collect(fields.named.iter().map(|field| Field::parse(field, what)))?
+        }
+        Fields::Unit => Vec::new(),
+        Fields::Unnamed(_) => {
+            return Err(Error::new_spanned(
+                &data.fields,
+                format!("a {what} can only be derived for a struct with named fields or none"),
+            ));
+        }
+    };
+    let fields: Vec<_> = fields.into_iter().flatten().collect();
+
+    let configurable = &input.ident;
     // a unit struct deserializes from `null` rather than from an empty config
     let is_unit = is_unit.then(|| {
         quote!(
@@ -73,7 +109,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
     let schema_fields = fields
         .iter()
         .map(|field| field.schema_field(default.as_ref()));
-    // a plugin without fields keeps the default, so that it reads as one written by hand would
+    // a struct without fields keeps the default, so that it reads as one written by hand would
     let plugins = (!fields.is_empty()).then(|| {
         let field_names = fields.iter().map(|field| &field.ident);
         quote! {
@@ -86,12 +122,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
     });
 
     Ok(quote! {
-        impl ::plugin_factory::Plugin for #plugin {
-            #declare
-            #recommends
-        }
-
-        impl ::plugin_factory::schema::Configurable for #plugin {
+        impl ::plugin_factory::schema::Configurable for #configurable {
             #is_unit
 
             fn schema() -> ::plugin_factory::schema::Schema {
@@ -100,18 +131,33 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
 
             #plugins
         }
-
-        impl ::plugin_factory::PluginType for #plugin {
-            const ID: &'static str = #id;
-            const LABEL: &'static str = #label;
-            const DESCRIPTION: &'static str = #description;
-
-            #declare_static
-        }
     })
 }
 
-/// What the attributes of the struct say.
+/// The `#[serde(default)]` on the struct `input`, a `what`.
+fn container_default(input: &DeriveInput, what: &str) -> Result<Option<SerdeDefault>> {
+    let mut default = None;
+    for attribute in attributes(&input.attrs, "serde") {
+        attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                default = Some(SerdeDefault::parse(&meta)?);
+                Ok(())
+            } else if ["rename_all", "transparent", "from", "try_from"]
+                .iter()
+                .any(|unsupported| meta.path.is_ident(unsupported))
+            {
+                Err(meta.error(format!(
+                    "a {what} whose fields are not what serde deserializes cannot be derived"
+                )))
+            } else {
+                skip(&meta)
+            }
+        })?;
+    }
+    Ok(default)
+}
+
+/// What the `#[plugin(..)]` attributes of a plugin's struct say.
 struct Container {
     id: LitStr,
     label: LitStr,
@@ -119,8 +165,6 @@ struct Container {
     declare_static: Option<Expr>,
     declare: Option<Expr>,
     recommends: Option<Expr>,
-    /// `#[serde(default)]` on the struct.
-    default: Option<SerdeDefault>,
 }
 
 impl Container {
@@ -154,25 +198,6 @@ impl Container {
             })?;
         }
 
-        let mut default = None;
-        for attribute in attributes(&input.attrs, "serde") {
-            attribute.parse_nested_meta(|meta| {
-                if meta.path.is_ident("default") {
-                    default = Some(SerdeDefault::parse(&meta)?);
-                    Ok(())
-                } else if ["rename_all", "transparent", "from", "try_from"]
-                    .iter()
-                    .any(|unsupported| meta.path.is_ident(unsupported))
-                {
-                    Err(meta.error(
-                        "a plugin whose fields are not what serde deserializes cannot be derived",
-                    ))
-                } else {
-                    skip(&meta)
-                }
-            })?;
-        }
-
         let required = |value: Option<LitStr>, name: &str| {
             value.ok_or_else(|| {
                 Error::new_spanned(
@@ -188,7 +213,6 @@ impl Container {
             declare_static,
             declare,
             recommends,
-            default,
         })
     }
 }
@@ -209,8 +233,8 @@ struct Field {
 }
 
 impl Field {
-    /// The field `field`, or [`None`] if `serde` does not deserialize it.
-    fn parse(field: &syn::Field) -> Result<Option<Self>> {
+    /// The field `field` of a `what`, or [`None`] if `serde` does not deserialize it.
+    fn parse(field: &syn::Field, what: &str) -> Result<Option<Self>> {
         let ident = field.ident.clone().expect("the fields are named");
         let mut name = LitStr::new(&ident.unraw().to_string(), ident.span());
         let mut default = None;
@@ -221,10 +245,10 @@ impl Field {
             attribute.parse_nested_meta(|meta| {
                 if meta.path.is_ident("rename") {
                     if !meta.input.peek(Token![=]) {
-                        return Err(meta.error(
-                            "a field of a plugin is read and written by one name, given by \
+                        return Err(meta.error(format!(
+                            "a field of a {what} is read and written by one name, given by \
                              `rename = \"...\"`",
-                        ));
+                        )));
                     }
                     name = meta.value()?.parse()?;
                 } else if meta.path.is_ident("default") {
@@ -272,7 +296,7 @@ impl Field {
         let label = label.ok_or_else(|| {
             Error::new_spanned(
                 &ident,
-                "a field of a plugin needs `#[plugin(label = \"...\")]`",
+                format!("a field of a {what} needs `#[plugin(label = \"...\")]`"),
             )
         })?;
 
@@ -421,7 +445,11 @@ mod tests {
     use super::*;
 
     fn error_of(input: DeriveInput) -> String {
-        expand(&input).unwrap_err().to_string()
+        expand_plugin(&input).unwrap_err().to_string()
+    }
+
+    fn composite_error_of(input: DeriveInput) -> String {
+        expand_configurable(&input).unwrap_err().to_string()
     }
 
     #[test]
@@ -451,7 +479,7 @@ mod tests {
     #[test]
     fn a_skipped_field_needs_no_label() {
         assert!(
-            expand(&parse_quote! {
+            expand_plugin(&parse_quote! {
                 #[plugin(id = "points", label = "points", description = "points")]
                 struct Points {
                     #[serde(skip)]
@@ -517,7 +545,7 @@ mod tests {
             const IS_UNIT: bool = true;
         )
         .to_string();
-        let expanded = |input: DeriveInput| expand(&input).unwrap().to_string();
+        let expanded = |input: DeriveInput| expand_plugin(&input).unwrap().to_string();
 
         assert!(
             expanded(parse_quote! {
@@ -543,6 +571,46 @@ mod tests {
                 struct Points(i64);
             }),
             "a plugin can only be derived for a struct with named fields or none"
+        );
+    }
+
+    #[test]
+    fn a_composite_is_only_configurable() {
+        let expanded = expand_configurable(&parse_quote! {
+            struct Phase {
+                #[serde(default)]
+                #[plugin(label = "Metrics")]
+                metrics: Vec<Box<dyn Metric>>,
+            }
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(expanded.contains("Configurable for Phase"));
+        assert!(!expanded.contains("PluginType"));
+        assert!(!expanded.contains(":: Plugin for"));
+    }
+
+    #[test]
+    fn a_composite_described_as_a_plugin_is_an_error() {
+        assert_eq!(
+            composite_error_of(parse_quote! {
+                #[plugin(id = "phase", label = "phase", description = "phase")]
+                struct Phase;
+            }),
+            "a composite takes no `#[plugin(..)]` on the struct; derive `Plugin` for a plugin"
+        );
+    }
+
+    #[test]
+    fn a_field_of_a_composite_without_a_label_is_an_error() {
+        assert_eq!(
+            composite_error_of(parse_quote! {
+                struct Phase {
+                    format: Box<dyn Format>,
+                }
+            }),
+            "a field of a composite needs `#[plugin(label = \"...\")]`"
         );
     }
 }

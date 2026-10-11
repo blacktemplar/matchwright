@@ -13,7 +13,7 @@ use plugin_factory::{
     },
     config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
     register,
-    schema::{Configurable, Field, Schema},
+    schema::Configurable,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::json;
@@ -266,27 +266,15 @@ struct Combined {
 impl Metric for Combined {}
 
 /// The composite: one format, any number of metrics, and a metric or none.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Configurable)]
 struct Phase {
+    #[plugin(label = "Format", description = "how the matches are scheduled")]
     format: Box<dyn Format>,
+    #[serde(default)]
+    #[plugin(label = "Metrics")]
     metrics: Vec<Box<dyn Metric>>,
+    #[plugin(label = "Tie break")]
     tie_break: Option<Box<dyn Metric>>,
-}
-
-impl Configurable for Phase {
-    fn schema() -> Schema {
-        Schema::new()
-            .field(
-                Field::plugin::<dyn Format>("format", "Format")
-                    .described("how the matches are scheduled"),
-            )
-            .field(Field::plugins::<dyn Metric>("metrics", "Metrics").with_default(json!([])))
-            .field(
-                Field::plugin::<dyn Metric>("tie_break", "Tie break")
-                    .optional()
-                    .with_default(Value::Null),
-            )
-    }
 }
 
 impl Accepts<dyn Metric> for Phase {
@@ -396,6 +384,15 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
     );
     assert_eq!(ids(axes[1].1), metrics);
     assert_eq!(ids(axes[2].1), metrics);
+    let schema = Phase::schema();
+    let default = |name| schema.field_named(name).unwrap().default_value();
+    assert_eq!(
+        schema.field_named("format").unwrap().description(),
+        Some("how the matches are scheduled")
+    );
+    assert_eq!(default("format"), None);
+    assert_eq!(default("metrics"), Some(&json!([])));
+    assert_eq!(default("tie_break"), Some(&Value::Null));
 
     let wins = axes[1].1.entry("full::wins").unwrap();
     let schema = wins.schema();

@@ -6,6 +6,7 @@
 //! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
 //! program reads the questions of a plugin before it is chosen and never names one.
 
+pub use plugin_factory_derive::Configurable;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -17,13 +18,13 @@ use crate::{
 /// Something configured by answering the fields of its [`Schema`]: a plugin, or the composite a
 /// program configures plugins into.
 ///
-/// Derived for a plugin, see [`derive@Plugin`](crate::Plugin); a composite implements it itself.
+/// Only derived: for a plugin by [`derive@Plugin`](crate::Plugin), for a composite by
+/// [`derive@Configurable`]. Implementing it by hand is not supported.
 ///
-/// It is built by deserializing a config that answers every field of its schema, see
-/// [`Schema::complete`], so its `Deserialize` impl has to read each field under the name the
-/// schema gives it. A derived plugin without parameters may be a unit struct, which is
-/// deserialized from `null` rather than from an empty config. An answer it rejects, e.g. through
-/// `#[serde(deserialize_with = ..)]` or `#[serde(try_from = ..)]`, is reported as
+/// It is built by deserializing its answers, with every field left unanswered answered by its
+/// default. A struct without fields may be a unit struct, which is deserialized from `null`
+/// rather than from an empty config. An answer it rejects, e.g. through
+/// `#[serde(deserialize_with = ..)]` or a field type's `#[serde(try_from = ..)]`, is reported as
 /// [`ConfigError::Rejected`] with the path of the answer.
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     /// Whether it is a unit struct, deserialized from `null`. Set by the derive; not part of the
@@ -123,16 +124,19 @@ impl<T: FieldType> FieldType for Vec<T> {
 }
 
 /// Everything a [`Configurable`] has to be told, in the order it is asked in.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Schema(Vec<Field>);
 
 impl Schema {
-    /// A schema asking for nothing, which is what a plugin without parameters has.
+    /// A schema asking for nothing. Called by the derive; not part of the API.
+    #[doc(hidden)]
     pub const fn new() -> Self {
         Self(Vec::new())
     }
 
-    /// This schema with `field` asked after the fields it holds already.
+    /// This schema with `field` asked after the fields it holds already. Called by the derive;
+    /// not part of the API.
+    #[doc(hidden)]
     #[must_use]
     pub fn field(mut self, field: Field) -> Self {
         self.0.push(field);
@@ -162,7 +166,7 @@ impl Schema {
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
     /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered, each
     /// anchored to where in a nested answer it is.
-    pub fn complete(&self, config: &Config) -> Result<Config, ConfigError> {
+    pub(crate) fn complete(&self, config: &Config) -> Result<Config, ConfigError> {
         self.check_known(config)?;
         let mut completed = Config::new();
         for field in self.fields() {
@@ -235,7 +239,9 @@ pub struct Field {
 }
 
 impl Field {
-    /// A field answered by an answer of kind `kind`, named `name` and labelled `label`.
+    /// A field answered by an answer of kind `kind`, named `name` and labelled `label`. Called by
+    /// the derive; not part of the API.
+    #[doc(hidden)]
     pub const fn new(name: &'static str, label: &'static str, kind: FieldKind) -> Self {
         Self {
             name,
@@ -246,34 +252,9 @@ impl Field {
         }
     }
 
-    /// A field answered by yes or no, named `name` and labelled `label`, e.g. "Play a match for
-    /// third place?".
-    pub const fn bool(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::Bool)
-    }
-
-    /// A field answered by a whole number, named `name` and labelled `label`.
-    pub const fn integer(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::Integer)
-    }
-
-    /// A field answered by a number with a fractional part, named `name` and labelled `label`.
-    pub const fn decimal(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::Decimal)
-    }
-
-    /// A field answered by one plugin of the axis `A`, named `name` and labelled `label`.
-    pub const fn plugin<A: Axis + ?Sized>(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::plugin::<A>())
-    }
-
-    /// A field answered by any number of plugins of the axis `A`, named `name` and labelled
-    /// `label`.
-    pub fn plugins<A: Axis + ?Sized>(name: &'static str, label: &'static str) -> Self {
-        Self::new(name, label, FieldKind::plugins::<A>())
-    }
-
-    /// This field with `description` as the help text of its question.
+    /// This field with `description` as the help text of its question. Called by the derive; not
+    /// part of the API.
+    #[doc(hidden)]
     #[must_use]
     pub const fn described(mut self, description: &'static str) -> Self {
         self.description = Some(description);
@@ -281,27 +262,11 @@ impl Field {
     }
 
     /// This field with `default` as the answer it offers, which is what makes it one that can be
-    /// left unanswered.
+    /// left unanswered. Called by the derive; not part of the API.
+    #[doc(hidden)]
     #[must_use]
     pub fn with_default(mut self, default: impl Into<Value>) -> Self {
         self.default = Some(default.into());
-        self
-    }
-
-    /// This field answered by what it takes or by nothing, see [`FieldKind::Optional`]. A default
-    /// it has already stays its default.
-    #[must_use]
-    pub fn optional(mut self) -> Self {
-        self.kind = FieldKind::optional(self.kind);
-        self
-    }
-
-    /// This field answered by any number of answers of what it takes, see [`FieldKind::List`]. A
-    /// default it has already becomes a list of that one answer.
-    #[must_use]
-    pub fn repeated(mut self) -> Self {
-        self.kind = FieldKind::list(self.kind);
-        self.default = self.default.map(|default| Value::Array(vec![default]));
         self
     }
 
@@ -356,11 +321,6 @@ impl FieldKind {
     /// One plugin of the axis `A`.
     pub const fn plugin<A: Axis + ?Sized>() -> Self {
         Self::Plugin(AnyAxis::of::<A>())
-    }
-
-    /// Any number of plugins of the axis `A`.
-    pub fn plugins<A: Axis + ?Sized>() -> Self {
-        Self::list(Self::plugin::<A>())
     }
 
     /// Any number of answers of the kind `element`.
@@ -660,19 +620,6 @@ mod tests {
     }
 
     #[test]
-    fn a_default_survives_the_field_it_is_given_to_becoming_optional_or_repeated() {
-        let optional = Field::decimal("for_bye", "Points for a bye")
-            .with_default(0.5)
-            .optional();
-        let repeated = Field::decimal("weights", "Weight per round")
-            .with_default(0.5)
-            .repeated();
-
-        assert_eq!(optional.default_value(), Some(&json!(0.5)));
-        assert_eq!(repeated.default_value(), Some(&json!([0.5])));
-    }
-
-    #[test]
     fn an_unanswered_field_is_answered_by_its_default() {
         assert_eq!(
             built::<Points>(Config::new()).as_deref(),
@@ -775,7 +722,9 @@ mod tests {
 
     #[test]
     fn a_default_of_another_kind_than_its_field_is_an_error() {
-        let schema = Schema::new().field(Field::integer("rounds", "Rounds").with_default(true));
+        // a derived schema cannot have such a default, so it is made by hand
+        let schema = Schema::new()
+            .field(Field::new("rounds", "Rounds", FieldKind::Integer).with_default(true));
 
         assert_eq!(
             schema.complete(&Config::new()),

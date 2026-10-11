@@ -52,7 +52,25 @@ pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
 /// serializing and deserializing.
 #[proc_macro_derive(Plugin, attributes(plugin))]
 pub fn derive_plugin(input: TokenStream) -> TokenStream {
-    derive::expand(&parse_macro_input!(input as DeriveInput))
+    derive::expand_plugin(&parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Implements `Configurable` for a composite, a struct that is not a plugin: its schema and the
+/// plugins it holds from its fields, as `Plugin` derives them for a plugin.
+///
+/// # Attributes
+///
+/// None on the struct. On every field `serde` deserializes, `label = "..."`, required, and
+/// `description = "..."`, optional.
+///
+/// # Errors
+///
+/// Fails to compile as `Plugin` does, and for `#[plugin(..)]` on the struct.
+#[proc_macro_derive(Configurable, attributes(plugin))]
+pub fn derive_configurable(input: TokenStream) -> TokenStream {
+    derive::expand_configurable(&parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

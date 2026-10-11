@@ -1,4 +1,4 @@
-//! Plugins derived rather than written by hand, on an axis of their own.
+//! Plugins and a composite derived rather than written by hand, on an axis of their own.
 
 use std::any::TypeId;
 
@@ -176,6 +176,19 @@ impl Default for Ranker {
 
 #[register]
 impl Derived for Ranker {}
+
+/// A composite, configured as a plugin is but not one itself.
+#[derive(Debug, Deserialize, Configurable)]
+struct Composite {
+    #[plugin(label = "Main", description = "what the composite is built around")]
+    main: Box<dyn Derived>,
+    #[serde(default)]
+    #[plugin(label = "Others")]
+    others: Vec<Box<dyn Derived>>,
+    #[serde(rename = "limit")]
+    #[plugin(label = "Limit")]
+    cap: Option<u32>,
+}
 
 /// The entry of the plugin `P`.
 fn entry_of<P: PluginType>() -> &'static PluginEntry {
@@ -375,4 +388,44 @@ fn a_recommendation_is_forwarded_to_the_function_given() {
         [PluginConfig::of::<Unit>(Config::new())]
     );
     assert!(Unit.recommends().is_empty());
+}
+
+#[test]
+fn a_composite_reads_its_schema_from_its_fields_as_a_plugin_does() {
+    let schema = Composite::schema();
+    let field = |name| schema.field_named(name).expect("the schema has the field");
+    let plugin = FieldKind::plugin::<dyn Derived>();
+
+    assert_eq!(
+        schema.fields().iter().map(Field::name).collect::<Vec<_>>(),
+        ["main", "others", "limit"]
+    );
+    assert_eq!(field("main").kind(), &plugin);
+    assert_eq!(
+        field("main").description(),
+        Some("what the composite is built around")
+    );
+    assert_eq!(field("main").default_value(), None);
+    assert_eq!(field("others").kind(), &FieldKind::list(plugin));
+    assert_eq!(field("others").default_value(), Some(&json!([])));
+    assert_eq!(
+        field("limit").kind(),
+        &FieldKind::optional(FieldKind::Integer)
+    );
+    assert_eq!(field("limit").default_value(), Some(&Value::Null));
+}
+
+#[test]
+fn the_plugins_of_a_composite_are_the_plugins_in_its_fields() {
+    let composite: Composite = serde_json::from_value(json!({
+        "main": {"type": "derive::unit", "value": null},
+        "others": [{"type": "derive::points", "value": {"byes": true, "cap": null}}],
+    }))
+    .unwrap();
+
+    assert_eq!(
+        format!("{:?}", composite.plugins()),
+        format!("[{:?}, {:?}]", Unit, composite.others[0])
+    );
+    assert_eq!(composite.cap, None);
 }

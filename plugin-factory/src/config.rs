@@ -58,8 +58,7 @@ impl PluginConfig {
 
     /// The plugin this configures, as a plugin of the axis `A`, e.g. `build::<dyn Metric>()`,
     /// where every field its config leaves unanswered is answered by the default of the field,
-    /// and likewise for the plugins answering its fields, see
-    /// [`Schema::complete`](crate::schema::Schema::complete).
+    /// and likewise for the plugins answering its fields.
     ///
     /// The plugin is deserialized from the completed answer through the `Deserialize` impl of
     /// `Box<A>`, i.e. the way a saved plugin is loaded, which knows the plugin by its id, see
@@ -96,8 +95,8 @@ impl From<PluginConfig> for Value {
 
 /// The answers one plugin is configured with, by the name of the field each answers.
 ///
-/// A config that answers every field of a schema configures the plugin of that schema, see
-/// [`Schema::complete`](crate::schema::Schema::complete); the default one answers nothing. As a
+/// A config that answers every field of a schema, or leaves only fields with a default
+/// unanswered, configures the plugin of that schema; the default one answers nothing. As a
 /// [`Value`] it is the object of those answers; `null` deserializes as the config answering
 /// nothing, which is how the config of a unit struct is written, see
 /// [`Configurable`](crate::schema::Configurable).
