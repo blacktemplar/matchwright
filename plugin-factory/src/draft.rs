@@ -1,17 +1,20 @@
 //! A composite of plugins being configured, one answer at a time.
 //!
-//! A [`Builder`] holds the answers given so far to the schema of a composite and to the schemas
-//! of the plugins answering its fields, as one tree in which a [`Path`] addresses a field or a
+//! A [`Draft`] holds the answers given so far to the schema of a composite and to the schemas of
+//! the plugins answering its fields, as one tree in which a [`Path`] addresses a field or a
 //! position in a list. A UI renders the fields from the schemas along the
-//! [answers](Builder::answers), see [`Builder`], and from the builder's queries — the
-//! [default](Builder::default) of a field, the [candidates](Builder::candidates) for a position
-//! taking plugins and the [issues](Builder::issues) of the answers so far — and changes the tree
-//! through [`Builder::set`] and [`Builder::unset`] alone, so that no answer is ever changed behind
-//! its back. [`Builder::finish`] builds the composite.
+//! [answers](Draft::answers), see [`Draft`], and changes the tree through [`Draft::set`] and
+//! [`Draft::unset`] alone, so that every answer in it fits the schema.
+//!
+//! The functions of this module answer what a UI asks about a draft: the
+//! [default](default_value) of a field, the [candidates] for a position taking plugins and the
+//! [issues] of the answers so far. [`finish`] builds the composite. Each takes the composite's
+//! context, i.e. what is true of it before any plugin is chosen, as a closure declaring it as a
+//! plugin declares, see [`compatibility::check`].
 //!
 //! While a field taking plugins is unanswered, whatever the plugins of its axis could provide may
-//! still arrive, so the candidates and issues are optimistic about it; [`Builder::finish`] checks
-//! with nothing open, see [`compatibility::check`].
+//! still arrive, so the candidates and issues are optimistic about it; [`finish`] checks with
+//! nothing open.
 
 use std::{any::TypeId, fmt::Write as _, marker::PhantomData, mem};
 
@@ -35,8 +38,8 @@ use crate::{
 /// ```
 /// use plugin_factory::{
 ///     Plugin, axis,
-///     builder::Builder,
 ///     config::{Config, Path, PluginConfig, Value},
+///     draft::Draft,
 ///     register,
 ///     schema::{Configurable, FieldKind, Schema},
 /// };
@@ -101,8 +104,8 @@ use crate::{
 /// }
 ///
 /// # fn main() {
-/// let mut builder = Builder::<Phase>::new(|_| {});
-/// builder
+/// let mut draft = Draft::<Phase>::new();
+/// draft
 ///     .set(
 ///         &"seedings".parse().unwrap(),
 ///         vec![PluginConfig::of::<Random>()],
@@ -110,7 +113,7 @@ use crate::{
 ///     .unwrap();
 ///
 /// let mut lines = Vec::new();
-/// fields(&Phase::schema(), builder.answers(), &Path::ROOT, &mut lines);
+/// fields(&Phase::schema(), draft.answers(), &Path::ROOT, &mut lines);
 /// assert_eq!(
 ///     lines,
 ///     [
@@ -120,34 +123,28 @@ use crate::{
 /// );
 /// # }
 /// ```
-pub struct Builder<T> {
-    context: Declaration,
+pub struct Draft<T> {
     answers: Config,
     composite: PhantomData<fn() -> T>,
 }
 
-impl<T: Configurable> Builder<T> {
-    /// A builder with nothing answered, for a composite with `context`, i.e. what is true of it
-    /// before any plugin is chosen, see [`compatibility::check`].
-    pub fn new(context: impl FnOnce(&mut Declaration)) -> Self {
+impl<T: Configurable> Draft<T> {
+    /// A draft with nothing answered.
+    pub fn new() -> Self {
         Self {
-            context: Declaration::of(context),
             answers: Config::new(),
             composite: PhantomData,
         }
     }
 
-    /// A builder with every field answered as in `composite`, e.g. one that was loaded, for a
-    /// composite with `context`; the answers are what `composite` serializes to. So
-    /// `from_built(..).finish()` settles and checks a composite built elsewhere.
+    /// A draft with every field answered as in `composite`, e.g. one that was loaded; the answers
+    /// are what `composite` serializes to. So [`finish`] of it settles and checks a composite
+    /// built elsewhere.
     ///
     /// # Errors
     /// Returns [`ConfigError::Rejected`] at the root if `composite` does not serialize to a
     /// config, and what [`Self::set`] returns for an answer that is not one of the schema.
-    pub fn from_built(
-        context: impl FnOnce(&mut Declaration),
-        composite: &T,
-    ) -> Result<Self, ConfigError>
+    pub fn from_built(composite: &T) -> Result<Self, ConfigError>
     where
         T: Serialize,
     {
@@ -158,7 +155,6 @@ impl<T: Configurable> Builder<T> {
                 reason: error.to_string(),
             })?;
         Ok(Self {
-            context: Declaration::of(context),
             answers: T::schema().walk(&answers, &Path::ROOT, false)?,
             composite: PhantomData,
         })
@@ -169,190 +165,11 @@ impl<T: Configurable> Builder<T> {
         &self.answers
     }
 
-    /// The answer the field at `path` offers, or [`None`] if it offers none or `path` addresses a
-    /// position in a list rather than a field. It is never filled in: a UI offering it sets it
-    /// as the answer, see [`Self::set`].
-    ///
-    /// A field taking plugins offers what the plugins answering the other fields of its config
-    /// recommend, see [`Plugin::recommends`], as far as it is of its
-    /// axis and fits as a [candidate](Self::candidates) would: a field taking one plugin the first
-    /// such recommendation, a field taking a list all of them that fit together, in the order they
-    /// are recommended in. A field no recommendation fits offers the default of its schema.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers.
-    pub fn default(&self, path: &Path) -> Result<Option<Value>, ConfigError> {
-        let schema = T::schema();
-        let Some(field) = locate(&schema, &self.answers, path)?.field else {
-            return Ok(None);
-        };
-        Ok(self.default_of(&Tree::of(&schema, &self.answers), &field, path))
-    }
-
-    /// The plugins that could answer the position at `path`, by id, each with why it does not fit
-    /// if it does not; empty if the position takes no plugins.
-    ///
-    /// A candidate takes the place of what answers the position, so it is checked against the
-    /// answers without it, and only for what it declares itself: an incompatibility among the
-    /// other answers is not its conflict. What the fields still unanswered could provide is
-    /// open, and so is what the candidate's own plugin fields could.
-    /// For a field taking a list the candidate is one of the plugins answering it, so the rest of
-    /// the list is open as well; at a position in the list, the rest of the list is as answered.
-    ///
-    /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path
-    /// may address the position just past the end of a list.
-    pub fn candidates(&self, path: &Path) -> Result<Vec<Candidate>, ConfigError> {
-        let schema = T::schema();
-        let position = locate(&schema, &self.answers, path)?;
-        let Some((axis, list)) = slot(&position.kind) else {
-            return Ok(Vec::new());
-        };
-        let tree = Tree::of(&schema, &self.answers);
-        let declarations = tree.declarations(Some(path));
-        let mut open = tree.open(Some(path));
-        if list {
-            open.extend(axis.facts().iter());
-        }
-        Ok(axis
-            .entries()
-            .map(|entry| {
-                let mut open = open.clone();
-                open.extend(entry.sub_axes().iter().flat_map(|axis| axis.facts().iter()));
-                let conflict = compatibility::check_addition(
-                    &self.context,
-                    declarations.iter().copied(),
-                    &Declared::new(entry.label(), entry.declaration()),
-                    &open,
-                )
-                .err();
-                Candidate { entry, conflict }
-            })
-            .collect())
-    }
-
-    /// Everything currently wrong with the answers, each at the path where it is fixed, in no
-    /// particular order: an answer a plugin rejects, a plugin that does not fit next to the
-    /// others, and a fact a plugin requires that nothing provides and no unanswered field could.
-    ///
-    /// An unanswered field is no issue, but still to be answered. A plugin with an unanswered
-    /// field counts with its static declaration only and recommends nothing.
-    pub fn issues(&self) -> Vec<Issue> {
-        self.issues_in(&Tree::of(&T::schema(), &self.answers), false)
-    }
-
-    /// [`Self::issues`] of the answers `tree` holds. If `finished`, nothing is open any more: an
-    /// unanswered field is an issue and provides nothing.
-    fn issues_in(&self, tree: &Tree, finished: bool) -> Vec<Issue> {
-        let mut issues = Vec::new();
-        if finished {
-            for question in tree
-                .questions
-                .iter()
-                .filter(|question| question.answer.is_none())
-            {
-                issues.push(Issue {
-                    path: question.path.clone(),
-                    problem: Problem::Invalid(ConfigError::Unanswered {
-                        path: question.path.clone(),
-                    }),
-                });
-            }
-        }
-        for placed in &tree.plugins {
-            if let Err(error) = &placed.instance
-                && !matches!(error, ConfigError::Unanswered { .. })
-            {
-                let issue = Issue {
-                    path: error.path().clone(),
-                    problem: Problem::Invalid(error.clone()),
-                };
-                // a plugin is built with the plugins answering its fields, so an error of one of
-                // those is found again building the plugin holding it
-                if !issues.contains(&issue) {
-                    issues.push(issue);
-                }
-            }
-        }
-
-        let open = if finished {
-            OpenFacts::NOTHING
-        } else {
-            tree.open(None)
-        };
-        let mut unprovided = Vec::new();
-        for (index, placed) in tree.plugins.iter().enumerate() {
-            let others = tree
-                .plugins
-                .iter()
-                .enumerate()
-                .filter(|&(other, _)| other != index)
-                .map(|(_, other)| &other.declared);
-            let mut incompatible = None;
-            for conflict in compatibility::conflicts(&self.context, others, &placed.declared, &open)
-            {
-                match conflict.incompatibility {
-                    // reported below, at the fields that could provide it
-                    Incompatibility::FactNotProvided { fact, .. } => {
-                        unprovided.push((conflict.fact, fact, placed.path.clone()));
-                    }
-                    incompatibility => {
-                        incompatible.get_or_insert(incompatibility);
-                    }
-                }
-            }
-            if let Some(incompatibility) = incompatible {
-                issues.push(Issue {
-                    path: placed.path.clone(),
-                    problem: Problem::Incompatible(incompatibility),
-                });
-            }
-        }
-
-        for (fact, name, required_by) in unprovided {
-            // unless finished, a field still unanswered that could provide the fact leaves it
-            // open, so only answered fields are found here
-            let fields: Vec<_> = tree
-                .questions
-                .iter()
-                .filter_map(|question| Some((question, slot(question.field.kind())?.0)))
-                .filter(|(_, axis)| axis.facts().contains(fact))
-                .collect();
-            if fields.is_empty() {
-                issues.push(Issue {
-                    path: required_by.clone(),
-                    problem: Problem::Unprovided {
-                        fact: name,
-                        required_by,
-                        providers: Vec::new(),
-                    },
-                });
-                continue;
-            }
-            for (question, axis) in fields {
-                let providers: Vec<_> = axis
-                    .entries()
-                    .filter(|entry| entry.declaration().provides_type(fact))
-                    .map(PluginEntry::id)
-                    .collect();
-                issues.push(Issue {
-                    path: question.path.clone(),
-                    problem: Problem::Unprovided {
-                        fact: name,
-                        required_by: required_by.clone(),
-                        providers,
-                    },
-                });
-            }
-        }
-        issues
-    }
-
     /// Answers the position at `path` with `answer`: a field, a position in a list, or the
     /// position just past its end, which appends `answer` to the list.
     ///
     /// The answer may leave fields of the plugins in it unanswered. What a plugin rejects is not
-    /// checked here but reported as an [issue](Self::issues).
+    /// checked here but reported as an [issue](issues).
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers or the
@@ -378,143 +195,360 @@ impl<T: Configurable> Builder<T> {
         edit(&mut self.answers, path, None);
         Ok(())
     }
+}
 
-    /// The composite, built from the answers with every fact settled that the catalog settles.
-    ///
-    /// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
-    /// neither the plugins nor the context provide is settled if exactly one plugin without
-    /// fields provides it among the axes of the fields of the composite taking a list of plugins,
-    /// and its axis is taken by one such field only: the plugin is appended to that field. A
-    /// field taking one plugin, and a field of a plugin, is never added to. This repeats until
-    /// nothing changes, so what a plugin added requires is settled in turn.
-    ///
-    /// Leaves the builder as it is, so that a failed composite can be fixed and finished again.
-    ///
-    /// # Errors
-    /// Returns the [issues](Self::issues) of the answers so settled, with nothing open any more:
-    /// an unanswered field is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and
-    /// a fact nothing provides is [`Problem::Unprovided`].
-    pub fn finish(&self) -> Result<T, Vec<Issue>> {
-        let schema = T::schema();
-        let invalid = |error: ConfigError| {
-            vec![Issue {
-                path: error.path().clone(),
-                problem: Problem::Invalid(error),
-            }]
-        };
-        let mut answers = self.answers.clone();
-        let mut tried = Vec::new();
-        while self.settle(&schema, &mut answers, &mut tried) {}
-        let issues = self.issues_in(&Tree::of(&schema, &answers), true);
-        if !issues.is_empty() {
-            return Err(issues);
-        }
-        let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
-        config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
-    }
-
-    /// Settles the first fact the plugins in `answers`, the answers to `schema`, require that
-    /// neither they nor the context provide and that is not in `tried`, see [`Self::finish`].
-    /// Each fact looked at is added to `tried`, so that it is tried once.
-    ///
-    /// Returns whether a plugin was added.
-    fn settle(&self, schema: &Schema, answers: &mut Config, tried: &mut Vec<TypeId>) -> bool {
-        let lists: Vec<_> = schema
-            .fields()
-            .iter()
-            .filter_map(|field| match slot(field.kind()) {
-                Some((axis, true)) => Some((field.name(), axis)),
-                _ => None,
-            })
-            .collect();
-        let tree = Tree::of(schema, answers);
-        let declarations = tree.declarations(None);
-        for fact in compatibility::unprovided(&declarations) {
-            if self.context.provides_type(fact) || tried.contains(&fact) {
-                continue;
-            }
-            tried.push(fact);
-            // an axis taken by two fields offers each provider twice, so it is never settled
-            let mut providers = lists.iter().flat_map(|(name, axis)| {
-                // only a plugin without fields is complete without being asked anything
-                axis.entries()
-                    .filter(move |entry| {
-                        entry.declaration().provides_type(fact)
-                            && entry.instance(&Config::new(), &Path::ROOT).is_ok()
-                    })
-                    .map(move |entry| (*name, entry))
-            });
-            if let Some((name, entry)) = providers.next()
-                && providers.next().is_none()
-            {
-                let mut list = match answers.get(name) {
-                    Some(Value::Array(list)) => list.clone(),
-                    _ => Vec::new(),
-                };
-                list.push(PluginConfig::new(entry.id()).into());
-                answers.set(name, list);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// [`Self::default`] of `field`, the field at `path` in the answers `tree` holds.
-    fn default_of(&self, tree: &Tree, field: &Field, path: &Path) -> Option<Value> {
-        let Some((axis, list)) = slot(field.kind()) else {
-            return field.default_value().cloned();
-        };
-        let (_, parent) = path
-            .segments()
-            .split_last()
-            .expect("the path of a field is not the root");
-        let recommended: Vec<_> = tree
-            .plugins
-            .iter()
-            .filter(|placed| placed.parent.segments() == parent && !placed.path.starts_with(path))
-            .filter_map(|placed| placed.instance.as_ref().ok())
-            .flat_map(|instance| instance.recommends())
-            .filter_map(|recommended| Some((axis.entry(recommended.plugin())?, recommended)))
-            .collect();
-
-        let declarations = tree.declarations(Some(path));
-        let mut open = tree.open(Some(path));
-        if list {
-            open.extend(axis.facts().iter());
-        }
-        let mut added = Vec::new();
-        let mut fitting = Vec::new();
-        for (entry, recommended) in recommended {
-            // a recommendation is a whole answer, so what it declares includes the plugins
-            // answering its fields
-            let declaration = entry
-                .declaration_for(recommended.config())
-                .unwrap_or_else(|_| entry.declaration());
-            let declared = Declared::new(entry.label(), declaration);
-            if compatibility::check_addition(
-                &self.context,
-                declarations.iter().copied().chain(&added),
-                &declared,
-                &open,
-            )
-            .is_ok()
-            {
-                added.push(declared);
-                fitting.push(Value::from(recommended));
-                if !list {
-                    break;
-                }
-            }
-        }
-        match (list, fitting.is_empty()) {
-            (_, true) => field.default_value().cloned(),
-            (true, false) => Some(Value::Array(fitting)),
-            (false, false) => fitting.pop(),
-        }
+impl<T: Configurable> Default for Draft<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-/// A plugin that could answer a position taking plugins, see [`Builder::candidates`].
+/// The answer the field at `path` of `draft` offers in a composite with `context`, or [`None`] if
+/// it offers none or `path` addresses a position in a list rather than a field. It is never filled
+/// in: a UI offering it sets it as the answer, see [`Draft::set`].
+///
+/// A field taking plugins offers what the plugins answering the other fields of its config
+/// recommend, see [`Plugin::recommends`], as far as it is of its axis and fits as a
+/// [candidate](candidates) would: a field taking one plugin the first such recommendation, a field
+/// taking a list all of them that fit together, in the order they are recommended in. A field no
+/// recommendation fits offers the default of its schema.
+///
+/// # Errors
+/// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers.
+pub fn default_value<T: Configurable>(
+    context: impl FnOnce(&mut Declaration),
+    draft: &Draft<T>,
+    path: &Path,
+) -> Result<Option<Value>, ConfigError> {
+    let schema = T::schema();
+    let Some(field) = locate(&schema, &draft.answers, path)?.field else {
+        return Ok(None);
+    };
+    Ok(default_in(
+        &Declaration::of(context),
+        &Tree::of(&schema, &draft.answers),
+        &field,
+        path,
+    ))
+}
+
+/// The plugins that could answer the position at `path` of `draft` in a composite with `context`,
+/// by id, each with why it does not fit if it does not; empty if the position takes no plugins.
+///
+/// A candidate takes the place of what answers the position, so it is checked against the answers
+/// without it, and only for what it declares itself: an incompatibility among the other answers is
+/// not its conflict. What the fields still unanswered could provide is open, and so is what the
+/// candidate's own plugin fields could. For a field taking a list the candidate is one of the
+/// plugins answering it, so the rest of the list is open as well; at a position in the list, the
+/// rest of the list is as answered.
+///
+/// # Errors
+/// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path may
+/// address the position just past the end of a list.
+pub fn candidates<T: Configurable>(
+    context: impl FnOnce(&mut Declaration),
+    draft: &Draft<T>,
+    path: &Path,
+) -> Result<Vec<Candidate>, ConfigError> {
+    let schema = T::schema();
+    let position = locate(&schema, &draft.answers, path)?;
+    let Some((axis, list)) = slot(&position.kind) else {
+        return Ok(Vec::new());
+    };
+    let context = Declaration::of(context);
+    let tree = Tree::of(&schema, &draft.answers);
+    let declarations = tree.declarations(Some(path));
+    let mut open = tree.open(Some(path));
+    if list {
+        open.extend(axis.facts().iter());
+    }
+    Ok(axis
+        .entries()
+        .map(|entry| {
+            let mut open = open.clone();
+            open.extend(entry.sub_axes().iter().flat_map(|axis| axis.facts().iter()));
+            let conflict = compatibility::check_addition(
+                &context,
+                declarations.iter().copied(),
+                &Declared::new(entry.label(), entry.declaration()),
+                &open,
+            )
+            .err();
+            Candidate { entry, conflict }
+        })
+        .collect())
+}
+
+/// Everything currently wrong with the answers of `draft` in a composite with `context`, each at
+/// the path where it is fixed, in no particular order: an answer a plugin rejects, a plugin that
+/// does not fit next to the others, and a fact a plugin requires that nothing provides and no
+/// unanswered field could.
+///
+/// An unanswered field is no issue, but still to be answered. A plugin with an unanswered field
+/// counts with its static declaration only and recommends nothing.
+pub fn issues<T: Configurable>(
+    context: impl FnOnce(&mut Declaration),
+    draft: &Draft<T>,
+) -> Vec<Issue> {
+    issues_in(
+        &Declaration::of(context),
+        &Tree::of(&T::schema(), &draft.answers),
+        false,
+    )
+}
+
+/// The composite `draft` is a draft of, in a composite with `context`, built from its answers
+/// with every fact settled that the catalog settles.
+///
+/// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
+/// neither the plugins nor the context provide is settled if exactly one plugin without fields
+/// provides it among the axes of the fields of the composite taking a list of plugins, and its
+/// axis is taken by one such field only: the plugin is appended to that field. A field taking one
+/// plugin, and a field of a plugin, is never added to. This repeats until nothing changes, so what
+/// a plugin added requires is settled in turn.
+///
+/// Leaves `draft` as it is, so that a failed composite can be fixed and finished again.
+///
+/// # Errors
+/// Returns the [issues] of the answers so settled, with nothing open any more: an unanswered field
+/// is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and a fact nothing provides
+/// is [`Problem::Unprovided`].
+pub fn finish<T: Configurable>(
+    context: impl FnOnce(&mut Declaration),
+    draft: &Draft<T>,
+) -> Result<T, Vec<Issue>> {
+    let context = Declaration::of(context);
+    let schema = T::schema();
+    let invalid = |error: ConfigError| {
+        vec![Issue {
+            path: error.path().clone(),
+            problem: Problem::Invalid(error),
+        }]
+    };
+    let mut answers = draft.answers.clone();
+    let mut tried = Vec::new();
+    while settle(&context, &schema, &mut answers, &mut tried) {}
+    let issues = issues_in(&context, &Tree::of(&schema, &answers), true);
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
+    config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
+}
+
+/// [`issues`] of the answers `tree` holds in a composite with `context`. If `finished`, nothing is
+/// open any more: an unanswered field is an issue and provides nothing.
+fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    if finished {
+        for question in tree
+            .questions
+            .iter()
+            .filter(|question| question.answer.is_none())
+        {
+            issues.push(Issue {
+                path: question.path.clone(),
+                problem: Problem::Invalid(ConfigError::Unanswered {
+                    path: question.path.clone(),
+                }),
+            });
+        }
+    }
+    for placed in &tree.plugins {
+        if let Err(error) = &placed.instance
+            && !matches!(error, ConfigError::Unanswered { .. })
+        {
+            let issue = Issue {
+                path: error.path().clone(),
+                problem: Problem::Invalid(error.clone()),
+            };
+            // a plugin is built with the plugins answering its fields, so an error of one of
+            // those is found again building the plugin holding it
+            if !issues.contains(&issue) {
+                issues.push(issue);
+            }
+        }
+    }
+
+    let open = if finished {
+        OpenFacts::NOTHING
+    } else {
+        tree.open(None)
+    };
+    let mut unprovided = Vec::new();
+    for (index, placed) in tree.plugins.iter().enumerate() {
+        let others = tree
+            .plugins
+            .iter()
+            .enumerate()
+            .filter(|&(other, _)| other != index)
+            .map(|(_, other)| &other.declared);
+        let mut incompatible = None;
+        for conflict in compatibility::conflicts(context, others, &placed.declared, &open) {
+            match conflict.incompatibility {
+                // reported below, at the fields that could provide it
+                Incompatibility::FactNotProvided { fact, .. } => {
+                    unprovided.push((conflict.fact, fact, placed.path.clone()));
+                }
+                incompatibility => {
+                    incompatible.get_or_insert(incompatibility);
+                }
+            }
+        }
+        if let Some(incompatibility) = incompatible {
+            issues.push(Issue {
+                path: placed.path.clone(),
+                problem: Problem::Incompatible(incompatibility),
+            });
+        }
+    }
+
+    for (fact, name, required_by) in unprovided {
+        // unless finished, a field still unanswered that could provide the fact leaves it open,
+        // so only answered fields are found here
+        let fields: Vec<_> = tree
+            .questions
+            .iter()
+            .filter_map(|question| Some((question, slot(question.field.kind())?.0)))
+            .filter(|(_, axis)| axis.facts().contains(fact))
+            .collect();
+        if fields.is_empty() {
+            issues.push(Issue {
+                path: required_by.clone(),
+                problem: Problem::Unprovided {
+                    fact: name,
+                    required_by,
+                    providers: Vec::new(),
+                },
+            });
+            continue;
+        }
+        for (question, axis) in fields {
+            let providers: Vec<_> = axis
+                .entries()
+                .filter(|entry| entry.declaration().provides_type(fact))
+                .map(PluginEntry::id)
+                .collect();
+            issues.push(Issue {
+                path: question.path.clone(),
+                problem: Problem::Unprovided {
+                    fact: name,
+                    required_by: required_by.clone(),
+                    providers,
+                },
+            });
+        }
+    }
+    issues
+}
+
+/// Settles the first fact the plugins in `answers`, the answers to `schema`, require that neither
+/// they nor `context` provide and that is not in `tried`, see [`finish`]. Each fact looked at is
+/// added to `tried`, so that it is tried once.
+///
+/// Returns whether a plugin was added.
+fn settle(
+    context: &Declaration,
+    schema: &Schema,
+    answers: &mut Config,
+    tried: &mut Vec<TypeId>,
+) -> bool {
+    let lists: Vec<_> = schema
+        .fields()
+        .iter()
+        .filter_map(|field| match slot(field.kind()) {
+            Some((axis, true)) => Some((field.name(), axis)),
+            _ => None,
+        })
+        .collect();
+    let tree = Tree::of(schema, answers);
+    let declarations = tree.declarations(None);
+    for fact in compatibility::unprovided(&declarations) {
+        if context.provides_type(fact) || tried.contains(&fact) {
+            continue;
+        }
+        tried.push(fact);
+        // an axis taken by two fields offers each provider twice, so it is never settled
+        let mut providers = lists.iter().flat_map(|(name, axis)| {
+            // only a plugin without fields is complete without being asked anything
+            axis.entries()
+                .filter(move |entry| {
+                    entry.declaration().provides_type(fact)
+                        && entry.instance(&Config::new(), &Path::ROOT).is_ok()
+                })
+                .map(move |entry| (*name, entry))
+        });
+        if let Some((name, entry)) = providers.next()
+            && providers.next().is_none()
+        {
+            let mut list = match answers.get(name) {
+                Some(Value::Array(list)) => list.clone(),
+                _ => Vec::new(),
+            };
+            list.push(PluginConfig::new(entry.id()).into());
+            answers.set(name, list);
+            return true;
+        }
+    }
+    false
+}
+
+/// [`default_value`] of `field`, the field at `path` in the answers `tree` holds, in a composite
+/// with `context`.
+fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) -> Option<Value> {
+    let Some((axis, list)) = slot(field.kind()) else {
+        return field.default_value().cloned();
+    };
+    let (_, parent) = path
+        .segments()
+        .split_last()
+        .expect("the path of a field is not the root");
+    let recommended: Vec<_> = tree
+        .plugins
+        .iter()
+        .filter(|placed| placed.parent.segments() == parent && !placed.path.starts_with(path))
+        .filter_map(|placed| placed.instance.as_ref().ok())
+        .flat_map(|instance| instance.recommends())
+        .filter_map(|recommended| Some((axis.entry(recommended.plugin())?, recommended)))
+        .collect();
+
+    let declarations = tree.declarations(Some(path));
+    let mut open = tree.open(Some(path));
+    if list {
+        open.extend(axis.facts().iter());
+    }
+    let mut added = Vec::new();
+    let mut fitting = Vec::new();
+    for (entry, recommended) in recommended {
+        // a recommendation is a whole answer, so what it declares includes the plugins answering
+        // its fields
+        let declaration = entry
+            .declaration_for(recommended.config())
+            .unwrap_or_else(|_| entry.declaration());
+        let declared = Declared::new(entry.label(), declaration);
+        if compatibility::check_addition(
+            context,
+            declarations.iter().copied().chain(&added),
+            &declared,
+            &open,
+        )
+        .is_ok()
+        {
+            added.push(declared);
+            fitting.push(Value::from(recommended));
+            if !list {
+                break;
+            }
+        }
+    }
+    match (list, fitting.is_empty()) {
+        (_, true) => field.default_value().cloned(),
+        (true, false) => Some(Value::Array(fitting)),
+        (false, false) => fitting.pop(),
+    }
+}
+
+/// A plugin that could answer a position taking plugins, see [`candidates`].
 #[derive(Debug)]
 pub struct Candidate {
     entry: &'static PluginEntry,
@@ -533,8 +567,8 @@ impl Candidate {
     }
 }
 
-/// Something currently wrong with the answers of a [`Builder`], at the path where it is fixed,
-/// see [`Builder::issues`].
+/// Something currently wrong with the answers of a [`Draft`], at the path where it is fixed, see
+/// [`issues`].
 #[derive(Debug, PartialEq, Eq)]
 pub struct Issue {
     path: Path,
@@ -656,7 +690,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
     Ok(position)
 }
 
-/// [`Builder::set`] on `answers`, the answers to `schema`.
+/// [`Draft::set`] on `answers`, the answers to `schema`.
 fn set_in(
     schema: &Schema,
     answers: &mut Config,
@@ -670,7 +704,7 @@ fn set_in(
 }
 
 /// Answers the position at `path` in `answers` with `answer`, or takes its answer back if
-/// `answer` is [`None`], see [`Builder::set`] and [`Builder::unset`]. `path` has been located.
+/// `answer` is [`None`], see [`Draft::set`] and [`Draft::unset`]. `path` has been located.
 fn edit(answers: &mut Config, path: &Path, answer: Option<Value>) {
     let (last, parent) = path
         .segments()
@@ -868,7 +902,7 @@ impl Placed {
     }
 }
 
-/// The builder, tested on axes of its own so that it does not depend on what the plugins of a
+/// The draft, tested on axes of its own so that it does not depend on what the plugins of a
 /// program happen to register.
 #[cfg(test)]
 mod tests {
@@ -904,7 +938,7 @@ mod tests {
     #[plugin(
         id = "round_robin",
         label = "round_robin",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         recommends = Self::recommends
     )]
     struct RoundRobin;
@@ -927,7 +961,7 @@ mod tests {
     #[plugin(
         id = "knockout",
         label = "knockout",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Knockout {
@@ -950,7 +984,7 @@ mod tests {
     #[plugin(
         id = "doubles",
         label = "doubles",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Doubles;
@@ -969,7 +1003,7 @@ mod tests {
     #[plugin(
         id = "monster",
         label = "monster",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Monster;
@@ -991,7 +1025,7 @@ mod tests {
     #[plugin(
         id = "match_count",
         label = "match_count",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct MatchCount;
@@ -1010,7 +1044,7 @@ mod tests {
     #[plugin(
         id = "wins",
         label = "wins",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Wins {
@@ -1045,7 +1079,7 @@ mod tests {
     #[plugin(
         id = "score",
         label = "score",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Score;
@@ -1064,7 +1098,7 @@ mod tests {
     #[plugin(
         id = "buchholz",
         label = "buchholz",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Buchholz;
@@ -1085,7 +1119,7 @@ mod tests {
     #[plugin(
         id = "losses",
         label = "losses",
-        description = "a plugin of the builder's tests",
+        description = "a plugin of the draft's tests",
         declare_static = Self::declare_static
     )]
     struct Losses;
@@ -1133,9 +1167,9 @@ mod tests {
         declaration.provide(EntrantsPerRanking(1));
     }
 
-    /// A builder of a phase of single players.
-    fn builder() -> Builder<Phase> {
-        Builder::new(singles)
+    /// A draft of a phase of single players.
+    fn draft() -> Draft<Phase> {
+        Draft::new()
     }
 
     /// The path written as `text`, e.g. `metrics[1].for_win`.
@@ -1148,22 +1182,18 @@ mod tests {
         PluginConfig::of::<P>()
     }
 
-    /// A builder with `answers` set, each at the path written as its first element.
-    fn answered(answers: &[(&str, Value)]) -> Builder<Phase> {
-        let mut builder = builder();
+    /// A draft with `answers` set, each at the path written as its first element.
+    fn answered(answers: &[(&str, Value)]) -> Draft<Phase> {
+        let mut draft = draft();
         for (at, answer) in answers {
-            builder.set(&path(at), answer.clone()).unwrap();
+            draft.set(&path(at), answer.clone()).unwrap();
         }
-        builder
+        draft
     }
 
-    /// The candidates at `at`, by id, each with why it does not fit.
-    fn candidates(
-        builder: &Builder<Phase>,
-        at: &str,
-    ) -> Vec<(&'static str, Option<Incompatibility>)> {
-        builder
-            .candidates(&path(at))
+    /// The candidates at `at` in a phase of single players, by id, each with why it does not fit.
+    fn candidates(draft: &Draft<Phase>, at: &str) -> Vec<(&'static str, Option<Incompatibility>)> {
+        super::candidates(singles, draft, &path(at))
             .unwrap()
             .into_iter()
             .map(|candidate| (candidate.entry().id(), candidate.conflict))
@@ -1171,18 +1201,18 @@ mod tests {
     }
 
     /// Why the plugin `id` does not fit at `at`.
-    fn conflict_of(builder: &Builder<Phase>, at: &str, id: &str) -> Option<Incompatibility> {
-        candidates(builder, at)
+    fn conflict_of(draft: &Draft<Phase>, at: &str, id: &str) -> Option<Incompatibility> {
+        candidates(draft, at)
             .into_iter()
             .find(|(candidate, _)| *candidate == id)
             .expect("the plugin is a candidate")
             .1
     }
 
-    /// The paths of the fields in the tree of the answers of `builder`, each with whether it is
+    /// The paths of the fields in the tree of the answers of `draft`, each with whether it is
     /// answered.
-    fn paths<T: Configurable>(builder: &Builder<T>) -> Vec<(String, bool)> {
-        Tree::of(&T::schema(), builder.answers())
+    fn paths<T: Configurable>(draft: &Draft<T>) -> Vec<(String, bool)> {
+        Tree::of(&T::schema(), draft.answers())
             .questions
             .iter()
             .map(|question| (question.path.to_string(), question.answer.is_some()))
@@ -1191,19 +1221,19 @@ mod tests {
 
     #[test]
     fn the_tree_holds_the_fields_of_the_composite_and_of_the_plugins_answering_them() {
-        let mut builder = builder();
+        let mut draft = draft();
 
         assert_eq!(
-            paths(&builder),
+            paths(&draft),
             [
                 ("format".to_owned(), false),
                 ("metrics".to_owned(), false),
                 ("tie_break".to_owned(), false),
             ]
         );
-        builder.set(&path("format"), plugin::<Knockout>()).unwrap();
+        draft.set(&path("format"), plugin::<Knockout>()).unwrap();
         assert_eq!(
-            paths(&builder),
+            paths(&draft),
             [
                 ("format".to_owned(), true),
                 ("format.third_place".to_owned(), false),
@@ -1215,42 +1245,42 @@ mod tests {
 
     #[test]
     fn an_answer_is_set_at_its_path_and_unset_again() {
-        let mut builder = answered(&[("metrics", json!([plugin::<Wins>()]))]);
+        let mut draft = answered(&[("metrics", json!([plugin::<Wins>()]))]);
 
-        builder.set(&path("metrics[0].for_win"), 2).unwrap();
-        builder
+        draft.set(&path("metrics[0].for_win"), 2).unwrap();
+        draft
             .set(&path("metrics[1]"), plugin::<MatchCount>())
             .unwrap();
         assert_eq!(
-            builder.answers().get("metrics"),
+            draft.answers().get("metrics"),
             Some(&json!([
                 {"type": "wins", "value": {"for_win": 2}},
                 {"type": "match_count", "value": {}},
             ]))
         );
 
-        builder.unset(&path("metrics[0]")).unwrap();
+        draft.unset(&path("metrics[0]")).unwrap();
         assert_eq!(
-            builder.answers().get("metrics"),
+            draft.answers().get("metrics"),
             Some(&json!([{"type": "match_count", "value": {}}]))
         );
-        builder.unset(&path("metrics")).unwrap();
-        assert_eq!(builder.answers().get("metrics"), None);
+        draft.unset(&path("metrics")).unwrap();
+        assert_eq!(draft.answers().get("metrics"), None);
     }
 
     #[test]
     fn a_path_addressing_nothing_is_an_error() {
-        let mut builder = answered(&[("metrics", json!([]))]);
+        let mut draft = answered(&[("metrics", json!([]))]);
 
         for at in ["format.third_place", "metrics[1]", "rounds", "tie_break[0]"] {
             assert_eq!(
-                builder.set(&path(at), 1),
+                draft.set(&path(at), 1),
                 Err(ConfigError::UnknownField { path: path(at) }),
                 "{at}"
             );
         }
         assert_eq!(
-            builder.unset(&path("metrics[0]")),
+            draft.unset(&path("metrics[0]")),
             Err(ConfigError::UnknownField {
                 path: path("metrics[0]"),
             })
@@ -1259,10 +1289,10 @@ mod tests {
 
     #[test]
     fn an_answer_that_is_not_one_its_field_takes_is_not_set() {
-        let mut builder = builder();
+        let mut draft = draft();
 
         assert_eq!(
-            builder.set(&path("metrics"), 1),
+            draft.set(&path("metrics"), 1),
             Err(ConfigError::WrongKind {
                 path: path("metrics"),
                 expected: "a list",
@@ -1270,7 +1300,7 @@ mod tests {
             })
         );
         assert_eq!(
-            builder.set(
+            draft.set(
                 &path("metrics"),
                 json!([plugin::<Wins>().with("for_win", true)])
             ),
@@ -1281,18 +1311,18 @@ mod tests {
             })
         );
         assert_eq!(
-            builder.set(&path("format"), plugin::<Wins>()),
+            draft.set(&path("format"), plugin::<Wins>()),
             Err(ConfigError::UnknownPlugin {
                 path: path("format"),
             })
         );
-        assert_eq!(builder.answers(), &Config::new());
+        assert_eq!(draft.answers(), &Config::new());
     }
 
     #[test]
     fn a_candidate_conflicting_with_the_context_says_why() {
         assert_eq!(
-            candidates(&builder(), "format"),
+            candidates(&draft(), "format"),
             [
                 (
                     "doubles",
@@ -1310,16 +1340,16 @@ mod tests {
 
     #[test]
     fn a_candidate_does_not_conflict_with_what_it_replaces() {
-        let builder = answered(&[
+        let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>()])),
             ("tie_break", Value::Null),
         ]);
 
-        assert_eq!(conflict_of(&builder, "metrics[0]", "score"), None);
-        assert_eq!(conflict_of(&builder, "metrics", "score"), None);
+        assert_eq!(conflict_of(&draft, "metrics[0]", "score"), None);
+        assert_eq!(conflict_of(&draft, "metrics", "score"), None);
         assert_eq!(
-            conflict_of(&builder, "metrics[1]", "score"),
+            conflict_of(&draft, "metrics[1]", "score"),
             Some(Incompatibility::FactProvidedTwice {
                 fact: format!("{Points:?}"),
                 first: "wins (metrics[0])".to_owned(),
@@ -1330,14 +1360,12 @@ mod tests {
 
     #[test]
     fn a_candidate_may_require_what_an_unanswered_field_could_provide() {
-        let mut builder = answered(&[("tie_break", Value::Null)]);
+        let mut draft = answered(&[("tie_break", Value::Null)]);
 
-        assert_eq!(conflict_of(&builder, "metrics", "losses"), None);
-        builder
-            .set(&path("format"), plugin::<RoundRobin>())
-            .unwrap();
+        assert_eq!(conflict_of(&draft, "metrics", "losses"), None);
+        draft.set(&path("format"), plugin::<RoundRobin>()).unwrap();
         assert_eq!(
-            conflict_of(&builder, "metrics", "losses"),
+            conflict_of(&draft, "metrics", "losses"),
             Some(Incompatibility::FactNotProvided {
                 fact: "eliminations",
                 required_by: "losses".to_owned(),
@@ -1347,15 +1375,15 @@ mod tests {
 
     #[test]
     fn a_candidate_for_a_list_may_require_what_the_rest_of_the_list_could_provide() {
-        let builder = answered(&[
+        let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([])),
             ("tie_break", Value::Null),
         ]);
 
-        assert_eq!(conflict_of(&builder, "metrics", "buchholz"), None);
+        assert_eq!(conflict_of(&draft, "metrics", "buchholz"), None);
         assert_eq!(
-            conflict_of(&builder, "metrics[0]", "buchholz"),
+            conflict_of(&draft, "metrics[0]", "buchholz"),
             Some(Incompatibility::FactNotProvided {
                 fact: "points",
                 required_by: "buchholz".to_owned(),
@@ -1365,24 +1393,24 @@ mod tests {
 
     #[test]
     fn a_position_taking_no_plugins_has_no_candidates() {
-        let builder = answered(&[("format", plugin::<Knockout>().into())]);
+        let draft = answered(&[("format", plugin::<Knockout>().into())]);
 
-        assert!(candidates(&builder, "format.third_place").is_empty());
+        assert!(candidates(&draft, "format.third_place").is_empty());
     }
 
     #[test]
     fn nested_plugins_are_addressed_through_the_fields_they_answer() {
-        let mut builder = answered(&[
+        let mut draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Combined>()])),
         ]);
 
-        assert!(paths(&builder).contains(&("metrics[0].parts".to_owned(), false)));
-        builder
+        assert!(paths(&draft).contains(&("metrics[0].parts".to_owned(), false)));
+        draft
             .set(&path("metrics[0].parts"), json!([plugin::<Wins>()]))
             .unwrap();
         assert_eq!(
-            conflict_of(&builder, "metrics[0].parts[1]", "score"),
+            conflict_of(&draft, "metrics[0].parts[1]", "score"),
             Some(Incompatibility::FactProvidedTwice {
                 fact: format!("{Points:?}"),
                 first: "wins (metrics[0].parts[0])".to_owned(),
@@ -1393,14 +1421,14 @@ mod tests {
 
     #[test]
     fn an_answer_a_plugin_rejects_is_an_issue_at_its_field() {
-        let builder = answered(&[("metrics", json!([plugin::<Wins>().with("for_win", -1.0)]))]);
+        let draft = answered(&[("metrics", json!([plugin::<Wins>().with("for_win", -1.0)]))]);
         let rejected = ConfigError::Rejected {
             path: path("metrics[0].for_win"),
             reason: "the points for a win cannot be negative".to_owned(),
         };
 
         assert_eq!(
-            builder.issues(),
+            issues(singles, &draft),
             [Issue {
                 path: path("metrics[0].for_win"),
                 problem: Problem::Invalid(rejected),
@@ -1410,7 +1438,7 @@ mod tests {
 
     #[test]
     fn plugins_providing_the_same_fact_are_issues_at_each_of_them() {
-        let builder = answered(&[
+        let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>(), plugin::<Score>()])),
             ("tie_break", Value::Null),
@@ -1424,7 +1452,7 @@ mod tests {
         };
 
         assert_eq!(
-            builder.issues(),
+            issues(singles, &draft),
             [
                 Issue {
                     path: path("metrics[0]"),
@@ -1457,14 +1485,14 @@ mod tests {
         };
 
         assert_eq!(
-            losing.issues(),
+            issues(singles, &losing),
             [Issue {
                 path: path("format"),
                 problem: unprovided("eliminations", &["knockout"]),
             }]
         );
         assert_eq!(
-            counting.issues(),
+            issues(singles, &counting),
             [
                 Issue {
                     path: path("metrics"),
@@ -1480,81 +1508,85 @@ mod tests {
 
     #[test]
     fn a_fact_an_unanswered_field_could_provide_is_no_issue() {
-        let builder = answered(&[("metrics", json!([plugin::<Losses>()]))]);
+        let draft = answered(&[("metrics", json!([plugin::<Losses>()]))]);
 
-        assert_eq!(builder.issues(), []);
+        assert_eq!(issues(singles, &draft), []);
     }
 
     #[test]
     fn a_field_offers_the_default_of_its_schema() {
-        let builder = answered(&[("format", plugin::<Knockout>().into())]);
+        let draft = answered(&[("format", plugin::<Knockout>().into())]);
 
         assert_eq!(
-            builder.default(&path("format.third_place")),
+            default_value(singles, &draft, &path("format.third_place")),
             Ok(Some(json!(false)))
         );
-        assert_eq!(builder.default(&path("metrics")), Ok(Some(json!([]))));
-        assert_eq!(builder.default(&path("format")), Ok(None));
+        assert_eq!(
+            default_value(singles, &draft, &path("metrics")),
+            Ok(Some(json!([])))
+        );
+        assert_eq!(default_value(singles, &draft, &path("format")), Ok(None));
     }
 
     #[test]
     fn a_field_taking_a_list_offers_every_recommendation_that_fits() {
-        let builder = answered(&[("format", plugin::<RoundRobin>().into())]);
+        let draft = answered(&[("format", plugin::<RoundRobin>().into())]);
 
         assert_eq!(
-            builder.default(&path("metrics")),
+            default_value(singles, &draft, &path("metrics")),
             Ok(Some(json!([plugin::<MatchCount>(), plugin::<Wins>()])))
         );
     }
 
     #[test]
     fn a_field_taking_one_plugin_offers_the_first_recommendation_that_fits() {
-        let mut builder = answered(&[("format", plugin::<RoundRobin>().into())]);
+        let mut draft = answered(&[("format", plugin::<RoundRobin>().into())]);
 
         assert_eq!(
-            builder.default(&path("tie_break")),
+            default_value(singles, &draft, &path("tie_break")),
             Ok(Some(plugin::<MatchCount>().into()))
         );
-        builder
+        draft
             .set(&path("metrics"), json!([plugin::<MatchCount>()]))
             .unwrap();
         assert_eq!(
-            builder.default(&path("tie_break")),
+            default_value(singles, &draft, &path("tie_break")),
             Ok(Some(plugin::<Wins>().into()))
         );
     }
 
-    /// Answers every unanswered field of `builder` that offers an answer with it, depth first in
+    /// Answers every unanswered field of `draft` that offers an answer with it, depth first in
     /// schema order, as a UI accepting every default does.
-    fn accept_defaults(builder: &mut Builder<Phase>) {
-        while let Some(at) = Tree::of(&Phase::schema(), builder.answers())
+    fn accept_defaults(draft: &mut Draft<Phase>) {
+        while let Some(at) = Tree::of(&Phase::schema(), draft.answers())
             .questions
             .into_iter()
             .find(|question| {
-                question.answer.is_none() && builder.default(&question.path) != Ok(None)
+                question.answer.is_none()
+                    && default_value(singles, draft, &question.path) != Ok(None)
             })
             .map(|question| question.path)
         {
-            let default = builder.default(&at).unwrap().unwrap();
-            builder.set(&at, default).unwrap();
+            let default = default_value(singles, draft, &at).unwrap().unwrap();
+            draft.set(&at, default).unwrap();
         }
     }
 
     #[test]
     fn finishing_fills_in_no_default() {
-        let mut builder = answered(&[("format", plugin::<RoundRobin>().into())]);
+        let mut draft = answered(&[("format", plugin::<RoundRobin>().into())]);
         let unanswered = |at: &str| Issue {
             path: path(at),
             problem: Problem::Invalid(ConfigError::Unanswered { path: path(at) }),
         };
 
         assert_eq!(
-            builder.finish().err(),
+            finish(singles, &draft).err(),
             Some(vec![unanswered("metrics"), unanswered("tie_break")])
         );
-        accept_defaults(&mut builder);
+        accept_defaults(&mut draft);
         assert_eq!(
-            builder.finish().map(|phase| format!("{phase:?}")),
+            finish(singles, &draft).map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -1574,7 +1606,7 @@ mod tests {
         };
 
         assert_eq!(
-            builder().finish().err(),
+            finish(singles, &draft()).err(),
             Some(vec![
                 unanswered("format"),
                 unanswered("metrics"),
@@ -1589,19 +1621,19 @@ mod tests {
         #[derive(Debug, Deserialize, Configurable)]
         struct Nothing;
 
-        assert!(Builder::<Nothing>::new(|_| {}).finish().is_ok());
+        assert!(finish(|_| {}, &Draft::<Nothing>::new()).is_ok());
     }
 
     #[test]
     fn finishing_with_an_answer_a_plugin_rejects_fails() {
-        let builder = answered(&[
+        let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>().with("for_win", -1.0)])),
             ("tie_break", Value::Null),
         ]);
 
         assert_eq!(
-            builder.finish().err(),
+            finish(singles, &draft).err(),
             Some(vec![Issue {
                 path: path("metrics[0].for_win"),
                 problem: Problem::Invalid(ConfigError::Rejected {
@@ -1614,15 +1646,15 @@ mod tests {
 
     #[test]
     fn finishing_reports_with_nothing_open() {
-        let builder = answered(&[
+        let draft = answered(&[
             ("metrics", json!([plugin::<Losses>()])),
             ("tie_break", Value::Null),
         ]);
 
         // the unanswered format could still provide the eliminations
-        assert_eq!(builder.issues(), []);
+        assert_eq!(issues(singles, &draft), []);
         assert_eq!(
-            builder.finish().err(),
+            finish(singles, &draft).err(),
             Some(vec![
                 Issue {
                     path: path("format"),
@@ -1655,7 +1687,7 @@ mod tests {
 
         // wins has a field, so score is the only plugin providing the points that is added
         assert_eq!(
-            settled.finish().map(|phase| format!("{:?}", phase.metrics)),
+            finish(singles, &settled).map(|phase| format!("{:?}", phase.metrics)),
             Ok("[Buchholz, Score, MatchCount]".to_owned())
         );
         // finishing leaves the answers as they were
@@ -1672,18 +1704,18 @@ mod tests {
             metrics: vec![Box::new(Buchholz), Box::new(Score)],
             tie_break: None,
         };
-        let builder = Builder::from_built(singles, &phase).unwrap();
+        let draft = Draft::from_built(&phase).unwrap();
 
         assert_eq!(
-            builder.answers().get("format"),
+            draft.answers().get("format"),
             Some(&json!({"type": "knockout", "value": {"third_place": true}}))
         );
         assert_eq!(
-            builder.answers().get("metrics"),
+            draft.answers().get("metrics"),
             Some(&json!([plugin::<Buchholz>(), plugin::<Score>()]))
         );
         assert_eq!(
-            builder.finish().map(|phase| format!("{phase:?}")),
+            finish(singles, &draft).map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -2023,17 +2055,17 @@ mod tests {
                 .fold(plugin::<Requiring>(), |requiring, field| {
                     requiring.with(field.name(), requires.contains(&field.name()))
                 });
-            let mut builder = Builder::<C>::new(context);
-            builder.set(&path("requirements"), requiring).unwrap();
+            let mut draft = Draft::<C>::new();
+            draft.set(&path("requirements"), requiring).unwrap();
             for field in C::schema().fields() {
                 if matches!(field.kind(), FieldKind::List(_)) {
-                    builder.set(&path(field.name()), json!([])).unwrap();
+                    draft.set(&path(field.name()), json!([])).unwrap();
                 }
             }
             for (at, answer) in answers {
-                builder.set(&path(at), answer.clone()).unwrap();
+                draft.set(&path(at), answer.clone()).unwrap();
             }
-            match builder.finish() {
+            match finish(context, &draft) {
                 Ok(built) => {
                     let built = serde_json::to_value(built).unwrap();
                     Ok(built

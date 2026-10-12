@@ -8,7 +8,7 @@
 //!
 //! A program reads the catalog to offer the plugins of an axis to choose from, and to settle a
 //! fact a composite requires but none of its plugins provides, see
-//! [`Builder::finish`](crate::builder::Builder::finish).
+//! [`draft::finish`](crate::draft::finish).
 
 use std::{
     any::{self, TypeId},
@@ -191,7 +191,7 @@ impl PluginEntry {
         complete: bool,
     ) -> Result<Value, ConfigError> {
         let walked = self.schema().walk(config, at, complete)?;
-        // an answer still being edited keeps an object as its config, which the builder edits
+        // an answer still being edited keeps an object as its config, which a draft edits
         if complete {
             return Ok((self.complete)(walked));
         }

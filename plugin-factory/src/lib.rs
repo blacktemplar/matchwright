@@ -3,7 +3,7 @@
 //! A plugin, see [`PluginType`], says what to call it, what it has to be told in order to be
 //! built, see [`schema`] and [`config`], and what it provides to and requires of the composite it
 //! is part of, see [`compatibility`]. It registers itself in the [`catalog`], which is where a
-//! program looking for a plugin finds it. A [`Builder`](builder::Builder) holds a composite of
+//! program looking for a plugin finds it. A [`Draft`](draft::Draft) holds a composite of
 //! plugins while it is being configured.
 //!
 //! An axis of plugins is a trait declared with [`axis`]. A plugin is usually derived, which reads
@@ -51,10 +51,10 @@ use crate::{compatibility::Declaration, config::PluginConfig, schema::Configurab
 // so that the code the derive generates for the crate's own tests names it as any other crate does
 extern crate self as plugin_factory;
 
-pub mod builder;
 pub mod catalog;
 pub mod compatibility;
 pub mod config;
+pub mod draft;
 pub mod schema;
 
 pub use plugin_factory_derive::{Plugin, axis, register};
