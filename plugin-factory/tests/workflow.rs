@@ -2,16 +2,14 @@
 //! program browses the catalog, an operator configures a phase with the builder, the phase is
 //! built, saved and loaded again, and what a phase built elsewhere lacks is resolved.
 
-use std::any::TypeId;
-
 use plugin_factory::{
     Plugin, PluginType, axis,
-    builder::{Builder, FinishError, Problem},
-    catalog::{Acceptor, Accepts, AnyAxis, Axis, Composite, providers_of, resolve},
+    builder::{Builder, Issue, Problem},
+    catalog::{AnyAxis, Axis},
     compatibility::{Condition, Declaration, Incompatibility, check, order},
     config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
     register,
-    schema::Configurable,
+    schema::{Configurable, FieldKind, Schema},
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::json;
@@ -275,16 +273,6 @@ struct Phase {
     tie_break: Option<Box<dyn Metric>>,
 }
 
-impl Accepts<dyn Metric> for Phase {
-    fn add(&mut self, plugin: Box<dyn Metric>) {
-        self.metrics.push(plugin);
-    }
-}
-
-impl Composite for Phase {
-    const ACCEPTS: &'static [Acceptor<Self>] = &[Acceptor::of::<dyn Metric>()];
-}
-
 /// The context of a phase of single players.
 fn singles() -> Declaration {
     Declaration::of(|declaration| {
@@ -310,12 +298,58 @@ fn plugin<P: PluginType>() -> PluginConfig {
     PluginConfig::of::<P>(Config::new())
 }
 
-/// The questions of `builder`, by path, each with whether it is answered.
+/// The fields a UI renders for `builder`, by path, each with whether it is answered: the schema of
+/// the phase walked along the answers, as documented on [`Builder`].
 fn questions(builder: &Builder<Phase>) -> Vec<(String, bool)> {
-    builder
-        .questions()
+    let mut questions = Vec::new();
+    fields(
+        &Phase::schema(),
+        builder.answers(),
+        &Path::ROOT,
+        &mut questions,
+    );
+    questions
+}
+
+/// Every field of `schema`, the schema of the config at `at`, each followed by the fields of the
+/// plugins answering it in `config`.
+fn fields(schema: &Schema, config: &Config, at: &Path, questions: &mut Vec<(String, bool)>) {
+    for field in schema.fields() {
+        let path = at.clone().then(Segment::field(field.name()));
+        let answer = config.get(field.name());
+        questions.push((path.to_string(), answer.is_some()));
+        if let Some(answer) = answer {
+            plugin_fields(field.kind(), answer, &path, questions);
+        }
+    }
+}
+
+/// The fields of the plugins in `answer`, an answer of `kind` at `at`.
+fn plugin_fields(kind: &FieldKind, answer: &Value, at: &Path, questions: &mut Vec<(String, bool)>) {
+    match (kind, answer) {
+        (FieldKind::Optional(inner), _) if !answer.is_null() => {
+            plugin_fields(inner, answer, at, questions);
+        }
+        (FieldKind::List(element), Value::Array(answers)) => {
+            for (index, answer) in answers.iter().enumerate() {
+                let path = at.clone().then(Segment::Index(index));
+                plugin_fields(element, answer, &path, questions);
+            }
+        }
+        (FieldKind::Plugin(axis), _) => {
+            let plugin = PluginConfig::deserialize(answer).unwrap();
+            let schema = axis.entry(plugin.plugin()).unwrap().schema();
+            fields(&schema, plugin.config(), at, questions);
+        }
+        _ => {}
+    }
+}
+
+/// The issues, each as its path and problem.
+fn problems(issues: &[Issue]) -> Vec<(String, &Problem)> {
+    issues
         .iter()
-        .map(|question| (question.path().to_string(), question.answer().is_some()))
+        .map(|issue| (issue.path().to_string(), issue.problem()))
         .collect()
 }
 
@@ -404,9 +438,6 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
 
 #[test]
 fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
-    let providers: Vec<_> = providers_of::<dyn Metric>(TypeId::of::<Points>())
-        .map(|entry| entry.id())
-        .collect();
     let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
     let wins = metric(plugin::<Wins>());
     let counting = metric(PluginConfig::of::<Wins>(
@@ -414,8 +445,6 @@ fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
     ));
     let buchholz = metric(plugin::<Buchholz>());
 
-    // the catalog tells what provides a fact before anything is configured
-    assert_eq!(providers, ["full::score", "full::wins"]);
     assert_eq!(
         check(&singles(), &[&*buchholz]),
         Err(Incompatibility::FactNotProvided {
@@ -551,22 +580,18 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             ),
         ]
     );
+    // finishing settles the matches, which a single metric provides, but not the answer
+    let issues = builder.finish().unwrap_err();
     assert_eq!(
-        builder.finish().err(),
-        Some(FinishError::Config(rejected()))
+        problems(&issues),
+        [(
+            "metrics[2].for_win".to_owned(),
+            &Problem::Invalid(rejected())
+        )]
     );
 
-    // a whole number answers a decimal field; what is still unprovided fails the build
+    // a whole number answers a decimal field
     builder.set(&path("metrics[2].for_win"), 3).unwrap();
-    assert_eq!(
-        builder.finish().err(),
-        Some(FinishError::Incompatible(
-            Incompatibility::FactNotProvided {
-                fact: "the matches",
-                required_by: "buchholz (metrics[1])".to_owned(),
-            }
-        ))
-    );
 
     // the candidates for one more metric are the ones fitting next to the others
     assert_eq!(
@@ -583,11 +608,8 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             second: "score".to_owned(),
         },
     );
-    builder
-        .set(&path("metrics[3]"), plugin::<MatchCount>())
-        .unwrap();
-    assert_eq!(builder.issues(), []);
 
+    // the match count is left to finishing, which appends it
     let phase = builder.finish().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
@@ -730,25 +752,36 @@ fn a_saved_phase_loads_as_it_was_built() {
 #[test]
 fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
     let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
-    let mut phase = Phase {
+    let phase = Phase {
         format: plugin::<Knockout>().build::<dyn Format>().unwrap(),
         metrics: vec![metric(plugin::<Buchholz>())],
         tie_break: None,
     };
 
-    // the points have two providers, so only the matches are settled
-    resolve(&singles(), &mut phase);
-    assert_eq!(format!("{:?}", phase.metrics), "[Buchholz, MatchCount]");
+    // the points have two providers, so finishing settles the matches alone and reports the
+    // points where they can be provided
+    let mut builder = Builder::from_built(singles(), &phase).unwrap();
+    let issues = builder.finish().unwrap_err();
+    let unprovided = Problem::Unprovided {
+        fact: "points",
+        required_by: path("metrics[0]"),
+        providers: vec!["full::score", "full::wins"],
+    };
     assert_eq!(
-        check(&singles(), &phase.plugins()),
-        Err(Incompatibility::FactNotProvided {
-            fact: "points",
-            required_by: "Buchholz".to_owned(),
-        })
+        problems(&issues),
+        [
+            ("metrics".to_owned(), &unprovided),
+            ("tie_break".to_owned(), &unprovided),
+        ]
     );
 
-    // the choice left to the consumer, which then orders the metrics by what they require
-    phase.metrics.push(metric(plugin::<Score>()));
+    // the choice left to the operator; the consumer then orders the metrics by what they require
+    builder.set(&path("metrics[1]"), plugin::<Score>()).unwrap();
+    let phase = builder.finish().unwrap();
+    assert_eq!(
+        format!("{:?}", phase.metrics),
+        "[Buchholz, Score, MatchCount]"
+    );
     assert_eq!(check(&singles(), &phase.plugins()), Ok(()));
     assert_eq!(order(&phase.plugins()), Ok(vec![0, 2, 3, 1]));
 }

@@ -6,8 +6,9 @@
 //! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
 //! defining the axis.
 //!
-//! A program reads the catalog to settle a fact a composite requires but none of its plugins
-//! provides, see [`resolve`], and to offer the plugins of an axis to choose from.
+//! A program reads the catalog to offer the plugins of an axis to choose from, and to settle a
+//! fact a composite requires but none of its plugins provides, see
+//! [`Builder::finish`](crate::builder::Builder::finish).
 
 use std::{
     any::{self, TypeId},
@@ -16,14 +17,13 @@ use std::{
     sync::OnceLock,
 };
 
-use serde::de::DeserializeOwned;
 use serde_json::Map;
 
 use crate::{
     Plugin, PluginType,
-    compatibility::{self, Declaration, Declared, OpenFacts, ProvidedFact},
+    compatibility::{Declaration, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
-    schema::{Configurable, Schema},
+    schema::Schema,
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
@@ -230,7 +230,7 @@ impl PluginEntry {
     /// answers, or `null` for a plugin that is a unit struct, which is how serde writes one.
     ///
     /// A plugin every field of whose schema has a default needs no configuration, i.e. completes
-    /// [`Config::new`], see [`add_provider_of`].
+    /// [`Config::new`].
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `config` answers a field the schema does not
@@ -373,138 +373,17 @@ impl Debug for AnyAxis {
     }
 }
 
-/// A composite of plugins that a plugin of the axis `A` may be added to, see
-/// [`add_provider_of`].
-///
-/// A composite with a single slot for an axis — a phase is played in one format — leaves the impl
-/// for that axis out, so that nothing can be added to it.
-pub trait Accepts<A: Axis + ?Sized> {
-    /// Adds `plugin` to the composite.
-    fn add(&mut self, plugin: Box<A>);
-}
-
-/// Adds a plugin providing a fact of type `fact` to `composite`, if exactly one plugin of the
-/// axis `A` is registered that provides it and needs no configuration.
-///
-/// Adds nothing if none does, or if several do: which of them to use is then not a program's
-/// choice to make, and the fact stays unprovided.
-pub fn add_provider_of<A, C>(composite: &mut C, fact: TypeId)
-where
-    A: Axis + ?Sized,
-    C: Accepts<A> + ?Sized,
-    Box<A>: DeserializeOwned,
-{
-    let mut providers = providers_of::<A>(fact).filter_map(|entry| {
-        PluginConfig::new(entry.id(), Config::new())
-            .build::<A>()
-            .ok()
-    });
-    if let Some(plugin) = providers.next()
-        && providers.next().is_none()
-    {
-        composite.add(plugin);
-    }
-}
-
-/// A composite of plugins as [`resolve`] sees it: the plugins it holds, see
-/// [`Configurable::plugins`], and the axes a plugin may be added for.
-pub trait Composite: Configurable {
-    /// The axes the catalog may add plugins of to the composite, each with how it is added, see
-    /// [`Acceptor::of`]. An axis listed twice is never added, since which of its slots to add to
-    /// is not a program's choice to make.
-    const ACCEPTS: &'static [Acceptor<Self>];
-}
-
-/// An axis a [`Composite`] `C` accepts plugins of, see [`Composite::ACCEPTS`].
-pub struct Acceptor<C> {
-    axis: AnyAxis,
-    add: fn(&mut C, &PluginEntry),
-}
-
-impl<C> Acceptor<C> {
-    /// The axis `A`, whose plugins are added to `C` through its [`Accepts`] impl.
-    pub const fn of<A: Axis + ?Sized>() -> Self
-    where
-        C: Accepts<A>,
-        Box<A>: DeserializeOwned,
-    {
-        Self {
-            axis: AnyAxis::of::<A>(),
-            add: add_unasked::<A, C>,
-        }
-    }
-
-    /// The axis.
-    pub fn axis(&self) -> AnyAxis {
-        self.axis
-    }
-}
-
-/// Adds the plugin of `entry`, a plugin of the axis `A` that needs no configuration, to
-/// `composite`.
-fn add_unasked<A: Axis + ?Sized, C: Accepts<A>>(composite: &mut C, entry: &PluginEntry)
-where
-    Box<A>: DeserializeOwned,
-{
-    // the entry was found among the plugins that build unasked, and register tags a plugin with
-    // its id, so this does not fail
-    if let Ok(plugin) = PluginConfig::new(entry.id(), Config::new()).build::<A>() {
-        composite.add(plugin);
-    }
-}
-
-/// Adds a plugin to `composite` for every fact its plugins require and neither they nor `context`
-/// provide, including the facts the added plugins require themselves.
-///
-/// A fact is settled only if exactly one registered plugin of all the axes the composite
-/// [accepts](Composite::ACCEPTS) provides it and needs no configuration; otherwise it stays
-/// unprovided, which [`check`](crate::compatibility::check) reports. Each fact is tried once.
-/// Plugins are added in the order their facts are first required in, so ordering them by what
-/// they require of each other is left to the caller, see [`order`](crate::compatibility::order).
-pub fn resolve<C: Composite>(context: &Declaration, composite: &mut C) {
-    let mut tried = Vec::new();
-    loop {
-        let declarations: Vec<_> = composite.plugins().into_iter().map(Declared::of).collect();
-        let Some(fact) = compatibility::unprovided(&declarations)
-            .find(|&fact| !context.provides_type(fact) && !tried.contains(&fact))
-        else {
-            return;
-        };
-        tried.push(fact);
-        let mut providers = C::ACCEPTS.iter().flat_map(|acceptor| {
-            acceptor
-                .axis
-                .entries()
-                .filter(|entry| {
-                    entry.declaration().provides_type(fact)
-                        && entry.instance(&Config::new()).is_ok()
-                })
-                .map(move |entry| (acceptor, entry))
-        });
-        if let Some((acceptor, entry)) = providers.next()
-            && providers.next().is_none()
-        {
-            (acceptor.add)(composite, entry);
-        }
-    }
-}
-
-/// Every registered plugin of the axis `A` that provides a fact of type `fact`, whatever its
-/// configuration.
-pub fn providers_of<A: Axis + ?Sized>(fact: TypeId) -> impl Iterator<Item = &'static PluginEntry> {
-    A::entries().filter(move |entry| entry.declaration().provides_type(fact))
-}
-
 /// The catalog itself, tested on an axis of its own so that it does not depend on what the plugins
 /// of a program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
-
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::{axis, register, schema::Field};
+    use crate::{
+        axis, register,
+        schema::{Configurable, Field},
+    };
 
     /// A fact exactly one registered plugin provides unasked.
     #[derive(Debug)]
@@ -521,10 +400,6 @@ mod tests {
     /// A fact a plugin provides unasked and a plugin that has to be configured provides too.
     #[derive(Debug)]
     struct Shared;
-
-    /// A fact no registered plugin provides.
-    #[derive(Debug)]
-    struct Unknown;
 
     /// A plugin axis with no behavior at all, so that a test plugin is its declaration.
     #[axis]
@@ -695,31 +570,6 @@ mod tests {
     #[register]
     impl Tested for Handwritten {}
 
-    /// A collection that every plugin of [`Tested`] can be added to.
-    #[derive(Debug, Default)]
-    struct Plugins(Vec<Box<dyn Tested>>);
-
-    impl Accepts<dyn Tested> for Plugins {
-        fn add(&mut self, plugin: Box<dyn Tested>) {
-            self.0.push(plugin);
-        }
-    }
-
-    impl Plugins {
-        /// The [`Debug`] forms of the plugins added to it, since a boxed plugin cannot be
-        /// downcast.
-        fn plugins(&self) -> Vec<String> {
-            self.0.iter().map(|plugin| format!("{plugin:?}")).collect()
-        }
-    }
-
-    /// The composite the plugin providing a fact of the type of `fact` is added to.
-    fn with_provider_of(fact: &dyn Any) -> Plugins {
-        let mut composite = Plugins::default();
-        add_provider_of::<dyn Tested, _>(&mut composite, fact.type_id());
-        composite
-    }
-
     /// The entry of the plugin `P`.
     fn entry_of<P: PluginType>() -> &'static PluginEntry {
         <dyn Tested>::entry(P::ID).expect("the plugin is registered")
@@ -816,46 +666,6 @@ mod tests {
     }
 
     #[test]
-    fn a_registered_plugin_is_found_by_the_fact_it_provides() {
-        assert_eq!(
-            with_provider_of(&Settled).plugins(),
-            [format!("{OnlyProvider:?}")]
-        );
-    }
-
-    #[test]
-    fn a_fact_several_registered_plugins_provide_is_left_to_be_configured() {
-        assert!(with_provider_of(&Ambiguous).plugins().is_empty());
-    }
-
-    #[test]
-    fn a_fact_no_registered_plugin_provides_adds_nothing() {
-        assert!(with_provider_of(&Unknown).plugins().is_empty());
-    }
-
-    #[test]
-    fn a_plugin_that_has_to_be_configured_is_not_added() {
-        assert!(with_provider_of(&Configured).plugins().is_empty());
-    }
-
-    #[test]
-    fn a_plugin_that_has_to_be_configured_does_not_make_a_fact_ambiguous() {
-        assert_eq!(
-            with_provider_of(&Shared).plugins(),
-            [format!("{OnlyProvider:?}")]
-        );
-    }
-
-    #[test]
-    fn a_fact_is_provided_by_every_plugin_declaring_it() {
-        let providers: Vec<_> = providers_of::<dyn Tested>(TypeId::of::<Shared>())
-            .map(PluginEntry::label)
-            .collect();
-
-        assert_eq!(providers, ["configured provider", "only provider"]);
-    }
-
-    #[test]
     fn the_plugins_of_an_axis_come_in_the_order_of_their_ids() {
         let ids: Vec<_> = <dyn Tested>::entries().map(PluginEntry::id).collect();
 
@@ -905,180 +715,6 @@ mod tests {
         // the two axes nest each other, so either one could contribute everything
         assert_eq!(AnyAxis::of::<dyn Tested>().facts(), facts);
         assert_eq!(AnyAxis::of::<dyn Nested>().facts(), facts);
-    }
-
-    /// The axis of [`Requiring`], which no composite accepts.
-    #[axis]
-    trait Requirements: Plugin {}
-
-    /// A plugin requiring the facts whose fields are set, so that a composite holding it requires
-    /// them.
-    #[derive(Debug, Default, Serialize, Deserialize, Plugin)]
-    #[plugin(
-        id = "requiring",
-        label = "requiring",
-        description = "a plugin requiring what it is told to",
-        declare = Self::declare
-    )]
-    struct Requiring {
-        #[serde(default)]
-        #[plugin(label = "Settled")]
-        settled: bool,
-        #[serde(default)]
-        #[plugin(label = "Ambiguous")]
-        ambiguous: bool,
-        #[serde(default)]
-        #[plugin(label = "Deep")]
-        deep: bool,
-        #[serde(default)]
-        #[plugin(label = "Downstream")]
-        downstream: bool,
-        #[serde(default)]
-        #[plugin(label = "Crosswise")]
-        crosswise: bool,
-    }
-
-    impl Requiring {
-        fn declare(&self, declaration: &mut Declaration) {
-            if self.ambiguous {
-                declaration.require::<Ambiguous>("the ambiguous fact", None);
-            }
-            if self.settled {
-                declaration.require::<Settled>("the settled fact", None);
-            }
-            if self.deep {
-                declaration.require::<Deep>("the deep fact", None);
-            }
-            if self.downstream {
-                declaration.require::<Downstream>("the downstream fact", None);
-            }
-            if self.crosswise {
-                declaration.require::<Crosswise>("the crosswise fact", None);
-            }
-        }
-    }
-
-    #[register]
-    impl Requirements for Requiring {}
-
-    /// A composite accepting plugins of both axes, whose own requirements are its
-    /// `requirements`.
-    #[derive(Deserialize, Configurable)]
-    struct Resolved {
-        #[plugin(label = "Requirements")]
-        requirements: Box<dyn Requirements>,
-        #[serde(default)]
-        #[plugin(label = "Tested")]
-        tested: Vec<Box<dyn Tested>>,
-        #[serde(default)]
-        #[plugin(label = "Nested")]
-        nested: Vec<Box<dyn Nested>>,
-    }
-
-    impl Accepts<dyn Tested> for Resolved {
-        fn add(&mut self, plugin: Box<dyn Tested>) {
-            self.tested.push(plugin);
-        }
-    }
-
-    impl Accepts<dyn Nested> for Resolved {
-        fn add(&mut self, plugin: Box<dyn Nested>) {
-            self.nested.push(plugin);
-        }
-    }
-
-    impl Composite for Resolved {
-        const ACCEPTS: &'static [Acceptor<Self>] =
-            &[Acceptor::of::<dyn Tested>(), Acceptor::of::<dyn Nested>()];
-    }
-
-    /// The [`Debug`] forms of the plugins [`resolve`] adds to a composite requiring what
-    /// `requirements` requires with `context`, those of [`Tested`] first.
-    fn resolved(context: &Declaration, requirements: Requiring) -> Vec<String> {
-        let mut composite = Resolved {
-            requirements: Box::new(requirements),
-            tested: Vec::new(),
-            nested: Vec::new(),
-        };
-        resolve(context, &mut composite);
-        let tested = composite.tested.iter().map(|plugin| format!("{plugin:?}"));
-        let nested = composite.nested.iter().map(|plugin| format!("{plugin:?}"));
-        tested.chain(nested).collect()
-    }
-
-    #[test]
-    fn resolving_adds_the_providers_of_what_the_added_plugins_require() {
-        assert_eq!(
-            resolved(
-                &Declaration::new(),
-                Requiring {
-                    downstream: true,
-                    ..Requiring::default()
-                }
-            ),
-            [format!("{Chained:?}"), format!("{OnlyProvider:?}")]
-        );
-    }
-
-    #[test]
-    fn resolving_adds_a_provider_of_any_accepted_axis() {
-        assert_eq!(
-            resolved(
-                &Declaration::new(),
-                Requiring {
-                    deep: true,
-                    ..Requiring::default()
-                }
-            ),
-            [format!("{:?}", DeepProvider { inner: None })]
-        );
-    }
-
-    #[test]
-    fn resolving_leaves_a_fact_provided_by_plugins_of_two_axes_unprovided() {
-        assert!(
-            resolved(
-                &Declaration::new(),
-                Requiring {
-                    crosswise: true,
-                    ..Requiring::default()
-                }
-            )
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn resolving_adds_nothing_for_a_fact_the_context_provides() {
-        let context = Declaration::of(|declaration| {
-            declaration.provide(Settled);
-        });
-
-        assert!(
-            resolved(
-                &context,
-                Requiring {
-                    settled: true,
-                    ..Requiring::default()
-                }
-            )
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn resolving_leaves_an_ambiguous_fact_unprovided_and_settles_the_others() {
-        assert_eq!(
-            resolved(
-                &Declaration::new(),
-                Requiring {
-                    ambiguous: true,
-                    settled: true,
-                    ..Requiring::default()
-                }
-            ),
-            [format!("{OnlyProvider:?}")]
-        );
     }
 
     /// An axis two of whose plugins share an id.
