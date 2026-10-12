@@ -183,7 +183,7 @@ impl Schema {
             let answer = field
                 .kind()
                 .complete(answer)
-                .map_err(|error| error.within(Segment::field(field.name())))?;
+                .map_err(|error| error.within(Segment::Field(field.name().to_owned())))?;
             completed.set(field.name(), answer);
         }
         Ok(completed)
@@ -203,7 +203,7 @@ impl Schema {
                 let answer = field
                     .kind()
                     .check(answer)
-                    .map_err(|error| error.within(Segment::field(field.name())))?;
+                    .map_err(|error| error.within(Segment::Field(field.name().to_owned())))?;
                 checked.set(field.name(), answer);
             }
         }
@@ -485,7 +485,7 @@ mod tests {
 
     impl Points {
         fn recommends(&self) -> Vec<PluginConfig> {
-            vec![PluginConfig::of::<Matches>(Config::new())]
+            vec![PluginConfig::of::<Matches>()]
         }
     }
 
@@ -592,7 +592,7 @@ mod tests {
 
     /// The summary of the plugin `P` as `config` configures it.
     fn built<P: PluginType>(config: Config) -> Result<String, ConfigError> {
-        PluginConfig::of::<P>(config)
+        PluginConfig::configured(P::ID, config)
             .build::<dyn Configured>()
             .map(|plugin| plugin.summary())
     }
@@ -612,6 +612,10 @@ mod tests {
             Some(&FieldKind::optional(kind))
         );
         assert!(schema.field_named("losses").is_none());
+        assert_eq!(
+            schema.field_named("fallback").unwrap().kind().axis(),
+            Some(AnyAxis::of::<dyn Configured>())
+        );
         assert_eq!(
             entry_of::<Ranker>().sub_axes(),
             [AnyAxis::of::<dyn Configured>(); 3]
@@ -713,7 +717,7 @@ mod tests {
         assert_eq!(
             built::<Threshold>(config),
             Err(ConfigError::WrongKind {
-                path: Path::of("weights").then(Segment::Index(1)),
+                path: Path::of("weights").index(1),
                 expected: "a number",
                 found: "yes or no",
             })
@@ -750,18 +754,15 @@ mod tests {
     #[test]
     fn a_field_taking_plugins_is_built_through_the_catalog() {
         let config = Config::new()
-            .with(
-                "by",
-                PluginConfig::of::<Points>(Config::new().with("for_win", 2.0)),
-            )
+            .with("by", PluginConfig::of::<Points>().with("for_win", 2.0))
             .with(
                 "tie_breakers",
                 vec![
-                    PluginConfig::of::<Matches>(Config::new()),
-                    PluginConfig::of::<Threshold>(Config::new().with("least", 4)),
+                    PluginConfig::of::<Matches>(),
+                    PluginConfig::of::<Threshold>().with("least", 4),
                 ],
             )
-            .with("fallback", PluginConfig::of::<Matches>(Config::new()));
+            .with("fallback", PluginConfig::of::<Matches>());
 
         assert_eq!(
             built::<Ranker>(config).as_deref(),
@@ -803,15 +804,12 @@ mod tests {
 
     #[test]
     fn an_error_in_a_nested_plugin_is_reported_by_the_path_of_its_field() {
-        let config = Config::new().with(
-            "by",
-            PluginConfig::of::<Points>(Config::new().with("for_win", -1.0)),
-        );
+        let config = Config::new().with("by", PluginConfig::of::<Points>().with("for_win", -1.0));
 
         assert_eq!(
             built::<Ranker>(config),
             Err(ConfigError::Rejected {
-                path: Path::of("by").then(Segment::field("for_win")),
+                path: Path::of("by").field("for_win"),
                 reason: "the points for a win cannot be negative".to_owned(),
             })
         );
@@ -822,17 +820,15 @@ mod tests {
         let config = Config::new().with(
             "tie_breakers",
             vec![
-                PluginConfig::of::<Matches>(Config::new()),
-                PluginConfig::of::<Threshold>(Config::new()),
+                PluginConfig::of::<Matches>(),
+                PluginConfig::of::<Threshold>(),
             ],
         );
 
         assert_eq!(
             built::<Ranker>(config),
             Err(ConfigError::Unanswered {
-                path: Path::of("tie_breakers")
-                    .then(Segment::Index(1))
-                    .then(Segment::field("least")),
+                path: Path::of("tie_breakers").index(1).field("least"),
             })
         );
     }
@@ -841,13 +837,13 @@ mod tests {
     fn an_error_in_a_nested_plugin_answering_an_optional_field_keeps_its_field() {
         let config = Config::new().with(
             "fallback",
-            PluginConfig::of::<Points>(Config::new().with("for_win", -1.0)),
+            PluginConfig::of::<Points>().with("for_win", -1.0),
         );
 
         assert_eq!(
             built::<Ranker>(config),
             Err(ConfigError::Rejected {
-                path: Path::of("fallback").then(Segment::field("for_win")),
+                path: Path::of("fallback").field("for_win"),
                 reason: "the points for a win cannot be negative".to_owned(),
             })
         );
@@ -855,7 +851,7 @@ mod tests {
 
     #[test]
     fn a_plugin_not_registered_for_the_axis_cannot_answer_a_plugin_field() {
-        let config = Config::new().with("by", PluginConfig::new("unregistered", Config::new()));
+        let config = Config::new().with("by", PluginConfig::new("unregistered"));
 
         assert_eq!(
             built::<Ranker>(config),
@@ -868,13 +864,10 @@ mod tests {
     #[test]
     fn a_built_plugin_serializes_as_the_completed_config_it_is_built_from() {
         let config = Config::new()
-            .with(
-                "by",
-                PluginConfig::of::<Points>(Config::new().with("for_win", 2.0)),
-            )
-            .with("fallback", PluginConfig::of::<Matches>(Config::new()));
+            .with("by", PluginConfig::of::<Points>().with("for_win", 2.0))
+            .with("fallback", PluginConfig::of::<Matches>());
         let completed = Ranker::schema().complete(&config).unwrap();
-        let built = PluginConfig::of::<Ranker>(config)
+        let built = PluginConfig::configured(Ranker::ID, config)
             .build::<dyn Configured>()
             .unwrap();
 
@@ -884,7 +877,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(&built).ok(),
-            Some(PluginConfig::of::<Ranker>(completed).into())
+            Some(PluginConfig::configured(Ranker::ID, completed).into())
         );
     }
 
@@ -909,10 +902,7 @@ mod tests {
             for_bye: None,
         };
 
-        assert_eq!(
-            points.recommends(),
-            vec![PluginConfig::of::<Matches>(Config::new())]
-        );
+        assert_eq!(points.recommends(), vec![PluginConfig::of::<Matches>()]);
         assert!(Matches.recommends().is_empty());
     }
 }

@@ -36,7 +36,7 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
         const _: () = {
             pub struct Registry(::plugin_factory::catalog::PluginEntry);
 
-            ::plugin_factory::inventory::collect!(Registry);
+            ::plugin_factory::__private::inventory::collect!(Registry);
 
             impl ::plugin_factory::catalog::Axis for dyn #axis {
                 fn __index() -> &'static ::std::collections::BTreeMap<
@@ -47,7 +47,7 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
                         ::plugin_factory::catalog::Index::new();
                     INDEX.get(
                         ::core::iter::IntoIterator::into_iter(
-                            ::plugin_factory::inventory::iter::<Registry>,
+                            ::plugin_factory::__private::inventory::iter::<Registry>,
                         )
                         .map(|registered| &registered.0),
                     )

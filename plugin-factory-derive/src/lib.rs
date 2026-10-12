@@ -29,8 +29,8 @@ pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// On the struct:
 ///
-/// - `id = "..."`, `label = "..."` and `description = "..."`, all required. The id is also the
-///   name the plugin is persisted under, see `register`.
+/// - `id = "..."` and `label = "..."`, required, and `description = "..."`, optional. The id is
+///   also the name the plugin is persisted under, see `register`.
 /// - `declare_static = path`, `declare = path` and `recommends = path`, each optional: a function
 ///   the function of `PluginType` or `Plugin` of that name forwards to, taking what it takes.
 ///

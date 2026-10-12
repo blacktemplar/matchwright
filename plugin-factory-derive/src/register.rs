@@ -28,7 +28,7 @@ pub fn expand(arguments: TokenStream, input: ItemImpl) -> Result<TokenStream> {
         #[::typetag::serde(name = <#plugin as ::plugin_factory::PluginType>::ID)]
         #input
 
-        ::plugin_factory::inventory::submit! {
+        ::plugin_factory::__private::inventory::submit! {
             <dyn #object as ::plugin_factory::__private::Register<#plugin>>::REGISTRY
         }
     })

@@ -1,6 +1,6 @@
 # Simplification plan
 
-Status: steps 1 to 6 done. The crate does everything it should, i.e. the catalog,
+Status: steps 1 to 7 done. The crate does everything it should, i.e. the catalog,
 schemas, configs, the compatibility checks, the builder, resolution and the
 derive are implemented and tested. This plan reduces it to its core without
 losing any of that: first the API a plugin author, a composite author and a UI
@@ -136,8 +136,8 @@ The whole public API, about 25 items:
   `Decimal`, `Plugin(AnyAxis)`, `List`, `Optional`), all read-only.
 - **Configs:** `Value`; `Config` (`new`, `with`, `get`); `PluginConfig`
   (`of`, `new`, `with`, `plugin`, `config`, `build`); `Path` (`ROOT`, `field`,
-  `index`, `segments`, `Display`, `FromStr`); `Segment` (`Field`, `Index`), to
-  read a path; `ConfigError` (`UnknownField`, `Unanswered`, `WrongKind`,
+  `index`, `segments`, `Display`, `FromStr`) and its `ParsePathError`;
+  `Segment` (`Field`, `Index`), to read a path; `ConfigError` (`UnknownField`, `Unanswered`, `WrongKind`,
   `UnknownPlugin`, `Rejected`, `path`).
 - **Builder:** `Builder` (`new`, `from_built`, `answers`, `default`,
   `candidates`, `issues`, `set`, `unset`, `finish`), `Candidate` (`entry`,

@@ -31,6 +31,12 @@ pub fn expand_plugin(input: &DeriveInput) -> Result<TokenStream> {
             }
         }
     });
+    let description = description.as_ref().map(|description| {
+        quote! {
+            const DESCRIPTION: ::std::option::Option<&'static str> =
+                ::std::option::Option::Some(#description);
+        }
+    });
     let recommends = recommends.as_ref().map(|recommends| {
         quote! {
             fn recommends(&self) -> ::std::vec::Vec<::plugin_factory::config::PluginConfig> {
@@ -50,7 +56,7 @@ pub fn expand_plugin(input: &DeriveInput) -> Result<TokenStream> {
         impl ::plugin_factory::PluginType for #plugin {
             const ID: &'static str = #id;
             const LABEL: &'static str = #label;
-            const DESCRIPTION: &'static str = #description;
+            #description
 
             #declare_static
         }
@@ -161,7 +167,7 @@ fn container_default(input: &DeriveInput, what: &str) -> Result<Option<SerdeDefa
 struct Container {
     id: LitStr,
     label: LitStr,
-    description: LitStr,
+    description: Option<LitStr>,
     declare_static: Option<Expr>,
     declare: Option<Expr>,
     recommends: Option<Expr>,
@@ -209,7 +215,7 @@ impl Container {
         Ok(Self {
             id: required(id, "id")?,
             label: required(label, "label")?,
-            description: required(description, "description")?,
+            description,
             declare_static,
             declare,
             recommends,
@@ -461,6 +467,18 @@ mod tests {
             }),
             "a plugin needs `#[plugin(id = \"...\")]`"
         );
+    }
+
+    #[test]
+    fn a_plugin_without_a_description_keeps_the_default_one() {
+        let expanded = expand_plugin(&parse_quote! {
+            #[plugin(id = "points", label = "points")]
+            struct Points;
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(!expanded.contains("DESCRIPTION"));
     }
 
     #[test]

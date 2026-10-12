@@ -88,18 +88,30 @@ impl Declaration {
         self
     }
 
-    /// Declares that a fact of type `T` has to hold, and that its value has to meet `condition` if
-    /// one is given. `name` is what the fact is called in an error message, e.g. "an elimination
-    /// annotation on the matches".
-    pub fn require<T: Debug + Sync + 'static>(
+    /// Declares that a fact of type `T` has to hold. `name` is what the fact is called in an error
+    /// message, e.g. "an elimination annotation on the matches".
+    pub fn require<T: Debug + Sync + 'static>(&mut self, name: &'static str) -> &mut Self {
+        self.required.push(RequiredFact {
+            type_id: TypeId::of::<T>(),
+            name,
+            condition: None,
+        });
+        self
+    }
+
+    /// Declares that a fact of type `T` has to hold and that its value has to meet `holds`. `name`
+    /// is what the fact is called in an error message, as for [`Self::require`], and `description`
+    /// what the condition is called, e.g. "rankings of single players".
+    pub fn require_that<T: Debug + Sync + 'static>(
         &mut self,
         name: &'static str,
-        condition: Option<Condition<T>>,
+        description: &'static str,
+        holds: fn(&T) -> bool,
     ) -> &mut Self {
         self.required.push(RequiredFact {
             type_id: TypeId::of::<T>(),
             name,
-            condition: condition.map(|Condition { description, holds }| DynCondition {
+            condition: Some(DynCondition {
                 description,
                 holds: Box::new(move |fact| {
                     holds(fact.downcast_ref().expect("facts are keyed by their type"))
@@ -131,20 +143,7 @@ impl Default for Declaration {
     }
 }
 
-/// A condition a plugin requires the value of a fact of type `T` to meet.
-pub struct Condition<T> {
-    description: &'static str,
-    holds: fn(&T) -> bool,
-}
-
-impl<T> Condition<T> {
-    /// The condition that `holds`, described by `description` in an error message, e.g. "rankings
-    /// of single players".
-    pub const fn new(description: &'static str, holds: fn(&T) -> bool) -> Self {
-        Self { description, holds }
-    }
-}
-
+/// A condition on the value of a required fact, see [`Declaration::require_that`].
 struct DynCondition {
     description: &'static str,
     holds: Holds,
@@ -481,12 +480,12 @@ mod tests {
     const SINGLE: EntrantsPerRanking = EntrantsPerRanking(1);
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(2);
 
-    fn single_players() -> Condition<EntrantsPerRanking> {
-        Condition::new("rankings of single players", |entrants| *entrants == SINGLE)
-    }
-
     fn requires_single_players(declaration: &mut Declaration) {
-        declaration.require("the entrants per ranking", Some(single_players()));
+        declaration.require_that::<EntrantsPerRanking>(
+            "the entrants per ranking",
+            "rankings of single players",
+            |entrants| *entrants == SINGLE,
+        );
     }
 
     fn declared(name: &str, declare: impl FnOnce(&mut Declaration)) -> Declared {
@@ -536,7 +535,7 @@ mod tests {
 
     impl Composite {
         fn declare(&self, declaration: &mut Declaration) {
-            declaration.require::<Derived>("a derived fact", None);
+            declaration.require::<Derived>("a derived fact");
         }
     }
 
@@ -554,7 +553,7 @@ mod tests {
         fn declare_static(declaration: &mut Declaration) {
             declaration
                 .provide(Derived)
-                .require::<Annotated>("an annotation", None);
+                .require::<Annotated>("an annotation");
         }
     }
 
@@ -614,7 +613,7 @@ mod tests {
     fn plugins_are_ordered_by_any_fact_they_require() {
         let declarations = [
             declared("requiring", |declaration| {
-                declaration.require::<Annotated>("an annotation", None);
+                declaration.require::<Annotated>("an annotation");
             }),
             declared("independent", |_| {}),
             declared("annotating", |declaration| {
@@ -631,12 +630,12 @@ mod tests {
             declared("annotating", |declaration| {
                 declaration
                     .provide(Annotated)
-                    .require::<Derived>("a derived fact", None);
+                    .require::<Derived>("a derived fact");
             }),
             declared("deriving", |declaration| {
                 declaration
                     .provide(Derived)
-                    .require::<Annotated>("an annotation", None);
+                    .require::<Annotated>("an annotation");
             }),
         ];
 
@@ -654,10 +653,10 @@ mod tests {
             declared("deriving", |declaration| {
                 declaration
                     .provide(Derived)
-                    .require::<Annotated>("an annotation", None);
+                    .require::<Annotated>("an annotation");
             }),
             declared("requiring", |declaration| {
-                declaration.require::<Derived>("a derived fact", None);
+                declaration.require::<Derived>("a derived fact");
             }),
         ];
 
@@ -674,7 +673,7 @@ mod tests {
                 declaration.provide(Annotated);
             }),
             declared("calculator", |declaration| {
-                declaration.require::<Annotated>("an annotation", None);
+                declaration.require::<Annotated>("an annotation");
             }),
         ];
 
@@ -690,12 +689,12 @@ mod tests {
             declared("format", |declaration| {
                 declaration
                     .provide(Annotated)
-                    .require::<EntrantsPerRanking>("the entrants per ranking", None);
+                    .require::<EntrantsPerRanking>("the entrants per ranking");
             }),
             declared("ranker", |declaration| {
                 declaration
                     .provide(SINGLE)
-                    .require::<Annotated>("an annotation", None);
+                    .require::<Annotated>("an annotation");
             }),
         ];
 
@@ -708,7 +707,7 @@ mod tests {
     #[test]
     fn a_fact_nothing_provides_is_an_error() {
         let declarations = [declared("calculator", |declaration| {
-            declaration.require::<Annotated>("an annotation", None);
+            declaration.require::<Annotated>("an annotation");
         })];
 
         assert_eq!(
@@ -723,7 +722,7 @@ mod tests {
     #[test]
     fn a_fact_a_plugin_still_to_be_chosen_could_provide_is_no_error() {
         let declarations = [declared("calculator", |declaration| {
-            declaration.require::<Annotated>("an annotation", None);
+            declaration.require::<Annotated>("an annotation");
         })];
 
         assert_eq!(
@@ -854,7 +853,7 @@ mod tests {
             }),
         ];
         let addition = declared("calculator", |declaration| {
-            declaration.require::<Annotated>("an annotation", None);
+            declaration.require::<Annotated>("an annotation");
         });
 
         assert_eq!(
@@ -871,7 +870,7 @@ mod tests {
     #[test]
     fn an_addition_requiring_a_fact_nothing_provides_conflicts() {
         let addition = declared("calculator", |declaration| {
-            declaration.require::<Annotated>("an annotation", None);
+            declaration.require::<Annotated>("an annotation");
         });
 
         assert_eq!(
@@ -886,9 +885,8 @@ mod tests {
     #[test]
     fn an_addition_may_require_a_fact_it_provides_itself() {
         let addition = declared("ranker", |declaration| {
-            declaration
-                .provide(SINGLE)
-                .require("the entrants per ranking", Some(single_players()));
+            declaration.provide(SINGLE);
+            requires_single_players(declaration);
         });
 
         assert_eq!(

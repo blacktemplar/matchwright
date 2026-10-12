@@ -6,7 +6,7 @@ use plugin_factory::{
     Plugin, PluginType, axis,
     catalog::{AnyAxis, Axis, PluginEntry},
     compatibility::{Declaration, Incompatibility, check},
-    config::{Config, ConfigError, Path, PluginConfig, Value},
+    config::{ConfigError, Path, PluginConfig, Value},
     register,
     schema::{Configurable, Field, FieldKind, FieldType},
 };
@@ -118,7 +118,7 @@ impl Points {
     fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(Scored)
-            .require::<Matches>("the matches", None);
+            .require::<Matches>("the matches");
     }
 
     fn declare(&self, declaration: &mut Declaration) {
@@ -128,20 +128,16 @@ impl Points {
     }
 
     fn recommends(&self) -> Vec<PluginConfig> {
-        vec![PluginConfig::of::<Unit>(Config::new())]
+        vec![PluginConfig::of::<Unit>()]
     }
 }
 
 #[register]
 impl Derived for Points {}
 
-/// A plugin without parameters.
+/// A plugin without parameters or description.
 #[derive(Debug, Serialize, Deserialize, Plugin)]
-#[plugin(
-    id = "derive::unit",
-    label = "unit",
-    description = "a plugin without parameters"
-)]
+#[plugin(id = "derive::unit", label = "unit")]
 struct Unit;
 
 #[register]
@@ -204,9 +200,11 @@ fn field_of<P: PluginType>(name: &str) -> Field {
         .expect("the schema has the field")
 }
 
-/// A config of [`Points`] answering what has no default.
-fn points_config() -> Config {
-    Config::new().with("byes", true).with("cap", Value::Null)
+/// [`Points`] with what has no default answered.
+fn points() -> PluginConfig {
+    PluginConfig::of::<Points>()
+        .with("byes", true)
+        .with("cap", Value::Null)
 }
 
 #[test]
@@ -216,15 +214,14 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(Points::ID, "derive::points");
     assert_eq!(Points::LABEL, "points");
     assert_eq!(entry.label(), "points");
-    assert_eq!(entry.description(), "points per result");
+    assert_eq!(entry.description(), Some("points per result"));
+    assert_eq!(entry_of::<Unit>().description(), None);
     assert_eq!(<dyn Derived>::entries().count(), 3);
 }
 
 #[test]
 fn a_built_plugin_is_tagged_with_its_id() {
-    let built = PluginConfig::of::<Unit>(Config::new())
-        .build::<dyn Derived>()
-        .unwrap();
+    let built = PluginConfig::of::<Unit>().build::<dyn Derived>().unwrap();
 
     assert_eq!(
         serde_json::to_value(&built).unwrap(),
@@ -274,8 +271,8 @@ fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
         &FieldKind::optional(plugin)
     );
     assert_eq!(
-        entry_of::<Ranker>().sub_axes(),
-        [AnyAxis::of::<dyn Derived>(); 3]
+        field_of::<Ranker>("tie_breakers").kind().axis(),
+        Some(AnyAxis::of::<dyn Derived>())
     );
 }
 
@@ -307,9 +304,7 @@ fn a_struct_default_is_the_default_of_every_field() {
 
 #[test]
 fn a_derived_plugin_is_built_from_its_defaults_and_answers() {
-    let built = PluginConfig::of::<Points>(points_config().with("share", 20))
-        .build::<dyn Derived>()
-        .unwrap();
+    let built = points().with("share", 20).build::<dyn Derived>().unwrap();
 
     assert_eq!(
         serde_json::to_value(&built).unwrap(),
@@ -326,14 +321,10 @@ fn a_derived_plugin_is_built_from_its_defaults_and_answers() {
 
 #[test]
 fn an_answer_the_field_type_rejects_is_rejected() {
-    let config = points_config().with("for_win", -1.0);
-
     assert_eq!(
-        PluginConfig::of::<Points>(config)
-            .build::<dyn Derived>()
-            .err(),
+        points().with("for_win", -1.0).build::<dyn Derived>().err(),
         Some(ConfigError::Rejected {
-            path: Path::of("for_win"),
+            path: Path::ROOT.field("for_win"),
             reason: "the points cannot be negative".to_owned(),
         })
     );
@@ -341,13 +332,9 @@ fn an_answer_the_field_type_rejects_is_rejected() {
 
 #[test]
 fn the_declaration_is_forwarded_to_the_functions_given() {
-    let built = |config| {
-        PluginConfig::of::<Points>(config)
-            .build::<dyn Derived>()
-            .unwrap()
-    };
-    let counted = built(points_config());
-    let uncounted = built(points_config().with("byes", false));
+    let built = |points: PluginConfig| points.build::<dyn Derived>().unwrap();
+    let counted = built(points());
+    let uncounted = built(points().with("byes", false));
     let matches = Declaration::of(|declaration| {
         declaration.provide(Matches);
     });
@@ -412,14 +399,9 @@ fn the_plugins_in_the_fields_are_the_plugins_it_holds() {
 
 #[test]
 fn a_recommendation_is_forwarded_to_the_function_given() {
-    let built = PluginConfig::of::<Points>(points_config())
-        .build::<dyn Derived>()
-        .unwrap();
+    let built = points().build::<dyn Derived>().unwrap();
 
-    assert_eq!(
-        built.recommends(),
-        [PluginConfig::of::<Unit>(Config::new())]
-    );
+    assert_eq!(built.recommends(), [PluginConfig::of::<Unit>()]);
     assert!(Unit.recommends().is_empty());
 }
 

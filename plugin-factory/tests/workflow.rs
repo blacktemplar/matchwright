@@ -6,8 +6,8 @@ use plugin_factory::{
     Plugin, PluginType, axis,
     builder::{Builder, Issue, Problem},
     catalog::{AnyAxis, Axis},
-    compatibility::{Condition, Declaration, Incompatibility, check, order},
-    config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
+    compatibility::{Declaration, Incompatibility, check, order},
+    config::{Config, ConfigError, Path, PluginConfig, Value},
     register,
     schema::{Configurable, FieldKind, Schema},
 };
@@ -109,12 +109,10 @@ struct Doubles;
 
 impl Doubles {
     fn declare_static(declaration: &mut Declaration) {
-        declaration.require(
+        declaration.require_that::<EntrantsPerRanking>(
             "the entrants per ranking",
-            Some(Condition::new(
-                "rankings of pairs",
-                |entrants: &EntrantsPerRanking| entrants.0 == 2,
-            )),
+            "rankings of pairs",
+            |entrants| entrants.0 == 2,
         );
     }
 }
@@ -159,7 +157,7 @@ impl Wins {
 
     fn declare(&self, declaration: &mut Declaration) {
         if self.counts_byes {
-            declaration.require::<Byes>("byes", None);
+            declaration.require::<Byes>("byes");
         }
     }
 }
@@ -218,8 +216,8 @@ struct Buchholz;
 impl Buchholz {
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .require::<Points>("points", None)
-            .require::<Matches>("the matches", None);
+            .require::<Points>("points")
+            .require::<Matches>("the matches");
     }
 }
 
@@ -238,7 +236,7 @@ struct Losses;
 
 impl Losses {
     fn declare_static(declaration: &mut Declaration) {
-        declaration.require::<Eliminating>("eliminations", None);
+        declaration.require::<Eliminating>("eliminations");
     }
 }
 
@@ -282,20 +280,12 @@ fn singles() -> Declaration {
 
 /// The path written as `text`, e.g. `metrics[1].for_win`.
 fn path(text: &str) -> Path {
-    let mut path = Path::ROOT;
-    for part in text.split('.') {
-        let mut pieces = part.split('[');
-        path = path.then(Segment::field(pieces.next().unwrap()));
-        for index in pieces {
-            path = path.then(Segment::Index(index.trim_end_matches(']').parse().unwrap()));
-        }
-    }
-    path
+    text.parse().unwrap()
 }
 
 /// The plugin `P` with nothing answered.
 fn plugin<P: PluginType>() -> PluginConfig {
-    PluginConfig::of::<P>(Config::new())
+    PluginConfig::of::<P>()
 }
 
 /// The fields a UI renders for `builder`, by path, each with whether it is answered: the schema of
@@ -315,7 +305,7 @@ fn questions(builder: &Builder<Phase>) -> Vec<(String, bool)> {
 /// plugins answering it in `config`.
 fn fields(schema: &Schema, config: &Config, at: &Path, questions: &mut Vec<(String, bool)>) {
     for field in schema.fields() {
-        let path = at.clone().then(Segment::field(field.name()));
+        let path = at.clone().field(field.name());
         let answer = config.get(field.name());
         questions.push((path.to_string(), answer.is_some()));
         if let Some(answer) = answer {
@@ -332,7 +322,7 @@ fn plugin_fields(kind: &FieldKind, answer: &Value, at: &Path, questions: &mut Ve
         }
         (FieldKind::List(element), Value::Array(answers)) => {
             for (index, answer) in answers.iter().enumerate() {
-                let path = at.clone().then(Segment::Index(index));
+                let path = at.clone().index(index);
                 plugin_fields(element, answer, &path, questions);
             }
         }
@@ -359,7 +349,7 @@ fn fitting(builder: &Builder<Phase>, at: &str) -> Vec<&'static str> {
         .candidates(&path(at))
         .unwrap()
         .iter()
-        .filter(|candidate| candidate.fits())
+        .filter(|candidate| candidate.conflict().is_none())
         .map(|candidate| candidate.entry().id())
         .collect()
 }
@@ -419,7 +409,7 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
     let schema = wins.schema();
     let counts_byes = schema.field_named("counts_byes").unwrap();
     assert_eq!(wins.label(), "wins");
-    assert_eq!(wins.description(), "points per win");
+    assert_eq!(wins.description(), Some("points per win"));
     assert_eq!(
         schema.field_named("for_win").unwrap().default_value(),
         Some(&json!(1.0))
@@ -430,9 +420,11 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
         Some("whether a bye counts as a win")
     );
     assert_eq!(counts_byes.default_value(), Some(&json!(false)));
+    // a plugin with fields taking plugins leads on to their axes
+    let combined = <dyn Metric>::entry("full::combined").unwrap().schema();
     assert_eq!(
-        <dyn Metric>::entry("full::combined").unwrap().sub_axes(),
-        [AnyAxis::of::<dyn Metric>()]
+        combined.fields()[0].kind().axis(),
+        Some(AnyAxis::of::<dyn Metric>())
     );
 }
 
@@ -440,9 +432,7 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
 fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
     let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
     let wins = metric(plugin::<Wins>());
-    let counting = metric(PluginConfig::of::<Wins>(
-        Config::new().with("counts_byes", true),
-    ));
+    let counting = metric(plugin::<Wins>().with("counts_byes", true));
     let buchholz = metric(plugin::<Buchholz>());
 
     assert_eq!(
@@ -552,10 +542,7 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
     // an answer the plugin rejects is set, reported where it is fixed and keeps the phase from
     // being built
     builder
-        .set(
-            &path("metrics[2]"),
-            PluginConfig::of::<Wins>(Config::new().with("for_win", -1)),
-        )
+        .set(&path("metrics[2]"), plugin::<Wins>().with("for_win", -1))
         .unwrap();
     let rejected = || ConfigError::Rejected {
         path: path("metrics[2].for_win"),
@@ -674,9 +661,7 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
     builder
         .set(
             &path("metrics"),
-            json!([PluginConfig::of::<Wins>(
-                Config::new().with("counts_byes", true)
-            )]),
+            json!([plugin::<Wins>().with("counts_byes", true)]),
         )
         .unwrap();
     builder.set(&path("tie_break"), Value::Null).unwrap();
@@ -709,9 +694,7 @@ fn a_saved_phase_loads_as_it_was_built() {
     builder
         .set(
             &path("tie_break"),
-            PluginConfig::of::<Combined>(
-                Config::new().with("parts", json!([plugin::<Buchholz>()])),
-            ),
+            plugin::<Combined>().with("parts", json!([plugin::<Buchholz>()])),
         )
         .unwrap();
     assert_eq!(

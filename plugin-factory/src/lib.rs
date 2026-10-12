@@ -19,11 +19,7 @@
 //! pub trait Seeding: Plugin {}
 //!
 //! #[derive(Debug, Serialize, Deserialize, Plugin)]
-//! #[plugin(
-//!     id = "my_crate::random",
-//!     label = "random",
-//!     description = "entrants are shuffled"
-//! )]
+//! #[plugin(id = "my_crate::random", label = "random")]
 //! struct Random {
 //!     #[serde(default)]
 //!     #[plugin(label = "Keep the top seeds")]
@@ -58,9 +54,6 @@ pub mod compatibility;
 pub mod config;
 pub mod schema;
 
-/// Re-exported so that a crate registering a plugin in the [catalog] does not have to depend on
-/// `inventory` itself.
-pub use inventory;
 pub use plugin_factory_derive::{Plugin, axis, register};
 
 /// What the code [`derive@Plugin`], [`axis`] and [`register`] generate refers to, and what a
@@ -69,6 +62,8 @@ pub use plugin_factory_derive::{Plugin, axis, register};
 pub mod __private {
     use std::{any::Any, fmt::Debug};
 
+    // so that a crate declaring an axis or registering a plugin does not have to depend on them
+    pub use inventory;
     pub use serde;
     use serde_json::value::Serializer;
 
@@ -186,8 +181,8 @@ pub trait PluginType: Plugin + Configurable {
     /// What an operator picking a plugin reads.
     const LABEL: &'static str;
 
-    /// What an operator picking a plugin reads about what it does.
-    const DESCRIPTION: &'static str;
+    /// What an operator picking a plugin reads about what it does; nothing by default.
+    const DESCRIPTION: Option<&'static str> = None;
 
     /// Declares the facts every configuration of this plugin provides to and requires of the
     /// composite it is part of, see [`Declaration`]; nothing by default.

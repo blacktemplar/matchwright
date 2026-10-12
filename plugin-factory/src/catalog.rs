@@ -138,7 +138,7 @@ impl Index {
 pub struct PluginEntry {
     id: &'static str,
     label: &'static str,
-    description: &'static str,
+    description: Option<&'static str>,
     declare: fn(&mut Declaration),
     instantiate: fn(&Value) -> Result<Box<dyn Plugin>, ConfigError>,
     schema: fn() -> Schema,
@@ -172,8 +172,8 @@ impl PluginEntry {
         self.label
     }
 
-    /// What an operator picking a plugin reads about what it does.
-    pub fn description(&self) -> &'static str {
+    /// What an operator picking a plugin reads about what it does, if anything.
+    pub fn description(&self) -> Option<&'static str> {
         self.description
     }
 
@@ -217,7 +217,7 @@ impl PluginEntry {
 
     /// The axes of the plugins the fields of the plugin's schema take, in schema order, an axis
     /// once per field taking it.
-    pub fn sub_axes(&self) -> Vec<AnyAxis> {
+    pub(crate) fn sub_axes(&self) -> Vec<AnyAxis> {
         self.schema()
             .fields()
             .iter()
@@ -324,7 +324,7 @@ impl AnyAxis {
             .entry(plugin.plugin())
             .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
         let checked = entry.schema().check(plugin.config())?;
-        Ok(PluginConfig::new(plugin.plugin(), checked).into())
+        Ok(PluginConfig::configured(plugin.plugin(), checked).into())
     }
 
     /// The types of the facts the plugins of this axis provide, i.e. what a slot for this axis
@@ -547,7 +547,7 @@ mod tests {
             declaration
                 .provide(Downstream)
                 .provide(Crosswise)
-                .require::<Settled>("the settled fact", None);
+                .require::<Settled>("the settled fact");
         }
     }
 
@@ -564,7 +564,6 @@ mod tests {
     impl PluginType for Handwritten {
         const ID: &'static str = "handwritten";
         const LABEL: &'static str = "handwritten";
-        const DESCRIPTION: &'static str = "a plugin written by hand";
     }
 
     #[register]
@@ -581,15 +580,19 @@ mod tests {
 
         assert_eq!(entry.id(), "only_provider");
         assert_eq!(entry.label(), OnlyProvider::LABEL);
-        assert_eq!(entry.description(), OnlyProvider::DESCRIPTION);
+        assert_eq!(
+            entry.description(),
+            Some("the one plugin providing the settled fact")
+        );
         assert!(entry.declaration().provides_type(TypeId::of::<Settled>()));
         assert!(entry.schema().fields().is_empty());
+        assert_eq!(entry_of::<Handwritten>().description(), None);
     }
 
     #[test]
     fn a_plugin_is_built_from_the_answers_to_its_schema() {
         let entry = entry_of::<ConfiguredProvider>();
-        let configured = |config| PluginConfig::of::<ConfiguredProvider>(config);
+        let configured = PluginConfig::of::<ConfiguredProvider>;
 
         assert_eq!(
             entry.schema().fields().iter().map(Field::name).next(),
@@ -597,15 +600,15 @@ mod tests {
         );
         // a built plugin is boxed behind the trait of the axis, so its Debug form is what a test
         // can compare
-        let built = configured(Config::new().with("rounds", 5)).build::<dyn Tested>();
+        let built = configured().with("rounds", 5).build::<dyn Tested>();
         assert_eq!(format!("{built:?}"), "Ok(ConfiguredProvider { rounds: 5 })");
-        assert!(configured(Config::new()).build::<dyn Tested>().is_err());
+        assert!(configured().build::<dyn Tested>().is_err());
     }
 
     #[test]
     fn a_plugin_of_another_axis_is_not_built() {
         assert_eq!(
-            PluginConfig::of::<DeepProvider>(Config::new())
+            PluginConfig::of::<DeepProvider>()
                 .build::<dyn Tested>()
                 .err(),
             Some(ConfigError::UnknownPlugin { path: Path::ROOT })
@@ -629,8 +632,7 @@ mod tests {
     #[test]
     fn a_configured_declaration_includes_the_sub_plugins() {
         let entry = entry_of::<Wrapper>();
-        let wrapping =
-            Config::new().with("nested", PluginConfig::of::<DeepProvider>(Config::new()));
+        let wrapping = Config::new().with("nested", PluginConfig::of::<DeepProvider>());
         let deep = TypeId::of::<Deep>();
 
         assert!(!entry.declaration().provides_type(deep));
@@ -691,7 +693,7 @@ mod tests {
 
     #[test]
     fn a_plugin_written_by_hand_is_built_by_its_id() {
-        let built = PluginConfig::of::<Handwritten>(Config::new()).build::<dyn Tested>();
+        let built = PluginConfig::of::<Handwritten>().build::<dyn Tested>();
 
         assert_eq!(format!("{built:?}"), "Ok(Handwritten)");
         assert_eq!(

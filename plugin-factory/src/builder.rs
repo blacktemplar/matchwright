@@ -36,7 +36,7 @@ use crate::{
 ///     Plugin, axis,
 ///     builder::Builder,
 ///     compatibility::Declaration,
-///     config::{Config, Path, PluginConfig, Segment, Value},
+///     config::{Config, Path, PluginConfig, Value},
 ///     register,
 ///     schema::{Configurable, FieldKind, Schema},
 /// };
@@ -70,7 +70,7 @@ use crate::{
 /// /// by the fields of the plugins answering it in `config`.
 /// fn fields(schema: &Schema, config: &Config, at: &Path, lines: &mut Vec<String>) {
 ///     for field in schema.fields() {
-///         let path = at.clone().then(Segment::field(field.name()));
+///         let path = at.clone().field(field.name());
 ///         lines.push(format!("{path}: {}", field.label()));
 ///         if let Some(answer) = config.get(field.name()) {
 ///             plugin_fields(field.kind(), answer, &path, lines);
@@ -86,7 +86,7 @@ use crate::{
 ///         }
 ///         (FieldKind::List(element), Value::Array(answers)) => {
 ///             for (index, answer) in answers.iter().enumerate() {
-///                 let path = at.clone().then(Segment::Index(index));
+///                 let path = at.clone().index(index);
 ///                 plugin_fields(element, answer, &path, lines);
 ///             }
 ///         }
@@ -104,8 +104,8 @@ use crate::{
 /// let mut builder = Builder::<Phase>::new(Declaration::new());
 /// builder
 ///     .set(
-///         &Path::of("seedings"),
-///         vec![PluginConfig::of::<Random>(Config::new())],
+///         &"seedings".parse().unwrap(),
+///         vec![PluginConfig::of::<Random>()],
 ///     )
 ///     .unwrap();
 ///
@@ -474,7 +474,7 @@ impl<T: Configurable> Builder<T> {
                     Some(Value::Array(list)) => list.clone(),
                     _ => Vec::new(),
                 };
-                list.push(PluginConfig::new(entry.id(), Config::new()).into());
+                list.push(PluginConfig::new(entry.id()).into());
                 answers.set(name, list);
                 return true;
             }
@@ -545,11 +545,6 @@ impl Candidate {
     /// The plugin.
     pub fn entry(&self) -> &'static PluginEntry {
         self.entry
-    }
-
-    /// Whether the plugin fits.
-    pub fn fits(&self) -> bool {
-        self.conflict.is_none()
     }
 
     /// Why the plugin does not fit, or [`None`] if it does.
@@ -800,7 +795,7 @@ impl Tree {
 
     fn add_config(&mut self, schema: &Schema, config: &Config, at: &Path) {
         for field in schema.fields() {
-            let path = at.clone().then(Segment::field(field.name()));
+            let path = at.clone().field(field.name());
             let answer = config.get(field.name()).cloned();
             self.questions.push(Question {
                 path: path.clone(),
@@ -822,12 +817,7 @@ impl Tree {
             (FieldKind::Optional(inner), _) => self.add_answer(inner, answer, path, parent),
             (FieldKind::List(element), Value::Array(answers)) => {
                 for (index, answer) in answers.iter().enumerate() {
-                    self.add_answer(
-                        element,
-                        answer,
-                        path.clone().then(Segment::Index(index)),
-                        parent,
-                    );
+                    self.add_answer(element, answer, path.clone().index(index), parent);
                 }
             }
             (FieldKind::Plugin(axis), _) => {
@@ -904,7 +894,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Plugin, PluginType, axis, compatibility::Condition, register};
+    use crate::{Plugin, PluginType, axis, register};
 
     #[derive(Debug)]
     struct Points;
@@ -940,9 +930,9 @@ mod tests {
     impl RoundRobin {
         fn recommends(&self) -> Vec<PluginConfig> {
             vec![
-                PluginConfig::of::<MatchCount>(Config::new()),
-                PluginConfig::of::<Wins>(Config::new()),
-                PluginConfig::of::<Score>(Config::new()),
+                PluginConfig::of::<MatchCount>(),
+                PluginConfig::of::<Wins>(),
+                PluginConfig::of::<Score>(),
             ]
         }
     }
@@ -1004,12 +994,10 @@ mod tests {
 
     impl Monster {
         fn declare_static(declaration: &mut Declaration) {
-            declaration.require(
+            declaration.require_that::<EntrantsPerRanking>(
                 "the entrants per ranking",
-                Some(Condition::new(
-                    "rankings of single players",
-                    |entrants: &EntrantsPerRanking| entrants.0 == 1,
-                )),
+                "rankings of single players",
+                |entrants| entrants.0 == 1,
             );
         }
     }
@@ -1102,8 +1090,8 @@ mod tests {
     impl Buchholz {
         fn declare_static(declaration: &mut Declaration) {
             declaration
-                .require::<Points>("points", None)
-                .require::<Matches>("matches", None);
+                .require::<Points>("points")
+                .require::<Matches>("matches");
         }
     }
 
@@ -1122,7 +1110,7 @@ mod tests {
 
     impl Losses {
         fn declare_static(declaration: &mut Declaration) {
-            declaration.require::<Eliminating>("eliminations", None);
+            declaration.require::<Eliminating>("eliminations");
         }
     }
 
@@ -1166,20 +1154,12 @@ mod tests {
 
     /// The path written as `text`, e.g. `metrics[1].for_win`.
     fn path(text: &str) -> Path {
-        let mut path = Path::ROOT;
-        for part in text.split('.') {
-            let mut pieces = part.split('[');
-            path = path.then(Segment::field(pieces.next().unwrap()));
-            for index in pieces {
-                path = path.then(Segment::Index(index.trim_end_matches(']').parse().unwrap()));
-            }
-        }
-        path
+        text.parse().unwrap()
     }
 
     /// The plugin `P` with nothing answered.
     fn plugin<P: PluginType>() -> PluginConfig {
-        PluginConfig::of::<P>(Config::new())
+        PluginConfig::of::<P>()
     }
 
     /// A builder with `answers` set, each at the path written as its first element.
@@ -1306,9 +1286,7 @@ mod tests {
         assert_eq!(
             builder.set(
                 &path("metrics"),
-                json!([PluginConfig::of::<Wins>(
-                    Config::new().with("for_win", true)
-                )])
+                json!([plugin::<Wins>().with("for_win", true)])
             ),
             Err(ConfigError::WrongKind {
                 path: path("metrics[0].for_win"),
@@ -1429,12 +1407,7 @@ mod tests {
 
     #[test]
     fn an_answer_a_plugin_rejects_is_an_issue_at_its_field() {
-        let builder = answered(&[(
-            "metrics",
-            json!([PluginConfig::of::<Wins>(
-                Config::new().with("for_win", -1.0)
-            )]),
-        )]);
+        let builder = answered(&[("metrics", json!([plugin::<Wins>().with("for_win", -1.0)]))]);
         let rejected = ConfigError::Rejected {
             path: path("metrics[0].for_win"),
             reason: "the points for a win cannot be negative".to_owned(),
@@ -1600,12 +1573,7 @@ mod tests {
     fn finishing_with_an_answer_a_plugin_rejects_fails() {
         let builder = answered(&[
             ("format", plugin::<RoundRobin>().into()),
-            (
-                "metrics",
-                json!([PluginConfig::of::<Wins>(
-                    Config::new().with("for_win", -1.0)
-                )]),
-            ),
+            ("metrics", json!([plugin::<Wins>().with("for_win", -1.0)])),
         ]);
 
         assert_eq!(
@@ -1802,25 +1770,25 @@ mod tests {
         impl Requiring {
             fn declare(&self, declaration: &mut Declaration) {
                 if self.settled {
-                    declaration.require::<Settled>("the settled fact", None);
+                    declaration.require::<Settled>("the settled fact");
                 }
                 if self.ambiguous {
-                    declaration.require::<Ambiguous>("the ambiguous fact", None);
+                    declaration.require::<Ambiguous>("the ambiguous fact");
                 }
                 if self.downstream {
-                    declaration.require::<Downstream>("the downstream fact", None);
+                    declaration.require::<Downstream>("the downstream fact");
                 }
                 if self.deep {
-                    declaration.require::<Deep>("the deep fact", None);
+                    declaration.require::<Deep>("the deep fact");
                 }
                 if self.crosswise {
-                    declaration.require::<Crosswise>("the crosswise fact", None);
+                    declaration.require::<Crosswise>("the crosswise fact");
                 }
                 if self.lone {
-                    declaration.require::<Lone>("the lone fact", None);
+                    declaration.require::<Lone>("the lone fact");
                 }
                 if self.nested {
-                    declaration.require::<Nested>("the nested fact", None);
+                    declaration.require::<Nested>("the nested fact");
                 }
             }
         }
@@ -1932,7 +1900,7 @@ mod tests {
             fn declare_static(declaration: &mut Declaration) {
                 declaration
                     .provide(Downstream)
-                    .require::<Settled>("the settled fact", None);
+                    .require::<Settled>("the settled fact");
             }
         }
 
@@ -2046,13 +2014,13 @@ mod tests {
             requires: &[&str],
             answers: &[(&str, Value)],
         ) -> Result<Vec<String>, Vec<(String, &'static str)>> {
-            let config = requires
+            let requiring = requires
                 .iter()
-                .fold(Config::new(), |config, fact| config.with(*fact, true));
+                .fold(plugin::<Requiring>(), |requiring, fact| {
+                    requiring.with(*fact, true)
+                });
             let mut builder = Builder::<C>::new(context);
-            builder
-                .set(&path("requirements"), PluginConfig::of::<Requiring>(config))
-                .unwrap();
+            builder.set(&path("requirements"), requiring).unwrap();
             for (at, answer) in answers {
                 builder.set(&path(at), answer.clone()).unwrap();
             }

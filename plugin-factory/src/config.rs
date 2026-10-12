@@ -8,7 +8,10 @@
 //! `Deserialize` impl; everything that can go wrong while configuring is a [`ConfigError`] and
 //! carries the [`Path`] of the field it is about.
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Map;
@@ -33,17 +36,30 @@ pub struct PluginConfig {
 }
 
 impl PluginConfig {
-    /// The plugin `P` configured by `config`.
-    pub fn of<P: PluginType>(config: Config) -> Self {
-        Self::new(P::ID, config)
+    /// The plugin `P` with nothing answered.
+    pub fn of<P: PluginType>() -> Self {
+        Self::new(P::ID)
     }
 
-    /// The plugin with the id `plugin` configured by `config`, see [`PluginType::ID`].
-    pub fn new(plugin: impl Into<String>, config: Config) -> Self {
+    /// The plugin with the id `plugin`, see [`PluginType::ID`], with nothing answered.
+    pub fn new(plugin: impl Into<String>) -> Self {
+        Self::configured(plugin, Config::new())
+    }
+
+    /// The plugin with the id `plugin` configured by `config`.
+    pub(crate) fn configured(plugin: impl Into<String>, config: Config) -> Self {
         Self {
             plugin: plugin.into(),
             config,
         }
+    }
+
+    /// This plugin with `field` answered by `answer`, replacing an answer it holds already, see
+    /// [`Config::with`].
+    #[must_use]
+    pub fn with(mut self, field: impl Into<String>, answer: impl Into<Value>) -> Self {
+        self.config.set(field, answer);
+        self
     }
 
     /// The id of the plugin this configures, see [`PluginType::ID`].
@@ -130,13 +146,8 @@ impl Config {
     }
 
     /// Answers `field` with `answer`, replacing an answer this config holds already.
-    pub fn set(&mut self, field: impl Into<String>, answer: impl Into<Value>) {
+    pub(crate) fn set(&mut self, field: impl Into<String>, answer: impl Into<Value>) {
         self.0.insert(field.into(), answer.into());
-    }
-
-    /// Removes the answer to `field`, so that it is unanswered again.
-    pub fn unset(&mut self, field: &str) {
-        self.0.remove(field);
     }
 
     /// The answer to `field`, or [`None`] if it is unanswered.
@@ -147,7 +158,7 @@ impl Config {
     }
 
     /// Every field this config answers with its answer, in no particular order.
-    pub fn answers(&self) -> impl Iterator<Item = (&str, &Value)> {
+    pub(crate) fn answers(&self) -> impl Iterator<Item = (&str, &Value)> {
         self.0.iter().map(|(name, answer)| (name.as_str(), answer))
     }
 }
@@ -195,7 +206,9 @@ pub(crate) fn name_of(answer: &Value) -> &'static str {
 /// Where in a config something is: the field it is about, prefixed by the fields and positions of
 /// the plugins and lists the field belongs to.
 ///
-/// [`Display`] writes a path as `metrics[1].points_for_win`.
+/// [`Display`] writes a path as `metrics[1].points_for_win`, and [`FromStr`] reads it back, e.g.
+/// `"metrics[1].points_for_win".parse()`. [`Self::ROOT`] is written as "the configuration" and
+/// not read back.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Path(Vec<Segment>);
 
@@ -203,16 +216,17 @@ impl Path {
     /// The config itself rather than a field of it.
     pub const ROOT: Self = Self(Vec::new());
 
-    /// The path of the field `field` of a config.
-    pub fn of(field: impl Into<String>) -> Self {
-        Self::ROOT.then(Segment::field(field))
+    /// This path followed by the field `name`: a field of the config this path addresses, or of
+    /// the plugin answering what it addresses.
+    #[must_use]
+    pub fn field(self, name: impl Into<String>) -> Self {
+        self.then(Segment::Field(name.into()))
     }
 
-    /// This path followed by `segment`, i.e. one level further in.
+    /// This path followed by the position `position` in the list it addresses.
     #[must_use]
-    pub fn then(mut self, segment: Segment) -> Self {
-        self.0.push(segment);
-        self
+    pub fn index(self, position: usize) -> Self {
+        self.then(Segment::Index(position))
     }
 
     /// The segments of this path, from the outermost field inwards.
@@ -220,8 +234,19 @@ impl Path {
         &self.0
     }
 
+    /// The path of the field `field` of a config.
+    pub(crate) fn of(field: impl Into<String>) -> Self {
+        Self::ROOT.field(field)
+    }
+
+    /// This path followed by `segment`, i.e. one level further in.
+    fn then(mut self, segment: Segment) -> Self {
+        self.0.push(segment);
+        self
+    }
+
     /// Whether this path is `prefix` or addresses something within what `prefix` addresses.
-    pub fn starts_with(&self, prefix: &Self) -> bool {
+    pub(crate) fn starts_with(&self, prefix: &Self) -> bool {
         self.0.starts_with(&prefix.0)
     }
 
@@ -260,13 +285,11 @@ impl Path {
         for segment in deserialized.iter() {
             match segment {
                 Deserialized::Map { key } if in_config => {
-                    path = path.then(Segment::field(key.as_str()));
+                    path = path.field(key.as_str());
                     in_config = false;
                 }
                 Deserialized::Map { key } if key == "value" => in_config = true,
-                Deserialized::Seq { index } if !in_config => {
-                    path = path.then(Segment::Index(*index));
-                }
+                Deserialized::Seq { index } if !in_config => path = path.index(*index),
                 _ => break,
             }
         }
@@ -290,6 +313,42 @@ impl Display for Path {
     }
 }
 
+impl FromStr for Path {
+    type Err = ParsePathError;
+
+    /// The path [`Display`] writes as `text`: fields separated by `.`, each followed by any
+    /// number of positions in brackets, e.g. `metrics[1].points_for_win`.
+    ///
+    /// # Errors
+    /// Returns [`ParsePathError`] if `text` is not such a path, e.g. if it is empty, or a field
+    /// name is empty or contains `[` or `]`.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let error = || ParsePathError(text.to_owned());
+        let mut path = Self::ROOT;
+        for part in text.split('.') {
+            let (name, mut positions) = part.split_at(part.find('[').unwrap_or(part.len()));
+            if name.is_empty() || name.contains(']') {
+                return Err(error());
+            }
+            path = path.field(name);
+            while let Some(rest) = positions.strip_prefix('[') {
+                let (position, rest) = rest.split_once(']').ok_or_else(error)?;
+                path = path.index(position.parse().map_err(|_| error())?);
+                positions = rest;
+            }
+            if !positions.is_empty() {
+                return Err(error());
+            }
+        }
+        Ok(path)
+    }
+}
+
+/// Why text is not a [`Path`] written as [`Display`] writes one.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("{0:?} is not a path")]
+pub struct ParsePathError(String);
+
 /// One step of a [`Path`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Segment {
@@ -297,13 +356,6 @@ pub enum Segment {
     Field(String),
     /// One answer of a field taking a list, by position.
     Index(usize),
-}
-
-impl Segment {
-    /// The segment of the field `field`.
-    pub fn field(field: impl Into<String>) -> Self {
-        Self::Field(field.into())
-    }
 }
 
 /// Why a config does not configure the plugin it is given to.
@@ -358,9 +410,7 @@ mod tests {
     use super::*;
 
     fn nested() -> Path {
-        Path::of("metrics")
-            .then(Segment::Index(1))
-            .then(Segment::field("points_for_win"))
+        Path::ROOT.field("metrics").index(1).field("points_for_win")
     }
 
     #[test]
@@ -371,13 +421,45 @@ mod tests {
     }
 
     #[test]
+    fn a_path_is_read_back_as_it_is_written() {
+        let paths = [
+            nested(),
+            Path::of("ranker"),
+            Path::of("tie_breakers").index(0).index(2).field("by"),
+        ];
+
+        for path in paths {
+            assert_eq!(path.to_string().parse(), Ok(path));
+        }
+    }
+
+    #[test]
+    fn text_that_is_not_a_path_is_an_error() {
+        for text in [
+            "",
+            "[1]",
+            "metrics.",
+            "metrics[",
+            "metrics[x]",
+            "metrics[1]x",
+            "metrics]",
+        ] {
+            assert_eq!(
+                text.parse::<Path>(),
+                Err(ParsePathError(text.to_owned())),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn an_error_seen_from_further_out_is_prefixed_by_the_field_it_is_in() {
         let error = ConfigError::Rejected {
             path: Path::of("points_for_win"),
             reason: "cannot be negative".to_owned(),
         }
         .within(Segment::Index(1))
-        .within(Segment::field("metrics"));
+        .within(Segment::Field("metrics".to_owned()));
 
         assert_eq!(error.path(), &nested());
         assert_eq!(
@@ -388,8 +470,8 @@ mod tests {
 
     #[test]
     fn an_unknown_plugin_is_reported_as_the_field_it_answers() {
-        let error =
-            ConfigError::UnknownPlugin { path: Path::ROOT }.within(Segment::field("ranker"));
+        let error = ConfigError::UnknownPlugin { path: Path::ROOT }
+            .within(Segment::Field("ranker".to_owned()));
 
         assert_eq!(error.path(), &Path::of("ranker"));
     }
@@ -406,14 +488,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_field_is_unanswered() {
-        let mut config = Config::new().with("third_place_match", true);
-        config.unset("third_place_match");
-
-        assert_eq!(config.get("third_place_match"), None);
-    }
-
-    #[test]
     fn a_field_answered_with_nothing_is_answered() {
         let config = Config::new().with("points_for_bye", Value::Null);
 
@@ -422,7 +496,7 @@ mod tests {
 
     #[test]
     fn a_plugin_answer_is_written_as_typetag_writes_an_adjacently_tagged_plugin() {
-        let answer = PluginConfig::new("points", Config::new().with("for_win", 2.0));
+        let answer = PluginConfig::new("points").with("for_win", 2.0);
 
         assert_eq!(
             Value::from(answer.clone()),
@@ -463,9 +537,7 @@ mod tests {
 
         assert_eq!(
             Path::of_deserialized(error.path(), true),
-            Path::of("tie_breakers")
-                .then(Segment::Index(0))
-                .then(Segment::field("for_win"))
+            Path::of("tie_breakers").index(0).field("for_win")
         );
     }
 
