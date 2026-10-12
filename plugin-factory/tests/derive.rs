@@ -1,11 +1,11 @@
 //! Plugins and a composite derived rather than written by hand, on an axis of their own.
 
-use std::any::TypeId;
+use std::fmt::Debug;
 
 use plugin_factory::{
     Plugin, PluginType, axis,
     catalog::{AnyAxis, Axis, PluginEntry},
-    compatibility::Declaration,
+    compatibility::{Declaration, Incompatibility, check},
     config::{Config, ConfigError, Path, PluginConfig, Value},
     register,
     schema::{Configurable, Field, FieldKind, FieldType},
@@ -341,20 +341,49 @@ fn an_answer_the_field_type_rejects_is_rejected() {
 
 #[test]
 fn the_declaration_is_forwarded_to_the_functions_given() {
-    let entry = entry_of::<Points>();
-    let configured = entry.declaration_for(&points_config()).unwrap();
-    let uncounted = entry
-        .declaration_for(&points_config().with("byes", false))
-        .unwrap();
+    let built = |config| {
+        PluginConfig::of::<Points>(config)
+            .build::<dyn Derived>()
+            .unwrap()
+    };
+    let counted = built(points_config());
+    let uncounted = built(points_config().with("byes", false));
+    let matches = Declaration::of(|declaration| {
+        declaration.provide(Matches);
+    });
 
-    assert!(entry.declaration().provides_type(TypeId::of::<Scored>()));
-    assert!(
-        !entry
-            .declaration()
-            .provides_type(TypeId::of::<ByesCounted>())
+    // the static declaration requires the matches and provides a score
+    assert_eq!(
+        check(&Declaration::new(), &[&*uncounted]),
+        Err(Incompatibility::FactNotProvided {
+            fact: "the matches",
+            required_by: format!("{uncounted:?}"),
+        })
     );
-    assert!(configured.provides_type(TypeId::of::<ByesCounted>()));
-    assert!(!uncounted.provides_type(TypeId::of::<ByesCounted>()));
+    assert_eq!(check(&matches, &[&*uncounted]), Ok(()));
+    assert_eq!(
+        check(&with(Scored), &[&*uncounted]),
+        Err(Incompatibility::FactProvidedByContext {
+            fact: "Scored".to_owned(),
+            provider: format!("{uncounted:?}"),
+        })
+    );
+    // the configured one provides the counted byes if they are counted
+    assert_eq!(check(&with(ByesCounted), &[&*uncounted]), Ok(()));
+    assert_eq!(
+        check(&with(ByesCounted), &[&*counted]),
+        Err(Incompatibility::FactProvidedByContext {
+            fact: "ByesCounted".to_owned(),
+            provider: format!("{counted:?}"),
+        })
+    );
+}
+
+/// A context providing the matches [`Points`] requires and `fact`.
+fn with<T: Debug + Sync + 'static>(fact: T) -> Declaration {
+    Declaration::of(|declaration| {
+        declaration.provide(Matches).provide(fact);
+    })
 }
 
 #[test]
@@ -365,16 +394,20 @@ fn the_plugins_in_the_fields_are_the_plugins_it_holds() {
         "tie_breakers": [{"type": "derive::unit", "value": null}],
     }))
     .unwrap();
-    let declaration = entry_of::<Ranker>()
-        .declaration_for(&Config::new().with("by", PluginConfig::of::<Points>(points_config())))
-        .unwrap();
 
     assert_eq!(
         format!("{:?}", ranker.plugins()),
         format!("[{:?}, {:?}]", ranker.by, Unit)
     );
     assert!(Unit.plugins().is_empty());
-    assert!(declaration.provides_type(TypeId::of::<ByesCounted>()));
+    // what they declare is part of what it declares
+    assert_eq!(
+        check(&with(ByesCounted), &[&ranker]),
+        Err(Incompatibility::FactProvidedByContext {
+            fact: "ByesCounted".to_owned(),
+            provider: format!("{ranker:?}"),
+        })
+    );
 }
 
 #[test]

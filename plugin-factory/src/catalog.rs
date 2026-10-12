@@ -21,9 +21,9 @@ use serde_json::Map;
 
 use crate::{
     Plugin, PluginType,
-    compatibility::{self, Declaration, OpenFacts, ProvidedFact},
+    compatibility::{self, Declaration, Declared, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
-    schema::Schema,
+    schema::{Configurable, Schema},
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
@@ -179,7 +179,7 @@ impl PluginEntry {
 
     /// What the plugin provides and requires whatever its configuration, see
     /// [`PluginType::declare_static`]. Built on every call.
-    pub fn declaration(&self) -> Declaration {
+    pub(crate) fn declaration(&self) -> Declaration {
         Declaration::of(self.declare)
     }
 
@@ -192,7 +192,7 @@ impl PluginEntry {
     /// # Errors
     /// Returns [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed
     /// config, and whatever completing `config` fails with otherwise.
-    pub fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
+    pub(crate) fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
         let instance = self.instance(config)?;
         Ok(Declaration::of(|declaration| {
             instance.declare_all(declaration);
@@ -237,7 +237,7 @@ impl PluginEntry {
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
     /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered.
-    pub fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
+    pub(crate) fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
         let completed = self.schema().complete(config)?;
         if self.is_unit {
             return Ok(Value::Null);
@@ -304,7 +304,7 @@ impl AnyAxis {
     /// # Errors
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this axis is registered with the id
     /// of `plugin`, and whatever completing its config fails with otherwise.
-    pub fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
+    pub(crate) fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
         let entry = self
             .entry(plugin.plugin())
             .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
@@ -333,7 +333,7 @@ impl AnyAxis {
     /// Includes what the plugins of their [sub-axes](PluginEntry::sub_axes) provide,
     /// transitively, since a plugin filling the slot can have slots of its own. Read from the
     /// static declarations, so it holds whatever the plugins end up configured with.
-    pub fn facts(&self) -> OpenFacts {
+    pub(crate) fn facts(&self) -> OpenFacts {
         let mut visited = vec![*self];
         let mut pending = vec![*self];
         let mut facts = Vec::new();
@@ -406,17 +406,13 @@ where
     }
 }
 
-/// A composite of plugins as [`resolve`] sees it: what its plugins declare, and the axes a plugin
-/// may be added for.
-pub trait Composite: Sized + 'static {
+/// A composite of plugins as [`resolve`] sees it: the plugins it holds, see
+/// [`Configurable::plugins`], and the axes a plugin may be added for.
+pub trait Composite: Configurable {
     /// The axes the catalog may add plugins of to the composite, each with how it is added, see
     /// [`Acceptor::of`]. An axis listed twice is never added, since which of its slots to add to
     /// is not a program's choice to make.
     const ACCEPTS: &'static [Acceptor<Self>];
-
-    /// What the plugins of the composite declare, each named as the checks report it, see
-    /// [`declaration_of`](crate::compatibility::declaration_of).
-    fn declarations(&self) -> Vec<(String, Declaration)>;
 }
 
 /// An axis a [`Composite`] `C` accepts plugins of, see [`Composite::ACCEPTS`].
@@ -462,14 +458,13 @@ where
 ///
 /// A fact is settled only if exactly one registered plugin of all the axes the composite
 /// [accepts](Composite::ACCEPTS) provides it and needs no configuration; otherwise it stays
-/// unprovided, which [`check_facts`](crate::compatibility::check_facts) reports. Each fact is
-/// tried once. Plugins are added in the order their facts are first required in, so ordering
-/// them by what they require of each other is left to the caller, see
-/// [`order`](crate::compatibility::order).
+/// unprovided, which [`check`](crate::compatibility::check) reports. Each fact is tried once.
+/// Plugins are added in the order their facts are first required in, so ordering them by what
+/// they require of each other is left to the caller, see [`order`](crate::compatibility::order).
 pub fn resolve<C: Composite>(context: &Declaration, composite: &mut C) {
     let mut tried = Vec::new();
     loop {
-        let declarations = composite.declarations();
+        let declarations: Vec<_> = composite.plugins().into_iter().map(Declared::of).collect();
         let Some(fact) = compatibility::unprovided(&declarations)
             .find(|&fact| !context.provides_type(fact) && !tried.contains(&fact))
         else {
@@ -500,26 +495,16 @@ pub fn providers_of<A: Axis + ?Sized>(fact: TypeId) -> impl Iterator<Item = &'st
     A::entries().filter(move |entry| entry.declaration().provides_type(fact))
 }
 
-/// The types of the facts the plugins of the axis `A` provide, see [`AnyAxis::facts`].
-pub fn facts_of_axis<A: Axis + ?Sized>() -> OpenFacts {
-    AnyAxis::of::<A>().facts()
-}
-
 /// The catalog itself, tested on an axis of its own so that it does not depend on what the plugins
 /// of a program happen to register.
 #[cfg(test)]
 mod tests {
-    use std::{any::Any, iter};
+    use std::any::Any;
 
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::{
-        axis,
-        compatibility::{OpenFacts, declaration_of},
-        register,
-        schema::{Configurable, Field},
-    };
+    use crate::{axis, register, schema::Field};
 
     /// A fact exactly one registered plugin provides unasked.
     #[derive(Debug)]
@@ -918,14 +903,75 @@ mod tests {
         ]);
 
         // the two axes nest each other, so either one could contribute everything
-        assert_eq!(facts_of_axis::<dyn Tested>(), facts);
-        assert_eq!(facts_of_axis::<dyn Nested>(), facts);
+        assert_eq!(AnyAxis::of::<dyn Tested>().facts(), facts);
+        assert_eq!(AnyAxis::of::<dyn Nested>().facts(), facts);
     }
 
-    /// A composite accepting plugins of both axes, whose own requirements are `requires`.
+    /// The axis of [`Requiring`], which no composite accepts.
+    #[axis]
+    trait Requirements: Plugin {}
+
+    /// A plugin requiring the facts whose fields are set, so that a composite holding it requires
+    /// them.
+    #[derive(Debug, Default, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "requiring",
+        label = "requiring",
+        description = "a plugin requiring what it is told to",
+        declare = Self::declare
+    )]
+    struct Requiring {
+        #[serde(default)]
+        #[plugin(label = "Settled")]
+        settled: bool,
+        #[serde(default)]
+        #[plugin(label = "Ambiguous")]
+        ambiguous: bool,
+        #[serde(default)]
+        #[plugin(label = "Deep")]
+        deep: bool,
+        #[serde(default)]
+        #[plugin(label = "Downstream")]
+        downstream: bool,
+        #[serde(default)]
+        #[plugin(label = "Crosswise")]
+        crosswise: bool,
+    }
+
+    impl Requiring {
+        fn declare(&self, declaration: &mut Declaration) {
+            if self.ambiguous {
+                declaration.require::<Ambiguous>("the ambiguous fact", None);
+            }
+            if self.settled {
+                declaration.require::<Settled>("the settled fact", None);
+            }
+            if self.deep {
+                declaration.require::<Deep>("the deep fact", None);
+            }
+            if self.downstream {
+                declaration.require::<Downstream>("the downstream fact", None);
+            }
+            if self.crosswise {
+                declaration.require::<Crosswise>("the crosswise fact", None);
+            }
+        }
+    }
+
+    #[register]
+    impl Requirements for Requiring {}
+
+    /// A composite accepting plugins of both axes, whose own requirements are its
+    /// `requirements`.
+    #[derive(Deserialize, Configurable)]
     struct Resolved {
-        requires: fn(&mut Declaration),
+        #[plugin(label = "Requirements")]
+        requirements: Box<dyn Requirements>,
+        #[serde(default)]
+        #[plugin(label = "Tested")]
         tested: Vec<Box<dyn Tested>>,
+        #[serde(default)]
+        #[plugin(label = "Nested")]
         nested: Vec<Box<dyn Nested>>,
     }
 
@@ -944,20 +990,13 @@ mod tests {
     impl Composite for Resolved {
         const ACCEPTS: &'static [Acceptor<Self>] =
             &[Acceptor::of::<dyn Tested>(), Acceptor::of::<dyn Nested>()];
-
-        fn declarations(&self) -> Vec<(String, Declaration)> {
-            iter::once(("requirements".to_owned(), Declaration::of(self.requires)))
-                .chain(self.tested.iter().map(|plugin| declaration_of(&**plugin)))
-                .chain(self.nested.iter().map(|plugin| declaration_of(&**plugin)))
-                .collect()
-        }
     }
 
-    /// The [`Debug`] forms of the plugins [`resolve`] adds to a composite requiring `requires`
-    /// with `context`, those of [`Tested`] first.
-    fn resolved(context: &Declaration, requires: fn(&mut Declaration)) -> Vec<String> {
+    /// The [`Debug`] forms of the plugins [`resolve`] adds to a composite requiring what
+    /// `requirements` requires with `context`, those of [`Tested`] first.
+    fn resolved(context: &Declaration, requirements: Requiring) -> Vec<String> {
         let mut composite = Resolved {
-            requires,
+            requirements: Box::new(requirements),
             tested: Vec::new(),
             nested: Vec::new(),
         };
@@ -970,9 +1009,13 @@ mod tests {
     #[test]
     fn resolving_adds_the_providers_of_what_the_added_plugins_require() {
         assert_eq!(
-            resolved(&Declaration::new(), |declaration| {
-                declaration.require::<Downstream>("the downstream fact", None);
-            }),
+            resolved(
+                &Declaration::new(),
+                Requiring {
+                    downstream: true,
+                    ..Requiring::default()
+                }
+            ),
             [format!("{Chained:?}"), format!("{OnlyProvider:?}")]
         );
     }
@@ -980,9 +1023,13 @@ mod tests {
     #[test]
     fn resolving_adds_a_provider_of_any_accepted_axis() {
         assert_eq!(
-            resolved(&Declaration::new(), |declaration| {
-                declaration.require::<Deep>("the deep fact", None);
-            }),
+            resolved(
+                &Declaration::new(),
+                Requiring {
+                    deep: true,
+                    ..Requiring::default()
+                }
+            ),
             [format!("{:?}", DeepProvider { inner: None })]
         );
     }
@@ -990,9 +1037,13 @@ mod tests {
     #[test]
     fn resolving_leaves_a_fact_provided_by_plugins_of_two_axes_unprovided() {
         assert!(
-            resolved(&Declaration::new(), |declaration| {
-                declaration.require::<Crosswise>("the crosswise fact", None);
-            })
+            resolved(
+                &Declaration::new(),
+                Requiring {
+                    crosswise: true,
+                    ..Requiring::default()
+                }
+            )
             .is_empty()
         );
     }
@@ -1004,9 +1055,13 @@ mod tests {
         });
 
         assert!(
-            resolved(&context, |declaration| {
-                declaration.require::<Settled>("the settled fact", None);
-            })
+            resolved(
+                &context,
+                Requiring {
+                    settled: true,
+                    ..Requiring::default()
+                }
+            )
             .is_empty()
         );
     }
@@ -1014,11 +1069,14 @@ mod tests {
     #[test]
     fn resolving_leaves_an_ambiguous_fact_unprovided_and_settles_the_others() {
         assert_eq!(
-            resolved(&Declaration::new(), |declaration| {
-                declaration
-                    .require::<Ambiguous>("the ambiguous fact", None)
-                    .require::<Settled>("the settled fact", None);
-            }),
+            resolved(
+                &Declaration::new(),
+                Requiring {
+                    ambiguous: true,
+                    settled: true,
+                    ..Requiring::default()
+                }
+            ),
             [format!("{OnlyProvider:?}")]
         );
     }

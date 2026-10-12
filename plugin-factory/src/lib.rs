@@ -67,6 +67,8 @@ pub use plugin_factory_derive::{Plugin, axis, register};
 /// plugin behind a `dyn` is asked through. Not part of the API.
 #[doc(hidden)]
 pub mod __private {
+    use std::{any::Any, fmt::Debug};
+
     pub use serde;
     use serde_json::value::Serializer;
 
@@ -74,6 +76,12 @@ pub mod __private {
         Plugin, PluginType, catalog::Axis, compatibility::Declaration, config::Value,
         schema::Configurable,
     };
+
+    /// A fact, see [`compatibility`](crate::compatibility): a value of any `'static + Debug +
+    /// Sync` type, identified by its type.
+    pub trait Fact: Any + Debug + Sync {}
+
+    impl<T: Any + Debug + Sync> Fact for T {}
 
     /// How the plugin `P` is registered for an axis: the value of the axis's registry that
     /// [`register`](crate::register) submits. Implemented by [`axis`](crate::axis) for every

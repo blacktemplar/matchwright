@@ -2,15 +2,13 @@
 //! program browses the catalog, an operator configures a phase with the builder, the phase is
 //! built, saved and loaded again, and what a phase built elsewhere lacks is resolved.
 
-use std::{any::TypeId, iter};
+use std::any::TypeId;
 
 use plugin_factory::{
     Plugin, PluginType, axis,
     builder::{Builder, FinishError, Problem},
-    catalog::{Acceptor, Accepts, AnyAxis, Axis, Composite, facts_of_axis, providers_of, resolve},
-    compatibility::{
-        Condition, Declaration, Incompatibility, OpenFacts, check_facts, declaration_of, order,
-    },
+    catalog::{Acceptor, Accepts, AnyAxis, Axis, Composite, providers_of, resolve},
+    compatibility::{Condition, Declaration, Incompatibility, check, order},
     config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
     register,
     schema::Configurable,
@@ -285,17 +283,6 @@ impl Accepts<dyn Metric> for Phase {
 
 impl Composite for Phase {
     const ACCEPTS: &'static [Acceptor<Self>] = &[Acceptor::of::<dyn Metric>()];
-
-    fn declarations(&self) -> Vec<(String, Declaration)> {
-        iter::once(declaration_of(&*self.format))
-            .chain(self.metrics.iter().map(|metric| declaration_of(&**metric)))
-            .chain(
-                self.tie_break
-                    .iter()
-                    .map(|metric| declaration_of(&**metric)),
-            )
-            .collect()
-    }
 }
 
 /// The context of a phase of single players.
@@ -416,34 +403,34 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
 }
 
 #[test]
-fn the_catalog_tells_what_an_axis_provides_before_anything_is_configured() {
-    let mut providers: Vec<_> = providers_of::<dyn Metric>(TypeId::of::<Points>())
+fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
+    let providers: Vec<_> = providers_of::<dyn Metric>(TypeId::of::<Points>())
         .map(|entry| entry.id())
         .collect();
-    providers.sort_unstable();
-    let buchholz = <dyn Metric>::entry("full::buchholz").unwrap().declaration();
-    let wins = <dyn Metric>::entry("full::wins").unwrap();
+    let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
+    let wins = metric(plugin::<Wins>());
+    let counting = metric(PluginConfig::of::<Wins>(
+        Config::new().with("counts_byes", true),
+    ));
+    let buchholz = metric(plugin::<Buchholz>());
 
+    // the catalog tells what provides a fact before anything is configured
     assert_eq!(providers, ["full::score", "full::wins"]);
-    assert!(facts_of_axis::<dyn Format>().contains(TypeId::of::<Eliminating>()));
-    assert!(facts_of_axis::<dyn Format>().contains(TypeId::of::<Byes>()));
-    assert!(!facts_of_axis::<dyn Metric>().contains(TypeId::of::<Byes>()));
     assert_eq!(
-        buchholz
-            .required()
-            .iter()
-            .map(|requirement| requirement.name())
-            .collect::<Vec<_>>(),
-        ["points", "the matches"]
+        check(&singles(), &[&*buchholz]),
+        Err(Incompatibility::FactNotProvided {
+            fact: "points",
+            required_by: "Buchholz".to_owned(),
+        })
     );
-    // what a configuration adds is read from the plugin built from it
-    assert!(wins.declaration().required().is_empty());
+    // what a configuration adds counts as well
+    assert_eq!(check(&singles(), &[&*wins]), Ok(()));
     assert_eq!(
-        wins.declaration_for(&Config::new().with("counts_byes", true))
-            .unwrap()
-            .required()[0]
-            .name(),
-        "byes"
+        check(&singles(), &[&*counting]),
+        Err(Incompatibility::FactNotProvided {
+            fact: "byes",
+            required_by: format!("{counting:?}"),
+        })
     );
 }
 
@@ -615,13 +602,9 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             "tie_break": null,
         })
     );
-    let declarations = phase.declarations();
-    assert_eq!(
-        check_facts(&singles(), &declarations, &OpenFacts::NOTHING),
-        Ok(())
-    );
+    assert_eq!(check(&singles(), &phase.plugins()), Ok(()));
     // the buchholz runs after the metrics it requires
-    assert_eq!(order(&declarations), Ok(vec![0, 1, 3, 4, 2]));
+    assert_eq!(order(&phase.plugins()), Ok(vec![0, 1, 3, 4, 2]));
 }
 
 #[test]
@@ -728,11 +711,15 @@ fn a_saved_phase_loads_as_it_was_built() {
         serde_json::to_value(&loaded).unwrap(),
         serde_json::to_value(&phase).unwrap()
     );
+    let plugins = loaded.plugins();
+    assert_eq!(check(&singles(), &plugins), Ok(()));
     // the buchholz nested in the tie break counts with its requirements
-    assert_eq!(loaded.declarations()[3].1.required().len(), 2);
     assert_eq!(
-        check_facts(&singles(), &loaded.declarations(), &OpenFacts::NOTHING),
-        Ok(())
+        check(&singles(), &[plugins[0], plugins[3]]),
+        Err(Incompatibility::FactNotProvided {
+            fact: "points",
+            required_by: format!("{:?}", plugins[3]),
+        })
     );
     // a saved plugin is checked as an answer is
     let tampered = saved.replace(r#""for_win":1.0"#, r#""for_win":-1.0"#);
@@ -753,7 +740,7 @@ fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
     resolve(&singles(), &mut phase);
     assert_eq!(format!("{:?}", phase.metrics), "[Buchholz, MatchCount]");
     assert_eq!(
-        check_facts(&singles(), &phase.declarations(), &OpenFacts::NOTHING),
+        check(&singles(), &phase.plugins()),
         Err(Incompatibility::FactNotProvided {
             fact: "points",
             required_by: "Buchholz".to_owned(),
@@ -762,10 +749,6 @@ fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
 
     // the choice left to the consumer, which then orders the metrics by what they require
     phase.metrics.push(metric(plugin::<Score>()));
-    let declarations = phase.declarations();
-    assert_eq!(
-        check_facts(&singles(), &declarations, &OpenFacts::NOTHING),
-        Ok(())
-    );
-    assert_eq!(order(&declarations), Ok(vec![0, 2, 3, 1]));
+    assert_eq!(check(&singles(), &phase.plugins()), Ok(()));
+    assert_eq!(order(&phase.plugins()), Ok(vec![0, 2, 3, 1]));
 }

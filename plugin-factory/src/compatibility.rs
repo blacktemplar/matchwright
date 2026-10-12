@@ -1,10 +1,12 @@
 //! What plugins provide to and require of the composite they are part of, and the checks deciding
 //! whether they fit together.
 //!
-//! A plugin states its facts in [`PluginType::declare_static`](crate::PluginType::declare_static)
-//! and [`Plugin::declare`].
-//! [`check_facts`] decides whether a set of plugins fits together, and [`check_addition`] whether
-//! one more plugin may be added to a set that is still being configured, see [`OpenFacts`].
+//! A fact is anything true of a composite, a value of any `'static + Debug + Sync` type,
+//! identified by its type; a fact may carry a value, so that a requirement can state a condition
+//! on it. A plugin states the facts it provides and requires in a [`Declaration`], in
+//! [`PluginType::declare_static`](crate::PluginType::declare_static) and [`Plugin::declare`].
+//! [`check`] decides whether the plugins of a built composite fit together, and [`order`] in
+//! which order they can run.
 
 use std::{
     any::{Any, TypeId},
@@ -14,19 +16,10 @@ use std::{
 
 use thiserror::Error;
 
-use crate::Plugin;
-
-/// Something true of a phase, which the plugins of the phase and its context provide and require,
-/// see [`Declaration`].
-///
-/// Every `'static` type with a [`Debug`] impl is a fact, identified by its type. A fact may carry a
-/// value, so that a requirement can state a condition on it.
-pub trait Fact: Any + Debug + Sync {}
-
-impl<T: Any + Debug + Sync> Fact for T {}
+use crate::{__private::Fact, Plugin};
 
 /// A fact a declaration provides, together with its value.
-pub struct ProvidedFact(Box<dyn Fact>);
+pub(crate) struct ProvidedFact(Box<dyn Fact>);
 
 impl ProvidedFact {
     fn new<T: Fact>(value: T) -> Self {
@@ -34,18 +27,18 @@ impl ProvidedFact {
     }
 
     /// The type of the fact, which is what identifies it.
-    pub fn type_id(&self) -> TypeId {
+    pub(crate) fn type_id(&self) -> TypeId {
         (*self.0).type_id()
     }
 
     /// The fact itself.
-    pub fn value(&self) -> &dyn Fact {
+    pub(crate) fn value(&self) -> &dyn Fact {
         &*self.0
     }
 }
 
 /// A fact a declaration requires, with the condition its value has to meet if there is one.
-pub struct RequiredFact {
+pub(crate) struct RequiredFact {
     type_id: TypeId,
     name: &'static str,
     condition: Option<DynCondition>,
@@ -53,24 +46,18 @@ pub struct RequiredFact {
 
 impl RequiredFact {
     /// The type of the fact, which is what identifies it.
-    pub fn type_id(&self) -> TypeId {
+    pub(crate) fn type_id(&self) -> TypeId {
         self.type_id
     }
 
     /// What the fact is called in an error message.
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         self.name
-    }
-
-    /// What the value of the fact has to satisfy, if anything.
-    pub fn condition(&self) -> Option<&'static str> {
-        self.condition
-            .as_ref()
-            .map(|condition| condition.description)
     }
 }
 
-/// What a plugin provides to and requires of the composite it is part of.
+/// What a plugin provides to and requires of the composite it is part of, or what the context of
+/// a composite provides.
 pub struct Declaration {
     provided: Vec<ProvidedFact>,
     required: Vec<RequiredFact>,
@@ -96,7 +83,7 @@ impl Declaration {
     ///
     /// Nothing else of the composite may provide a fact of the same type, neither another plugin
     /// nor its context.
-    pub fn provide<T: Fact>(&mut self, value: T) -> &mut Self {
+    pub fn provide<T: Debug + Sync + 'static>(&mut self, value: T) -> &mut Self {
         self.provided.push(ProvidedFact::new(value));
         self
     }
@@ -104,7 +91,7 @@ impl Declaration {
     /// Declares that a fact of type `T` has to hold, and that its value has to meet `condition` if
     /// one is given. `name` is what the fact is called in an error message, e.g. "an elimination
     /// annotation on the matches".
-    pub fn require<T: Fact>(
+    pub fn require<T: Debug + Sync + 'static>(
         &mut self,
         name: &'static str,
         condition: Option<Condition<T>>,
@@ -123,17 +110,17 @@ impl Declaration {
     }
 
     /// The facts this declaration provides, in the order they were declared in.
-    pub fn provided(&self) -> &[ProvidedFact] {
+    pub(crate) fn provided(&self) -> &[ProvidedFact] {
         &self.provided
     }
 
     /// The facts this declaration requires, in the order they were declared in.
-    pub fn required(&self) -> &[RequiredFact] {
+    pub(crate) fn required(&self) -> &[RequiredFact] {
         &self.required
     }
 
     /// Whether this declaration provides a fact of the type `type_id`.
-    pub fn provides_type(&self, type_id: TypeId) -> bool {
+    pub(crate) fn provides_type(&self, type_id: TypeId) -> bool {
         self.provided.iter().any(|fact| fact.type_id() == type_id)
     }
 }
@@ -172,14 +159,14 @@ type Holds = Box<dyn Fn(&dyn Any) -> bool + Sync>;
 /// checks treat it as met. [`Self::NOTHING`] turns that off, which is what the check of a finished
 /// composite passes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct OpenFacts(BTreeSet<TypeId>);
+pub(crate) struct OpenFacts(BTreeSet<TypeId>);
 
 impl OpenFacts {
     /// Nothing can arrive any more, i.e. every plugin of the composite is known.
-    pub const NOTHING: Self = Self(BTreeSet::new());
+    pub(crate) const NOTHING: Self = Self(BTreeSet::new());
 
     /// Whether a fact of type `type_id` could still be provided.
-    pub fn contains(&self, type_id: TypeId) -> bool {
+    pub(crate) fn contains(&self, type_id: TypeId) -> bool {
         self.0.contains(&type_id)
     }
 }
@@ -229,52 +216,91 @@ pub enum Incompatibility {
     },
     #[error("{plugins:?} require facts of each other in a cycle")]
     CyclicRequirements { plugins: Vec<String> },
-    #[error("{plugin} runs before a plugin providing a fact it requires")]
-    OutOfOrder { plugin: String },
 }
 
-/// What `plugin` declares with the configuration it has, together with its name as the checks
-/// report it.
-pub fn declaration_of<P: Plugin + ?Sized>(plugin: &P) -> (String, Declaration) {
-    (
-        format!("{plugin:?}"),
-        Declaration::of(|declaration| plugin.declare_all(declaration)),
-    )
+/// Checks that none of `plugins` provides a fact `context` or another one of them provides
+/// already, and that every fact they require is provided and meets the condition it is required
+/// with. What a plugin declares includes what the plugins it holds declare, see
+/// [`Configurable::plugins`](crate::schema::Configurable::plugins).
+///
+/// An [`Incompatibility`] names a plugin by its [`Debug`] form.
+///
+/// # Errors
+/// Returns the first incompatibility found.
+pub fn check(context: &Declaration, plugins: &[&dyn Plugin]) -> Result<(), Incompatibility> {
+    check_facts(context, &declared(plugins), &OpenFacts::NOTHING)
+}
+
+/// An order in which `plugins` can run one after another, so that each runs after the plugins
+/// providing the facts it requires, given as indices into `plugins`. Plugins keep their given
+/// order wherever the requirements allow it, so an order that is already valid stays as it is.
+///
+/// A plugin may require a fact it provides itself. An [`Incompatibility`] names a plugin by its
+/// [`Debug`] form.
+///
+/// # Errors
+/// Returns [`Incompatibility::CyclicRequirements`] if plugins require facts of each other in a
+/// cycle.
+pub fn order(plugins: &[&dyn Plugin]) -> Result<Vec<usize>, Incompatibility> {
+    order_of(&declared(plugins))
+}
+
+/// What one plugin declares, together with its name as the checks report it.
+pub(crate) struct Declared {
+    pub(crate) name: String,
+    pub(crate) declaration: Declaration,
+}
+
+impl Declared {
+    /// What `plugin` declares with the configuration it has, sub-plugins included, named by its
+    /// [`Debug`] form.
+    pub(crate) fn of(plugin: &dyn Plugin) -> Self {
+        Self::new(
+            format!("{plugin:?}"),
+            Declaration::of(|declaration| plugin.declare_all(declaration)),
+        )
+    }
+
+    pub(crate) fn new(name: impl Into<String>, declaration: Declaration) -> Self {
+        Self {
+            name: name.into(),
+            declaration,
+        }
+    }
+}
+
+/// What each of `plugins` declares, see [`Declared::of`].
+fn declared(plugins: &[&dyn Plugin]) -> Vec<Declared> {
+    plugins.iter().map(|plugin| Declared::of(*plugin)).collect()
 }
 
 /// The types of the facts required in `declarations` that none of them provides, in the order they
 /// are required in and with repetitions.
-pub fn unprovided(declarations: &[(String, Declaration)]) -> impl Iterator<Item = TypeId> {
+pub(crate) fn unprovided(declarations: &[Declared]) -> impl Iterator<Item = TypeId> {
     declarations
         .iter()
-        .flat_map(|(_, declaration)| declaration.required())
+        .flat_map(|declared| declared.declaration.required())
         .map(RequiredFact::type_id)
         .filter(|&required| {
             !declarations
                 .iter()
-                .any(|(_, declaration)| declaration.provides_type(required))
+                .any(|declared| declared.declaration.provides_type(required))
         })
 }
 
-/// An order in which plugins with `declarations` can run one after another, so that each runs
-/// after the plugins providing the facts it requires, given as indices into `declarations`.
-/// Plugins keep their given order wherever the requirements allow it, so an order that is
-/// already valid stays as it is.
-///
-/// A plugin may require a fact it provides itself.
-///
-/// # Errors
-/// Returns an error if plugins require facts of each other in a cycle.
-pub fn order(declarations: &[(String, Declaration)]) -> Result<Vec<usize>, Incompatibility> {
+/// [`order`] of the plugins with `declarations`.
+fn order_of(declarations: &[Declared]) -> Result<Vec<usize>, Incompatibility> {
     let dependencies: Vec<Vec<usize>> = declarations
         .iter()
         .enumerate()
-        .map(|(index, (_, declaration))| {
+        .map(|(index, declared)| {
             (0..declarations.len())
                 .filter(|&other| {
                     other != index
-                        && declaration.required().iter().any(|requirement| {
-                            declarations[other].1.provides_type(requirement.type_id())
+                        && declared.declaration.required().iter().any(|requirement| {
+                            declarations[other]
+                                .declaration
+                                .provides_type(requirement.type_id())
                         })
                 })
                 .collect()
@@ -294,7 +320,7 @@ pub fn order(declarations: &[(String, Declaration)]) -> Result<Vec<usize>, Incom
             return Err(Incompatibility::CyclicRequirements {
                 plugins: (0..declarations.len())
                     .filter(|&index| !placed[index])
-                    .map(|index| declarations[index].0.clone())
+                    .map(|index| declarations[index].name.clone())
                     .collect(),
             });
         };
@@ -304,60 +330,55 @@ pub fn order(declarations: &[(String, Declaration)]) -> Result<Vec<usize>, Incom
     Ok(order)
 }
 
-/// Checks that nothing in `declarations` provides a fact `context` or another one of them provides
-/// already, and that every fact they require is provided and meets the condition it is required
-/// with, where each declaration comes with the name of the plugin that made it.
-///
-/// A requirement of a fact nothing provides is not reported if its type is in `open`, since a
-/// plugin still to be chosen may provide it. With [`OpenFacts::NOTHING`] everything is reported,
-/// which is what the check of a finished composite passes.
+/// [`check`] of the plugins with `declarations`, where a requirement of a fact nothing provides
+/// is not reported if its type is in `open`, since a plugin still to be chosen may provide it.
+/// With [`OpenFacts::NOTHING`] everything is reported, which is what [`check`] passes.
 ///
 /// # Errors
 /// Returns the first incompatibility found.
-pub fn check_facts(
+pub(crate) fn check_facts(
     context: &Declaration,
-    declarations: &[(String, Declaration)],
+    declarations: &[Declared],
     open: &OpenFacts,
 ) -> Result<(), Incompatibility> {
     let mut facts = Facts::of(context);
-    for (provider, declaration) in declarations {
-        if let Some(conflict) = facts.conflict_with(provider, declaration) {
+    for declared in declarations {
+        if let Some(conflict) = facts.conflict_with(declared) {
             return Err(conflict);
         }
-        facts.add(provider, declaration);
+        facts.add(declared);
     }
-    for (required_by, declaration) in declarations {
-        facts.check_requirements(required_by, declaration, open)?;
+    for declared in declarations {
+        facts.check_requirements(declared, open)?;
     }
     Ok(())
 }
 
-/// Checks whether the plugin `addition`, named as in [`declaration_of`], fits into a composite
-/// with `context` that has the plugins with `declarations`, where the facts in `open` are the ones
-/// a plugin still to be chosen could provide.
+/// Checks whether the plugin with `addition` fits into a composite with `context` that has the
+/// plugins with `declarations`, where the facts in `open` are the ones a plugin still to be
+/// chosen could provide.
 ///
 /// Only what `addition` declares is checked: an incompatibility among `declarations` is not
 /// reported here, but by [`check_facts`].
 ///
 /// # Errors
 /// Returns the first incompatibility found.
-pub fn check_addition(
+pub(crate) fn check_addition(
     context: &Declaration,
-    declarations: &[(String, Declaration)],
-    addition: (&str, &Declaration),
+    declarations: &[Declared],
+    addition: &Declared,
     open: &OpenFacts,
 ) -> Result<(), Incompatibility> {
-    let (provider, declaration) = addition;
     let mut facts = Facts::of(context);
-    for (other, other_declaration) in declarations {
-        facts.add(other, other_declaration);
+    for declared in declarations {
+        facts.add(declared);
     }
-    if let Some(conflict) = facts.conflict_with(provider, declaration) {
+    if let Some(conflict) = facts.conflict_with(addition) {
         return Err(conflict);
     }
     // its own facts count, since a plugin may require a fact it provides itself
-    facts.add(provider, declaration);
-    facts.check_requirements(provider, declaration, open)
+    facts.add(addition);
+    facts.check_requirements(addition, open)
 }
 
 /// The facts of a composite by their type, each with the name of the plugin providing it, or
@@ -376,40 +397,44 @@ impl<'a> Facts<'a> {
         )
     }
 
-    /// Adds every fact `declaration` provides as provided by the plugin `provider`.
-    fn add(&mut self, provider: &'a str, declaration: &'a Declaration) {
-        for fact in declaration.provided() {
-            self.0.insert(fact.type_id(), (Some(provider), fact));
+    /// Adds every fact the plugin `provider` provides.
+    fn add(&mut self, provider: &'a Declared) {
+        for fact in provider.declaration.provided() {
+            self.0
+                .insert(fact.type_id(), (Some(provider.name.as_str()), fact));
         }
     }
 
-    /// Why the plugin `provider` with `declaration` cannot be added to these facts, i.e. the fact
-    /// of it the context or another plugin provides already.
-    fn conflict_with(&self, provider: &str, declaration: &Declaration) -> Option<Incompatibility> {
-        declaration.provided().iter().find_map(|fact| {
+    /// Why the plugin `provider` cannot be added to these facts, i.e. the fact of it the context
+    /// or another plugin provides already.
+    fn conflict_with(&self, provider: &Declared) -> Option<Incompatibility> {
+        provider.declaration.provided().iter().find_map(|fact| {
             let (first, _) = self.0.get(&fact.type_id())?;
             Some(match first {
                 Some(first) => Incompatibility::FactProvidedTwice {
                     fact: format!("{:?}", fact.value()),
                     first: (*first).to_owned(),
-                    second: provider.to_owned(),
+                    second: provider.name.clone(),
                 },
                 None => Incompatibility::FactProvidedByContext {
                     fact: format!("{:?}", fact.value()),
-                    provider: provider.to_owned(),
+                    provider: provider.name.clone(),
                 },
             })
         })
     }
 
-    /// Checks the requirements of the plugin `required_by` with `declaration` against these facts,
-    /// assuming that the facts in `open` arrive.
+    /// Checks the requirements of the plugin `required_by` against these facts, assuming that the
+    /// facts in `open` arrive.
     fn check_requirements(
         &self,
-        required_by: &str,
-        declaration: &Declaration,
+        required_by: &Declared,
         open: &OpenFacts,
     ) -> Result<(), Incompatibility> {
+        let Declared {
+            name: required_by,
+            declaration,
+        } = required_by;
         for requirement in declaration.required() {
             // a provided fact is settled: nothing may provide it a second time, so whether its
             // value meets the condition is decided however the composite is filled up
@@ -464,8 +489,8 @@ mod tests {
         declaration.require("the entrants per ranking", Some(single_players()));
     }
 
-    fn declared(name: &str, declare: impl FnOnce(&mut Declaration)) -> (String, Declaration) {
-        (name.to_owned(), Declaration::of(declare))
+    fn declared(name: &str, declare: impl FnOnce(&mut Declaration)) -> Declared {
+        Declared::new(name, Declaration::of(declare))
     }
 
     /// A fact of type `T`, and nothing else, can still arrive.
@@ -515,12 +540,37 @@ mod tests {
         }
     }
 
+    /// A plugin providing what [`Composite`] requires.
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "deriving",
+        label = "deriving",
+        description = "a plugin providing a derived fact",
+        declare_static = Self::declare_static
+    )]
+    struct Deriving;
+
+    impl Deriving {
+        fn declare_static(declaration: &mut Declaration) {
+            declaration
+                .provide(Derived)
+                .require::<Annotated>("an annotation", None);
+        }
+    }
+
+    #[register]
+    impl Part for Deriving {}
+
+    fn composite() -> Composite {
+        Composite {
+            part: Box::new(Leaf),
+        }
+    }
+
     #[test]
     fn the_declaration_of_a_plugin_includes_what_its_sub_plugins_declare() {
-        let composite = Composite {
-            part: Box::new(Leaf),
-        };
-        let (name, declaration) = declaration_of(&composite);
+        let composite = composite();
+        let Declared { name, declaration } = Declared::of(&composite);
 
         assert_eq!(name, format!("{composite:?}"));
         assert_eq!((&composite as &dyn Plugin).id(), "composite");
@@ -529,6 +579,35 @@ mod tests {
             declaration.required().iter().map(RequiredFact::name).next(),
             Some("a derived fact")
         );
+    }
+
+    #[test]
+    fn built_plugins_are_checked_by_what_they_and_their_sub_plugins_declare() {
+        let composite = composite();
+
+        assert_eq!(
+            check(&Declaration::new(), &[&composite]),
+            Err(Incompatibility::FactNotProvided {
+                fact: "a derived fact",
+                required_by: format!("{composite:?}"),
+            })
+        );
+        // the annotation the deriving plugin requires comes from the leaf inside the composite
+        assert_eq!(check(&Declaration::new(), &[&composite, &Deriving]), Ok(()));
+    }
+
+    #[test]
+    fn built_plugins_are_ordered_by_what_they_require_of_each_other() {
+        let composite = composite();
+
+        assert_eq!(
+            order(&[&composite, &Deriving]),
+            Err(Incompatibility::CyclicRequirements {
+                plugins: vec![format!("{composite:?}"), format!("{Deriving:?}")],
+            })
+        );
+        assert_eq!(order(&[&Leaf, &Deriving]), Ok(vec![0, 1]));
+        assert_eq!(order(&[&Deriving, &Leaf]), Ok(vec![1, 0]));
     }
 
     #[test]
@@ -543,7 +622,7 @@ mod tests {
             }),
         ];
 
-        assert_eq!(order(&declarations), Ok(vec![1, 2, 0]));
+        assert_eq!(order_of(&declarations), Ok(vec![1, 2, 0]));
     }
 
     #[test]
@@ -562,7 +641,7 @@ mod tests {
         ];
 
         assert_eq!(
-            order(&declarations),
+            order_of(&declarations),
             Err(Incompatibility::CyclicRequirements {
                 plugins: vec!["annotating".to_owned(), "deriving".to_owned()],
             })
@@ -727,7 +806,7 @@ mod tests {
         let declarations = [declared("format", |declaration| {
             declaration.provide(Annotated);
         })];
-        let addition = Declaration::of(|declaration| {
+        let addition = declared("another format", |declaration| {
             declaration.provide(Annotated);
         });
 
@@ -735,7 +814,7 @@ mod tests {
             check_addition(
                 &Declaration::new(),
                 &declarations,
-                ("another format", &addition),
+                &addition,
                 &OpenFacts::NOTHING,
             ),
             Err(Incompatibility::FactProvidedTwice {
@@ -751,12 +830,12 @@ mod tests {
         let context = Declaration::of(|declaration| {
             declaration.provide(SINGLE);
         });
-        let addition = Declaration::of(|declaration| {
+        let addition = declared("draw", |declaration| {
             declaration.provide(PAIRS);
         });
 
         assert_eq!(
-            check_addition(&context, &[], ("draw", &addition), &OpenFacts::NOTHING),
+            check_addition(&context, &[], &addition, &OpenFacts::NOTHING),
             Err(Incompatibility::FactProvidedByContext {
                 fact: format!("{PAIRS:?}"),
                 provider: "draw".to_owned(),
@@ -774,7 +853,7 @@ mod tests {
                 declaration.provide(Annotated);
             }),
         ];
-        let addition = Declaration::of(|declaration| {
+        let addition = declared("calculator", |declaration| {
             declaration.require::<Annotated>("an annotation", None);
         });
 
@@ -782,7 +861,7 @@ mod tests {
             check_addition(
                 &Declaration::new(),
                 &declarations,
-                ("calculator", &addition),
+                &addition,
                 &OpenFacts::NOTHING,
             ),
             Ok(())
@@ -791,17 +870,12 @@ mod tests {
 
     #[test]
     fn an_addition_requiring_a_fact_nothing_provides_conflicts() {
-        let addition = Declaration::of(|declaration| {
+        let addition = declared("calculator", |declaration| {
             declaration.require::<Annotated>("an annotation", None);
         });
 
         assert_eq!(
-            check_addition(
-                &Declaration::new(),
-                &[],
-                ("calculator", &addition),
-                &OpenFacts::NOTHING
-            ),
+            check_addition(&Declaration::new(), &[], &addition, &OpenFacts::NOTHING),
             Err(Incompatibility::FactNotProvided {
                 fact: "an annotation",
                 required_by: "calculator".to_owned(),
@@ -811,19 +885,14 @@ mod tests {
 
     #[test]
     fn an_addition_may_require_a_fact_it_provides_itself() {
-        let addition = Declaration::of(|declaration| {
+        let addition = declared("ranker", |declaration| {
             declaration
                 .provide(SINGLE)
                 .require("the entrants per ranking", Some(single_players()));
         });
 
         assert_eq!(
-            check_addition(
-                &Declaration::new(),
-                &[],
-                ("ranker", &addition),
-                &OpenFacts::NOTHING
-            ),
+            check_addition(&Declaration::new(), &[], &addition, &OpenFacts::NOTHING),
             Ok(())
         );
     }

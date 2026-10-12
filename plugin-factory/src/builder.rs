@@ -9,8 +9,8 @@
 //! ever changed behind its back. [`Builder::finish`] builds the composite.
 //!
 //! While a field taking plugins is unanswered, whatever the plugins of its axis could provide may
-//! still arrive, see [`OpenFacts`], so the candidates and issues are optimistic about it;
-//! [`Builder::finish`] checks with nothing open.
+//! still arrive, so the candidates and issues are optimistic about it; [`Builder::finish`] checks
+//! with nothing open, see [`compatibility::check`].
 
 use std::{fmt::Write as _, marker::PhantomData, mem};
 
@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use crate::{
     catalog::{AnyAxis, PluginEntry},
-    compatibility::{self, Declaration, Incompatibility, OpenFacts},
+    compatibility::{self, Declaration, Declared, Incompatibility, OpenFacts},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
     schema::{Configurable, Field, FieldKind, Schema},
 };
@@ -32,7 +32,7 @@ pub struct Builder<T> {
 
 impl<T: Configurable> Builder<T> {
     /// A builder with nothing answered, for a composite with `context`, i.e. what is true of it
-    /// before any plugin is chosen, see [`compatibility::check_facts`].
+    /// before any plugin is chosen, see [`compatibility::check`].
     pub fn new(context: Declaration) -> Self {
         Self {
             context,
@@ -72,8 +72,9 @@ impl<T: Configurable> Builder<T> {
     /// if it does not; empty if the position takes no plugins.
     ///
     /// A candidate takes the place of what answers the position, so it is checked against the
-    /// answers without it, see [`compatibility::check_addition`]. What the fields still
-    /// unanswered could provide is open, and so is what the candidate's own plugin fields could.
+    /// answers without it, and only for what it declares itself: an incompatibility among the
+    /// other answers is not its conflict. What the fields still unanswered could provide is
+    /// open, and so is what the candidate's own plugin fields could.
     /// For a field taking a list the candidate is one of the plugins answering it, so the rest of
     /// the list is open as well; at a position in the list, the rest of the list is as answered.
     ///
@@ -100,7 +101,7 @@ impl<T: Configurable> Builder<T> {
                 let conflict = compatibility::check_addition(
                     &self.context,
                     &declarations,
-                    (entry.label(), &entry.declaration()),
+                    &Declared::new(entry.label(), entry.declaration()),
                     &open,
                 )
                 .err();
@@ -138,13 +139,13 @@ impl<T: Configurable> Builder<T> {
         let mut declarations = tree.declarations();
         let mut open = tree.open();
         let mut unprovided = Vec::new();
-        for ((_, declaration), placed) in declarations.iter().zip(&tree.plugins) {
-            for requirement in declaration.required() {
+        for (declared, placed) in declarations.iter().zip(&tree.plugins) {
+            for requirement in declared.declaration.required() {
                 let fact = requirement.type_id();
                 if !self.context.provides_type(fact)
                     && !declarations
                         .iter()
-                        .any(|(_, declaration)| declaration.provides_type(fact))
+                        .any(|declared| declared.declaration.provides_type(fact))
                     && !open.contains(fact)
                 {
                     unprovided.push((fact, requirement.name(), placed.path.clone()));
@@ -154,19 +155,16 @@ impl<T: Configurable> Builder<T> {
         // a requirement nothing provides is reported below, at the fields that could provide it
         open.extend(unprovided.iter().map(|&(fact, _, _)| fact));
         for (index, placed) in tree.plugins.iter().enumerate() {
-            let (name, declaration) = declarations.remove(index);
-            if let Err(incompatibility) = compatibility::check_addition(
-                &self.context,
-                &declarations,
-                (&name, &declaration),
-                &open,
-            ) {
+            let declared = declarations.remove(index);
+            if let Err(incompatibility) =
+                compatibility::check_addition(&self.context, &declarations, &declared, &open)
+            {
                 issues.push(Issue {
                     path: placed.path.clone(),
                     problem: Problem::Incompatible(incompatibility),
                 });
             }
-            declarations.insert(index, (name, declaration));
+            declarations.insert(index, declared);
         }
 
         for (fact, name, required_by) in unprovided {
@@ -247,7 +245,7 @@ impl<T: Configurable> Builder<T> {
     /// # Errors
     /// Returns [`FinishError::Config`] if a field without a default is unanswered or an answer or
     /// default is rejected, and [`FinishError::Incompatible`] if the plugins do not fit together
-    /// with nothing open any more, see [`compatibility::check_facts`].
+    /// with nothing open any more, see [`compatibility::check`].
     pub fn finish(&self) -> Result<T, FinishError> {
         let schema = T::schema();
         let mut answers = self.answers.clone();
@@ -306,16 +304,10 @@ impl<T: Configurable> Builder<T> {
             let declaration = entry
                 .declaration_for(recommended.config())
                 .unwrap_or_else(|_| entry.declaration());
-            let name = entry.label();
-            if compatibility::check_addition(
-                &self.context,
-                &declarations,
-                (name, &declaration),
-                &open,
-            )
-            .is_ok()
+            let declared = Declared::new(entry.label(), declaration);
+            if compatibility::check_addition(&self.context, &declarations, &declared, &open).is_ok()
             {
-                declarations.push((name.to_owned(), declaration));
+                declarations.push(declared);
                 fitting.push(Value::from(recommended));
                 if !list {
                     break;
@@ -696,7 +688,7 @@ impl Tree {
 
     /// What the plugins declare, each named as the checks report it, in the order of
     /// [`Self::plugins`].
-    fn declarations(&self) -> Vec<(String, Declaration)> {
+    fn declarations(&self) -> Vec<Declared> {
         self.plugins.iter().map(Placed::declaration).collect()
     }
 }
@@ -705,23 +697,23 @@ impl Placed {
     /// What the plugin declares itself, without the plugins answering its fields, which are
     /// placed in the tree themselves: what its configuration declares if its config completes and
     /// is accepted, and its static declaration otherwise.
-    fn declaration(&self) -> (String, Declaration) {
+    fn declaration(&self) -> Declared {
         let mut declaration = self.entry.declaration();
         if let Ok(instance) = self.entry.instance(&self.config) {
             instance.declare(&mut declaration);
         }
-        (self.name(), declaration)
+        Declared::new(self.name(), declaration)
     }
 
     /// [`Self::declaration`] of a plugin whose config has to complete and be accepted.
-    fn configured_declaration(&self) -> Result<(String, Declaration), ConfigError> {
+    fn configured_declaration(&self) -> Result<Declared, ConfigError> {
         let instance = self
             .entry
             .instance(&self.config)
             .map_err(|error| self.path.prefix(error))?;
         let mut declaration = self.entry.declaration();
         instance.declare(&mut declaration);
-        Ok((self.name(), declaration))
+        Ok(Declared::new(self.name(), declaration))
     }
 
     /// What the plugin is called in an incompatibility.
