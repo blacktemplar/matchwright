@@ -89,7 +89,7 @@ use crate::{
 ///         (FieldKind::Optional(inner), _) if !answer.is_null() => {
 ///             plugin_fields(inner, answer, at, lines);
 ///         }
-///         (FieldKind::List(element), Value::Array(answers)) => {
+///         (FieldKind::List { element, .. }, Value::Array(answers)) => {
 ///             for (index, answer) in answers.iter().enumerate() {
 ///                 let path = at.clone().index(index);
 ///                 plugin_fields(element, answer, &path, lines);
@@ -1088,7 +1088,7 @@ pub enum Problem {
 fn slot(kind: &FieldKind) -> Option<(AnyAxis, bool)> {
     match unwrapped(kind) {
         FieldKind::Plugin(axis) => Some((*axis, false)),
-        FieldKind::List(element) => match unwrapped(element) {
+        FieldKind::List { element, .. } => match unwrapped(element) {
             FieldKind::Plugin(axis) => Some((*axis, true)),
             _ => None,
         },
@@ -1133,7 +1133,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
     for segment in segments {
         position = match segment {
             Segment::Index(index) => {
-                let (FieldKind::List(element), Some(Value::Array(answers))) =
+                let (FieldKind::List { element, .. }, Some(Value::Array(answers))) =
                     (unwrapped(&position.kind), &position.answer)
                 else {
                     return Err(unknown());
@@ -1310,7 +1310,7 @@ impl Tree {
     fn add_answer(&mut self, kind: &FieldKind, answer: &Value, path: Path, parent: &Path) {
         match (kind, answer) {
             (FieldKind::Optional(inner), _) => self.add_answer(inner, answer, path, parent),
-            (FieldKind::List(element), Value::Array(answers)) => {
+            (FieldKind::List { element, .. }, Value::Array(answers)) => {
                 for (index, answer) in answers.iter().enumerate() {
                     self.add_answer(element, answer, path.clone().index(index), parent);
                 }
@@ -2708,7 +2708,7 @@ mod tests {
             let mut draft = Draft::<C>::new();
             draft.set(&path("requirements"), requiring).unwrap();
             for field in C::schema().fields() {
-                if matches!(field.kind(), FieldKind::List(_)) {
+                if matches!(field.kind(), FieldKind::List { .. }) {
                     draft.set(&path(field.name()), json!([])).unwrap();
                 }
             }

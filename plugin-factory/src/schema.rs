@@ -6,8 +6,10 @@
 //! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
 //! program reads the questions of a plugin before it is chosen and never names one.
 
+use std::collections::BTreeSet;
+
 pub use plugin_factory_derive::Configurable;
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     Plugin,
@@ -80,7 +82,8 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 /// takes.
 ///
 /// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
-/// a plugin axis, and `Option` and `Vec` of any of them. A type that deserializes from one of
+/// a plugin axis, and `Option`, `Vec`, [`Set`] and `BTreeSet` of any of them. A `Vec` takes an
+/// ordered list, a `Set` or `BTreeSet` an unordered one. A type that deserializes from one of
 /// these answers, such as a newtype checking its value, implements it to be a field.
 pub trait FieldType {
     /// The kind of answer a field of this type takes.
@@ -148,6 +151,83 @@ impl<T: FieldType> FieldType for Vec<T> {
     }
 }
 
+impl<T: FieldType> FieldType for Set<T> {
+    fn kind() -> FieldKind {
+        FieldKind::set(T::kind())
+    }
+
+    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
+        for answer in self {
+            answer.plugins(plugins);
+        }
+    }
+}
+
+// `HashSet` is left out on purpose: it serializes in an order that differs from run to run.
+impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
+    fn kind() -> FieldKind {
+        FieldKind::set(T::kind())
+    }
+
+    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
+        for answer in self {
+            answer.plugins(plugins);
+        }
+    }
+}
+
+/// The answers to a field taking an unordered list, for elements that cannot be put in a
+/// `BTreeSet`, such as plugins or numbers with a fractional part.
+///
+/// It holds the answers in the order they are given in and is (de)serialized as that list. A
+/// config giving an answer twice is rejected with [`ConfigError::Duplicate`] when it is checked
+/// against its schema, as it is when a plugin is built from it; deserializing it on its own,
+/// e.g. when it is loaded, does not check that.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Set<T>(Vec<T>);
+
+impl<T> Set<T> {
+    /// The answers, in the order they are given in.
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
+
+    /// How many answers it holds.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether it holds no answer.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<T> Default for Set<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> IntoIterator for Set<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Set<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 /// Everything a [`Configurable`] has to be told, in the order it is asked in.
 #[derive(Debug, Clone)]
 pub struct Schema(Vec<Field>);
@@ -189,8 +269,9 @@ impl Schema {
     /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema does not
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, and, if `complete`, [`ConfigError::Unanswered`] if a field is unanswered, each with
-    /// its path from the root.
+    /// axis, and, if `complete`, [`ConfigError::Unanswered`] if a field is unanswered and
+    /// [`ConfigError::Duplicate`] if an unordered list gives an answer twice, each with its path
+    /// from the root.
     pub(crate) fn walk(
         &self,
         config: &Config,
@@ -302,8 +383,15 @@ pub enum FieldKind {
     Decimal,
     /// One plugin of the axis, answered by a [`PluginConfig`] naming a plugin registered for it.
     Plugin(AnyAxis),
-    /// Any number of answers of the kind, answered by a [`Value::Array`].
-    List(Box<FieldKind>),
+    /// Any number of answers of the kind `element`, answered by a [`Value::Array`].
+    ///
+    /// Unless `ordered`, the list is a set: the order of its answers means nothing, and a
+    /// complete config giving the same answer twice is rejected with [`ConfigError::Duplicate`].
+    /// Numbers count as the same if they are equal in value, e.g. `1` and `1.0`.
+    List {
+        element: Box<FieldKind>,
+        ordered: bool,
+    },
     /// An answer of the kind or nothing, answered by an answer of the kind or by [`Value::Null`].
     ///
     /// Being answered with nothing is being answered. An optional answer of an optional answer is
@@ -317,9 +405,20 @@ impl FieldKind {
         Self::Plugin(AnyAxis::of::<A>())
     }
 
-    /// Any number of answers of the kind `element`.
+    /// Any number of answers of the kind `element`, in an order that matters.
     pub fn list(element: Self) -> Self {
-        Self::List(Box::new(element))
+        Self::List {
+            element: Box::new(element),
+            ordered: true,
+        }
+    }
+
+    /// Any number of distinct answers of the kind `element`, in an order that does not matter.
+    pub fn set(element: Self) -> Self {
+        Self::List {
+            element: Box::new(element),
+            ordered: false,
+        }
     }
 
     /// An answer of the kind `answer` or nothing.
@@ -332,7 +431,7 @@ impl FieldKind {
     pub fn axis(&self) -> Option<AnyAxis> {
         match self {
             Self::Plugin(axis) => Some(*axis),
-            Self::List(inner) | Self::Optional(inner) => inner.axis(),
+            Self::List { element: inner, .. } | Self::Optional(inner) => inner.axis(),
             Self::Bool | Self::Integer | Self::Decimal => None,
         }
     }
@@ -353,14 +452,29 @@ impl FieldKind {
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
             (Self::Optional(inner), _) => inner.walk(answer, at, complete),
-            (Self::List(element), Value::Array(answers)) => answers
-                .iter()
-                .enumerate()
-                .map(|(position, answer)| {
-                    element.walk(answer, &at.clone().index(position), complete)
-                })
-                .collect::<Result<_, _>>()
-                .map(Value::Array),
+            (Self::List { element, ordered }, Value::Array(answers)) => {
+                let walked = answers
+                    .iter()
+                    .enumerate()
+                    .map(|(position, answer)| {
+                        element.walk(answer, &at.clone().index(position), complete)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                // an incomplete answer may still become different from an equal one
+                if complete && !ordered {
+                    let duplicate = (1..walked.len()).find(|&position| {
+                        walked[..position]
+                            .iter()
+                            .any(|earlier| same_answer(earlier, &walked[position]))
+                    });
+                    if let Some(position) = duplicate {
+                        return Err(ConfigError::Duplicate {
+                            path: at.clone().index(position),
+                        });
+                    }
+                }
+                Ok(Value::Array(walked))
+            }
             (Self::Plugin(axis), _) => match PluginConfig::from_answer(answer) {
                 Some(plugin) => axis.walk(&plugin, at, complete),
                 None => Err(self.wrong_kind(answer, at)),
@@ -385,9 +499,29 @@ impl FieldKind {
             Self::Integer => "a whole number",
             Self::Decimal => "a number",
             Self::Plugin(_) => "one plugin",
-            Self::List(_) => "a list",
+            Self::List { .. } => "a list",
             Self::Optional(_) => "an optional answer",
         }
+    }
+}
+
+/// Whether `a` and `b` are the same answer, with numbers compared by value so that `1` is the
+/// same as `1.0`. The answers in a list are compared in order.
+fn same_answer(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        // two whole numbers are compared exactly, as an `f64` cannot hold every `i64`
+        (Value::Number(a), Value::Number(b)) => {
+            a == b || ((a.is_f64() || b.is_f64()) && a.as_f64() == b.as_f64())
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_answer(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(name, a)| b.get(name).is_some_and(|b| same_answer(a, b)))
+        }
+        _ => a == b,
     }
 }
 
@@ -543,6 +677,45 @@ mod tests {
         Box::new(Matches)
     }
 
+    /// A plugin with fields taking unordered lists: of whole numbers, of numbers and of plugins.
+    #[derive(Debug, Serialize, Deserialize, Plugin)]
+    #[plugin(id = "pool", label = "pool", description = "a plugin taking sets")]
+    struct Pool {
+        #[plugin(label = "Rounds")]
+        rounds: BTreeSet<i64>,
+        #[plugin(label = "Shares")]
+        shares: Set<f64>,
+        #[plugin(label = "Members")]
+        members: Set<Box<dyn Configured>>,
+    }
+
+    #[register]
+    impl Configured for Pool {
+        fn summary(&self) -> String {
+            let members: Vec<_> = self.members.iter().map(|member| member.summary()).collect();
+            format!(
+                "pool({:?}, {:?}, [{}])",
+                self.rounds,
+                self.shares,
+                members.join(", ")
+            )
+        }
+    }
+
+    /// The config of [`Pool`] answering every field with distinct answers.
+    fn pool() -> Config {
+        Config::new()
+            .with("rounds", vec![3, 1])
+            .with("shares", vec![0.5, 1.0])
+            .with(
+                "members",
+                vec![
+                    PluginConfig::of::<Matches>(),
+                    PluginConfig::configured(Points::ID, points()),
+                ],
+            )
+    }
+
     #[register]
     impl Configured for Ranker {
         fn summary(&self) -> String {
@@ -618,6 +791,94 @@ mod tests {
             [AnyAxis::of::<dyn Configured>(); 3]
         );
         assert!(entry_of::<Points>().sub_axes().is_empty());
+    }
+
+    #[test]
+    fn a_field_typed_as_a_set_takes_an_unordered_list() {
+        let schema = Pool::schema();
+        let kind = |name| schema.field_named(name).map(Field::kind);
+
+        assert_eq!(kind("rounds"), Some(&FieldKind::set(FieldKind::Integer)));
+        assert_eq!(kind("shares"), Some(&FieldKind::set(FieldKind::Decimal)));
+        assert_eq!(
+            kind("members"),
+            Some(&FieldKind::set(FieldKind::plugin::<dyn Configured>()))
+        );
+        assert_ne!(
+            FieldKind::set(FieldKind::Integer),
+            FieldKind::list(FieldKind::Integer)
+        );
+        assert_eq!(
+            entry_of::<Pool>().sub_axes(),
+            [AnyAxis::of::<dyn Configured>()]
+        );
+    }
+
+    #[test]
+    fn a_set_of_distinct_answers_is_built() {
+        assert_eq!(
+            built::<Pool>(pool()).as_deref(),
+            Ok("pool({1, 3}, Set([0.5, 1.0]), [matches, points(1, 3, true, 0.5)])")
+        );
+    }
+
+    #[test]
+    fn an_answer_repeated_in_a_set_is_an_error_at_its_second_position() {
+        let duplicate = |config| match built::<Pool>(config) {
+            Err(ConfigError::Duplicate { path }) => Some(path.to_string()),
+            _ => None,
+        };
+
+        assert_eq!(
+            duplicate(pool().with("rounds", vec![1, 2, 1])).as_deref(),
+            Some("rounds[2]")
+        );
+        assert_eq!(
+            duplicate(pool().with("shares", json!([1, 0.5, 1.0]))).as_deref(),
+            Some("shares[2]")
+        );
+        assert_eq!(
+            duplicate(pool().with(
+                "members",
+                vec![
+                    PluginConfig::configured(Points::ID, points()),
+                    PluginConfig::configured(Points::ID, points().with("for_win", 1)),
+                ],
+            ))
+            .as_deref(),
+            Some("members[1]")
+        );
+    }
+
+    #[test]
+    fn an_answer_repeated_in_a_set_is_no_error_unless_the_config_is_to_be_complete() {
+        let config = pool().with(
+            "members",
+            vec![
+                PluginConfig::of::<Threshold>(),
+                PluginConfig::of::<Threshold>(),
+            ],
+        );
+
+        assert!(Pool::schema().walk(&config, &Path::ROOT, false).is_ok());
+        assert_eq!(
+            Pool::schema().walk(&config, &Path::ROOT, true),
+            Err(ConfigError::Unanswered {
+                path: Path::of("members").index(0).field("least"),
+            })
+        );
+    }
+
+    #[test]
+    fn an_answer_repeated_in_an_ordered_list_is_no_error() {
+        let config = Config::new()
+            .with("least", 2)
+            .with("weights", vec![1.0, 1.0]);
+
+        assert_eq!(
+            built::<Threshold>(config).as_deref(),
+            Ok("threshold(2, [1.0, 1.0])")
+        );
     }
 
     #[test]

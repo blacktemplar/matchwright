@@ -345,7 +345,7 @@ fn plugin_fields(kind: &FieldKind, answer: &Value, at: &Path, questions: &mut Ve
         (FieldKind::Optional(inner), _) if !answer.is_null() => {
             plugin_fields(inner, answer, at, questions);
         }
-        (FieldKind::List(element), Value::Array(answers)) => {
+        (FieldKind::List { element, .. }, Value::Array(answers)) => {
             for (index, answer) in answers.iter().enumerate() {
                 let path = at.clone().index(index);
                 plugin_fields(element, answer, &path, questions);
