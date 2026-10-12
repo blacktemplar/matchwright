@@ -148,7 +148,7 @@ pub struct PluginEntry {
     declare: fn(&mut Declaration),
     instantiate: Instantiate,
     schema: fn() -> Schema,
-    is_unit: bool,
+    complete: fn(Config) -> Value,
     type_name: fn() -> &'static str,
 }
 
@@ -163,7 +163,7 @@ impl PluginEntry {
             declare: P::declare_static,
             instantiate: instantiate::<P>,
             schema: P::schema,
-            is_unit: P::IS_UNIT,
+            complete: config::complete::<P>,
             type_name: any::type_name::<P>,
         }
     }
@@ -237,8 +237,8 @@ impl PluginEntry {
 
     /// `config`, the config of the plugin at `at`, walked as [`Schema::walk`] walks it.
     ///
-    /// If `complete`, this is the value the plugin is deserialized from, so the config of a
-    /// plugin that is a unit struct is `null`, which is how serde writes one.
+    /// If `complete`, this is the value the plugin is deserialized from, as
+    /// [`config::complete`] writes it.
     ///
     /// # Errors
     /// Returns what [`Schema::walk`] returns.
@@ -250,8 +250,8 @@ impl PluginEntry {
     ) -> Result<Value, ConfigError> {
         let walked = self.schema().walk(config, at, complete)?;
         // an answer still being edited keeps an object as its config, which the builder edits
-        if complete && self.is_unit {
-            return Ok(Value::Null);
+        if complete {
+            return Ok((self.complete)(walked));
         }
         Ok(walked.into())
     }

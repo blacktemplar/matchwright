@@ -21,6 +21,7 @@ use thiserror::Error;
 use crate::{
     PluginType,
     catalog::{AnyAxis, Axis},
+    schema::Configurable,
 };
 
 /// One plugin as the answer to a field, i.e. which plugin it is and how it is configured.
@@ -113,10 +114,9 @@ impl From<PluginConfig> for Value {
 /// The answers one plugin is configured with, by the name of the field each answers.
 ///
 /// A config that answers every field of a schema configures the plugin of that schema; the
-/// default one answers nothing. As a
-/// [`Value`] it is the object of those answers; `null` deserializes as the config answering
-/// nothing, which is how the config of a unit struct is written, see
-/// [`Configurable`](crate::schema::Configurable).
+/// default one answers nothing. As a [`Value`] it is the object of those answers; `null`
+/// deserializes as the config answering nothing, which is how the config of a unit struct is
+/// written, see [`Configurable`].
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Config(pub(crate) Map<String, Value>);
@@ -164,8 +164,17 @@ impl Config {
     }
 }
 
-/// `T` deserialized from `config`, a complete config at `at` as
-/// [`PluginEntry::walk`](crate::catalog::PluginEntry::walk) writes it.
+/// `walked`, a config walked as complete, as the value a [`Configurable`] is deserialized from:
+/// `null` if it is a unit struct, which is how serde writes one.
+pub(crate) fn complete<T: Configurable>(walked: Config) -> Value {
+    if T::IS_UNIT {
+        Value::Null
+    } else {
+        walked.into()
+    }
+}
+
+/// `T` deserialized from `config`, a complete config at `at` as [`complete`] writes it.
 ///
 /// # Errors
 /// Returns [`ConfigError::Rejected`] with the path of the answer `T` rejects.

@@ -408,7 +408,7 @@ impl<T: Configurable> Builder<T> {
             return Err(issues);
         }
         let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
-        config::deserialize(&walked.into(), &Path::ROOT).map_err(invalid)
+        config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
     }
 
     /// Settles the first fact the plugins in `answers`, the answers to `schema`, require that
@@ -1575,6 +1575,15 @@ mod tests {
                 unanswered("tie_break"),
             ])
         );
+    }
+
+    #[test]
+    fn a_composite_that_is_a_unit_struct_finishes() {
+        /// A composite asking for nothing.
+        #[derive(Debug, Deserialize, Configurable)]
+        struct Nothing;
+
+        assert!(Builder::<Nothing>::new(Declaration::new()).finish().is_ok());
     }
 
     #[test]
