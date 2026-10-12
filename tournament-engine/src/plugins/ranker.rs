@@ -1,67 +1,36 @@
 use std::{cmp::Ordering, fmt::Debug, num::NonZeroU32};
 
-use dyn_clone::DynClone;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Ranking, RankingId},
     plugins::{Plugin, compatibility::Declaration},
-    type_map::{TypeMap, TypeMapValue},
+    type_map::TypeMapValue,
 };
 
-/// Ranks the rankings of a phase.
-///
-/// A ranker made of other parts has to include what they [declare](Plugin::declare) in its own
-/// declaration.
-#[typetag::serde(tag = "type", content = "value")]
-pub trait Ranker: Plugin {
-    /// The new rank of every ranking of `phase_data`.
-    ///
-    /// The ranks must satisfy the following invariant: ordered by rank, the first ranking has rank
-    /// 1 and every following one has either the rank of its predecessor or rank `index + 1`. Equal
-    /// ranks are therefore ties, and the rank after a tie skips the tied ranks.
-    fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)>;
-}
-
-impl Clone for Box<dyn Ranker> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
-
-#[typetag::serde(tag = "type", content = "value")]
-pub trait SliceRanker: Plugin {
-    /// Assigns new ranks to the given slice and reorders them according to the new ranks.
-    fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
-}
-
-impl Clone for Box<dyn SliceRanker> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks the rankings of a phase by its slice rankers in order, each one breaking the ties of the
+/// ones before it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct HierarchicalRanker(Vec<Box<dyn SliceRanker>>);
 
 impl HierarchicalRanker {
+    /// A ranker applying `slice_rankers` in order. Without any slice ranker, all rankings are tied.
     pub fn new(slice_rankers: Vec<Box<dyn SliceRanker>>) -> Self {
         Self(slice_rankers)
     }
-}
 
-impl Plugin for HierarchicalRanker {
-    fn declare(&self, declaration: &mut Declaration) {
-        for slice_ranker in &self.0 {
-            slice_ranker.declare(declaration);
-        }
+    /// The slice rankers, in the order they are applied in.
+    pub fn slice_rankers(&self) -> &[Box<dyn SliceRanker>] {
+        &self.0
     }
-}
 
-#[typetag::serde]
-impl Ranker for HierarchicalRanker {
-    fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
+    /// The new rank of every ranking of `phase_data`.
+    ///
+    /// The ranks satisfy the following invariant: ordered by rank, the first ranking has rank 1 and
+    /// every following one has either the rank of its predecessor or rank `index + 1`. Equal ranks
+    /// are therefore ties, and the rank after a tie skips the tied ranks.
+    pub fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase_data
             .ranking_ids_ordered_by_unique_rank()
             .iter()
@@ -91,167 +60,111 @@ impl Ranker for HierarchicalRanker {
     }
 }
 
-/// The order a [`RankingCriterion`] sorts the rankings in, which it states by calling exactly one
-/// of the methods here.
+/// Ranks rankings that are tied so far, as one step of a [`HierarchicalRanker`].
 ///
-/// Both methods sort by a single metric, named as the type parameter, and differ only in where the
-/// order of that metric comes from. If a ranking does not hold that metric, the criterion orders
-/// nothing at all, see [`LexicographicalCriteria`].
-#[must_use]
-pub struct RankingOrder<'a, 'b>(Use<'a, 'b>);
-
-/// What the metric a criterion states it sorts by is used for.
-enum Use<'a, 'b> {
-    /// Reading the metric of every ranking to be sorted, see [`LexicographicalCriteria`].
-    Sort {
-        metrics: &'b [&'a TypeMap],
-        output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
-    },
-    /// Requiring the metric of the phase, so that the criteria of a ranker declare the metrics
-    /// they sort by without a plugin author restating them.
-    Declare(&'b mut Declaration),
-}
-
-impl<'a, 'b> RankingOrder<'a, 'b> {
-    /// Sorts by metric `M`, in the one order `M` is compared in itself, see [`Compare`].
-    pub fn by_metric<M: TypeMapValue + Compare>(self) {
-        match self.0 {
-            Use::Sort { metrics, output } => {
-                *output = values::<M>(metrics)
-                    .map(|values| Box::new(MetricValues(values)) as Box<dyn MetricColumn + 'a>);
-            }
-            Use::Declare(declaration) => {
-                declaration.requires::<M>();
-            }
-        }
-    }
-
-    /// Sorts by metric `M` too, but in the order `compare` puts two of its values in rather than in
-    /// `M`'s own.
-    ///
-    /// This is the only way to sort by a metric that has no [`Compare`] impl, and the way several
-    /// criteria can each sort by one shared metric differently — e.g. the wins, draws and losses of
-    /// a [`WinsDrawsLosses`].
-    ///
-    /// [`WinsDrawsLosses`]: crate::plugins::metrics_calculator::wins_draws_losses::WinsDrawsLosses
-    pub fn by_metric_compared_by<M: TypeMapValue>(self, compare: fn(&M, &M) -> Comparison) {
-        match self.0 {
-            Use::Sort { metrics, output } => {
-                *output = values::<M>(metrics).map(|values| {
-                    Box::new(ComparedBy(values, compare)) as Box<dyn MetricColumn + 'a>
-                });
-            }
-            Use::Declare(declaration) => {
-                declaration.requires::<M>();
-            }
-        }
-    }
-
-    /// Reads the metric a criterion sorts by out of `metrics`, one [`TypeMap`] per ranking, into
-    /// `output`.
-    fn sorting(
-        metrics: &'b [&'a TypeMap],
-        output: &'b mut Option<Box<dyn MetricColumn + 'a>>,
-    ) -> Self {
-        Self(Use::Sort { metrics, output })
-    }
-
-    /// Declares the metric a criterion sorts by as required by the phase.
-    fn declaring(declaration: &'b mut Declaration) -> Self {
-        Self(Use::Declare(declaration))
-    }
-}
-
-/// The value of metric `M` of every ranking of `metrics`, or [`None`] if any of them does not hold
-/// it.
-fn values<'a, M: TypeMapValue>(metrics: &[&'a TypeMap]) -> Option<Vec<&'a M>> {
-    metrics
-        .iter()
-        .map(|map| map.get::<M>())
-        .collect::<Option<_>>()
-}
-
-/// One way to compare two rankings, i.e. a criterion a ranking can be sorted by.
-///
-/// A criterion picks the metric it sorts by *and* the order that metric is compared in: either the
-/// metric's own, see [`RankingOrder::by_metric`] and
-/// [`MorePoints`](crate::plugins::metrics_calculator::points::MorePoints), or one it passes in
-/// itself, see [`RankingOrder::by_metric_compared_by`] and
-/// [`FewerLosses`](crate::plugins::metrics_calculator::wins_draws_losses::FewerLosses). A criterion
-/// that passes its own order in should say in its name which way round it sorts.
-///
-/// The order an implementation states can be read back with [`compare_by`].
+/// A slice ranker sorting by a single metric is best written as a [`RankingCriterion`].
 #[typetag::serde(tag = "type", content = "value")]
-pub trait RankingCriterion: Debug + DynClone {
-    /// States the order this criterion sorts the rankings in, by calling exactly one method of
-    /// `order`.
-    fn order_rankings(&self, order: RankingOrder<'_, '_>);
+pub trait SliceRanker: Plugin {
+    /// Reorders `slice` by the new ranks and assigns them.
+    ///
+    /// All rankings of `slice` come in with the same rank `r`. Afterwards, ordered as the slice
+    /// is, the first ranking must have rank `r` and every following one either the rank of its
+    /// predecessor or rank `r + index`.
+    fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
 }
 
-/// How `criterion` compares a ranking whose metrics are `first` to one whose metrics are `second`,
-/// or [`None`] if either of them does not hold the metric `criterion` sorts by.
-///
-/// This is the way to ask a criterion about a single pair, e.g. to test it in isolation. Ranking a
-/// whole phase does not go through it, see [`LexicographicalCriteria`].
-///
-/// # Examples
-/// ```
-/// use tournament_engine::{
-///     plugins::{
-///         metrics_calculator::wins_draws_losses::{FewerLosses, WinsDrawsLosses},
-///         ranker::{Comparison, compare_by},
-///     },
-///     type_map::TypeMap,
-/// };
-///
-/// let mut one_loss = TypeMap::new();
-/// one_loss.insert(WinsDrawsLosses {
-///     wins: 1,
-///     draws: 0,
-///     losses: 1,
-///     byes: 0,
-/// });
-/// let mut two_losses = TypeMap::new();
-/// two_losses.insert(WinsDrawsLosses {
-///     wins: 5,
-///     draws: 0,
-///     losses: 2,
-///     byes: 0,
-/// });
-///
-/// // the wins do not enter into it, this criterion sorts by the losses alone
-/// assert_eq!(
-///     compare_by(&FewerLosses, &one_loss, &two_losses),
-///     Some(Comparison::Better)
-/// );
-/// // a ranking that does not hold the metric cannot be compared by it at all
-/// assert_eq!(compare_by(&FewerLosses, &one_loss, &TypeMap::new()), None);
-/// ```
-pub fn compare_by(
-    criterion: &dyn RankingCriterion,
-    first: &TypeMap,
-    second: &TypeMap,
-) -> Option<Comparison> {
-    let mut column = None;
-    criterion.order_rankings(RankingOrder::sorting(&[first, second], &mut column));
-    Some(column?.compare(0, 1))
-}
-
-impl Clone for Box<dyn RankingCriterion> {
+impl Clone for Box<dyn SliceRanker> {
     fn clone(&self) -> Self {
         dyn_clone::clone_box(&**self)
     }
 }
 
-/// The values of one metric, one per ranking, already read out of their [`TypeMap`].
-// Extracting all values up front rather than one pair at a time is what keeps them typed: a
-// comparison indexes into values already known to be of one metric type instead of downcasting a
-// `dyn Any` per comparison. A criterion never sees a column, it only states an order, so this and
-// its implementations stay private to this module.
-trait MetricColumn {
-    /// Compares the values of the rankings at `index1` and `index2`, in terms of the order they
-    /// were extracted in.
-    fn compare(&self, index1: usize, index2: usize) -> Comparison;
+/// A [`SliceRanker`] sorting by a single metric.
+///
+/// A criterion is a [`Plugin`] requiring its [`Metric`](Self::Metric), so its [`SliceRanker`] impl
+/// only has to call [`rank_by`]. A criterion that compares its metric in an order other than the
+/// metric's own [`Compare`] impl should say in its name which way round it sorts.
+///
+/// # Examples
+/// ```
+/// use std::num::NonZeroU32;
+///
+/// use serde::{Deserialize, Serialize};
+/// use tournament_engine::{
+///     entities::competition::{PhaseData, Ranking},
+///     plugins::{
+///         metrics_calculator::points::Points,
+///         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by},
+///     },
+/// };
+///
+/// /// Ranks by the points, where fewer points are better.
+/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// struct FewerPoints;
+///
+/// impl RankingCriterion for FewerPoints {
+///     type Metric = Points;
+///
+///     fn compare(&self, first: &Points, second: &Points) -> Comparison {
+///         Comparison::less_is_better(first.0.total_cmp(&second.0))
+///     }
+/// }
+///
+/// #[typetag::serde]
+/// impl SliceRanker for FewerPoints {
+///     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+///         rank_by(self, slice);
+///     }
+/// }
+/// ```
+pub trait RankingCriterion: Debug + Clone {
+    /// The metric this criterion sorts by.
+    type Metric: TypeMapValue;
+
+    /// How a ranking whose metric is `first` compares to one whose metric is `second`.
+    fn compare(&self, first: &Self::Metric, second: &Self::Metric) -> Comparison;
+}
+
+// Derived from the metric type, so that a criterion's requirement cannot drift from what it sorts
+// by.
+impl<C: RankingCriterion> Plugin for C {
+    fn declare(&self, declaration: &mut Declaration) {
+        declaration.requires::<C::Metric>();
+    }
+}
+
+/// Reorders `slice` by `criterion` and assigns the new ranks, as [`SliceRanker::update_ranks`]
+/// requires. Rankings that `criterion` finds equal stay tied, in the order they came in.
+///
+/// # Panics
+/// Panics if a ranking of `slice` does not hold the metric of `criterion`, i.e. if the phase does
+/// not calculate it.
+pub fn rank_by<C: RankingCriterion>(criterion: &C, slice: &mut [(&Ranking, NonZeroU32)]) {
+    let Some(&(_, start_rank)) = slice.first() else {
+        return;
+    };
+    // This runs for every reported match result, so every value is looked up once here rather than
+    // on every comparison of the sort below.
+    let mut sorted = slice
+        .iter()
+        .map(|&(ranking, _)| {
+            let metric = ranking
+                .metric::<C::Metric>()
+                .expect("the phase calculates the metric of every criterion");
+            (ranking, metric)
+        })
+        .collect_vec();
+    sorted.sort_by(|(_, first), (_, second)| {
+        criterion.compare(first, second).to_ordering_for_sorting()
+    });
+
+    let mut rank = start_rank;
+    for (index, &(ranking, metric)) in sorted.iter().enumerate() {
+        if index > 0 && criterion.compare(sorted[index - 1].1, metric) != Comparison::Equal {
+            rank = start_rank.saturating_add(index as u32);
+        }
+        slice[index] = (ranking, rank);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +201,7 @@ impl Comparison {
 }
 
 /// The one order a metric is naturally compared in, which a [`RankingCriterion`] over that metric
-/// can then sort by without naming a direction of its own, see [`RankingOrder::by_metric`].
+/// can sort by without naming a direction of its own.
 ///
 /// Only implement this for a metric with a single obvious better end — more points, a later first
 /// loss. Leave it out for one that counts several things, or that different phases want sorted
@@ -297,107 +210,66 @@ pub trait Compare {
     fn compare(&self, other: &Self) -> Comparison;
 }
 
-/// The values of metric `M` of a list of rankings, compared in `M`'s own order.
-struct MetricValues<'a, M>(Vec<&'a M>);
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+    use vec1::vec1;
 
-impl<M: Compare> MetricColumn for MetricValues<'_, M> {
-    fn compare(&self, index1: usize, index2: usize) -> Comparison {
-        self.0[index1].compare(self.0[index2])
-    }
-}
+    use super::*;
+    use crate::{
+        entities::competition::EntrantId,
+        plugins::metrics_calculator::points::{MorePoints, Points},
+    };
 
-/// The values of metric `M` of a list of rankings, compared by the function the
-/// [`RankingCriterion`] that read them passed in, see [`RankingOrder::by_metric_compared_by`].
-struct ComparedBy<'a, M>(Vec<&'a M>, fn(&M, &M) -> Comparison);
-
-impl<M> MetricColumn for ComparedBy<'_, M> {
-    fn compare(&self, index1: usize, index2: usize) -> Comparison {
-        (self.1)(self.0[index1], self.0[index2])
-    }
-}
-
-/// Sorts rankings by its criteria in order, each one breaking the ties of the ones before it.
-///
-/// # Panics
-/// Sorting panics if a ranking does not hold the metric one of the criteria sorts by, i.e. if the
-/// phase does not calculate that metric.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct LexicographicalCriteria(Vec<Box<dyn RankingCriterion>>);
-
-impl LexicographicalCriteria {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Appends `criterion`, so that it breaks the ties of every criterion already added.
-    pub fn add_criterion(mut self, criterion: impl RankingCriterion + 'static) -> Self {
-        self.0.push(Box::new(criterion));
-        self
-    }
-}
-
-impl Plugin for LexicographicalCriteria {
-    /// Requires the metric of every criterion, read from the order each one states rather than
-    /// declared by the criterion itself.
-    fn declare(&self, declaration: &mut Declaration) {
-        for criterion in &self.0 {
-            criterion.order_rankings(RankingOrder::declaring(declaration));
+    /// The `index`th of a list of rankings, holding `points` if given.
+    fn ranking(index: u128, points: Option<f32>) -> Ranking {
+        let ranking = Ranking::new(
+            vec1![EntrantId::new(Uuid::from_u128(index))],
+            NonZeroU32::new(index as u32 + 1).unwrap(),
+        );
+        match points {
+            Some(points) => ranking.with_metric(Points(points)),
+            None => ranking,
         }
     }
-}
 
-#[typetag::serde]
-impl SliceRanker for LexicographicalCriteria {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        if self.0.is_empty() || slice.len() < 2 {
-            // this becomes basically a no-op
-            return;
-        }
-        // The metrics of all rankings, one dense column per metric. This runs for every single
-        // reported match result, so it is worth resolving every value once here rather than on
-        // every comparison of the sort below.
-        let metrics = slice
+    fn rank(rank: u32) -> NonZeroU32 {
+        NonZeroU32::new(rank).unwrap()
+    }
+
+    #[test]
+    fn rank_by_sorts_the_slice_and_ranks_from_the_rank_it_came_in_with() {
+        let rankings: Vec<_> = (0..)
+            .zip([1.0, 3.0, 1.0, 2.0])
+            .map(|(index, points)| ranking(index, Some(points)))
+            .collect();
+        let mut slice: Vec<_> = rankings.iter().map(|ranking| (ranking, rank(5))).collect();
+
+        rank_by(&MorePoints, &mut slice);
+
+        let ranked: Vec<_> = slice
             .iter()
-            .map(|&(ranking, _)| ranking.metrics())
-            .collect_vec();
-        let columns = self
-            .0
-            .iter()
-            .map(|criterion| {
-                let mut column = None;
-                criterion.order_rankings(RankingOrder::sorting(&metrics, &mut column));
-                column.expect("All queried metrics must exist")
-            })
-            .collect_vec();
-        let comparator = |row1: usize, row2: usize| {
-            for column in &columns {
-                let result = column.compare(row1, row2);
-                if result != Comparison::Equal {
-                    return result;
-                }
-            }
-            Comparison::Equal
-        };
-        // sorting indices instead of the slice itself keeps the elements that the sort moves
-        // around small and leaves the rows of the table in place
-        let mut order = (0..slice.len() as u32).collect_vec();
-        order.sort_by(|&row1, &row2| {
-            comparator(row1 as usize, row2 as usize).to_ordering_for_sorting()
-        });
-        // assign new ranks and reorder the slice accordingly; all rankings of the slice start out
-        // with the same rank, so any of them serves as the rank the first one keeps
-        let start_rank = slice[0].1;
-        let mut reordered = Vec::with_capacity(slice.len());
-        reordered.push((slice[order[0] as usize].0, start_rank));
-        for i in 1..order.len() {
-            let rank = if comparator(order[i - 1] as usize, order[i] as usize) == Comparison::Equal
-            {
-                reordered[i - 1].1
-            } else {
-                start_rank.saturating_add(i as u32)
-            };
-            reordered.push((slice[order[i] as usize].0, rank));
-        }
-        slice.copy_from_slice(&reordered);
+            .map(|(ranking, rank)| (ranking.id(), rank.get()))
+            .collect();
+        assert_eq!(
+            ranked,
+            [
+                (rankings[1].id(), 5),
+                (rankings[3].id(), 6),
+                // the tie keeps the order the rankings came in, and the rank after it would skip
+                // the tied ranks
+                (rankings[0].id(), 7),
+                (rankings[2].id(), 7),
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the phase calculates the metric of every criterion")]
+    fn rank_by_panics_if_a_ranking_lacks_the_metric() {
+        let rankings = [ranking(0, Some(1.0)), ranking(1, None)];
+        let mut slice: Vec<_> = rankings.iter().map(|ranking| (ranking, rank(1))).collect();
+
+        rank_by(&MorePoints, &mut slice);
     }
 }

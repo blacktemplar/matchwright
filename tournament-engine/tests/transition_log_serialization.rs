@@ -24,7 +24,7 @@ use tournament_engine::{
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::single_elimination::SingleElimination,
-        ranker::{HierarchicalRanker, LexicographicalCriteria},
+        ranker::HierarchicalRanker,
     },
     transitions::{
         CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
@@ -98,17 +98,13 @@ fn played_competition() -> CompetitionStateMachine {
         &mut machine,
         RemoveEntrant::new(Entrant::new(entrant_id(4))),
     );
-    let ranker = HierarchicalRanker::new(vec![Box::new(
-        LexicographicalCriteria::new()
-            .add_criterion(LaterFirstLoss)
-            .add_criterion(MorePoints),
-    )]);
+    let ranker = HierarchicalRanker::new(vec![Box::new(LaterFirstLoss), Box::new(MorePoints)]);
     apply(
         &mut machine,
         AddPhase::new(
             phase_id(),
             Box::new(SingleElimination::new()),
-            Box::new(ranker),
+            ranker,
             // the calculators run in this order, so every one of them that reads the metric of
             // another one has to be listed after it
             vec![

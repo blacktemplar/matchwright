@@ -1,10 +1,10 @@
-use std::any::TypeId;
+use std::{any::TypeId, num::NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
         Plugin,
@@ -12,7 +12,7 @@ use crate::{
         metrics_calculator::{
             MetricsCalculator, MetricsCalculatorKind, wins_draws_losses::WinsDrawsLosses,
         },
-        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -39,10 +39,18 @@ impl AsRef<f32> for Points {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MorePoints;
 
-#[typetag::serde]
 impl RankingCriterion for MorePoints {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<Points>();
+    type Metric = Points;
+
+    fn compare(&self, first: &Points, second: &Points) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MorePoints {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 

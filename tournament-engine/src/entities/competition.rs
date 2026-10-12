@@ -18,7 +18,7 @@ use crate::{
         compatibility::{Declaration, EntrantsPerRanking},
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::{PhaseFormat, Schedule},
-        ranker::Ranker,
+        ranker::HierarchicalRanker,
     },
     type_map::{TypeMap, TypeMapValue},
 };
@@ -227,7 +227,7 @@ pub struct Phase {
     outgoing_phase_transitions: Vec<PhaseTransitionId>,
     incoming_phase_transitions: Vec<PhaseTransitionId>,
     phase_format: Box<dyn PhaseFormat>,
-    ranker: Box<dyn Ranker>,
+    ranker: HierarchicalRanker,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     data: PhaseData,
 }
@@ -496,7 +496,7 @@ impl Phase {
             self.data.rankings.get_mut(ranking_id).unwrap().unique_rank =
                 NonZeroU32::new(index as u32 + 1).unwrap()
         }
-        // check requirements of [`Ranker::update_ranks`]
+        // check requirements of [`HierarchicalRanker::update_ranks`]
         debug_assert!(
             self.data.rankings[&self.data.ranking_ids_ordered_by_unique_rank[0]].rank.get() == 1 &&
             self.data.ranking_ids_ordered_by_unique_rank
@@ -612,6 +612,13 @@ impl Ranking {
 
     pub fn metrics(&self) -> &TypeMap {
         &self.metrics
+    }
+
+    /// The ranking with `metric` set, for tests of rankers that do not need a whole phase.
+    #[cfg(test)]
+    pub(crate) fn with_metric(mut self, metric: impl TypeMapValue) -> Self {
+        self.metrics.insert(metric);
+        self
     }
 }
 
@@ -889,12 +896,12 @@ impl Bye {
 }
 
 /// Builds a standalone [`Phase`] with prepopulated rankings, without a [`Competition`] around it,
-/// for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) and [`Ranker`]
-/// implementations.
+/// for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) and
+/// [`SliceRanker`](crate::plugins::ranker::SliceRanker) implementations.
 #[cfg(test)]
 pub(crate) struct PhaseBuilder {
     phase_format: Box<dyn PhaseFormat>,
-    ranker: Box<dyn Ranker>,
+    ranker: HierarchicalRanker,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     rankings: Vec<Ranking>,
 }
@@ -906,13 +913,13 @@ impl PhaseBuilder {
     pub(crate) fn new(phase_format: Box<dyn PhaseFormat>) -> Self {
         Self {
             phase_format,
-            ranker: Box::new(crate::plugins::ranker::HierarchicalRanker::new(Vec::new())),
+            ranker: HierarchicalRanker::default(),
             metrics_calculators: Vec::new(),
             rankings: Vec::new(),
         }
     }
 
-    pub(crate) fn ranker(mut self, ranker: Box<dyn Ranker>) -> Self {
+    pub(crate) fn ranker(mut self, ranker: HierarchicalRanker) -> Self {
         self.ranker = ranker;
         self
     }

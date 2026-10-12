@@ -440,7 +440,7 @@ mod tests {
     fn plugins(calculators: &[Calculator]) -> PhasePlugins {
         PhasePlugins::new(
             Box::new(RoundRobin),
-            Box::new(HierarchicalRanker::new(Vec::new())),
+            HierarchicalRanker::default(),
             calculators
                 .iter()
                 .map(|calculator| Box::new(calculator.clone()) as Box<dyn MetricsCalculator>)

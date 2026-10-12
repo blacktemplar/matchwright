@@ -3,13 +3,13 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
         Plugin,
         compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -35,10 +35,18 @@ impl Compare for RoundOfFirstLoss {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaterFirstLoss;
 
-#[typetag::serde]
 impl RankingCriterion for LaterFirstLoss {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<RoundOfFirstLoss>();
+    type Metric = RoundOfFirstLoss;
+
+    fn compare(&self, first: &RoundOfFirstLoss, second: &RoundOfFirstLoss) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for LaterFirstLoss {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -113,11 +121,7 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::Phase,
-        plugins::{
-            metrics_calculator::test_utils::{self, MatchSpec, match_id},
-            ranker::compare_by,
-        },
-        type_map::TypeMap,
+        plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 
     /// A ranking that has not lost a match yet, which is the best this metric gets.
@@ -239,18 +243,11 @@ mod tests {
         assert_eq!(UNBEATEN.compare(&UNBEATEN), Comparison::Equal);
     }
 
-    /// The criterion sorts by this metric, which is what makes a phase ranked by it calculate the
-    /// metric, see [`Plugin::declare`].
     #[test]
     fn the_criterion_ranks_by_the_round_of_the_first_loss() {
-        let mut unbeaten = TypeMap::new();
-        unbeaten.insert(UNBEATEN);
-        let mut beaten = TypeMap::new();
-        beaten.insert(lost_in(1));
-
         assert_eq!(
-            compare_by(&LaterFirstLoss, &unbeaten, &beaten),
-            Some(Comparison::Better)
+            LaterFirstLoss.compare(&UNBEATEN, &lost_in(1)),
+            Comparison::Better
         );
     }
 }

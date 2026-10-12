@@ -40,12 +40,21 @@ must never require touching another axis's trait.
 ### Decision
 
 Every axis is its own public, unsealed trait, selected as `Box<dyn Trait>` and
-constructed directly by the consumer. Implemented axes: `PhaseFormat`, `Ranker`
-(with `SliceRanker`, `RankingCriterion` beneath it), `MetricsCalculator`. All
-but `RankingCriterion` share the `Plugin` supertrait (`Debug + DynClone` plus
-`declare`, see [Compatibility between plugins](#compatibility-between-plugins)),
-and each has a hand-written `impl Clone for Box<dyn Trait>` delegating to
-`dyn_clone`.
+constructed directly by the consumer. Implemented axes: `PhaseFormat`,
+`SliceRanker` and `MetricsCalculator`. They share the `Plugin` supertrait
+(`Debug + DynClone` plus `declare`, see
+[Compatibility between plugins](#compatibility-between-plugins)), and each has a
+hand-written `impl Clone for Box<dyn Trait>` delegating to `dyn_clone`.
+
+**The ranker is not an axis.** A phase is always ranked by a
+`HierarchicalRanker`, a plain struct holding a list of `SliceRanker`s, each
+breaking the ties the ones before it left. Every way of ranking that was
+foreseen is such a chain, so a second axis above `SliceRanker` only added a
+layer of trait objects and tags. A slice ranker sorting by a single metric — a
+*criterion* such as `MorePoints` — implements the helper trait
+`RankingCriterion` (its metric type and a comparison) and calls `rank_by` from
+its `SliceRanker` impl; other slice rankers (e.g. head-to-head) implement
+`SliceRanker` directly.
 
 This applies uniformly to future axes: each one gets a trait and a slot, with no
 per-axis judgment call. A string-keyed registry for loading a configuration from
@@ -76,13 +85,14 @@ than the phase:
 
 ```rust
 fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;      // PhaseFormat
-fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)>; // Ranker
+fn update_ranks(&mut self, phase_data: &PhaseData,
+                slice: &mut [(&Ranking, NonZeroU32)]);                     // SliceRanker
 fn update_after_match_result_changed(&mut self, phase_data: &PhaseData, /* ... */)
     -> Vec<(RankingId, Metric)>;                                           // MetricsCalculator
 ```
 
-`SliceRanker::update_ranks` follows suit, since `HierarchicalRanker` calls it
-with its own `&PhaseData`. Methods that only describe a plugin's configuration
+`HierarchicalRanker::update_ranks` takes `&mut self` too, since it calls its
+slice rankers. Methods that only describe a plugin's configuration
 (`default_metric_value`, `allows_draws`) stay `&self`.
 
 **Undo needs nothing extra.** A plugin is a field of its `Phase`, so its state is
@@ -172,15 +182,15 @@ impl Declaration {
 ```
 
 `declare` is required, so an implementation cannot silently forget it —
-composite plugins like `HierarchicalRanker` in particular have to forward to
-their parts. Having it on `Plugin` rather than on each axis trait lets the
-engine collect every declaration through `&dyn Plugin`, whatever the axis.
+composite plugins in particular have to forward to their parts. Having it on
+`Plugin` rather than on each axis trait lets the engine collect every
+declaration through `&dyn Plugin`, whatever the axis. The `HierarchicalRanker`
+is no plugin; `PhasePlugins` collects the declaration of each of its slice
+rankers, so an issue names the slice ranker that has it.
 
-A `RankingCriterion` is not a `Plugin`. All it can do is state, through
-`RankingOrder`, which metric it sorts by, and the engine controls
-`RankingOrder`; so `LexicographicalCriteria`, the `SliceRanker` that holds the
-criteria, declares their metrics by running each criterion against a
-`RankingOrder` that records instead of sorting.
+A criterion's declaration is derived: a blanket
+`impl<C: RankingCriterion> Plugin for C` requires `C::Metric`, the metric type
+the criterion compares and `rank_by` reads.
 
 Facts are provided by the phase's plugins and by its context: the competition,
 or the output the previous phase's format declares, e.g. `EntrantsPerRanking(1)`.
@@ -215,9 +225,9 @@ generic order of any list of plugins. The one place that knows the axes is
 `PhasePlugins`, the plugins of a phase: it collects their declarations through
 `&dyn Plugin`, resolves defaults and orders its calculators.
 
-**Self-reported, except for criteria.** A criterion's requirement is recorded
-from its call to `RankingOrder::by_metric::<M>()`, so it cannot drift from what
-the criterion does. Everything else is self-reported in `declare`. That is the
+**Self-reported, except for criteria.** A criterion's requirement is its
+associated `Metric` type, so it cannot drift from what the criterion compares.
+Everything else is self-reported in `declare`. That is the
 trade-off accepted here: facts like "rankings are pairs" are not something the
 compiler can derive, and none of the alternatives can express conditions on
 values. Test helpers that build a phase from a plugin plus only the facts it
@@ -338,10 +348,15 @@ change freely.
   checked by a debug assertion.
 - **`declare` on each axis trait.** Repeated the same method per axis and left
   the engine no uniform way to ask a plugin. Superseded by `Plugin::declare`.
-- **A blanket `impl<T: RankingCriterion> Plugin for T`** deriving a criterion's
-  declaration from `order_rankings`. Works, but criteria are deliberately
-  limited to what `RankingOrder` offers, so the holder of the criteria can
-  declare for them without making them plugins. Rejected.
+- **Criteria that are no plugins**, held by one `LexicographicalCriteria` slice
+  ranker that declared their metrics by running each criterion against a
+  recording `RankingOrder` (the previous design). Kept criteria out of the
+  axes, but needed a second, closed mechanism to state an order and a second
+  trait object with tags of its own. Superseded by criteria being slice rankers
+  with a blanket `Plugin` impl.
+- **A `Ranker` axis above `SliceRanker`.** No ranking that was foreseen is not
+  a chain of slice rankers, so it was a layer of trait objects without a second
+  implementation. Removed; a phase is always ranked by a `HierarchicalRanker`.
 - **A boxed plugin as the default provider**, put into its slot by the
   resolution. `Box<dyn Plugin>` cannot become a `Box<dyn MetricsCalculator>`
   without the trait-to-trait casts `intertrait` existed for, and an enum over
@@ -469,12 +484,16 @@ only complete if those calculators did run before it, so calculator order does
 matter; it is derived from their declared dependencies, see
 [Compatibility between plugins](#compatibility-between-plugins).
 
-**Ranking comparison stays typed.** A `Ranker` orders rankings; the implemented
-one, `HierarchicalRanker`, applies a list of `SliceRanker`s, each resolving ties
-left by the previous. `LexicographicalMetrics` extracts one dense, typed column
-per metric up front via `MetricGetter`/`MetricColumn`, so a comparison indexes
-into values already known to be of that metric's type instead of downcasting per
-comparison — this runs on every reported result, so it is worth resolving once.
+**Ranking comparison stays typed.** The `HierarchicalRanker` applies a list of
+`SliceRanker`s, each resolving ties left by the previous. `rank_by`, which every
+criterion sorts with, looks up its metric once per ranking of the slice and
+sorts the rankings together with the typed values, so a comparison neither
+looks up nor downcasts anything. Each criterion only sees the slices still tied,
+which is usually a small part of the phase after the first one. Grouping all
+criteria into one sort over pre-extracted columns per metric (the previous
+`LexicographicalCriteria`) was measured to be about 20% slower on the
+`large_tournament` benchmark, since it extracted every metric for every ranking
+and compared through a trait object per column.
 
 *Planned:* the active calculators' metric types being pairwise disjoint, and
 metrics required by other plugins being present, are checked as facts once per

@@ -151,7 +151,7 @@ pub trait CompetitionStateMachineExt {
     /// #     AddPhase::new(
     /// #         phase_id,
     /// #         Box::new(RoundRobin),
-    /// #         Box::new(HierarchicalRanker::new(Vec::new())),
+    /// #         HierarchicalRanker::default(),
     /// #         Vec::new(),
     /// #     )
     /// #     .unwrap(),
@@ -284,7 +284,7 @@ mod tests {
             AddPhase::new(
                 phase_id(),
                 Box::new(SingleElimination::new()),
-                Box::new(HierarchicalRanker::new(Vec::new())),
+                HierarchicalRanker::default(),
                 Vec::new(),
             )
             .unwrap(),

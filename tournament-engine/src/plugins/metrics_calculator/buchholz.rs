@@ -1,13 +1,14 @@
 use std::{
     any::{Any, TypeId},
     fmt::Debug,
+    num::NonZeroU32,
 };
 
 use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
         Plugin,
@@ -15,7 +16,7 @@ use crate::{
         metrics_calculator::{
             MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
         },
-        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -48,10 +49,18 @@ impl From<f32> for Buchholz {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreBuchholz;
 
-#[typetag::serde]
 impl RankingCriterion for MoreBuchholz {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<Buchholz>();
+    type Metric = Buchholz;
+
+    fn compare(&self, first: &Buchholz, second: &Buchholz) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MoreBuchholz {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -192,10 +201,18 @@ impl From<f32> for BuchholzOfBuchholz {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreBuchholzOfBuchholz;
 
-#[typetag::serde]
 impl RankingCriterion for MoreBuchholzOfBuchholz {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<BuchholzOfBuchholz>();
+    type Metric = BuchholzOfBuchholz;
+
+    fn compare(&self, first: &BuchholzOfBuchholz, second: &BuchholzOfBuchholz) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MoreBuchholzOfBuchholz {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 

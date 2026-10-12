@@ -17,7 +17,7 @@ use tournament_engine::{
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
-        ranker::{HierarchicalRanker, LexicographicalCriteria},
+        ranker::HierarchicalRanker,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
@@ -107,9 +107,7 @@ fn full_tournament() {
     let seed = rng().random();
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination::new());
-    let ranker = Box::new(HierarchicalRanker::new(vec![Box::new(
-        LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
-    )]));
+    let ranker = HierarchicalRanker::new(vec![Box::new(LaterFirstLoss)]);
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
@@ -402,9 +400,7 @@ fn byes_are_scored_when_they_are_scheduled() {
         AddPhase::new(
             phase_id,
             Box::new(RoundRobin),
-            Box::new(HierarchicalRanker::new(vec![Box::new(
-                LexicographicalCriteria::new().add_criterion(MorePoints),
-            )])),
+            HierarchicalRanker::new(vec![Box::new(MorePoints)]),
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE.with_points_for_bye(3.0)),
@@ -440,9 +436,7 @@ fn single_elimination_rejects_a_draw() {
         AddPhase::new(
             phase_id,
             Box::new(SingleElimination::new()),
-            Box::new(HierarchicalRanker::new(vec![Box::new(
-                LexicographicalCriteria::new().add_criterion(LaterFirstLoss),
-            )])),
+            HierarchicalRanker::new(vec![Box::new(LaterFirstLoss)]),
             vec![Box::new(RoundOfFirstLossCalculator)],
         )
         .unwrap(),

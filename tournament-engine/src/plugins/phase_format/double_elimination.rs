@@ -238,21 +238,20 @@ mod tests {
                 },
                 wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
             },
-            ranker::{HierarchicalRanker, LexicographicalCriteria},
+            ranker::HierarchicalRanker,
         },
     };
 
     /// A double elimination between `num_players` entrants with its first matches scheduled,
     /// ranked by the round of elimination and then by the losses.
     fn bracket(format: DoubleElimination, num_players: u32) -> Phase {
-        let criteria = LexicographicalCriteria::new()
-            .add_criterion(LaterElimination)
-            .add_criterion(FewerLosses);
+        let ranker =
+            HierarchicalRanker::new(vec![Box::new(LaterElimination), Box::new(FewerLosses)]);
         let mut phase = PhaseBuilder::new(Box::new(format))
             .with_players(num_players)
             .metrics_calculator(Box::new(RoundOfEliminationCalculator))
             .metrics_calculator(Box::new(WinsDrawsLossesCalculator))
-            .ranker(Box::new(HierarchicalRanker::new(vec![Box::new(criteria)])))
+            .ranker(ranker)
             .build();
         phase.create_new_matches();
         phase

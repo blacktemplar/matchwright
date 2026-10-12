@@ -1,15 +1,15 @@
-use std::any::TypeId;
+use std::{any::TypeId, num::NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
         Plugin,
         compatibility::Declaration,
         metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Comparison, RankingCriterion, RankingOrder},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -46,12 +46,18 @@ impl TypeMapValue for WinsDrawsLosses {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreWins;
 
-#[typetag::serde]
 impl RankingCriterion for MoreWins {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
-            Comparison::greater_is_better(wdl.wins.cmp(&other.wins))
-        });
+    type Metric = WinsDrawsLosses;
+
+    fn compare(&self, first: &WinsDrawsLosses, second: &WinsDrawsLosses) -> Comparison {
+        Comparison::greater_is_better(first.wins.cmp(&second.wins))
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MoreWins {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -61,12 +67,18 @@ impl RankingCriterion for MoreWins {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreDraws;
 
-#[typetag::serde]
 impl RankingCriterion for MoreDraws {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
-            Comparison::greater_is_better(wdl.draws.cmp(&other.draws))
-        });
+    type Metric = WinsDrawsLosses;
+
+    fn compare(&self, first: &WinsDrawsLosses, second: &WinsDrawsLosses) -> Comparison {
+        Comparison::greater_is_better(first.draws.cmp(&second.draws))
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MoreDraws {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -74,12 +86,18 @@ impl RankingCriterion for MoreDraws {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FewerLosses;
 
-#[typetag::serde]
 impl RankingCriterion for FewerLosses {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
-            Comparison::less_is_better(wdl.losses.cmp(&other.losses))
-        });
+    type Metric = WinsDrawsLosses;
+
+    fn compare(&self, first: &WinsDrawsLosses, second: &WinsDrawsLosses) -> Comparison {
+        Comparison::less_is_better(first.losses.cmp(&second.losses))
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for FewerLosses {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -92,12 +110,18 @@ impl RankingCriterion for FewerLosses {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FewerMatchesPlayed;
 
-#[typetag::serde]
 impl RankingCriterion for FewerMatchesPlayed {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric_compared_by::<WinsDrawsLosses>(|wdl, other| {
-            Comparison::less_is_better(wdl.matches_played().cmp(&other.matches_played()))
-        });
+    type Metric = WinsDrawsLosses;
+
+    fn compare(&self, first: &WinsDrawsLosses, second: &WinsDrawsLosses) -> Comparison {
+        Comparison::less_is_better(first.matches_played().cmp(&second.matches_played()))
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for FewerMatchesPlayed {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -192,11 +216,7 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::Phase,
-        plugins::{
-            metrics_calculator::test_utils::{self, MatchSpec, match_id},
-            ranker::compare_by,
-        },
-        type_map::TypeMap,
+        plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 
     /// Builds a phase with `num_players` rankings whose wins/draws/losses got initialized and
@@ -330,21 +350,13 @@ mod tests {
         assert_eq!(metric_of(&phase, 0), wins_draws_losses(1, 0, 0));
     }
 
-    /// The metrics of a ranking whose only metric is `wdl`.
-    fn metrics_of(wdl: WinsDrawsLosses) -> TypeMap {
-        let mut metrics = TypeMap::new();
-        metrics.insert(wdl);
-        metrics
-    }
-
     /// How `criterion` orders a ranking with `first` against one with `second`.
     fn comparison(
-        criterion: &dyn RankingCriterion,
+        criterion: &impl RankingCriterion<Metric = WinsDrawsLosses>,
         first: WinsDrawsLosses,
         second: WinsDrawsLosses,
     ) -> Comparison {
-        let (first, second) = (metrics_of(first), metrics_of(second));
-        compare_by(criterion, &first, &second).expect("both rankings hold the metric")
+        criterion.compare(&first, &second)
     }
 
     #[test]
@@ -467,26 +479,6 @@ mod tests {
             ),
             Comparison::Equal
         );
-    }
-
-    /// All four criteria read the same metric, so none of them orders a ranking that does not hold
-    /// it, which is what [`LexicographicalCriteria`] reports rather than ranking by a metric that
-    /// is not there.
-    ///
-    /// [`LexicographicalCriteria`]: crate::plugins::ranker::LexicographicalCriteria
-    #[test]
-    fn a_criterion_orders_nothing_if_a_ranking_lacks_the_metric() {
-        let with_metric = metrics_of(wins_draws_losses(1, 0, 0));
-        let without_metric = TypeMap::new();
-
-        for criterion in [
-            &MoreWins as &dyn RankingCriterion,
-            &MoreDraws,
-            &FewerLosses,
-            &FewerMatchesPlayed,
-        ] {
-            assert!(compare_by(criterion, &with_metric, &without_metric).is_none());
-        }
     }
 
     #[test]

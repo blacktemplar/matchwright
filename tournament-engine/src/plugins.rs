@@ -7,7 +7,7 @@ use crate::plugins::{
     compatibility::{Declaration, Incompatibility, declaration_of, order, unprovided},
     metrics_calculator::{MetricsCalculator, MetricsCalculatorKind},
     phase_format::PhaseFormat,
-    ranker::Ranker,
+    ranker::HierarchicalRanker,
 };
 
 pub mod catalog;
@@ -38,14 +38,14 @@ pub trait Plugin: Debug + DynClone {
 #[derive(Debug, Clone)]
 pub struct PhasePlugins {
     pub(crate) phase_format: Box<dyn PhaseFormat>,
-    pub(crate) ranker: Box<dyn Ranker>,
+    pub(crate) ranker: HierarchicalRanker,
     pub(crate) metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
 impl PhasePlugins {
     pub(crate) fn new(
         phase_format: Box<dyn PhaseFormat>,
-        ranker: Box<dyn Ranker>,
+        ranker: HierarchicalRanker,
         metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Self {
         Self {
@@ -59,8 +59,8 @@ impl PhasePlugins {
         &*self.phase_format
     }
 
-    pub fn ranker(&self) -> &dyn Ranker {
-        &*self.ranker
+    pub fn ranker(&self) -> &HierarchicalRanker {
+        &self.ranker
     }
 
     /// The metrics calculators, in the order they run in.
@@ -70,13 +70,16 @@ impl PhasePlugins {
 
     /// The declarations of all plugins, each together with the name of its plugin.
     pub(crate) fn declarations(&self) -> Vec<(String, Declaration)> {
-        [
-            declaration_of(&*self.phase_format),
-            declaration_of(&*self.ranker),
-        ]
-        .into_iter()
-        .chain(self.declarations_of_metrics_calculators())
-        .collect()
+        [declaration_of(&*self.phase_format)]
+            .into_iter()
+            .chain(
+                self.ranker
+                    .slice_rankers()
+                    .iter()
+                    .map(|slice_ranker| declaration_of(&**slice_ranker)),
+            )
+            .chain(self.declarations_of_metrics_calculators())
+            .collect()
     }
 
     fn declarations_of_metrics_calculators(&self) -> Vec<(String, Declaration)> {
@@ -194,7 +197,7 @@ mod tests {
                 round_robin::RoundRobin,
                 single_elimination::{KnockoutRound, SingleElimination},
             },
-            ranker::{HierarchicalRanker, LexicographicalCriteria},
+            ranker::{HierarchicalRanker, SliceRanker},
         },
     };
 
@@ -206,21 +209,21 @@ mod tests {
     /// Two entrants per ranking, i.e. the rankings a draw pairing the entrants up leaves behind.
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(NonZeroU32::new(2).unwrap());
 
-    /// A ranker sorting by `criteria`, which is how every phase of the CLI is ranked.
-    fn ranked_by(criteria: LexicographicalCriteria) -> Box<dyn Ranker> {
-        Box::new(HierarchicalRanker::new(vec![Box::new(criteria)]))
+    /// A ranker sorting by `slice_ranker` alone.
+    fn ranked_by(slice_ranker: impl SliceRanker + 'static) -> HierarchicalRanker {
+        HierarchicalRanker::new(vec![Box::new(slice_ranker)])
     }
 
     /// A ranker leaving every entrant tied, for a phase whose ranking is not what is tested.
-    fn unranked() -> Box<dyn Ranker> {
-        ranked_by(LexicographicalCriteria::new())
+    fn unranked() -> HierarchicalRanker {
+        HierarchicalRanker::default()
     }
 
     /// Whether the plugins of a phase played in `format`, ranked by `ranker` and calculating the
     /// metrics of `calculators` fit together in a competition, i.e. what `AddPhase` checks.
     fn check(
         format: Box<dyn PhaseFormat>,
-        ranker: Box<dyn Ranker>,
+        ranker: HierarchicalRanker,
         calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<(), Incompatibility> {
         check_facts_of(&PhasePlugins::new(format, ranker, calculators))
@@ -230,7 +233,7 @@ mod tests {
     fn check_in(
         context: Declaration,
         format: Box<dyn PhaseFormat>,
-        ranker: Box<dyn Ranker>,
+        ranker: HierarchicalRanker,
         calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<(), Incompatibility> {
         let plugins = PhasePlugins::new(format, ranker, calculators);
@@ -312,11 +315,8 @@ mod tests {
     /// not configured calculates it, with the parameters it is registered with.
     #[test]
     fn a_metric_the_phase_is_ranked_by_is_added_from_the_catalog() {
-        let mut plugins = PhasePlugins::new(
-            Box::new(RoundRobin),
-            ranked_by(LexicographicalCriteria::new().add_criterion(MorePoints)),
-            Vec::new(),
-        );
+        let mut plugins =
+            PhasePlugins::new(Box::new(RoundRobin), ranked_by(MorePoints), Vec::new());
 
         plugins.resolve().unwrap();
 
@@ -349,11 +349,8 @@ mod tests {
 
     #[test]
     fn a_round_robin_ranked_by_the_sonneborn_berger_fits_with_every_metric_it_reads() {
-        let ranker = ranked_by(
-            LexicographicalCriteria::new()
-                .add_criterion(MorePoints)
-                .add_criterion(MoreSonnebornBerger),
-        );
+        let ranker =
+            HierarchicalRanker::new(vec![Box::new(MorePoints), Box::new(MoreSonnebornBerger)]);
 
         assert_eq!(
             check(
@@ -393,41 +390,35 @@ mod tests {
 
     #[test]
     fn ranking_by_a_metric_nothing_calculates_is_an_error() {
-        let ranker = ranked_by(LexicographicalCriteria::new().add_criterion(MorePoints));
-
         assert_eq!(
             check(
                 Box::new(RoundRobin),
-                ranker.clone(),
+                ranked_by(MorePoints),
                 vec![Box::new(WinsDrawsLossesCalculator)],
             ),
             Err(Incompatibility::FactNotProvided {
                 fact: type_name::<Points>(),
-                required_by: format!("{ranker:?}"),
+                required_by: format!("{MorePoints:?}"),
             })
         );
     }
 
-    /// A criterion states the metric it sorts by through its [`RankingOrder`], whichever of the
-    /// two methods it uses, so the ranker requires it either way.
-    ///
-    /// [`RankingOrder`]: ranker::RankingOrder
+    /// A criterion requires its metric whether it compares it in the metric's own order or in one
+    /// of its own.
     #[test]
     fn a_criterion_bringing_its_own_order_requires_its_metric_too() {
-        let ranker = ranked_by(LexicographicalCriteria::new().add_criterion(FewerLosses));
-
         assert_eq!(
-            check(Box::new(RoundRobin), ranker.clone(), Vec::new()),
+            check(Box::new(RoundRobin), ranked_by(FewerLosses), Vec::new()),
             Err(Incompatibility::FactNotProvided {
                 fact: type_name::<WinsDrawsLosses>(),
-                required_by: format!("{ranker:?}"),
+                required_by: format!("{FewerLosses:?}"),
             })
         );
     }
 
     #[test]
     fn the_round_of_elimination_needs_a_format_that_knocks_entrants_out() {
-        let ranker = ranked_by(LexicographicalCriteria::new().add_criterion(LaterElimination));
+        let ranker = ranked_by(LaterElimination);
         let calculators: Vec<Box<dyn MetricsCalculator>> =
             vec![Box::new(RoundOfEliminationCalculator)];
 

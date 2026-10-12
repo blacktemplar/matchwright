@@ -3,13 +3,13 @@ use std::{any::TypeId, num::NonZeroU32};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, Team},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team},
     map::Map,
     plugins::{
         Plugin,
         compatibility::{Declaration, MatchAnnotation},
         metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -54,10 +54,18 @@ impl Compare for RoundOfElimination {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaterElimination;
 
-#[typetag::serde]
 impl RankingCriterion for LaterElimination {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<RoundOfElimination>();
+    type Metric = RoundOfElimination;
+
+    fn compare(&self, first: &RoundOfElimination, second: &RoundOfElimination) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for LaterElimination {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 
@@ -139,10 +147,7 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::Phase,
-        plugins::{
-            metrics_calculator::test_utils::{self, AnnotatedMatchSpec, MatchSpec, match_id},
-            ranker::compare_by,
-        },
+        plugins::metrics_calculator::test_utils::{self, AnnotatedMatchSpec, MatchSpec, match_id},
         type_map::TypeMap,
     };
 
@@ -306,18 +311,11 @@ mod tests {
         assert_eq!(STILL_IN.compare(&STILL_IN), Comparison::Equal);
     }
 
-    /// The criterion sorts by this metric, which is what makes a phase ranked by it calculate the
-    /// metric, see [`Plugin::declare`].
     #[test]
     fn the_criterion_ranks_by_the_round_of_elimination() {
-        let mut still_in = TypeMap::new();
-        still_in.insert(STILL_IN);
-        let mut out = TypeMap::new();
-        out.insert(out_in(1));
-
         assert_eq!(
-            compare_by(&LaterElimination, &still_in, &out),
-            Some(Comparison::Better)
+            LaterElimination.compare(&STILL_IN, &out_in(1)),
+            Comparison::Better
         );
     }
 }

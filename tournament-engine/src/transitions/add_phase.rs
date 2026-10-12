@@ -9,7 +9,7 @@ use crate::{
         compatibility::{Declaration, Incompatibility, check_facts},
         metrics_calculator::MetricsCalculator,
         phase_format::PhaseFormat,
-        ranker::Ranker,
+        ranker::HierarchicalRanker,
     },
     transitions::CompetitionTransition,
 };
@@ -34,7 +34,7 @@ pub struct AddPhase {
 struct SerializedAddPhase {
     id: PhaseId,
     phase_format: Box<dyn PhaseFormat>,
-    ranker: Box<dyn Ranker>,
+    ranker: HierarchicalRanker,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 }
 
@@ -85,7 +85,7 @@ impl AddPhase {
     pub fn new(
         id: PhaseId,
         phase_format: Box<dyn PhaseFormat>,
-        ranker: Box<dyn Ranker>,
+        ranker: HierarchicalRanker,
         metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<Self, Incompatibility> {
         let mut plugins = PhasePlugins::new(phase_format, ranker, metrics_calculators);

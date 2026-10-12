@@ -30,7 +30,7 @@ use tournament_engine::plugins::{
         random_rounds::RandomRounds, round_robin::RoundRobin,
         single_elimination::SingleElimination,
     },
-    ranker::{HierarchicalRanker, LexicographicalCriteria, Ranker},
+    ranker::{HierarchicalRanker, SliceRanker},
 };
 
 use crate::command::PhasePreset;
@@ -61,7 +61,7 @@ const DEFAULT_SONNEBORN_BERGER: MetricConfig = MetricConfig::SonnebornBerger {
 /// are calculated in.
 pub(crate) type PhasePlugins = (
     Box<dyn PhaseFormat>,
-    Box<dyn Ranker>,
+    HierarchicalRanker,
     Vec<Box<dyn MetricsCalculator>>,
 );
 
@@ -433,20 +433,19 @@ impl Criterion {
         }
     }
 
-    /// Appends this criterion to `metrics`, so that it breaks the ties of every criterion already
-    /// in there.
-    fn add_to(self, metrics: LexicographicalCriteria) -> LexicographicalCriteria {
+    /// The slice ranker sorting by this criterion.
+    fn slice_ranker(self) -> Box<dyn SliceRanker> {
         match self {
-            Self::MoreWins => metrics.add_criterion(MoreWins),
-            Self::MoreDraws => metrics.add_criterion(MoreDraws),
-            Self::FewerLosses => metrics.add_criterion(FewerLosses),
-            Self::FewerMatchesPlayed => metrics.add_criterion(FewerMatchesPlayed),
-            Self::MorePoints => metrics.add_criterion(MorePoints),
-            Self::LaterFirstLoss => metrics.add_criterion(LaterFirstLoss),
-            Self::LaterElimination => metrics.add_criterion(LaterElimination),
-            Self::MoreBuchholz => metrics.add_criterion(MoreBuchholz),
-            Self::MoreSonnebornBerger => metrics.add_criterion(MoreSonnebornBerger),
-            Self::MoreBuchholzOfBuchholz => metrics.add_criterion(MoreBuchholzOfBuchholz),
+            Self::MoreWins => Box::new(MoreWins),
+            Self::MoreDraws => Box::new(MoreDraws),
+            Self::FewerLosses => Box::new(FewerLosses),
+            Self::FewerMatchesPlayed => Box::new(FewerMatchesPlayed),
+            Self::MorePoints => Box::new(MorePoints),
+            Self::LaterFirstLoss => Box::new(LaterFirstLoss),
+            Self::LaterElimination => Box::new(LaterElimination),
+            Self::MoreBuchholz => Box::new(MoreBuchholz),
+            Self::MoreSonnebornBerger => Box::new(MoreSonnebornBerger),
+            Self::MoreBuchholzOfBuchholz => Box::new(MoreBuchholzOfBuchholz),
         }
     }
 }
@@ -602,15 +601,14 @@ impl PhaseConfig {
 
     /// The plugins the engine runs the configured phase with, see [`PhasePlugins`].
     pub(crate) fn into_plugins(self) -> PhasePlugins {
-        let metrics = self
-            .ranked_by
-            .iter()
-            .fold(LexicographicalCriteria::new(), |metrics, ranking_metric| {
-                ranking_metric.add_to(metrics)
-            });
         (
             self.format.plugin(),
-            Box::new(HierarchicalRanker::new(vec![Box::new(metrics)])),
+            HierarchicalRanker::new(
+                self.ranked_by
+                    .iter()
+                    .map(|criterion| criterion.slice_ranker())
+                    .collect(),
+            ),
             self.metrics
                 .into_iter()
                 .map(MetricConfig::calculator)

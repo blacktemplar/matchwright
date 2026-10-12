@@ -1,9 +1,14 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    num::NonZeroU32,
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, ResultOfTeam, Team},
+    entities::competition::{
+        Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
+    },
     map::Map,
     plugins::{
         Plugin,
@@ -11,7 +16,7 @@ use crate::{
         metrics_calculator::{
             Metric, MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
         },
-        ranker::{Compare, Comparison, RankingCriterion, RankingOrder},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
     },
     type_map::TypeMapValue,
 };
@@ -32,10 +37,18 @@ impl Compare for SonnebornBerger {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoreSonnebornBerger;
 
-#[typetag::serde]
 impl RankingCriterion for MoreSonnebornBerger {
-    fn order_rankings(&self, order: RankingOrder<'_, '_>) {
-        order.by_metric::<SonnebornBerger>();
+    type Metric = SonnebornBerger;
+
+    fn compare(&self, first: &SonnebornBerger, second: &SonnebornBerger) -> Comparison {
+        first.compare(second)
+    }
+}
+
+#[typetag::serde]
+impl SliceRanker for MoreSonnebornBerger {
+    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
+        rank_by(self, slice);
     }
 }
 

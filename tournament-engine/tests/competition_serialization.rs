@@ -23,7 +23,7 @@ use tournament_engine::{
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::{KnockoutRound, SingleElimination},
-        ranker::{HierarchicalRanker, LexicographicalCriteria},
+        ranker::HierarchicalRanker,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
@@ -89,20 +89,19 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
         let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
         apply(&mut sm, AddEntrant::new(entrant));
     }
-    let ranker = HierarchicalRanker::new(vec![Box::new(
-        LexicographicalCriteria::new()
-            .add_criterion(LaterFirstLoss)
-            .add_criterion(MorePoints)
-            .add_criterion(MoreBuchholz)
-            .add_criterion(MoreSonnebornBerger)
-            .add_criterion(MoreBuchholzOfBuchholz),
-    )]);
+    let ranker = HierarchicalRanker::new(vec![
+        Box::new(LaterFirstLoss),
+        Box::new(MorePoints),
+        Box::new(MoreBuchholz),
+        Box::new(MoreSonnebornBerger),
+        Box::new(MoreBuchholzOfBuchholz),
+    ]);
     apply(
         &mut sm,
         AddPhase::new(
             phase_id(),
             Box::new(SingleElimination::new()),
-            Box::new(ranker),
+            ranker,
             // the calculators run in this order, so every one of them that reads the metric of
             // another one has to be listed after it
             vec![
@@ -399,7 +398,7 @@ fn a_competition_with_a_bye_round_trips() {
         AddPhase::new(
             phase_id(),
             Box::new(SingleElimination::new()),
-            Box::new(HierarchicalRanker::new(vec![])),
+            HierarchicalRanker::default(),
             vec![Box::new(WinsDrawsLossesCalculator)],
         )
         .unwrap(),
