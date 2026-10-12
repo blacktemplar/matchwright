@@ -258,6 +258,12 @@ impl Path {
         Self::ROOT.field(field)
     }
 
+    /// The path of what this path is within, or [`None`] for the root.
+    pub(crate) fn parent(&self) -> Option<Self> {
+        let (_, parent) = self.0.split_last()?;
+        Some(Self(parent.to_vec()))
+    }
+
     /// This path followed by `segment`, i.e. one level further in.
     fn then(mut self, segment: Segment) -> Self {
         self.0.push(segment);

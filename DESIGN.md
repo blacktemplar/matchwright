@@ -246,11 +246,30 @@ has to be configured provides. Which kinds of plugin may be added is
 itself knows no axis. Resolution repeatedly collects the declarations and
 settles the first missing fact, each fact once, so it terminates even where
 nothing is added. A plugin configured explicitly always wins, since the fact it
-provides is never missing, and an added plugin is checked like every other one,
-so one that does not fit the phase — e.g. a calculator that cannot read a
-third-party match format — is reported as unmet rather than used. Consumers only
-configure calculators that need their configuration (points per win, ...) or
-that they want calculated without ranking by them.
+provides is never missing. Consumers only configure calculators that need their
+configuration (points per win, ...) or that they want calculated without ranking
+by them.
+
+**A fact is settled all or nothing.** What an added plugin requires and nothing
+provides is settled the same way, in turn, and the plugins found for one missing
+fact are added only together and only if none of them raises an issue: a fact
+provided twice, a fact still missing, a condition not met — on what they
+require or on what they provide to a plugin already there — or a cycle.
+Otherwise nothing is added and the original fact stays unprovided, an issue at
+the place the operator configured. So an automatic addition never leaves behind
+a problem with a plugin nobody chose, e.g. a calculator that cannot read a
+third-party match format. It also makes "this is settled automatically" a
+promise: a UI can mark or hide an unprovided fact that settling will fix, and
+show the plugins it will add, because adding them cannot make a new issue
+appear. Checking a chain needs the phase's context, since a requirement the
+context meets is no issue. Problems among the configured plugins themselves do
+not block an addition.
+
+*Implemented in `plugin-factory` (`draft::finish`, with the additions reported
+as `added_by_finish` by `draft::issues` and `draft::candidates`). The engine's
+`PhasePlugins::resolve` still adds a provider without checking it and reports
+what stays unmet; it is to be replaced by the plugin-factory mechanism rather
+than changed.*
 
 **Resolution happens before the transition, validation in it.** `AddPhase::new`
 resolves: it adds the missing plugins and sorts, and returns an error for a fact
@@ -302,6 +321,12 @@ change freely.
 - **The requiring plugin naming the default** (`requires_or(..)`). Two plugins
   could suggest different defaults for the same fact with nothing to settle
   which wins. Rejected; a requirement names a fact and nothing else.
+- **Adding a provider whatever it brings along**, checking it like every other
+  plugin afterwards (the engine's current resolution). A provider that does not
+  fit, or requires what nothing provides, turns one missing fact into a problem
+  with a plugin the operator never chose and cannot see in what they
+  configured, and a UI could not tell an issue settling fixes from one it
+  replaces. Superseded by settling all or nothing.
 - **Resolving inside `AddPhase::apply`.** Replay would then depend on which
   plugins are registered, so linking a crate in would change every saved log.
   Rejected.

@@ -182,7 +182,7 @@ impl Extend<TypeId> for OpenFacts {
 }
 
 /// Why plugins cannot be combined into one composite.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum Incompatibility {
     #[error("{first} and {second} both provide {fact}")]
     FactProvidedTwice {
