@@ -375,7 +375,7 @@ pub enum ConfigError {
     },
     #[error("the plugin answering {path} is not registered for the axis of the field")]
     UnknownPlugin { path: Path },
-    /// An answer in an unordered list is the same as one before it.
+    /// An answer in a list is the same as one before it.
     #[error("{path} repeats an earlier answer, but the list takes each answer only once")]
     Duplicate { path: Path },
     /// The plugin's `Deserialize` impl rejected the answer, e.g. through a custom error.

@@ -176,8 +176,9 @@ impl<T: Configurable> Draft<T> {
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers or the
     /// answer answers a field a schema does not have, [`ConfigError::WrongKind`] if an answer is
-    /// not one its field takes, and [`ConfigError::UnknownPlugin`] if a plugin in it is not
-    /// registered for the axis of its field, with paths seen from the root. Nothing is changed
+    /// not one its field takes, [`ConfigError::UnknownPlugin`] if a plugin in it is not
+    /// registered for the axis of its field, and [`ConfigError::Duplicate`] if a plugin it puts
+    /// into a list is in that list already, with paths seen from the root. Nothing is changed
     /// then.
     pub fn set(&mut self, path: &Path, answer: impl Into<Value>) -> Result<(), ConfigError> {
         set_in(&T::schema(), &mut self.answers, path, &answer.into())
@@ -240,7 +241,8 @@ pub fn default_value<T: Configurable>(
 /// A candidate takes the place of what answers the position, so it is checked against the answers
 /// without it, and only for what it declares itself: an incompatibility among the other answers is
 /// not its conflict. For a field taking a list the candidate is one of the plugins answering it,
-/// so the rest of the list is left out as well.
+/// so the rest of the list is left out as well. For a position in a list, a plugin answering
+/// another position of that list is no candidate.
 ///
 /// A fact the candidate requires and nothing provides is
 /// - [missing](Candidate::missing) if a field could still provide it: a field still unanswered, a
@@ -272,8 +274,20 @@ pub fn candidates<T: Configurable>(
         .iter()
         .filter(|placed| !is_within(&placed.path, Some(path)))
         .collect();
+    let taken: Vec<_> = match path.segments().last() {
+        Some(Segment::Index(_)) => {
+            let list = path.parent();
+            others
+                .iter()
+                .filter(|placed| placed.path.parent() == list)
+                .map(|placed| placed.id)
+                .collect()
+        }
+        _ => Vec::new(),
+    };
     Ok(axis
         .entries()
+        .filter(|entry| !taken.contains(&entry.id()))
         .map(|entry| candidate(&context, &others, &sources, entry))
         .collect())
 }
@@ -880,8 +894,14 @@ fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) ->
         open.extend(axis.facts().iter());
     }
     let mut added = Vec::new();
+    let mut offered = Vec::new();
     let mut fitting = Vec::new();
     for (entry, recommended) in recommended {
+        // a list takes each plugin once, so a plugin recommended by several siblings is offered
+        // where it is first recommended and fits
+        if offered.contains(&entry.id()) {
+            continue;
+        }
         // a recommendation is a whole answer, so what it declares includes the plugins answering
         // its fields
         let declaration = entry
@@ -897,6 +917,7 @@ fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) ->
         .is_ok()
         {
             added.push(declared);
+            offered.push(entry.id());
             fitting.push(Value::from(recommended));
             if !list {
                 break;
@@ -1178,7 +1199,12 @@ fn set_in(
 ) -> Result<(), ConfigError> {
     let position = locate(schema, answers, path)?;
     let answer = position.kind.walk(answer, path, false)?;
-    edit(answers, path, Some(answer));
+    let mut edited = answers.clone();
+    edit(&mut edited, path, Some(answer));
+    // a plugin put into a list repeats one of the list only next to the rest of it; the other
+    // answers were checked when they were set, so this finds nothing else
+    schema.walk(&edited, &Path::ROOT, false)?;
+    *answers = edited;
     Ok(())
 }
 
@@ -1265,6 +1291,8 @@ struct Tree {
 
 /// A plugin in the answers, built once with the tree.
 struct Placed {
+    /// The plugin's id, see [`PluginType::ID`](crate::PluginType::ID).
+    id: &'static str,
     path: Path,
     /// The path of the config whose field the plugin answers.
     parent: Path,
@@ -1373,6 +1401,7 @@ impl Placed {
         }
         let declared = Declared::new(format!("{} ({path})", entry.label()), declaration);
         Self {
+            id: entry.id(),
             path,
             parent: parent.clone(),
             instance,
@@ -1477,13 +1506,14 @@ mod tests {
     #[register]
     impl Format for Doubles {}
 
-    /// A format with a condition on the fact the context provides.
+    /// A format with a condition on the fact the context provides, recommending a metric twice.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "monster",
         label = "monster",
         description = "a plugin of the draft's tests",
-        declare_static = Self::declare_static
+        declare_static = Self::declare_static,
+        recommends = Self::recommends
     )]
     struct Monster;
 
@@ -1494,6 +1524,14 @@ mod tests {
                 "rankings of single players",
                 |entrants| entrants.0 == 1,
             );
+        }
+
+        fn recommends(&self) -> Vec<PluginConfig> {
+            vec![
+                PluginConfig::of::<Buchholz>(),
+                PluginConfig::of::<MatchCount>(),
+                PluginConfig::of::<Buchholz>(),
+            ]
         }
     }
 
@@ -1829,6 +1867,36 @@ mod tests {
     }
 
     #[test]
+    fn a_plugin_already_in_a_list_is_not_set_into_it_again() {
+        let mut draft = answered(&[("metrics", json!([plugin::<Wins>(), plugin::<Buchholz>()]))]);
+        let before = draft.answers().clone();
+        let duplicate = |at: &str| Err(ConfigError::Duplicate { path: path(at) });
+        let wins = || plugin::<Wins>().with("for_win", 2);
+
+        // whatever it is configured with, appended or in another position
+        assert_eq!(
+            draft.set(&path("metrics[2]"), wins()),
+            duplicate("metrics[2]")
+        );
+        assert_eq!(
+            draft.set(&path("metrics[1]"), wins()),
+            duplicate("metrics[1]")
+        );
+        assert_eq!(
+            draft.set(&path("metrics"), json!([wins(), wins()])),
+            duplicate("metrics[1]")
+        );
+        assert_eq!(draft.answers(), &before);
+
+        // a plugin replacing itself is no repeat
+        draft.set(&path("metrics[0]"), wins()).unwrap();
+        assert_eq!(
+            draft.answers().get("metrics"),
+            Some(&json!([wins(), plugin::<Buchholz>()]))
+        );
+    }
+
+    #[test]
     fn a_candidate_conflicting_with_the_context_says_why() {
         assert_eq!(
             candidates(&draft(), "format"),
@@ -1871,6 +1939,45 @@ mod tests {
                 Some("metrics[0]")
             )]
         );
+    }
+
+    #[test]
+    fn a_plugin_answering_another_position_of_a_list_is_no_candidate_there() {
+        let draft = answered(&[
+            ("metrics", json!([plugin::<Buchholz>(), plugin::<Wins>()])),
+            (
+                "tie_break",
+                plugin::<Combined>().with("parts", json!([])).into(),
+            ),
+        ]);
+        let ids = |at| -> Vec<_> {
+            candidates(&draft, at)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let all = [
+            "buchholz",
+            "combined",
+            "losses",
+            "match_count",
+            "score",
+            "wins",
+        ];
+
+        // the wins are left out whatever they are configured with
+        assert_eq!(
+            ids("metrics[2]"),
+            ["combined", "losses", "match_count", "score"]
+        );
+        // what answers the position itself stays a candidate, and so does what answers another
+        // field
+        assert_eq!(
+            ids("metrics[0]"),
+            ["buchholz", "combined", "losses", "match_count", "score"]
+        );
+        assert_eq!(ids("metrics"), all);
+        assert_eq!(ids("tie_break.parts[0]"), all);
     }
 
     #[test]
@@ -2122,6 +2229,16 @@ mod tests {
         assert_eq!(
             default_value(singles, &draft, &path("metrics")),
             Ok(Some(json!([plugin::<MatchCount>(), plugin::<Wins>()])))
+        );
+    }
+
+    #[test]
+    fn a_field_taking_a_list_offers_a_recommendation_once() {
+        let draft = answered(&[("format", plugin::<Monster>().into())]);
+
+        assert_eq!(
+            default_value(singles, &draft, &path("metrics")),
+            Ok(Some(json!([plugin::<Buchholz>(), plugin::<MatchCount>()])))
         );
     }
 

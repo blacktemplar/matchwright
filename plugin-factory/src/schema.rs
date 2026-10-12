@@ -269,9 +269,9 @@ impl Schema {
     /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema does not
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, and, if `complete`, [`ConfigError::Unanswered`] if a field is unanswered and
-    /// [`ConfigError::Duplicate`] if an unordered list gives an answer twice, each with its path
-    /// from the root.
+    /// axis, [`ConfigError::Duplicate`] if a list gives an answer twice, as
+    /// [`FieldKind::List`] counts answers as the same, and, if `complete`,
+    /// [`ConfigError::Unanswered`] if a field is unanswered, each with its path from the root.
     pub(crate) fn walk(
         &self,
         config: &Config,
@@ -383,11 +383,13 @@ pub enum FieldKind {
     Decimal,
     /// One plugin of the axis, answered by a [`PluginConfig`] naming a plugin registered for it.
     Plugin(AnyAxis),
-    /// Any number of answers of the kind `element`, answered by a [`Value::Array`].
+    /// Any number of distinct answers of the kind `element`, answered by a [`Value::Array`].
     ///
-    /// Unless `ordered`, the list is a set: the order of its answers means nothing, and a
-    /// complete config giving the same answer twice is rejected with [`ConfigError::Duplicate`].
-    /// Numbers count as the same if they are equal in value, e.g. `1` and `1.0`.
+    /// Giving the same answer twice is rejected with [`ConfigError::Duplicate`]. Two plugins count
+    /// as the same if they are the same plugin, whatever they are configured with, even in a
+    /// config that is still incomplete. Other answers count as the same only in a complete
+    /// config, numbers if they are equal in value, e.g. `1` and `1.0`. Unless `ordered`, the list
+    /// is a set: the order of its answers means nothing.
     List {
         element: Box<FieldKind>,
         ordered: bool,
@@ -405,7 +407,7 @@ impl FieldKind {
         Self::Plugin(AnyAxis::of::<A>())
     }
 
-    /// Any number of answers of the kind `element`, in an order that matters.
+    /// Any number of distinct answers of the kind `element`, in an order that matters.
     pub fn list(element: Self) -> Self {
         Self::List {
             element: Box::new(element),
@@ -452,7 +454,7 @@ impl FieldKind {
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
             (Self::Optional(inner), _) => inner.walk(answer, at, complete),
-            (Self::List { element, ordered }, Value::Array(answers)) => {
+            (Self::List { element, .. }, Value::Array(answers)) => {
                 let walked = answers
                     .iter()
                     .enumerate()
@@ -460,18 +462,15 @@ impl FieldKind {
                         element.walk(answer, &at.clone().index(position), complete)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                // an incomplete answer may still become different from an equal one
-                if complete && !ordered {
-                    let duplicate = (1..walked.len()).find(|&position| {
-                        walked[..position]
-                            .iter()
-                            .any(|earlier| same_answer(earlier, &walked[position]))
+                let duplicate = (1..walked.len()).find(|&position| {
+                    walked[..position]
+                        .iter()
+                        .any(|earlier| same_element(element, earlier, &walked[position], complete))
+                });
+                if let Some(position) = duplicate {
+                    return Err(ConfigError::Duplicate {
+                        path: at.clone().index(position),
                     });
-                    if let Some(position) = duplicate {
-                        return Err(ConfigError::Duplicate {
-                            path: at.clone().index(position),
-                        });
-                    }
                 }
                 Ok(Value::Array(walked))
             }
@@ -502,6 +501,27 @@ impl FieldKind {
             Self::List { .. } => "a list",
             Self::Optional(_) => "an optional answer",
         }
+    }
+}
+
+/// Whether `a` and `b`, walked answers of the kind `element` in one list, count as the same
+/// answer: two plugins if they are the same plugin, whatever they are configured with, and,
+/// only if `complete`, anything else as [`same_answer`] compares it.
+fn same_element(element: &FieldKind, a: &Value, b: &Value, complete: bool) -> bool {
+    match (plugin_id(element, a), plugin_id(element, b)) {
+        (Some(a), Some(b)) => a == b,
+        // an incomplete answer, e.g. a list in the list, may still become different from an
+        // equal one, while a plugin stays the plugin it is
+        _ => complete && same_answer(a, b),
+    }
+}
+
+/// The id of the plugin `answer`, a walked answer of `kind`, is, or [`None`] if it is none.
+fn plugin_id<'a>(kind: &FieldKind, answer: &'a Value) -> Option<&'a Value> {
+    match kind {
+        FieldKind::Plugin(_) => answer.get("type"),
+        FieldKind::Optional(inner) => plugin_id(inner, answer),
+        _ => None,
     }
 }
 
@@ -837,12 +857,13 @@ mod tests {
             duplicate(pool().with("shares", json!([1, 0.5, 1.0]))).as_deref(),
             Some("shares[2]")
         );
+        // a plugin is the same plugin whatever it is configured with
         assert_eq!(
             duplicate(pool().with(
                 "members",
                 vec![
                     PluginConfig::configured(Points::ID, points()),
-                    PluginConfig::configured(Points::ID, points().with("for_win", 1)),
+                    PluginConfig::configured(Points::ID, points().with("for_win", 2)),
                 ],
             ))
             .as_deref(),
@@ -851,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_repeated_in_a_set_is_no_error_unless_the_config_is_to_be_complete() {
+    fn a_plugin_repeated_in_a_list_is_an_error_even_if_the_config_is_incomplete() {
         let config = pool().with(
             "members",
             vec![
@@ -860,24 +881,46 @@ mod tests {
             ],
         );
 
-        assert!(Pool::schema().walk(&config, &Path::ROOT, false).is_ok());
         assert_eq!(
-            Pool::schema().walk(&config, &Path::ROOT, true),
-            Err(ConfigError::Unanswered {
-                path: Path::of("members").index(0).field("least"),
+            Pool::schema().walk(&config, &Path::ROOT, false),
+            Err(ConfigError::Duplicate {
+                path: Path::of("members").index(1),
             })
         );
     }
 
     #[test]
-    fn an_answer_repeated_in_an_ordered_list_is_no_error() {
+    fn another_answer_repeated_in_a_list_is_no_error_unless_the_config_is_to_be_complete() {
         let config = Config::new()
             .with("least", 2)
             .with("weights", vec![1.0, 1.0]);
 
+        assert!(
+            Threshold::schema()
+                .walk(&config, &Path::ROOT, false)
+                .is_ok()
+        );
         assert_eq!(
-            built::<Threshold>(config).as_deref(),
-            Ok("threshold(2, [1.0, 1.0])")
+            Threshold::schema().walk(&config, &Path::ROOT, true),
+            Err(ConfigError::Duplicate {
+                path: Path::of("weights").index(1),
+            })
+        );
+    }
+
+    #[test]
+    fn an_answer_repeated_in_an_ordered_list_is_an_error_too() {
+        let config = Config::new().with("least", 2);
+
+        assert_eq!(
+            built::<Threshold>(config.clone().with("weights", vec![2.0, 1.0])).as_deref(),
+            Ok("threshold(2, [2.0, 1.0])")
+        );
+        assert_eq!(
+            built::<Threshold>(config.with("weights", json!([1, 2.0, 1.0]))),
+            Err(ConfigError::Duplicate {
+                path: Path::of("weights").index(2),
+            })
         );
     }
 

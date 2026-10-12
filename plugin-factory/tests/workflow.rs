@@ -616,16 +616,11 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
     // a whole number answers a decimal field
     draft.set(&path("metrics[2].for_win"), 3).unwrap();
 
-    // the candidates for one more metric are the ones fitting next to the others; what they
-    // miss can still be added to the metrics
+    // the candidates for one more metric are the ones not in the list yet fitting next to the
+    // others; what they miss can still be added to the metrics
     assert_eq!(
         fitting(&draft, "metrics[3]"),
-        [
-            "full::buchholz",
-            "full::combined",
-            "full::losses",
-            "full::match_count"
-        ]
+        ["full::combined", "full::match_count"]
     );
     assert_conflict(
         &draft,
