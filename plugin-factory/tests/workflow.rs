@@ -5,7 +5,7 @@
 use plugin_factory::{
     Plugin, PluginType, axis,
     builder::{Builder, Issue, Problem},
-    catalog::{AnyAxis, Axis},
+    catalog::AnyAxis,
     compatibility::{Declaration, Incompatibility, check, order},
     config::{Config, ConfigError, Path, PluginConfig, Value},
     register,
@@ -273,10 +273,8 @@ struct Phase {
 }
 
 /// The context of a phase of single players.
-fn singles() -> Declaration {
-    Declaration::of(|declaration| {
-        declaration.provide(EntrantsPerRanking(1));
-    })
+fn singles(declaration: &mut Declaration) {
+    declaration.provide(EntrantsPerRanking(1));
 }
 
 /// The path written as `text`, e.g. `metrics[1].for_win`.
@@ -448,7 +446,7 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
     );
     assert_eq!(counts_byes.default_value(), Some(&json!(false)));
     // a plugin with fields taking plugins leads on to their axes
-    let combined = <dyn Metric>::entry("full::combined").unwrap().schema();
+    let combined = axes[1].1.entry("full::combined").unwrap().schema();
     assert_eq!(
         combined.fields()[0].kind().axis(),
         Some(AnyAxis::of::<dyn Metric>())
@@ -463,16 +461,16 @@ fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
     let buchholz = metric(plugin::<Buchholz>());
 
     assert_eq!(
-        check(&singles(), &[&*buchholz]),
+        check(singles, &[&*buchholz]),
         Err(Incompatibility::FactNotProvided {
             fact: "points",
             required_by: "Buchholz".to_owned(),
         })
     );
     // what a configuration adds counts as well
-    assert_eq!(check(&singles(), &[&*uncounting]), Ok(()));
+    assert_eq!(check(singles, &[&*uncounting]), Ok(()));
     assert_eq!(
-        check(&singles(), &[&*counting]),
+        check(singles, &[&*counting]),
         Err(Incompatibility::FactNotProvided {
             fact: "byes",
             required_by: format!("{counting:?}"),
@@ -482,7 +480,7 @@ fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
 
 #[test]
 fn an_operator_configures_a_phase_one_answer_at_a_time() {
-    let mut builder = Builder::<Phase>::new(singles());
+    let mut builder = Builder::<Phase>::new(singles);
     assert_eq!(
         questions(&builder),
         [
@@ -640,14 +638,14 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             "tie_break": null,
         })
     );
-    assert_eq!(check(&singles(), &phase.plugins()), Ok(()));
+    assert_eq!(check(singles, &phase.plugins()), Ok(()));
     // the buchholz runs after the metrics it requires
     assert_eq!(order(&phase.plugins()), Ok(vec![0, 1, 3, 4, 2]));
 }
 
 #[test]
 fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
-    let mut builder = Builder::<Phase>::new(singles());
+    let mut builder = Builder::<Phase>::new(singles);
     builder
         .set(&path("format"), plugin::<RoundRobin>())
         .unwrap();
@@ -694,7 +692,7 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
 
 #[test]
 fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
-    let mut builder = Builder::<Phase>::new(singles());
+    let mut builder = Builder::<Phase>::new(singles);
     builder
         .set(
             &path("format"),
@@ -725,7 +723,7 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
 
 #[test]
 fn a_saved_phase_loads_as_it_was_built() {
-    let mut builder = Builder::<Phase>::new(singles());
+    let mut builder = Builder::<Phase>::new(singles);
     builder
         .set(&path("format"), plugin::<RoundRobin>())
         .unwrap();
@@ -756,10 +754,10 @@ fn a_saved_phase_loads_as_it_was_built() {
         serde_json::to_value(&phase).unwrap()
     );
     let plugins = loaded.plugins();
-    assert_eq!(check(&singles(), &plugins), Ok(()));
+    assert_eq!(check(singles, &plugins), Ok(()));
     // the buchholz nested in the tie break counts with its requirements
     assert_eq!(
-        check(&singles(), &[plugins[0], plugins[3]]),
+        check(singles, &[plugins[0], plugins[3]]),
         Err(Incompatibility::FactNotProvided {
             fact: "points",
             required_by: format!("{:?}", plugins[3]),
@@ -786,12 +784,12 @@ fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
     // the wins have fields, so the score is the only provider of the points that is added, and
     // the match count the only one of the matches; the consumer then orders the metrics by what
     // they require
-    let builder = Builder::from_built(singles(), &phase).unwrap();
+    let builder = Builder::from_built(singles, &phase).unwrap();
     let phase = builder.finish().unwrap();
     assert_eq!(
         format!("{:?}", phase.metrics),
         "[Buchholz, Score, MatchCount]"
     );
-    assert_eq!(check(&singles(), &phase.plugins()), Ok(()));
+    assert_eq!(check(singles, &phase.plugins()), Ok(()));
     assert_eq!(order(&phase.plugins()), Ok(vec![0, 2, 3, 1]));
 }

@@ -77,7 +77,7 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 }
 
 /// A type a field of a derived plugin can have, see [`derive@Plugin`]: what kind of answer it
-/// takes and which plugins it holds.
+/// takes.
 ///
 /// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
 /// a plugin axis, and `Option` and `Vec` of any of them. A type that deserializes from one of
@@ -86,7 +86,9 @@ pub trait FieldType {
     /// The kind of answer a field of this type takes.
     fn kind() -> FieldKind;
 
-    /// Adds the plugins `self` holds to `plugins`; none by default.
+    /// Adds the plugins `self` holds to `plugins`; none by default. Called by the derive; not
+    /// part of the API.
+    #[doc(hidden)]
     fn plugins<'a>(&'a self, _plugins: &mut Vec<&'a dyn Plugin>) {}
 }
 
@@ -562,7 +564,9 @@ mod tests {
 
     /// The entry of the plugin `P`.
     fn entry_of<P: PluginType>() -> &'static PluginEntry {
-        <dyn Configured>::entry(P::ID).expect("the plugin is registered")
+        AnyAxis::of::<dyn Configured>()
+            .entry(P::ID)
+            .expect("the plugin is registered")
     }
 
     /// The summary of the plugin `P` as `config` configures it.

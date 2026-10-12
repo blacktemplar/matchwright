@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use plugin_factory::{
     Plugin, PluginType, axis,
-    catalog::{AnyAxis, Axis, PluginEntry},
+    catalog::{AnyAxis, PluginEntry},
     compatibility::{Declaration, Incompatibility, check},
     config::{ConfigError, Path, PluginConfig, Value},
     register,
@@ -189,7 +189,9 @@ struct Composite {
 
 /// The entry of the plugin `P`.
 fn entry_of<P: PluginType>() -> &'static PluginEntry {
-    <dyn Derived>::entry(P::ID).expect("the plugin is registered")
+    AnyAxis::of::<dyn Derived>()
+        .entry(P::ID)
+        .expect("the plugin is registered")
 }
 
 /// The field `name` of the schema of the plugin `P`.
@@ -221,7 +223,7 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), Some("points per result"));
     assert_eq!(entry_of::<Unit>().description(), None);
-    assert_eq!(<dyn Derived>::entries().count(), 3);
+    assert_eq!(AnyAxis::of::<dyn Derived>().entries().count(), 3);
 }
 
 #[test]
@@ -340,30 +342,30 @@ fn the_declaration_is_forwarded_to_the_functions_given() {
     let built = |points: PluginConfig| points.build::<dyn Derived>().unwrap();
     let counted = built(points());
     let uncounted = built(points().with("byes", false));
-    let matches = Declaration::of(|declaration| {
+    let matches = |declaration: &mut Declaration| {
         declaration.provide(Matches);
-    });
+    };
 
     // the static declaration requires the matches and provides a score
     assert_eq!(
-        check(&Declaration::new(), &[&*uncounted]),
+        check(|_| {}, &[&*uncounted]),
         Err(Incompatibility::FactNotProvided {
             fact: "the matches",
             required_by: format!("{uncounted:?}"),
         })
     );
-    assert_eq!(check(&matches, &[&*uncounted]), Ok(()));
+    assert_eq!(check(matches, &[&*uncounted]), Ok(()));
     assert_eq!(
-        check(&with(Scored), &[&*uncounted]),
+        check(with(Scored), &[&*uncounted]),
         Err(Incompatibility::FactProvidedByContext {
             fact: "Scored".to_owned(),
             provider: format!("{uncounted:?}"),
         })
     );
     // the configured one provides the counted byes if they are counted
-    assert_eq!(check(&with(ByesCounted), &[&*uncounted]), Ok(()));
+    assert_eq!(check(with(ByesCounted), &[&*uncounted]), Ok(()));
     assert_eq!(
-        check(&with(ByesCounted), &[&*counted]),
+        check(with(ByesCounted), &[&*counted]),
         Err(Incompatibility::FactProvidedByContext {
             fact: "ByesCounted".to_owned(),
             provider: format!("{counted:?}"),
@@ -372,10 +374,10 @@ fn the_declaration_is_forwarded_to_the_functions_given() {
 }
 
 /// A context providing the matches [`Points`] requires and `fact`.
-fn with<T: Debug + Sync + 'static>(fact: T) -> Declaration {
-    Declaration::of(|declaration| {
+fn with<T: Debug + Sync + 'static>(fact: T) -> impl FnOnce(&mut Declaration) {
+    |declaration| {
         declaration.provide(Matches).provide(fact);
-    })
+    }
 }
 
 #[test]
@@ -394,7 +396,7 @@ fn the_plugins_in_the_fields_are_the_plugins_it_holds() {
     assert!(Unit.plugins().is_empty());
     // what they declare is part of what it declares
     assert_eq!(
-        check(&with(ByesCounted), &[&ranker]),
+        check(with(ByesCounted), &[&ranker]),
         Err(Incompatibility::FactProvidedByContext {
             fact: "ByesCounted".to_owned(),
             provider: format!("{ranker:?}"),

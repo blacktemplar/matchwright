@@ -39,7 +39,7 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
             ::plugin_factory::__private::inventory::collect!(Registry);
 
             impl ::plugin_factory::catalog::Axis for dyn #axis {
-                fn __index() -> &'static ::plugin_factory::catalog::Index {
+                fn __index() -> &'static ::plugin_factory::__private::Index {
                     fn registered() -> ::std::vec::Vec<
                         &'static ::plugin_factory::catalog::PluginEntry,
                     > {
@@ -50,8 +50,8 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
                         .collect()
                     }
 
-                    static INDEX: ::plugin_factory::catalog::Index =
-                        ::plugin_factory::catalog::Index::new(registered);
+                    static INDEX: ::plugin_factory::__private::Index =
+                        ::plugin_factory::__private::Index::new(registered);
                     &INDEX
                 }
             }
@@ -63,7 +63,7 @@ pub fn expand(arguments: TokenStream, input: ItemTrait) -> Result<TokenStream> {
                 type Registry = Registry;
 
                 const REGISTRY: Registry =
-                    Registry(::plugin_factory::catalog::PluginEntry::new::<P>());
+                    Registry(::plugin_factory::__private::entry::<P>());
             }
         };
     })

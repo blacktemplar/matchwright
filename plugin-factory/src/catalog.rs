@@ -4,7 +4,7 @@
 //! implements [`Axis`]. A plugin registers itself for its axis with [`register`](crate::register),
 //! as one [`PluginEntry`], which describes it and states what it has to be told. Registration is
 //! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
-//! defining the axis.
+//! defining the axis. The plugins of an axis are browsed through its [`AnyAxis`].
 //!
 //! A program reads the catalog to offer the plugins of an axis to choose from, and to settle a
 //! fact a composite requires but none of its plugins provides, see
@@ -12,14 +12,13 @@
 
 use std::{
     any::{self, TypeId},
-    collections::BTreeMap,
     fmt::{self, Debug, Formatter},
-    sync::OnceLock,
 };
 
 use serde_json::Map;
 
 use crate::{
+    __private::Index,
     Plugin, PluginType,
     compatibility::{Declaration, OpenFacts, ProvidedFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
@@ -27,7 +26,8 @@ use crate::{
 };
 
 /// One axis of plugins, i.e. a plugin trait together with the registry the plugins of that trait
-/// register in, implemented for the trait object, e.g. `dyn Metric`.
+/// register in, implemented for the trait object, e.g. `dyn Metric`. Its plugins are browsed
+/// through [`AnyAxis::of`].
 ///
 /// Implemented by [`axis`](crate::axis) alone, which is also the only way to get the registry.
 /// The trait of an axis has [`Plugin`] as a supertrait, so that any plugin can be asked what it
@@ -40,7 +40,7 @@ use crate::{
 ///
 /// # Examples
 /// ```
-/// use plugin_factory::{Plugin, axis, catalog::Axis, register};
+/// use plugin_factory::{Plugin, axis, catalog::AnyAxis, register};
 /// use serde::{Deserialize, Serialize};
 ///
 /// /// How the entrants of a phase are seeded, an axis of a crate building on the engine.
@@ -64,75 +64,18 @@ use crate::{
 ///
 /// # fn main() {
 /// assert_eq!(
-///     <dyn Seeding>::entry("my_crate::by_rank").unwrap().label(),
+///     AnyAxis::of::<dyn Seeding>()
+///         .entry("my_crate::by_rank")
+///         .unwrap()
+///         .label(),
 ///     "by rank"
 /// );
 /// # }
 /// ```
 pub trait Axis: Plugin {
-    /// Every plugin registered for this axis, in the order of their ids.
-    ///
-    /// # Panics
-    /// Panics if two plugins are registered for this axis with the same id, see [`Self::entry`].
-    fn entries() -> impl Iterator<Item = &'static PluginEntry> {
-        Self::__index().entries().values().copied()
-    }
-
-    /// The plugin registered for this axis with the id `id`, see [`PluginType::ID`], or [`None`]
-    /// if none is.
-    ///
-    /// # Panics
-    /// Panics if two plugins are registered for this axis with the same id, naming the id and
-    /// both plugins. Every access to the catalog of the axis checks this.
-    fn entry(id: &str) -> Option<&'static PluginEntry> {
-        Self::__index().entries().get(id).copied()
-    }
-
-    /// The registry of this axis, see [`Index`].
+    /// The registry of this axis. Implemented by [`axis`](crate::axis); not part of the API.
     #[doc(hidden)]
     fn __index() -> &'static Index;
-}
-
-/// What is known of one axis: the plugins registered for it by id, and the facts they could
-/// provide, each built on first access. Held in a static by the code [`axis`](crate::axis)
-/// generates; not part of the API.
-#[doc(hidden)]
-pub struct Index {
-    registered: fn() -> Vec<&'static PluginEntry>,
-    entries: OnceLock<BTreeMap<&'static str, &'static PluginEntry>>,
-    facts: OnceLock<OpenFacts>,
-}
-
-impl Index {
-    /// The index of the plugins `registered` returns.
-    pub const fn new(registered: fn() -> Vec<&'static PluginEntry>) -> Self {
-        Self {
-            registered,
-            entries: OnceLock::new(),
-            facts: OnceLock::new(),
-        }
-    }
-
-    /// The registered plugins by id.
-    ///
-    /// # Panics
-    /// Panics if two of them share an id.
-    fn entries(&self) -> &BTreeMap<&'static str, &'static PluginEntry> {
-        self.entries.get_or_init(|| {
-            let mut index = BTreeMap::new();
-            for entry in (self.registered)() {
-                if let Some(other) = index.insert(entry.id, entry) {
-                    panic!(
-                        "the plugins {} and {} are both registered with the id {:?}",
-                        (other.type_name)(),
-                        (entry.type_name)(),
-                        entry.id,
-                    );
-                }
-            }
-            index
-        })
-    }
 }
 
 /// One plugin as it is registered in the catalog.
@@ -153,9 +96,8 @@ pub struct PluginEntry {
 }
 
 impl PluginEntry {
-    /// The entry of the plugin `P`, built by the code [`register`](crate::register) generates.
-    #[doc(hidden)]
-    pub const fn new<P: PluginType>() -> Self {
+    /// The entry of the plugin `P`.
+    pub(crate) const fn new<P: PluginType>() -> Self {
         Self {
             id: P::ID,
             label: P::LABEL,
@@ -255,6 +197,11 @@ impl PluginEntry {
         }
         Ok(walked.into())
     }
+
+    /// The name of the plugin's type, for an error message.
+    pub(crate) fn type_name(&self) -> &'static str {
+        (self.type_name)()
+    }
 }
 
 impl Debug for PluginEntry {
@@ -275,9 +222,8 @@ fn instantiate<P: PluginType>(config: &Value, at: &Path) -> Result<Box<dyn Plugi
     Ok(Box::new(config::deserialize::<P>(config, at)?))
 }
 
-/// An [`Axis`] as a value, i.e. the axis of the plugins a field takes, see
-/// [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin), through which its registered plugins
-/// can be browsed without naming the axis.
+/// An [`Axis`] as a value, through which its registered plugins are browsed, e.g. the axis of the
+/// plugins a field takes, see [`FieldKind::Plugin`](crate::schema::FieldKind::Plugin).
 ///
 /// Two values are equal if they are of the same axis.
 #[derive(Clone, Copy)]
@@ -295,19 +241,20 @@ impl AnyAxis {
         }
     }
 
-    /// Every plugin registered for this axis, in the order of their ids, see [`Axis::entries`].
+    /// Every plugin registered for this axis, in the order of their ids.
     ///
     /// # Panics
-    /// As [`Axis::entries`].
+    /// Panics if two plugins are registered for this axis with the same id, see [`Self::entry`].
     pub fn entries(&self) -> impl Iterator<Item = &'static PluginEntry> {
         (self.index)().entries().values().copied()
     }
 
-    /// The plugin registered for this axis with the id `id`, or [`None`] if none is, see
-    /// [`Axis::entry`].
+    /// The plugin registered for this axis with the id `id`, see [`PluginType::ID`], or [`None`]
+    /// if none is.
     ///
     /// # Panics
-    /// As [`Axis::entry`].
+    /// Panics if two plugins are registered for this axis with the same id, naming the id and
+    /// both plugins. Every access to the catalog of the axis checks this.
     pub fn entry(&self, id: &str) -> Option<&'static PluginEntry> {
         (self.index)().entries().get(id).copied()
     }
@@ -588,7 +535,9 @@ mod tests {
 
     /// The entry of the plugin `P`.
     fn entry_of<P: PluginType>() -> &'static PluginEntry {
-        <dyn Tested>::entry(P::ID).expect("the plugin is registered")
+        AnyAxis::of::<dyn Tested>()
+            .entry(P::ID)
+            .expect("the plugin is registered")
     }
 
     #[test]
@@ -636,7 +585,6 @@ mod tests {
     fn an_axis_as_a_value_finds_the_entries_of_the_axis() {
         let axis = AnyAxis::of::<dyn Tested>();
 
-        assert_eq!(axis.entries().count(), <dyn Tested>::entries().count());
         assert_eq!(
             axis.entry("wrapper").map(PluginEntry::label),
             Some("wrapper")
@@ -684,12 +632,15 @@ mod tests {
 
     #[test]
     fn an_id_no_plugin_is_registered_with_has_no_entry() {
-        assert!(<dyn Tested>::entry("unregistered").is_none());
+        assert!(AnyAxis::of::<dyn Tested>().entry("unregistered").is_none());
     }
 
     #[test]
     fn the_plugins_of_an_axis_come_in_the_order_of_their_ids() {
-        let ids: Vec<_> = <dyn Tested>::entries().map(PluginEntry::id).collect();
+        let ids: Vec<_> = AnyAxis::of::<dyn Tested>()
+            .entries()
+            .map(PluginEntry::id)
+            .collect();
 
         assert_eq!(
             ids,
@@ -702,12 +653,6 @@ mod tests {
                 "only_provider",
                 "wrapper",
             ]
-        );
-        assert!(
-            AnyAxis::of::<dyn Tested>()
-                .entries()
-                .map(PluginEntry::id)
-                .eq(ids)
         );
     }
 
@@ -771,12 +716,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "are both registered with the id \"clash\"")]
     fn two_plugins_registered_with_the_same_id_panic_on_access() {
-        <dyn Clashing>::entry("clash");
+        AnyAxis::of::<dyn Clashing>().entry("clash");
     }
 
     #[test]
     fn the_panic_on_a_shared_id_names_both_plugins() {
-        let message = std::panic::catch_unwind(|| <dyn Clashing>::entries().count())
+        let message = std::panic::catch_unwind(|| AnyAxis::of::<dyn Clashing>().entries().count())
             .unwrap_err()
             .downcast::<String>()
             .unwrap();

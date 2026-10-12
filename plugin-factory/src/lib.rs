@@ -35,8 +35,11 @@
 //!     seeding: Box<dyn Seeding>,
 //! }
 //! # fn main() {
-//! # use plugin_factory::catalog::Axis;
-//! # assert_eq!(<dyn Seeding>::entry("my_crate::random").unwrap().label(), "random");
+//! # use plugin_factory::catalog::AnyAxis;
+//! # assert_eq!(
+//! #     AnyAxis::of::<dyn Seeding>().entry("my_crate::random").unwrap().label(),
+//! #     "random"
+//! # );
 //! # assert_eq!(Phase::schema().fields()[0].name(), "seeding");
 //! # }
 //! ```
@@ -60,7 +63,7 @@ pub use plugin_factory_derive::{Plugin, axis, register};
 /// plugin behind a `dyn` is asked through. Not part of the API.
 #[doc(hidden)]
 pub mod __private {
-    use std::{any::Any, fmt::Debug};
+    use std::{any::Any, collections::BTreeMap, fmt::Debug, sync::OnceLock};
 
     // so that a crate declaring an axis or registering a plugin does not have to depend on them
     pub use inventory;
@@ -68,9 +71,58 @@ pub mod __private {
     use serde_json::value::Serializer;
 
     use crate::{
-        Plugin, PluginType, catalog::Axis, compatibility::Declaration, config::Value,
+        Plugin, PluginType,
+        catalog::{Axis, PluginEntry},
+        compatibility::{Declaration, OpenFacts},
+        config::Value,
         schema::Configurable,
     };
+
+    /// What is known of one axis: the plugins registered for it by id, and the facts they could
+    /// provide, each built on first access. Held in a static by the code [`axis`](crate::axis)
+    /// generates.
+    pub struct Index {
+        registered: fn() -> Vec<&'static PluginEntry>,
+        entries: OnceLock<BTreeMap<&'static str, &'static PluginEntry>>,
+        pub(crate) facts: OnceLock<OpenFacts>,
+    }
+
+    impl Index {
+        /// The index of the plugins `registered` returns.
+        pub const fn new(registered: fn() -> Vec<&'static PluginEntry>) -> Self {
+            Self {
+                registered,
+                entries: OnceLock::new(),
+                facts: OnceLock::new(),
+            }
+        }
+
+        /// The registered plugins by id.
+        ///
+        /// # Panics
+        /// Panics if two of them share an id.
+        pub(crate) fn entries(&self) -> &BTreeMap<&'static str, &'static PluginEntry> {
+            self.entries.get_or_init(|| {
+                let mut index = BTreeMap::new();
+                for entry in (self.registered)() {
+                    if let Some(other) = index.insert(entry.id(), entry) {
+                        panic!(
+                            "the plugins {} and {} are both registered with the id {:?}",
+                            other.type_name(),
+                            entry.type_name(),
+                            entry.id(),
+                        );
+                    }
+                }
+                index
+            })
+        }
+    }
+
+    /// The entry of the plugin `P`, which [`register`](crate::register) submits.
+    pub const fn entry<P: PluginType>() -> PluginEntry {
+        PluginEntry::new::<P>()
+    }
 
     /// A fact, see [`compatibility`](crate::compatibility): a value of any `'static + Debug +
     /// Sync` type, identified by its type.

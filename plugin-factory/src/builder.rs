@@ -36,7 +36,6 @@ use crate::{
 /// use plugin_factory::{
 ///     Plugin, axis,
 ///     builder::Builder,
-///     compatibility::Declaration,
 ///     config::{Config, Path, PluginConfig, Value},
 ///     register,
 ///     schema::{Configurable, FieldKind, Schema},
@@ -102,7 +101,7 @@ use crate::{
 /// }
 ///
 /// # fn main() {
-/// let mut builder = Builder::<Phase>::new(Declaration::new());
+/// let mut builder = Builder::<Phase>::new(|_| {});
 /// builder
 ///     .set(
 ///         &"seedings".parse().unwrap(),
@@ -130,9 +129,9 @@ pub struct Builder<T> {
 impl<T: Configurable> Builder<T> {
     /// A builder with nothing answered, for a composite with `context`, i.e. what is true of it
     /// before any plugin is chosen, see [`compatibility::check`].
-    pub fn new(context: Declaration) -> Self {
+    pub fn new(context: impl FnOnce(&mut Declaration)) -> Self {
         Self {
-            context,
+            context: Declaration::of(context),
             answers: Config::new(),
             composite: PhantomData,
         }
@@ -145,7 +144,10 @@ impl<T: Configurable> Builder<T> {
     /// # Errors
     /// Returns [`ConfigError::Rejected`] at the root if `composite` does not serialize to a
     /// config, and what [`Self::set`] returns for an answer that is not one of the schema.
-    pub fn from_built(context: Declaration, composite: &T) -> Result<Self, ConfigError>
+    pub fn from_built(
+        context: impl FnOnce(&mut Declaration),
+        composite: &T,
+    ) -> Result<Self, ConfigError>
     where
         T: Serialize,
     {
@@ -156,7 +158,7 @@ impl<T: Configurable> Builder<T> {
                 reason: error.to_string(),
             })?;
         Ok(Self {
-            context,
+            context: Declaration::of(context),
             answers: T::schema().walk(&answers, &Path::ROOT, false)?,
             composite: PhantomData,
         })
@@ -1126,11 +1128,14 @@ mod tests {
         tie_break: Option<Box<dyn Metric>>,
     }
 
+    /// The context of a phase of single players.
+    fn singles(declaration: &mut Declaration) {
+        declaration.provide(EntrantsPerRanking(1));
+    }
+
     /// A builder of a phase of single players.
     fn builder() -> Builder<Phase> {
-        Builder::new(Declaration::of(|declaration| {
-            declaration.provide(EntrantsPerRanking(1));
-        }))
+        Builder::new(singles)
     }
 
     /// The path written as `text`, e.g. `metrics[1].for_win`.
@@ -1584,7 +1589,7 @@ mod tests {
         #[derive(Debug, Deserialize, Configurable)]
         struct Nothing;
 
-        assert!(Builder::<Nothing>::new(Declaration::new()).finish().is_ok());
+        assert!(Builder::<Nothing>::new(|_| {}).finish().is_ok());
     }
 
     #[test]
@@ -1667,13 +1672,7 @@ mod tests {
             metrics: vec![Box::new(Buchholz), Box::new(Score)],
             tie_break: None,
         };
-        let builder = Builder::from_built(
-            Declaration::of(|declaration| {
-                declaration.provide(EntrantsPerRanking(1));
-            }),
-            &phase,
-        )
-        .unwrap();
+        let builder = Builder::from_built(singles, &phase).unwrap();
 
         assert_eq!(
             builder.answers().get("format"),
@@ -2014,7 +2013,7 @@ mod tests {
         /// requirements requiring the facts named in `requires`, its lists empty and `answers`
         /// set, or the facts it reports unprovided, each with the path it reports it at.
         fn finished<C: Configurable + Serialize>(
-            context: Declaration,
+            context: impl FnOnce(&mut Declaration),
             requires: &[&str],
             answers: &[(&str, Value)],
         ) -> Result<Vec<String>, Vec<(String, &'static str)>> {
@@ -2060,7 +2059,7 @@ mod tests {
         fn the_providers_of_what_an_added_plugin_requires_are_added_too() {
             // a plugin with fields does not make the settled fact ambiguous
             assert_eq!(
-                finished::<Resolved>(Declaration::new(), &["downstream"], &[]),
+                finished::<Resolved>(|_| {}, &["downstream"], &[]),
                 Ok(vec!["chaining".to_owned(), "settling".to_owned()])
             );
         }
@@ -2068,7 +2067,7 @@ mod tests {
         #[test]
         fn a_provider_is_added_to_the_list_taking_its_axis() {
             assert_eq!(
-                finished::<Resolved>(Declaration::new(), &["deep"], &[]),
+                finished::<Resolved>(|_| {}, &["deep"], &[]),
                 Ok(vec!["deepening".to_owned()])
             );
         }
@@ -2076,7 +2075,7 @@ mod tests {
         #[test]
         fn a_fact_plugins_of_two_lists_provide_is_left_unprovided() {
             assert_eq!(
-                finished::<Resolved>(Declaration::new(), &["crosswise"], &[]),
+                finished::<Resolved>(|_| {}, &["crosswise"], &[]),
                 Err(vec![
                     ("supplies".to_owned(), "the crosswise fact"),
                     ("extras".to_owned(), "the crosswise fact"),
@@ -2086,9 +2085,9 @@ mod tests {
 
         #[test]
         fn nothing_is_added_for_a_fact_the_context_provides() {
-            let context = Declaration::of(|declaration| {
+            let context = |declaration: &mut Declaration| {
                 declaration.provide(Settled);
-            });
+            };
 
             assert_eq!(
                 finished::<Resolved>(context, &["settled"], &[]),
@@ -2099,7 +2098,7 @@ mod tests {
         #[test]
         fn an_ambiguous_fact_is_left_unprovided_and_the_others_settled() {
             assert_eq!(
-                finished::<Resolved>(Declaration::new(), &["ambiguous", "settled"], &[]),
+                finished::<Resolved>(|_| {}, &["ambiguous", "settled"], &[]),
                 Err(vec![("supplies".to_owned(), "the ambiguous fact")])
             );
         }
@@ -2107,7 +2106,7 @@ mod tests {
         #[test]
         fn a_single_slot_is_never_added_to() {
             assert_eq!(
-                finished::<Resolved>(Declaration::new(), &["lone"], &[]),
+                finished::<Resolved>(|_| {}, &["lone"], &[]),
                 Err(vec![("requirements".to_owned(), "the lone fact")])
             );
         }
@@ -2116,7 +2115,7 @@ mod tests {
         fn a_list_of_a_plugin_is_never_added_to() {
             assert_eq!(
                 finished::<Resolved>(
-                    Declaration::new(),
+                    |_| {},
                     &["nested"],
                     &[(
                         "supplies",
@@ -2133,7 +2132,7 @@ mod tests {
         #[test]
         fn an_axis_two_lists_take_is_never_added_to() {
             assert_eq!(
-                finished::<Twice>(Declaration::new(), &["settled"], &[]),
+                finished::<Twice>(|_| {}, &["settled"], &[]),
                 Err(vec![
                     ("first".to_owned(), "the settled fact"),
                     ("second".to_owned(), "the settled fact"),

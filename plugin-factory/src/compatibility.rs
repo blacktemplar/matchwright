@@ -65,7 +65,7 @@ pub struct Declaration {
 
 impl Declaration {
     /// A declaration of nothing.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             provided: vec![],
             required: vec![],
@@ -73,7 +73,7 @@ impl Declaration {
     }
 
     /// The declaration `declare` makes.
-    pub fn of(declare: impl FnOnce(&mut Self)) -> Self {
+    pub(crate) fn of(declare: impl FnOnce(&mut Self)) -> Self {
         let mut declaration = Self::new();
         declare(&mut declaration);
         declaration
@@ -134,12 +134,6 @@ impl Declaration {
     /// Whether this declaration provides a fact of the type `type_id`.
     pub(crate) fn provides_type(&self, type_id: TypeId) -> bool {
         self.provided.iter().any(|fact| fact.type_id() == type_id)
-    }
-}
-
-impl Default for Declaration {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -213,17 +207,25 @@ pub enum Incompatibility {
     CyclicRequirements { plugins: Vec<String> },
 }
 
-/// Checks that none of `plugins` provides a fact `context` or another one of them provides
-/// already, and that every fact they require is provided and meets the condition it is required
-/// with. What a plugin declares includes what the plugins it holds declare, see
-/// [`Configurable::plugins`](crate::schema::Configurable::plugins).
+/// Checks that none of `plugins` provides a fact the composite's `context` or another one of them
+/// provides already, and that every fact they require is provided and meets the condition it is
+/// required with. `context` declares what is true of the composite apart from its plugins, as a
+/// plugin declares; `|_| {}` declares nothing. What a plugin declares includes what the plugins it
+/// holds declare, see [`Configurable::plugins`](crate::schema::Configurable::plugins).
 ///
 /// An [`Incompatibility`] names a plugin by its [`Debug`] form.
 ///
 /// # Errors
 /// Returns the first incompatibility found.
-pub fn check(context: &Declaration, plugins: &[&dyn Plugin]) -> Result<(), Incompatibility> {
-    check_facts(context, &declared(plugins), &OpenFacts::NOTHING)
+pub fn check(
+    context: impl FnOnce(&mut Declaration),
+    plugins: &[&dyn Plugin],
+) -> Result<(), Incompatibility> {
+    check_facts(
+        &Declaration::of(context),
+        &declared(plugins),
+        &OpenFacts::NOTHING,
+    )
 }
 
 /// An order in which `plugins` can run one after another, so that each runs after the plugins
@@ -618,14 +620,14 @@ mod tests {
         let composite = composite();
 
         assert_eq!(
-            check(&Declaration::new(), &[&composite]),
+            check(|_| {}, &[&composite]),
             Err(Incompatibility::FactNotProvided {
                 fact: "a derived fact",
                 required_by: format!("{composite:?}"),
             })
         );
         // the annotation the deriving plugin requires comes from the leaf inside the composite
-        assert_eq!(check(&Declaration::new(), &[&composite, &Deriving]), Ok(()));
+        assert_eq!(check(|_| {}, &[&composite, &Deriving]), Ok(()));
     }
 
     #[test]
