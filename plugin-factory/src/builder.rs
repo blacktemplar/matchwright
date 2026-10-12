@@ -171,7 +171,7 @@ impl<T: Configurable> Builder<T> {
     /// position in a list rather than a field.
     ///
     /// A field taking plugins offers what the plugins answering the other fields of its config
-    /// recommend, see [`Plugin::recommends`](crate::Plugin::recommends), as far as it is of its
+    /// recommend, see [`Plugin::recommends`], as far as it is of its
     /// axis and fits as a [candidate](Self::candidates) would: a field taking one plugin the first
     /// such recommendation, a field taking a list all of them that fit together, in the order they
     /// are recommended in. A field no recommendation fits offers the default of its schema.

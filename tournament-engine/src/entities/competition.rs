@@ -645,7 +645,7 @@ impl MatchId {
 ///
 /// Beyond who plays it, its round and its result, a match holds `annotations`: data that describes
 /// it, keyed by type, such as which stage of a knockout it belongs to. The
-/// [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) scheduling the match gives them when
+/// [`PhaseFormat`] scheduling the match gives them when
 /// creating it, with [`Match::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Match {
@@ -809,7 +809,7 @@ impl Match {
 pub struct ByeId(Uuid);
 
 /// A round of a phase in which a ranking has no match to play, as decided by the
-/// [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) that schedules it.
+/// [`PhaseFormat`] that schedules it.
 ///
 /// A bye is final as soon as it is scheduled: it has no result to report, and the metrics of its
 /// ranking are updated right away, see [`MetricsCalculator::update_after_bye`]. Like a match it

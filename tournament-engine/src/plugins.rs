@@ -151,8 +151,8 @@ impl PhasePlugins {
     }
 }
 
-/// A phase can calculate any number of metrics, so a calculator the catalog settles on is added
-/// after the ones already configured; [`PhasePlugins::resolve`] sorts them afterwards.
+// A phase can calculate any number of metrics, so a calculator the catalog settles on is added
+// after the ones already configured; `PhasePlugins::resolve` sorts them afterwards.
 impl Accepts<MetricsCalculatorKind> for PhasePlugins {
     fn add(&mut self, plugin: Box<dyn MetricsCalculator>) {
         self.metrics_calculators.push(plugin);

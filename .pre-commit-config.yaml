@@ -24,7 +24,7 @@ repos:
 
       - id: cargo-doc
         name: cargo doc
-        entry: cargo doc --workspace --no-deps
+        entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
         language: system
         types: [rust]
         pass_filenames: false
