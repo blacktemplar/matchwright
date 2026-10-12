@@ -168,7 +168,8 @@ impl<T: Configurable> Builder<T> {
     }
 
     /// The answer the field at `path` offers, or [`None`] if it offers none or `path` addresses a
-    /// position in a list rather than a field.
+    /// position in a list rather than a field. It is never filled in: a UI offering it sets it
+    /// as the answer, see [`Self::set`].
     ///
     /// A field taking plugins offers what the plugins answering the other fields of its config
     /// recommend, see [`Plugin::recommends`], as far as it is of its
@@ -232,7 +233,8 @@ impl<T: Configurable> Builder<T> {
     /// particular order: an answer a plugin rejects, a plugin that does not fit next to the
     /// others, and a fact a plugin requires that nothing provides and no unanswered field could.
     ///
-    /// A field without a default left unanswered is no issue, but still to be answered.
+    /// An unanswered field is no issue, but still to be answered. A plugin with an unanswered
+    /// field counts with its static declaration only and recommends nothing.
     pub fn issues(&self) -> Vec<Issue> {
         self.issues_in(&Tree::of(&T::schema(), &self.answers), false)
     }
@@ -375,24 +377,21 @@ impl<T: Configurable> Builder<T> {
         Ok(())
     }
 
-    /// The composite, built from the answers with every unanswered field answered by its
-    /// [default](Self::default) and every fact settled that the catalog settles.
+    /// The composite, built from the answers with every fact settled that the catalog settles.
     ///
-    /// The defaults are accepted as if an operator accepted each one, depth first in schema
-    /// order: a field taking plugins before the fields of the plugins answering it. A fact a
-    /// plugin requires and neither the plugins nor the context provide is then settled if exactly
-    /// one plugin needing no configuration provides it among the axes of the fields of the
-    /// composite taking a list of plugins, and its axis is taken by one such field only: the
-    /// plugin is appended to that field. A field taking one plugin, and a field of a plugin, is
-    /// never added to. Both repeat until nothing changes, so a plugin added is configured by its
-    /// defaults and what it requires is settled in turn.
+    /// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
+    /// neither the plugins nor the context provide is settled if exactly one plugin without
+    /// fields provides it among the axes of the fields of the composite taking a list of plugins,
+    /// and its axis is taken by one such field only: the plugin is appended to that field. A
+    /// field taking one plugin, and a field of a plugin, is never added to. This repeats until
+    /// nothing changes, so what a plugin added requires is settled in turn.
     ///
     /// Leaves the builder as it is, so that a failed composite can be fixed and finished again.
     ///
     /// # Errors
-    /// Returns the [issues](Self::issues) of the answers so completed, with nothing open any
-    /// more: a field without a default unanswered is an [`Problem::Invalid`] issue with
-    /// [`ConfigError::Unanswered`], and a fact nothing provides is [`Problem::Unprovided`].
+    /// Returns the [issues](Self::issues) of the answers so settled, with nothing open any more:
+    /// an unanswered field is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and
+    /// a fact nothing provides is [`Problem::Unprovided`].
     pub fn finish(&self) -> Result<T, Vec<Issue>> {
         let schema = T::schema();
         let invalid = |error: ConfigError| {
@@ -403,43 +402,13 @@ impl<T: Configurable> Builder<T> {
         };
         let mut answers = self.answers.clone();
         let mut tried = Vec::new();
-        loop {
-            self.accept_defaults(&schema, &mut answers)
-                .map_err(invalid)?;
-            if !self.settle(&schema, &mut answers, &mut tried) {
-                break;
-            }
-        }
+        while self.settle(&schema, &mut answers, &mut tried) {}
         let issues = self.issues_in(&Tree::of(&schema, &answers), true);
         if !issues.is_empty() {
             return Err(issues);
         }
-        let completed = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
-        config::deserialize(&completed.into(), &Path::ROOT).map_err(invalid)
-    }
-
-    /// Answers every unanswered field of `answers`, the answers to `schema`, that offers a
-    /// default with it, see [`Self::finish`].
-    ///
-    /// # Errors
-    /// Returns why a default is not one its field takes.
-    fn accept_defaults(&self, schema: &Schema, answers: &mut Config) -> Result<(), ConfigError> {
-        // accepting a default changes the questions after it, so the tree is built anew each time
-        loop {
-            let tree = Tree::of(schema, answers);
-            let Some((path, default)) = tree
-                .questions
-                .iter()
-                .filter(|question| question.answer.is_none())
-                .find_map(|question| {
-                    let default = self.default_of(&tree, &question.field, &question.path)?;
-                    Some((&question.path, default))
-                })
-            else {
-                return Ok(());
-            };
-            set_in(schema, answers, path, &default)?;
-        }
+        let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
+        config::deserialize(&walked.into(), &Path::ROOT).map_err(invalid)
     }
 
     /// Settles the first fact the plugins in `answers`, the answers to `schema`, require that
@@ -465,6 +434,7 @@ impl<T: Configurable> Builder<T> {
             tried.push(fact);
             // an axis taken by two fields offers each provider twice, so it is never settled
             let mut providers = lists.iter().flat_map(|(name, axis)| {
+                // only a plugin without fields is complete without being asked anything
                 axis.entries()
                     .filter(move |entry| {
                         entry.declaration().provides_type(fact)
@@ -783,8 +753,8 @@ struct Placed {
     path: Path,
     /// The path of the config whose field the plugin answers.
     parent: Path,
-    /// The plugin built from its config with every unanswered field answered by its default, or
-    /// why it cannot be, see [`PluginEntry::instance`].
+    /// The plugin built from its config, or why it cannot be, e.g. because a field is still
+    /// unanswered, see [`PluginEntry::instance`].
     instance: Result<Box<dyn Plugin>, ConfigError>,
     /// What the plugin declares itself, without the plugins answering its fields, which are
     /// placed in the tree themselves: what its configuration declares if it is built, and its
@@ -1548,10 +1518,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn finishing_accepts_every_default_depth_first_in_schema_order() {
-        let builder = answered(&[("format", plugin::<RoundRobin>().into())]);
+    /// Answers every unanswered field of `builder` that offers an answer with it, depth first in
+    /// schema order, as a UI accepting every default does.
+    fn accept_defaults(builder: &mut Builder<Phase>) {
+        while let Some(at) = Tree::of(&Phase::schema(), builder.answers())
+            .questions
+            .into_iter()
+            .find(|question| {
+                question.answer.is_none() && builder.default(&question.path) != Ok(None)
+            })
+            .map(|question| question.path)
+        {
+            let default = builder.default(&at).unwrap().unwrap();
+            builder.set(&at, default).unwrap();
+        }
+    }
 
+    #[test]
+    fn finishing_fills_in_no_default() {
+        let mut builder = answered(&[("format", plugin::<RoundRobin>().into())]);
+        let unanswered = |at: &str| Issue {
+            path: path(at),
+            problem: Problem::Invalid(ConfigError::Unanswered { path: path(at) }),
+        };
+
+        assert_eq!(
+            builder.finish().err(),
+            Some(vec![unanswered("metrics"), unanswered("tie_break")])
+        );
+        accept_defaults(&mut builder);
         assert_eq!(
             builder.finish().map(|phase| format!("{phase:?}")),
             Ok(format!(
@@ -1563,19 +1558,22 @@ mod tests {
                 }
             ))
         );
-        assert_eq!(builder.answers().get("metrics"), None);
     }
 
     #[test]
-    fn finishing_with_a_field_without_a_default_unanswered_fails() {
+    fn finishing_with_an_unanswered_field_fails() {
+        let unanswered = |at: &str| Issue {
+            path: path(at),
+            problem: Problem::Invalid(ConfigError::Unanswered { path: path(at) }),
+        };
+
         assert_eq!(
             builder().finish().err(),
-            Some(vec![Issue {
-                path: path("format"),
-                problem: Problem::Invalid(ConfigError::Unanswered {
-                    path: path("format"),
-                }),
-            }])
+            Some(vec![
+                unanswered("format"),
+                unanswered("metrics"),
+                unanswered("tie_break"),
+            ])
         );
     }
 
@@ -1584,6 +1582,7 @@ mod tests {
         let builder = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>().with("for_win", -1.0)])),
+            ("tie_break", Value::Null),
         ]);
 
         assert_eq!(
@@ -1600,7 +1599,10 @@ mod tests {
 
     #[test]
     fn finishing_reports_with_nothing_open() {
-        let builder = answered(&[("metrics", json!([plugin::<Losses>()]))]);
+        let builder = answered(&[
+            ("metrics", json!([plugin::<Losses>()])),
+            ("tie_break", Value::Null),
+        ]);
 
         // the unanswered format could still provide the eliminations
         assert_eq!(builder.issues(), []);
@@ -1627,34 +1629,16 @@ mod tests {
 
     #[test]
     fn finishing_settles_what_a_single_plugin_provides() {
-        let builder = answered(&[
-            ("format", plugin::<Knockout>().into()),
-            ("metrics", json!([plugin::<Buchholz>()])),
-        ]);
-        let unprovided = || Problem::Unprovided {
-            fact: "points",
-            required_by: path("metrics[0]"),
-            providers: vec!["score", "wins"],
-        };
-
-        // the matches are settled, the points have two providers
-        assert_eq!(
-            builder.finish().err(),
-            Some(vec![
-                Issue {
-                    path: path("metrics"),
-                    problem: unprovided(),
-                },
-                Issue {
-                    path: path("tie_break"),
-                    problem: unprovided(),
-                },
-            ])
-        );
         let settled = answered(&[
-            ("format", plugin::<Knockout>().into()),
-            ("metrics", json!([plugin::<Buchholz>(), plugin::<Score>()])),
+            (
+                "format",
+                plugin::<Knockout>().with("third_place", false).into(),
+            ),
+            ("metrics", json!([plugin::<Buchholz>()])),
+            ("tie_break", Value::Null),
         ]);
+
+        // wins has a field, so score is the only plugin providing the points that is added
         assert_eq!(
             settled.finish().map(|phase| format!("{:?}", phase.metrics)),
             Ok("[Buchholz, Score, MatchCount]".to_owned())
@@ -1662,7 +1646,7 @@ mod tests {
         // finishing leaves the answers as they were
         assert_eq!(
             settled.answers().get("metrics"),
-            Some(&json!([plugin::<Buchholz>(), plugin::<Score>()]))
+            Some(&json!([plugin::<Buchholz>()]))
         );
     }
 
@@ -1825,7 +1809,7 @@ mod tests {
         #[register]
         impl Need for Alone {}
 
-        /// The only plugin needing no configuration that provides [`Settled`].
+        /// The only plugin without fields that provides [`Settled`].
         #[derive(Debug, Serialize, Deserialize, Plugin)]
         #[plugin(
             id = "settling",
@@ -2017,20 +2001,26 @@ mod tests {
         }
 
         /// The ids of the plugins in the lists of the composite `C` finished with `context`, its
-        /// requirements requiring the facts named in `requires` and `answers` set, or the facts
-        /// it reports unprovided, each with the path it reports it at.
+        /// requirements requiring the facts named in `requires`, its lists empty and `answers`
+        /// set, or the facts it reports unprovided, each with the path it reports it at.
         fn finished<C: Configurable + Serialize>(
             context: Declaration,
             requires: &[&str],
             answers: &[(&str, Value)],
         ) -> Result<Vec<String>, Vec<(String, &'static str)>> {
-            let requiring = requires
+            let requiring = Requiring::schema()
+                .fields()
                 .iter()
-                .fold(plugin::<Requiring>(), |requiring, fact| {
-                    requiring.with(*fact, true)
+                .fold(plugin::<Requiring>(), |requiring, field| {
+                    requiring.with(field.name(), requires.contains(&field.name()))
                 });
             let mut builder = Builder::<C>::new(context);
             builder.set(&path("requirements"), requiring).unwrap();
+            for field in C::schema().fields() {
+                if matches!(field.kind(), FieldKind::List(_)) {
+                    builder.set(&path(field.name()), json!([])).unwrap();
+                }
+            }
             for (at, answer) in answers {
                 builder.set(&path(at), answer.clone()).unwrap();
             }
@@ -2058,7 +2048,7 @@ mod tests {
 
         #[test]
         fn the_providers_of_what_an_added_plugin_requires_are_added_too() {
-            // a plugin that has to be configured does not make the settled fact ambiguous
+            // a plugin with fields does not make the settled fact ambiguous
             assert_eq!(
                 finished::<Resolved>(Declaration::new(), &["downstream"], &[]),
                 Ok(vec!["chaining".to_owned(), "settling".to_owned()])
@@ -2118,7 +2108,10 @@ mod tests {
                 finished::<Resolved>(
                     Declaration::new(),
                     &["nested"],
-                    &[("supplies", json!([plugin::<Bundle>()]))]
+                    &[(
+                        "supplies",
+                        json!([plugin::<Bundle>().with("parts", json!([]))])
+                    )]
                 ),
                 Err(vec![
                     ("supplies".to_owned(), "the nested fact"),

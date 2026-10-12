@@ -288,6 +288,32 @@ fn plugin<P: PluginType>() -> PluginConfig {
     PluginConfig::of::<P>()
 }
 
+/// [`Wins`] with a point per win, counting byes if `counts_byes`.
+fn wins(counts_byes: bool) -> PluginConfig {
+    plugin::<Wins>()
+        .with("for_win", 1.0)
+        .with("counts_byes", counts_byes)
+}
+
+/// Answers every unanswered field of `builder` that offers an answer with it, in question order,
+/// as a UI accepting every default does.
+fn accept_defaults(builder: &mut Builder<Phase>) {
+    loop {
+        let next = questions(builder)
+            .into_iter()
+            .filter(|(_, answered)| !answered)
+            .find_map(|(at, _)| {
+                let at = path(&at);
+                let default = builder.default(&at).unwrap()?;
+                Some((at, default))
+            });
+        let Some((at, default)) = next else {
+            return;
+        };
+        builder.set(&at, default).unwrap();
+    }
+}
+
 /// The fields a UI renders for `builder`, by path, each with whether it is answered: the schema of
 /// the phase walked along the answers, as documented on [`Builder`].
 fn questions(builder: &Builder<Phase>) -> Vec<(String, bool)> {
@@ -431,8 +457,8 @@ fn a_program_finds_every_plugin_through_the_schema_of_the_composite() {
 #[test]
 fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
     let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
-    let wins = metric(plugin::<Wins>());
-    let counting = metric(plugin::<Wins>().with("counts_byes", true));
+    let uncounting = metric(wins(false));
+    let counting = metric(wins(true));
     let buchholz = metric(plugin::<Buchholz>());
 
     assert_eq!(
@@ -443,7 +469,7 @@ fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
         })
     );
     // what a configuration adds counts as well
-    assert_eq!(check(&singles(), &[&*wins]), Ok(()));
+    assert_eq!(check(&singles(), &[&*uncounting]), Ok(()));
     assert_eq!(
         check(&singles(), &[&*counting]),
         Err(Incompatibility::FactNotProvided {
@@ -494,6 +520,8 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         builder.default(&path("format.third_place")),
         Ok(Some(json!(false)))
     );
+    // the offered answer is only filled in by setting it
+    builder.set(&path("format.third_place"), false).unwrap();
     // a knockout recommends nothing, so the schema's default is offered
     assert_eq!(builder.default(&path("metrics")), Ok(Some(json!([]))));
 
@@ -542,7 +570,7 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
     // an answer the plugin rejects is set, reported where it is fixed and keeps the phase from
     // being built
     builder
-        .set(&path("metrics[2]"), plugin::<Wins>().with("for_win", -1))
+        .set(&path("metrics[2]"), wins(false).with("for_win", -1))
         .unwrap();
     let rejected = || ConfigError::Rejected {
         path: path("metrics[2].for_win"),
@@ -623,6 +651,10 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
         .set(&path("format"), plugin::<RoundRobin>())
         .unwrap();
 
+    // a format with a field still unanswered recommends nothing yet
+    assert_eq!(builder.default(&path("metrics")), Ok(Some(json!([]))));
+    builder.set(&path("format.rounds"), 1).unwrap();
+
     // the score does not fit next to the wins recommended before it
     assert_eq!(
         builder.default(&path("metrics")),
@@ -633,8 +665,18 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
         Ok(Some(json!(plugin::<Wins>())))
     );
 
-    // the defaults are accepted in question order, so the tie break no longer fits the
-    // recommended metrics once they are accepted
+    // finishing fills in no default
+    let unanswered: Vec<_> = builder
+        .finish()
+        .unwrap_err()
+        .iter()
+        .map(|issue| issue.path().to_string())
+        .collect();
+    assert_eq!(unanswered, ["metrics", "tie_break"]);
+
+    // accepted in question order, the tie break no longer fits the recommended metrics once
+    // they are set
+    accept_defaults(&mut builder);
     let phase = builder.finish().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
@@ -647,23 +689,18 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
             "tie_break": null,
         })
     );
-    // finishing leaves the answers as they were
-    assert_eq!(
-        builder.answers(),
-        &Config::new().with("format", plugin::<RoundRobin>())
-    );
 }
 
 #[test]
 fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
     let mut builder = Builder::<Phase>::new(singles());
-    builder.set(&path("format"), plugin::<Knockout>()).unwrap();
     builder
         .set(
-            &path("metrics"),
-            json!([plugin::<Wins>().with("counts_byes", true)]),
+            &path("format"),
+            plugin::<Knockout>().with("third_place", false),
         )
         .unwrap();
+    builder.set(&path("metrics"), json!([wins(true)])).unwrap();
     builder.set(&path("tie_break"), Value::Null).unwrap();
 
     let issues = builder.issues();
@@ -679,7 +716,7 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
     );
 
     builder
-        .set(&path("format"), plugin::<RoundRobin>())
+        .set(&path("format"), plugin::<RoundRobin>().with("rounds", 1))
         .unwrap();
     assert_eq!(builder.issues(), []);
     assert!(builder.finish().is_ok());
@@ -707,6 +744,7 @@ fn a_saved_phase_loads_as_it_was_built() {
             ("tie_break.parts".to_owned(), true),
         ]
     );
+    accept_defaults(&mut builder);
     let phase = builder.finish().unwrap();
 
     let saved = serde_json::to_string(&phase).unwrap();
@@ -736,30 +774,18 @@ fn a_saved_phase_loads_as_it_was_built() {
 fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
     let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
     let phase = Phase {
-        format: plugin::<Knockout>().build::<dyn Format>().unwrap(),
+        format: plugin::<Knockout>()
+            .with("third_place", false)
+            .build::<dyn Format>()
+            .unwrap(),
         metrics: vec![metric(plugin::<Buchholz>())],
         tie_break: None,
     };
 
-    // the points have two providers, so finishing settles the matches alone and reports the
-    // points where they can be provided
-    let mut builder = Builder::from_built(singles(), &phase).unwrap();
-    let issues = builder.finish().unwrap_err();
-    let unprovided = Problem::Unprovided {
-        fact: "points",
-        required_by: path("metrics[0]"),
-        providers: vec!["full::score", "full::wins"],
-    };
-    assert_eq!(
-        problems(&issues),
-        [
-            ("metrics".to_owned(), &unprovided),
-            ("tie_break".to_owned(), &unprovided),
-        ]
-    );
-
-    // the choice left to the operator; the consumer then orders the metrics by what they require
-    builder.set(&path("metrics[1]"), plugin::<Score>()).unwrap();
+    // the wins have fields, so the score is the only provider of the points that is added, and
+    // the match count the only one of the matches; the consumer then orders the metrics by what
+    // they require
+    let builder = Builder::from_built(singles(), &phase).unwrap();
     let phase = builder.finish().unwrap();
     assert_eq!(
         format!("{:?}", phase.metrics),

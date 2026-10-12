@@ -21,11 +21,12 @@ use crate::{
 /// Only derived: for a plugin by [`derive@Plugin`](crate::Plugin), for a composite by
 /// [`derive@Configurable`]. Implementing it by hand is not supported.
 ///
-/// It is built by deserializing its answers, with every field left unanswered answered by its
-/// default. A struct without fields may be a unit struct, which is deserialized from `null`
-/// rather than from an empty config. An answer it rejects, e.g. through
-/// `#[serde(deserialize_with = ..)]` or a field type's `#[serde(try_from = ..)]`, is reported as
-/// [`ConfigError::Rejected`] with the path of the answer.
+/// It is built by deserializing its answers, which have to answer every field; a field's
+/// [default](Field::default_value) is only offered, never filled in. A struct without fields may
+/// be a unit struct, which is deserialized from `null` rather than from an empty config. An
+/// answer it rejects, e.g. through `#[serde(deserialize_with = ..)]` or a field type's
+/// `#[serde(try_from = ..)]`, is reported as [`ConfigError::Rejected`] with the path of the
+/// answer.
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     /// Whether it is a unit struct, deserialized from `null`. Set by the derive; not part of the
     /// API.
@@ -156,21 +157,21 @@ impl Schema {
     /// `config`, the config at `at`, checked against this schema, and so the config of every
     /// plugin answering one of its fields against the schema of that plugin, down the whole tree.
     ///
-    /// If `fill_defaults`, every field left unanswered is answered by its default, which is what
-    /// a [`Configurable`] is built from; otherwise it is left unanswered. A plugin answer is
-    /// written as [`AnyAxis::walk`] writes it.
+    /// If `complete`, every field has to be answered, as for building a [`Configurable`];
+    /// otherwise a field may be left unanswered. A plugin answer is written as
+    /// [`AnyAxis::walk`] writes it.
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema does not
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, and, if `fill_defaults`, [`ConfigError::Unanswered`] if a field without a default is
-    /// unanswered, each with its path from the root.
+    /// axis, and, if `complete`, [`ConfigError::Unanswered`] if a field is unanswered, each with
+    /// its path from the root.
     pub(crate) fn walk(
         &self,
         config: &Config,
         at: &Path,
-        fill_defaults: bool,
+        complete: bool,
     ) -> Result<Config, ConfigError> {
         if let Some((answered, _)) = config
             .answers()
@@ -185,17 +186,10 @@ impl Schema {
             let path = at.clone().field(field.name());
             let answer = match config.get(field.name()) {
                 Some(answer) => answer,
-                None if !fill_defaults => continue,
-                None => field
-                    .default_value()
-                    .ok_or_else(|| ConfigError::Unanswered { path: path.clone() })?,
+                None if !complete => continue,
+                None => return Err(ConfigError::Unanswered { path }),
             };
-            // the default is checked like an answer, so that a plugin offering one of the wrong
-            // kind says so where it is configured rather than where it is built
-            walked.set(
-                field.name(),
-                field.kind().walk(answer, &path, fill_defaults)?,
-            );
+            walked.set(field.name(), field.kind().walk(answer, &path, complete)?);
         }
         Ok(walked)
     }
@@ -203,9 +197,8 @@ impl Schema {
 
 /// One question a [`Configurable`] asks, i.e. what is answered in a [`Config`] under its name.
 ///
-/// A field with a default can be left unanswered; a [`Configurable`] all of whose fields have one
-/// needs no configuration and can be created unasked, see
-/// [`PluginConfig::build`].
+/// Every field has to be answered, see [`PluginConfig::build`]; its default is what a UI offers
+/// as the answer.
 #[derive(Debug, Clone)]
 pub struct Field {
     name: &'static str,
@@ -238,8 +231,8 @@ impl Field {
         self
     }
 
-    /// This field with `default` as the answer it offers, which is what makes it one that can be
-    /// left unanswered. Called by the derive; not part of the API.
+    /// This field with `default` as the answer it offers. Called by the derive; not part of the
+    /// API.
     #[doc(hidden)]
     #[must_use]
     pub fn with_default(mut self, default: impl Into<Value>) -> Self {
@@ -267,7 +260,8 @@ impl Field {
         &self.kind
     }
 
-    /// The answer this field offers, or [`None`] if it has to be answered.
+    /// The answer this field offers, or [`None`] if it offers none. Offering an answer does not
+    /// make the field optional: it is still to be answered.
     pub fn default_value(&self) -> Option<&Value> {
         self.default.as_ref()
     }
@@ -288,9 +282,8 @@ pub enum FieldKind {
     List(Box<FieldKind>),
     /// An answer of the kind or nothing, answered by an answer of the kind or by [`Value::Null`].
     ///
-    /// Being answered with nothing is being answered; a field that may be left unanswered needs a
-    /// default, which for such a field is usually [`Value::Null`]. An optional answer of an
-    /// optional answer is just an optional answer.
+    /// Being answered with nothing is being answered, and is what such a field usually offers as
+    /// its default. An optional answer of an optional answer is just an optional answer.
     Optional(Box<FieldKind>),
 }
 
@@ -329,23 +322,23 @@ impl FieldKind {
         &self,
         answer: &Value,
         at: &Path,
-        fill_defaults: bool,
+        complete: bool,
     ) -> Result<Value, ConfigError> {
         match (self, answer) {
             (Self::Bool, Value::Bool(_)) | (Self::Optional(_), Value::Null) => Ok(answer.clone()),
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
-            (Self::Optional(inner), _) => inner.walk(answer, at, fill_defaults),
+            (Self::Optional(inner), _) => inner.walk(answer, at, complete),
             (Self::List(element), Value::Array(answers)) => answers
                 .iter()
                 .enumerate()
                 .map(|(position, answer)| {
-                    element.walk(answer, &at.clone().index(position), fill_defaults)
+                    element.walk(answer, &at.clone().index(position), complete)
                 })
                 .collect::<Result<_, _>>()
                 .map(Value::Array),
             (Self::Plugin(axis), _) => match PluginConfig::from_answer(answer) {
-                Some(plugin) => axis.walk(&plugin, at, fill_defaults),
+                Some(plugin) => axis.walk(&plugin, at, complete),
                 None => Err(self.wrong_kind(answer, at)),
             },
             _ => Err(self.wrong_kind(answer, at)),
@@ -556,6 +549,24 @@ mod tests {
             .map(|plugin| plugin.summary())
     }
 
+    /// The config of [`Points`] answering every field with its default.
+    fn points() -> Config {
+        Config::new()
+            .with("for_win", 1.0)
+            .with("rounds", 3)
+            .with("counts_byes", true)
+            .with("for_bye", 0.5)
+    }
+
+    /// The config of [`Ranker`] answering every field: by matches, without tie breakers and
+    /// without a fallback.
+    fn ranker() -> Config {
+        Config::new()
+            .with("by", PluginConfig::of::<Matches>())
+            .with("tie_breakers", json!([]))
+            .with("fallback", Value::Null)
+    }
+
     #[test]
     fn a_field_taking_plugins_knows_the_axis_it_takes() {
         let schema = Ranker::schema();
@@ -583,16 +594,28 @@ mod tests {
     }
 
     #[test]
-    fn an_unanswered_field_is_answered_by_its_default() {
+    fn a_field_offering_a_default_still_has_to_be_answered() {
         assert_eq!(
-            built::<Points>(Config::new()).as_deref(),
+            Points::schema()
+                .field_named("rounds")
+                .and_then(Field::default_value),
+            Some(&json!(3))
+        );
+        assert_eq!(
+            built::<Points>(Config::new()),
+            Err(ConfigError::Unanswered {
+                path: Path::of("for_win"),
+            })
+        );
+        assert_eq!(
+            built::<Points>(points()).as_deref(),
             Ok("points(1, 3, true, 0.5)")
         );
     }
 
     #[test]
     fn an_answer_is_kept_as_it_is_given() {
-        let config = Config::new()
+        let config = points()
             .with("for_win", 2.5)
             .with("counts_byes", false)
             .with("for_bye", Value::Null);
@@ -606,7 +629,7 @@ mod tests {
     #[test]
     fn a_whole_number_answers_a_decimal_field() {
         assert_eq!(
-            built::<Points>(Config::new().with("for_win", 2)).as_deref(),
+            built::<Points>(points().with("for_win", 2)).as_deref(),
             Ok("points(2, 3, true, 0.5)")
         );
     }
@@ -614,13 +637,14 @@ mod tests {
     #[test]
     fn a_field_without_a_default_has_to_be_answered() {
         assert_eq!(
-            built::<Threshold>(Config::new()),
+            built::<Threshold>(Config::new().with("weights", json!([]))),
             Err(ConfigError::Unanswered {
                 path: Path::of("least"),
             })
         );
         assert_eq!(
-            built::<Threshold>(Config::new().with("least", 2)).as_deref(),
+            built::<Threshold>(Config::new().with("least", 2).with("weights", json!([])))
+                .as_deref(),
             Ok("threshold(2, [])")
         );
     }
@@ -650,7 +674,7 @@ mod tests {
     #[test]
     fn an_answer_of_another_kind_than_its_field_is_an_error() {
         assert_eq!(
-            built::<Points>(Config::new().with("counts_byes", 1)),
+            built::<Points>(points().with("counts_byes", 1)),
             Err(ConfigError::WrongKind {
                 path: Path::of("counts_byes"),
                 expected: "yes or no",
@@ -658,7 +682,7 @@ mod tests {
             })
         );
         assert_eq!(
-            built::<Points>(Config::new().with("rounds", 2.5)),
+            built::<Points>(points().with("rounds", 2.5)),
             Err(ConfigError::WrongKind {
                 path: Path::of("rounds"),
                 expected: "a whole number",
@@ -684,25 +708,9 @@ mod tests {
     }
 
     #[test]
-    fn a_default_of_another_kind_than_its_field_is_an_error() {
-        // a derived schema cannot have such a default, so it is made by hand
-        let schema = Schema::new()
-            .field(Field::new("rounds", "Rounds", FieldKind::Integer).with_default(true));
-
-        assert_eq!(
-            schema.walk(&Config::new(), &Path::ROOT, true),
-            Err(ConfigError::WrongKind {
-                path: Path::of("rounds"),
-                expected: "a whole number",
-                found: "yes or no",
-            })
-        );
-    }
-
-    #[test]
     fn an_answer_a_plugin_rejects_is_reported_as_its_field() {
         assert_eq!(
-            built::<Points>(Config::new().with("for_win", -1.0)),
+            built::<Points>(points().with("for_win", -1.0)),
             Err(ConfigError::Rejected {
                 path: Path::of("for_win"),
                 reason: "the points for a win cannot be negative".to_owned(),
@@ -713,12 +721,17 @@ mod tests {
     #[test]
     fn a_field_taking_plugins_is_built_through_the_catalog() {
         let config = Config::new()
-            .with("by", PluginConfig::of::<Points>().with("for_win", 2.0))
+            .with(
+                "by",
+                PluginConfig::configured(Points::ID, points().with("for_win", 2.0)),
+            )
             .with(
                 "tie_breakers",
                 vec![
                     PluginConfig::of::<Matches>(),
-                    PluginConfig::of::<Threshold>().with("least", 4),
+                    PluginConfig::of::<Threshold>()
+                        .with("least", 4)
+                        .with("weights", json!([])),
                 ],
             )
             .with("fallback", PluginConfig::of::<Matches>());
@@ -730,19 +743,19 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_field_left_unanswered_is_answered_by_its_default() {
+    fn a_plugin_field_offering_a_default_still_has_to_be_answered() {
         assert_eq!(
-            built::<Ranker>(Config::new()).as_deref(),
-            Ok("ranker(matches, [], none)")
+            built::<Ranker>(Config::new()),
+            Err(ConfigError::Unanswered {
+                path: Path::of("by"),
+            })
         );
     }
 
     #[test]
     fn a_plugin_field_that_may_be_answered_with_nothing_takes_no_plugin() {
-        let config = Config::new().with("fallback", Value::Null);
-
         assert_eq!(
-            built::<Ranker>(config).as_deref(),
+            built::<Ranker>(ranker()).as_deref(),
             Ok("ranker(matches, [], none)")
         );
     }
@@ -763,7 +776,10 @@ mod tests {
 
     #[test]
     fn an_error_in_a_nested_plugin_is_reported_by_the_path_of_its_field() {
-        let config = Config::new().with("by", PluginConfig::of::<Points>().with("for_win", -1.0));
+        let config = ranker().with(
+            "by",
+            PluginConfig::configured(Points::ID, points().with("for_win", -1.0)),
+        );
 
         assert_eq!(
             built::<Ranker>(config),
@@ -776,11 +792,11 @@ mod tests {
 
     #[test]
     fn an_error_in_one_of_several_nested_plugins_is_reported_by_its_position() {
-        let config = Config::new().with(
+        let config = ranker().with(
             "tie_breakers",
             vec![
                 PluginConfig::of::<Matches>(),
-                PluginConfig::of::<Threshold>(),
+                PluginConfig::of::<Threshold>().with("weights", json!([])),
             ],
         );
 
@@ -794,9 +810,9 @@ mod tests {
 
     #[test]
     fn an_error_in_a_nested_plugin_answering_an_optional_field_keeps_its_field() {
-        let config = Config::new().with(
+        let config = ranker().with(
             "fallback",
-            PluginConfig::of::<Points>().with("for_win", -1.0),
+            PluginConfig::configured(Points::ID, points().with("for_win", -1.0)),
         );
 
         assert_eq!(
@@ -821,30 +837,32 @@ mod tests {
     }
 
     #[test]
-    fn a_built_plugin_serializes_as_the_completed_config_it_is_built_from() {
-        let config = Config::new()
-            .with("by", PluginConfig::of::<Points>().with("for_win", 2.0))
+    fn a_built_plugin_serializes_as_the_walked_config_it_is_built_from() {
+        let config = ranker()
+            .with(
+                "by",
+                PluginConfig::configured(Points::ID, points().with("for_win", 2.0)),
+            )
             .with("fallback", PluginConfig::of::<Matches>());
-        let completed = Ranker::schema().walk(&config, &Path::ROOT, true).unwrap();
+        let walked = Ranker::schema().walk(&config, &Path::ROOT, true).unwrap();
         let built = PluginConfig::configured(Ranker::ID, config)
             .build::<dyn Configured>()
             .unwrap();
 
         assert_eq!(
-            completed.get("fallback"),
+            walked.get("fallback"),
             Some(&json!({"type": "matches", "value": null}))
         );
         assert_eq!(
             serde_json::to_value(&built).ok(),
-            Some(PluginConfig::configured(Ranker::ID, completed).into())
+            Some(PluginConfig::configured(Ranker::ID, walked).into())
         );
     }
 
     #[test]
-    fn a_plugin_without_parameters_is_completed_as_a_unit_struct_is_written() {
-        let walked = |entry: &PluginEntry, config, fill_defaults| {
-            entry.walk(&config, &Path::ROOT, fill_defaults)
-        };
+    fn a_plugin_without_parameters_is_walked_as_a_unit_struct_is_written() {
+        let walked =
+            |entry: &PluginEntry, config, complete| entry.walk(&config, &Path::ROOT, complete);
 
         assert_eq!(
             walked(entry_of::<Matches>(), Config::new(), true),
@@ -858,7 +876,7 @@ mod tests {
         assert_eq!(
             walked(
                 entry_of::<Threshold>(),
-                Config::new().with("least", 2),
+                Config::new().with("least", 2).with("weights", json!([])),
                 true
             ),
             Ok(json!({"least": 2, "weights": []}))
@@ -866,8 +884,8 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_left_unanswered_is_no_error_unless_the_defaults_are_filled() {
-        let config = Config::new().with(
+    fn an_unanswered_field_is_no_error_unless_the_config_is_to_be_complete() {
+        let config = ranker().with(
             "tie_breakers",
             vec![PluginConfig::of::<Threshold>().with("weights", vec![1.0])],
         );
@@ -877,7 +895,9 @@ mod tests {
                 .walk(&config, &Path::ROOT, false)
                 .map(Value::from),
             Ok(json!({
-                "tie_breakers": [{"type": "threshold", "value": {"weights": [1.0]}}]
+                "by": {"type": "matches", "value": {}},
+                "tie_breakers": [{"type": "threshold", "value": {"weights": [1.0]}}],
+                "fallback": null
             }))
         );
         assert_eq!(

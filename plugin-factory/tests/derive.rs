@@ -200,11 +200,15 @@ fn field_of<P: PluginType>(name: &str) -> Field {
         .expect("the schema has the field")
 }
 
-/// [`Points`] with what has no default answered.
+/// [`Points`] with every field answered, by its default if it has one.
 fn points() -> PluginConfig {
     PluginConfig::of::<Points>()
+        .with("for_win", 1.0)
         .with("byes", true)
+        .with("rounds", 0)
+        .with("for_bye", Value::Null)
         .with("cap", Value::Null)
+        .with("share", 50.0)
 }
 
 #[test]
@@ -303,7 +307,7 @@ fn a_struct_default_is_the_default_of_every_field() {
 }
 
 #[test]
-fn a_derived_plugin_is_built_from_its_defaults_and_answers() {
+fn a_derived_plugin_is_built_from_its_answers() {
     let built = points().with("share", 20).build::<dyn Derived>().unwrap();
 
     assert_eq!(

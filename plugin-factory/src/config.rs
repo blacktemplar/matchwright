@@ -72,20 +72,20 @@ impl PluginConfig {
         &self.config
     }
 
-    /// The plugin this configures, as a plugin of the axis `A`, e.g. `build::<dyn Metric>()`,
-    /// where every field its config leaves unanswered is answered by the default of the field,
-    /// and likewise for the plugins answering its fields.
+    /// The plugin this configures, as a plugin of the axis `A`, e.g. `build::<dyn Metric>()`.
+    /// Every field of its config, and of the configs of the plugins answering its fields, has to
+    /// be answered; defaults are not filled in.
     ///
-    /// The plugin is deserialized from the completed answer through the `Deserialize` impl of
-    /// `Box<A>`, i.e. the way a saved plugin is loaded, which knows the plugin by its id, see
+    /// The plugin is deserialized from the answer through the `Deserialize` impl of `Box<A>`,
+    /// i.e. the way a saved plugin is loaded, which knows the plugin by its id, see
     /// [`register`](crate::register).
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of the axis `A` is registered with
-    /// this id, [`ConfigError::Unanswered`] if a field without a default is unanswered,
-    /// [`ConfigError::Rejected`] if deserializing the completed answer fails, and whatever
-    /// completing the config fails with otherwise. The path of the error addresses a field of
-    /// this config, i.e. it is relative to the plugin.
+    /// this id, [`ConfigError::Unanswered`] if a field is unanswered, [`ConfigError::Rejected`]
+    /// if deserializing the answer fails, and whatever checking the config against the schemas
+    /// fails with otherwise. The path of the error addresses a field of this config, i.e. it is
+    /// relative to the plugin.
     pub fn build<A: Axis + ?Sized>(&self) -> Result<Box<A>, ConfigError>
     where
         Box<A>: DeserializeOwned,
@@ -112,8 +112,8 @@ impl From<PluginConfig> for Value {
 
 /// The answers one plugin is configured with, by the name of the field each answers.
 ///
-/// A config that answers every field of a schema, or leaves only fields with a default
-/// unanswered, configures the plugin of that schema; the default one answers nothing. As a
+/// A config that answers every field of a schema configures the plugin of that schema; the
+/// default one answers nothing. As a
 /// [`Value`] it is the object of those answers; `null` deserializes as the config answering
 /// nothing, which is how the config of a unit struct is written, see
 /// [`Configurable`](crate::schema::Configurable).
@@ -164,7 +164,7 @@ impl Config {
     }
 }
 
-/// `T` deserialized from `config`, a completed config at `at` as
+/// `T` deserialized from `config`, a complete config at `at` as
 /// [`PluginEntry::walk`](crate::catalog::PluginEntry::walk) writes it.
 ///
 /// # Errors
@@ -176,7 +176,7 @@ pub(crate) fn deserialize<T: DeserializeOwned>(
     deserialize_at(config, at, true)
 }
 
-/// The plugin `P` deserialized from `answer`, a completed plugin answer at `at` as
+/// The plugin `P` deserialized from `answer`, a complete plugin answer at `at` as
 /// [`AnyAxis::walk`] writes it, i.e. still tagged with its id.
 ///
 /// # Errors
@@ -350,7 +350,7 @@ pub enum Segment {
 pub enum ConfigError {
     #[error("{path} is not a field of the schema")]
     UnknownField { path: Path },
-    #[error("{path} is unanswered and has no default")]
+    #[error("{path} is unanswered")]
     Unanswered { path: Path },
     #[error("{path} is {found}, but it takes {expected}")]
     WrongKind {
