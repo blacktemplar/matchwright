@@ -18,6 +18,7 @@ use std::{any::TypeId, fmt::Write as _, marker::PhantomData, mem};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    Plugin,
     catalog::{AnyAxis, PluginEntry},
     compatibility::{self, Declaration, Declared, Incompatibility, OpenFacts},
     config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
@@ -156,7 +157,7 @@ impl<T: Configurable> Builder<T> {
             })?;
         Ok(Self {
             context,
-            answers: T::schema().check(&answers)?,
+            answers: T::schema().walk(&answers, &Path::ROOT, false)?,
             composite: PhantomData,
         })
     }
@@ -178,7 +179,11 @@ impl<T: Configurable> Builder<T> {
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers.
     pub fn default(&self, path: &Path) -> Result<Option<Value>, ConfigError> {
-        self.default_in(&self.answers, path)
+        let schema = T::schema();
+        let Some(field) = locate(&schema, &self.answers, path)?.field else {
+            return Ok(None);
+        };
+        Ok(self.default_of(&Tree::of(&schema, &self.answers), &field, path))
     }
 
     /// The plugins that could answer the position at `path`, by id, each with why it does not fit
@@ -200,20 +205,20 @@ impl<T: Configurable> Builder<T> {
         let Some((axis, list)) = slot(&position.kind) else {
             return Ok(Vec::new());
         };
-        let tree = Tree::of(&schema, &self.answers).without(path);
-        let declarations = tree.declarations();
-        let mut open = tree.open();
+        let tree = Tree::of(&schema, &self.answers);
+        let declarations = tree.declarations(Some(path));
+        let mut open = tree.open(Some(path));
         if list {
-            open.extend(axis.facts());
+            open.extend(axis.facts().iter());
         }
         Ok(axis
             .entries()
             .map(|entry| {
                 let mut open = open.clone();
-                open.extend(entry.sub_axes().iter().flat_map(AnyAxis::facts));
+                open.extend(entry.sub_axes().iter().flat_map(|axis| axis.facts().iter()));
                 let conflict = compatibility::check_addition(
                     &self.context,
-                    &declarations,
+                    declarations.iter().copied(),
                     &Declared::new(entry.label(), entry.declaration()),
                     &open,
                 )
@@ -229,13 +234,12 @@ impl<T: Configurable> Builder<T> {
     ///
     /// A field without a default left unanswered is no issue, but still to be answered.
     pub fn issues(&self) -> Vec<Issue> {
-        self.issues_in(&T::schema(), &self.answers, false)
+        self.issues_in(&Tree::of(&T::schema(), &self.answers), false)
     }
 
-    /// [`Self::issues`] of `answers`, the answers to `schema`. If `finished`, nothing is open
-    /// any more: an unanswered field is an issue and provides nothing.
-    fn issues_in(&self, schema: &Schema, answers: &Config, finished: bool) -> Vec<Issue> {
-        let tree = Tree::of(schema, answers);
+    /// [`Self::issues`] of the answers `tree` holds. If `finished`, nothing is open any more: an
+    /// unanswered field is an issue and provides nothing.
+    fn issues_in(&self, tree: &Tree, finished: bool) -> Vec<Issue> {
         let mut issues = Vec::new();
         if finished {
             for question in tree
@@ -252,56 +256,53 @@ impl<T: Configurable> Builder<T> {
             }
         }
         for placed in &tree.plugins {
-            match placed.entry.instance(&placed.config) {
-                Ok(_) | Err(ConfigError::Unanswered { .. }) => {}
-                Err(error) => {
-                    let error = placed.path.prefix(error);
-                    let issue = Issue {
-                        path: error.path().clone(),
-                        problem: Problem::Invalid(error),
-                    };
-                    // a plugin is built with the plugins answering its fields, so an error of
-                    // one of those is found again building the plugin holding it
-                    if !issues.contains(&issue) {
-                        issues.push(issue);
-                    }
+            if let Err(error) = &placed.instance
+                && !matches!(error, ConfigError::Unanswered { .. })
+            {
+                let issue = Issue {
+                    path: error.path().clone(),
+                    problem: Problem::Invalid(error.clone()),
+                };
+                // a plugin is built with the plugins answering its fields, so an error of one of
+                // those is found again building the plugin holding it
+                if !issues.contains(&issue) {
+                    issues.push(issue);
                 }
             }
         }
 
-        let mut declarations = tree.declarations();
-        let mut open = if finished {
+        let open = if finished {
             OpenFacts::NOTHING
         } else {
-            tree.open()
+            tree.open(None)
         };
         let mut unprovided = Vec::new();
-        for (declared, placed) in declarations.iter().zip(&tree.plugins) {
-            for requirement in declared.declaration.required() {
-                let fact = requirement.type_id();
-                if !self.context.provides_type(fact)
-                    && !declarations
-                        .iter()
-                        .any(|declared| declared.declaration.provides_type(fact))
-                    && !open.contains(fact)
-                {
-                    unprovided.push((fact, requirement.name(), placed.path.clone()));
+        for (index, placed) in tree.plugins.iter().enumerate() {
+            let others = tree
+                .plugins
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != index)
+                .map(|(_, other)| &other.declared);
+            let mut incompatible = None;
+            for conflict in compatibility::conflicts(&self.context, others, &placed.declared, &open)
+            {
+                match conflict.incompatibility {
+                    // reported below, at the fields that could provide it
+                    Incompatibility::FactNotProvided { fact, .. } => {
+                        unprovided.push((conflict.fact, fact, placed.path.clone()));
+                    }
+                    incompatibility => {
+                        incompatible.get_or_insert(incompatibility);
+                    }
                 }
             }
-        }
-        // a requirement nothing provides is reported below, at the fields that could provide it
-        open.extend(unprovided.iter().map(|&(fact, _, _)| fact));
-        for (index, placed) in tree.plugins.iter().enumerate() {
-            let declared = declarations.remove(index);
-            if let Err(incompatibility) =
-                compatibility::check_addition(&self.context, &declarations, &declared, &open)
-            {
+            if let Some(incompatibility) = incompatible {
                 issues.push(Issue {
                     path: placed.path.clone(),
                     problem: Problem::Incompatible(incompatibility),
                 });
             }
-            declarations.insert(index, declared);
         }
 
         for (fact, name, required_by) in unprovided {
@@ -409,12 +410,12 @@ impl<T: Configurable> Builder<T> {
                 break;
             }
         }
-        let issues = self.issues_in(&schema, &answers, true);
+        let issues = self.issues_in(&Tree::of(&schema, &answers), true);
         if !issues.is_empty() {
             return Err(issues);
         }
-        let completed = schema.complete(&answers).map_err(invalid)?;
-        config::deserialize(&completed.into()).map_err(invalid)
+        let completed = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
+        config::deserialize(&completed.into(), &Path::ROOT).map_err(invalid)
     }
 
     /// Answers every unanswered field of `answers`, the answers to `schema`, that offers a
@@ -424,18 +425,21 @@ impl<T: Configurable> Builder<T> {
     /// Returns why a default is not one its field takes.
     fn accept_defaults(&self, schema: &Schema, answers: &mut Config) -> Result<(), ConfigError> {
         // accepting a default changes the questions after it, so the tree is built anew each time
-        while let Some((path, default)) = Tree::of(schema, answers)
-            .questions
-            .into_iter()
-            .filter(|question| question.answer.is_none())
-            .find_map(|question| {
-                let default = self.default_in(answers, &question.path).ok()??;
-                Some((question.path, default))
-            })
-        {
-            set_in(schema, answers, &path, &default)?;
+        loop {
+            let tree = Tree::of(schema, answers);
+            let Some((path, default)) = tree
+                .questions
+                .iter()
+                .filter(|question| question.answer.is_none())
+                .find_map(|question| {
+                    let default = self.default_of(&tree, &question.field, &question.path)?;
+                    Some((&question.path, default))
+                })
+            else {
+                return Ok(());
+            };
+            set_in(schema, answers, path, &default)?;
         }
-        Ok(())
     }
 
     /// Settles the first fact the plugins in `answers`, the answers to `schema`, require that
@@ -452,7 +456,8 @@ impl<T: Configurable> Builder<T> {
                 _ => None,
             })
             .collect();
-        let declarations = Tree::of(schema, answers).declarations();
+        let tree = Tree::of(schema, answers);
+        let declarations = tree.declarations(None);
         for fact in compatibility::unprovided(&declarations) {
             if self.context.provides_type(fact) || tried.contains(&fact) {
                 continue;
@@ -463,7 +468,7 @@ impl<T: Configurable> Builder<T> {
                 axis.entries()
                     .filter(move |entry| {
                         entry.declaration().provides_type(fact)
-                            && entry.instance(&Config::new()).is_ok()
+                            && entry.instance(&Config::new(), &Path::ROOT).is_ok()
                     })
                     .map(move |entry| (*name, entry))
             });
@@ -482,33 +487,30 @@ impl<T: Configurable> Builder<T> {
         false
     }
 
-    /// [`Self::default`] with `answers` as the answers.
-    fn default_in(&self, answers: &Config, path: &Path) -> Result<Option<Value>, ConfigError> {
-        let schema = T::schema();
-        let position = locate(&schema, answers, path)?;
-        let Some(field) = position.field else {
-            return Ok(None);
-        };
+    /// [`Self::default`] of `field`, the field at `path` in the answers `tree` holds.
+    fn default_of(&self, tree: &Tree, field: &Field, path: &Path) -> Option<Value> {
         let Some((axis, list)) = slot(field.kind()) else {
-            return Ok(field.default_value().cloned());
+            return field.default_value().cloned();
         };
-        let tree = Tree::of(&schema, answers);
-        let parent = path.parent();
+        let (_, parent) = path
+            .segments()
+            .split_last()
+            .expect("the path of a field is not the root");
         let recommended: Vec<_> = tree
             .plugins
             .iter()
-            .filter(|placed| placed.parent == parent && !placed.path.starts_with(path))
-            .filter_map(|placed| placed.entry.instance(&placed.config).ok())
+            .filter(|placed| placed.parent.segments() == parent && !placed.path.starts_with(path))
+            .filter_map(|placed| placed.instance.as_ref().ok())
             .flat_map(|instance| instance.recommends())
             .filter_map(|recommended| Some((axis.entry(recommended.plugin())?, recommended)))
             .collect();
 
-        let tree = tree.without(path);
-        let mut declarations = tree.declarations();
-        let mut open = tree.open();
+        let declarations = tree.declarations(Some(path));
+        let mut open = tree.open(Some(path));
         if list {
-            open.extend(axis.facts());
+            open.extend(axis.facts().iter());
         }
+        let mut added = Vec::new();
         let mut fitting = Vec::new();
         for (entry, recommended) in recommended {
             // a recommendation is a whole answer, so what it declares includes the plugins
@@ -517,20 +519,26 @@ impl<T: Configurable> Builder<T> {
                 .declaration_for(recommended.config())
                 .unwrap_or_else(|_| entry.declaration());
             let declared = Declared::new(entry.label(), declaration);
-            if compatibility::check_addition(&self.context, &declarations, &declared, &open).is_ok()
+            if compatibility::check_addition(
+                &self.context,
+                declarations.iter().copied().chain(&added),
+                &declared,
+                &open,
+            )
+            .is_ok()
             {
-                declarations.push(declared);
+                added.push(declared);
                 fitting.push(Value::from(recommended));
                 if !list {
                     break;
                 }
             }
         }
-        Ok(match (list, fitting.is_empty()) {
+        match (list, fitting.is_empty()) {
             (_, true) => field.default_value().cloned(),
             (true, false) => Some(Value::Array(fitting)),
             (false, false) => fitting.pop(),
-        })
+        }
     }
 }
 
@@ -684,10 +692,7 @@ fn set_in(
     answer: &Value,
 ) -> Result<(), ConfigError> {
     let position = locate(schema, answers, path)?;
-    let answer = position
-        .kind
-        .check(answer)
-        .map_err(|error| path.prefix(error))?;
+    let answer = position.kind.walk(answer, path, false)?;
     edit(answers, path, Some(answer));
     Ok(())
 }
@@ -773,13 +778,18 @@ struct Tree {
     plugins: Vec<Placed>,
 }
 
-/// A plugin in the answers.
+/// A plugin in the answers, built once with the tree.
 struct Placed {
     path: Path,
     /// The path of the config whose field the plugin answers.
     parent: Path,
-    entry: &'static PluginEntry,
-    config: Config,
+    /// The plugin built from its config with every unanswered field answered by its default, or
+    /// why it cannot be, see [`PluginEntry::instance`].
+    instance: Result<Box<dyn Plugin>, ConfigError>,
+    /// What the plugin declares itself, without the plugins answering its fields, which are
+    /// placed in the tree themselves: what its configuration declares if it is built, and its
+    /// static declaration otherwise. Named by its label and path.
+    declared: Declared,
 }
 
 impl Tree {
@@ -827,62 +837,62 @@ impl Tree {
                 let Some(entry) = axis.entry(plugin.plugin()) else {
                     return;
                 };
-                self.plugins.push(Placed {
-                    path: path.clone(),
-                    parent: parent.clone(),
-                    entry,
-                    config: plugin.config().clone(),
-                });
+                self.plugins
+                    .push(Placed::new(entry, plugin.config(), path.clone(), parent));
                 self.add_config(&entry.schema(), plugin.config(), &path);
             }
             _ => {}
         }
     }
 
-    /// This tree without what is at `path` and within it.
-    fn without(mut self, path: &Path) -> Self {
-        self.questions
-            .retain(|question| !question.path.starts_with(path));
-        self.plugins.retain(|placed| !placed.path.starts_with(path));
-        self
-    }
-
-    /// The types of the facts the fields still unanswered could provide.
-    fn open(&self) -> OpenFacts {
+    /// The types of the facts the fields still unanswered could provide, except the fields at
+    /// and within `excluding`.
+    fn open(&self, excluding: Option<&Path>) -> OpenFacts {
         let mut axes = Vec::new();
         for question in &self.questions {
             if question.answer.is_none()
+                && !is_within(&question.path, excluding)
                 && let Some((axis, _)) = slot(question.field.kind())
                 && !axes.contains(&axis)
             {
                 axes.push(axis);
             }
         }
-        axes.iter().flat_map(AnyAxis::facts).collect()
+        axes.iter().flat_map(|axis| axis.facts().iter()).collect()
     }
 
-    /// What the plugins declare, each named as the checks report it, in the order of
-    /// [`Self::plugins`].
-    fn declarations(&self) -> Vec<Declared> {
-        self.plugins.iter().map(Placed::declaration).collect()
+    /// What the plugins declare, in the order of [`Self::plugins`], except the plugins at and
+    /// within `excluding`.
+    fn declarations(&self, excluding: Option<&Path>) -> Vec<&Declared> {
+        self.plugins
+            .iter()
+            .filter(|placed| !is_within(&placed.path, excluding))
+            .map(|placed| &placed.declared)
+            .collect()
     }
 }
 
+/// Whether `path` is `excluding` or within it.
+fn is_within(path: &Path, excluding: Option<&Path>) -> bool {
+    excluding.is_some_and(|excluding| path.starts_with(excluding))
+}
+
 impl Placed {
-    /// What the plugin declares itself, without the plugins answering its fields, which are
-    /// placed in the tree themselves: what its configuration declares if its config completes and
-    /// is accepted, and its static declaration otherwise.
-    fn declaration(&self) -> Declared {
-        let mut declaration = self.entry.declaration();
-        if let Ok(instance) = self.entry.instance(&self.config) {
+    /// The plugin `entry` configured by `config`, answering the position at `path` of the config
+    /// at `parent`.
+    fn new(entry: &'static PluginEntry, config: &Config, path: Path, parent: &Path) -> Self {
+        let instance = entry.instance(config, &path);
+        let mut declaration = entry.declaration();
+        if let Ok(instance) = &instance {
             instance.declare(&mut declaration);
         }
-        Declared::new(self.name(), declaration)
-    }
-
-    /// What the plugin is called in an incompatibility.
-    fn name(&self) -> String {
-        format!("{} ({})", self.entry.label(), self.path)
+        let declared = Declared::new(format!("{} ({path})", entry.label()), declaration);
+        Self {
+            path,
+            parent: parent.clone(),
+            instance,
+            declared,
+        }
     }
 }
 

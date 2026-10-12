@@ -75,7 +75,7 @@ pub trait Axis: Plugin {
     /// # Panics
     /// Panics if two plugins are registered for this axis with the same id, see [`Self::entry`].
     fn entries() -> impl Iterator<Item = &'static PluginEntry> {
-        Self::__index().values().copied()
+        Self::__index().entries().values().copied()
     }
 
     /// The plugin registered for this axis with the id `id`, see [`PluginType::ID`], or [`None`]
@@ -85,36 +85,42 @@ pub trait Axis: Plugin {
     /// Panics if two plugins are registered for this axis with the same id, naming the id and
     /// both plugins. Every access to the catalog of the axis checks this.
     fn entry(id: &str) -> Option<&'static PluginEntry> {
-        Self::__index().get(id).copied()
+        Self::__index().entries().get(id).copied()
     }
 
-    /// The plugins registered for this axis by id, see [`Index`].
+    /// The registry of this axis, see [`Index`].
     #[doc(hidden)]
-    fn __index() -> &'static BTreeMap<&'static str, &'static PluginEntry>;
+    fn __index() -> &'static Index;
 }
 
-/// The plugins registered for one axis by id, built on first access. Held by the code
-/// [`axis`](crate::axis) generates; not part of the API.
+/// What is known of one axis: the plugins registered for it by id, and the facts they could
+/// provide, each built on first access. Held in a static by the code [`axis`](crate::axis)
+/// generates; not part of the API.
 #[doc(hidden)]
-pub struct Index(OnceLock<BTreeMap<&'static str, &'static PluginEntry>>);
+pub struct Index {
+    registered: fn() -> Vec<&'static PluginEntry>,
+    entries: OnceLock<BTreeMap<&'static str, &'static PluginEntry>>,
+    facts: OnceLock<OpenFacts>,
+}
 
 impl Index {
-    #[expect(clippy::new_without_default, reason = "only ever built in a static")]
-    pub const fn new() -> Self {
-        Self(OnceLock::new())
+    /// The index of the plugins `registered` returns.
+    pub const fn new(registered: fn() -> Vec<&'static PluginEntry>) -> Self {
+        Self {
+            registered,
+            entries: OnceLock::new(),
+            facts: OnceLock::new(),
+        }
     }
 
-    /// The plugins of `registered` by id, built from it on the first call only.
+    /// The registered plugins by id.
     ///
     /// # Panics
     /// Panics if two of them share an id.
-    pub fn get(
-        &self,
-        registered: impl IntoIterator<Item = &'static PluginEntry>,
-    ) -> &BTreeMap<&'static str, &'static PluginEntry> {
-        self.0.get_or_init(|| {
+    fn entries(&self) -> &BTreeMap<&'static str, &'static PluginEntry> {
+        self.entries.get_or_init(|| {
             let mut index = BTreeMap::new();
-            for entry in registered {
+            for entry in (self.registered)() {
                 if let Some(other) = index.insert(entry.id, entry) {
                     panic!(
                         "the plugins {} and {} are both registered with the id {:?}",
@@ -140,7 +146,7 @@ pub struct PluginEntry {
     label: &'static str,
     description: Option<&'static str>,
     declare: fn(&mut Declaration),
-    instantiate: fn(&Value) -> Result<Box<dyn Plugin>, ConfigError>,
+    instantiate: Instantiate,
     schema: fn() -> Schema,
     is_unit: bool,
     type_name: fn() -> &'static str,
@@ -187,26 +193,30 @@ impl PluginEntry {
     /// the [static declaration](Self::declaration), what this configuration adds to it, see
     /// [`Plugin::declare`], and what the plugins in its fields declare.
     ///
-    /// Builds the plugin from `config` completed, see [`Self::complete`], and drops it again.
+    /// Builds the plugin from `config` completed, see [`Self::instance`], and drops it again.
     ///
     /// # Errors
-    /// Returns [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed
-    /// config, and whatever completing `config` fails with otherwise.
+    /// As [`Self::instance`], with paths relative to the plugin.
     pub(crate) fn declaration_for(&self, config: &Config) -> Result<Declaration, ConfigError> {
-        let instance = self.instance(config)?;
+        let instance = self.instance(config, &Path::ROOT)?;
         Ok(Declaration::of(|declaration| {
             instance.declare_all(declaration);
         }))
     }
 
-    /// The plugin built from `config` completed, see [`Self::complete`], for what only a
-    /// configured plugin can say: what it declares on top of its static declaration, and what it
-    /// recommends.
+    /// The plugin built from `config`, its config at `at`, with every field left unanswered
+    /// answered by its default, for what only a configured plugin can say: what it declares on top
+    /// of its static declaration, and what it recommends.
     ///
     /// # Errors
-    /// As [`Self::declaration_for`].
-    pub(crate) fn instance(&self, config: &Config) -> Result<Box<dyn Plugin>, ConfigError> {
-        (self.instantiate)(&self.complete(config)?)
+    /// Returns [`ConfigError::Rejected`] if the plugin's `Deserialize` impl rejects the completed
+    /// config, and whatever walking `config` fails with otherwise, see [`Self::walk`].
+    pub(crate) fn instance(
+        &self,
+        config: &Config,
+        at: &Path,
+    ) -> Result<Box<dyn Plugin>, ConfigError> {
+        (self.instantiate)(&self.walk(config, at, true)?, at)
     }
 
     /// What has to be answered in order to create the plugin, see
@@ -225,24 +235,27 @@ impl PluginEntry {
             .collect()
     }
 
-    /// `config` completed against the schema of the plugin, i.e. every field it leaves unanswered
-    /// answered by its default, as the value the plugin is deserialized from: the object of its
-    /// answers, or `null` for a plugin that is a unit struct, which is how serde writes one.
+    /// `config`, the config of the plugin at `at`, walked as [`Schema::walk`] walks it.
     ///
-    /// A plugin every field of whose schema has a default needs no configuration, i.e. completes
+    /// With `fill_defaults`, this is the value the plugin is deserialized from, so the config of
+    /// a plugin that is a unit struct is `null`, which is how serde writes one. A plugin every
+    /// field of whose schema has a default needs no configuration, i.e. completes
     /// [`Config::new`].
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if `config` answers a field the schema does not
-    /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
-    /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered.
-    pub(crate) fn complete(&self, config: &Config) -> Result<Value, ConfigError> {
-        let completed = self.schema().complete(config)?;
-        if self.is_unit {
+    /// Returns what [`Schema::walk`] returns.
+    pub(crate) fn walk(
+        &self,
+        config: &Config,
+        at: &Path,
+        fill_defaults: bool,
+    ) -> Result<Value, ConfigError> {
+        let walked = self.schema().walk(config, at, fill_defaults)?;
+        // an answer still being edited keeps an object as its config, which the builder edits
+        if fill_defaults && self.is_unit {
             return Ok(Value::Null);
         }
-        Ok(completed.into())
+        Ok(walked.into())
     }
 }
 
@@ -255,10 +268,13 @@ impl Debug for PluginEntry {
     }
 }
 
-/// The plugin `P` deserialized from `config`, its completed config, see
+/// How a [`PluginEntry`] builds its plugin, see [`instantiate`].
+type Instantiate = fn(&Value, &Path) -> Result<Box<dyn Plugin>, ConfigError>;
+
+/// The plugin `P` deserialized from `config`, its completed config at `at`, see
 /// [`PluginEntry::instance`].
-fn instantiate<P: PluginType>(config: &Value) -> Result<Box<dyn Plugin>, ConfigError> {
-    Ok(Box::new(config::deserialize::<P>(config)?))
+fn instantiate<P: PluginType>(config: &Value, at: &Path) -> Result<Box<dyn Plugin>, ConfigError> {
+    Ok(Box::new(config::deserialize::<P>(config, at)?))
 }
 
 /// An [`Axis`] as a value, i.e. the axis of the plugins a field takes, see
@@ -269,7 +285,7 @@ fn instantiate<P: PluginType>(config: &Value) -> Result<Box<dyn Plugin>, ConfigE
 #[derive(Clone, Copy)]
 pub struct AnyAxis {
     id: TypeId,
-    index: fn() -> &'static BTreeMap<&'static str, &'static PluginEntry>,
+    index: fn() -> &'static Index,
 }
 
 impl AnyAxis {
@@ -286,7 +302,7 @@ impl AnyAxis {
     /// # Panics
     /// As [`Axis::entries`].
     pub fn entries(&self) -> impl Iterator<Item = &'static PluginEntry> {
-        (self.index)().values().copied()
+        (self.index)().entries().values().copied()
     }
 
     /// The plugin registered for this axis with the id `id`, or [`None`] if none is, see
@@ -295,36 +311,31 @@ impl AnyAxis {
     /// # Panics
     /// As [`Axis::entry`].
     pub fn entry(&self, id: &str) -> Option<&'static PluginEntry> {
-        (self.index)().get(id).copied()
+        (self.index)().entries().get(id).copied()
     }
 
-    /// `plugin` as a plugin of this axis with its config completed, see
-    /// [`PluginEntry::complete`], written as [`PluginConfig`] writes a plugin answer.
+    /// `plugin`, the answer at `at`, as a plugin of this axis with its config walked as
+    /// [`PluginEntry::walk`] walks it, written as [`PluginConfig`] writes a plugin answer.
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownPlugin`] if no plugin of this axis is registered with the id
-    /// of `plugin`, and whatever completing its config fails with otherwise.
-    pub(crate) fn complete(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
+    /// of `plugin`, and what [`PluginEntry::walk`] returns otherwise.
+    pub(crate) fn walk(
+        &self,
+        plugin: &PluginConfig,
+        at: &Path,
+        fill_defaults: bool,
+    ) -> Result<Value, ConfigError> {
         let entry = self
             .entry(plugin.plugin())
-            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
+            .ok_or_else(|| ConfigError::UnknownPlugin { path: at.clone() })?;
         Ok(Value::Object(Map::from_iter([
             ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
-            ("value".to_owned(), entry.complete(plugin.config())?),
+            (
+                "value".to_owned(),
+                entry.walk(plugin.config(), at, fill_defaults)?,
+            ),
         ])))
-    }
-
-    /// `plugin` as a plugin of this axis with its config checked but not completed, see
-    /// [`Schema::check`], written as [`PluginConfig`] writes a plugin answer.
-    ///
-    /// # Errors
-    /// As [`Self::complete`], except that an unanswered field is no error.
-    pub(crate) fn check(&self, plugin: &PluginConfig) -> Result<Value, ConfigError> {
-        let entry = self
-            .entry(plugin.plugin())
-            .ok_or(ConfigError::UnknownPlugin { path: Path::ROOT })?;
-        let checked = entry.schema().check(plugin.config())?;
-        Ok(PluginConfig::configured(plugin.plugin(), checked).into())
     }
 
     /// The types of the facts the plugins of this axis provide, i.e. what a slot for this axis
@@ -332,8 +343,14 @@ impl AnyAxis {
     ///
     /// Includes what the plugins of their [sub-axes](PluginEntry::sub_axes) provide,
     /// transitively, since a plugin filling the slot can have slots of its own. Read from the
-    /// static declarations, so it holds whatever the plugins end up configured with.
-    pub(crate) fn facts(&self) -> OpenFacts {
+    /// static declarations, so it holds whatever the plugins end up configured with, and is
+    /// collected once per axis.
+    pub(crate) fn facts(&self) -> &'static OpenFacts {
+        (self.index)().facts.get_or_init(|| self.collect_facts())
+    }
+
+    /// [`Self::facts`], collected anew.
+    fn collect_facts(&self) -> OpenFacts {
         let mut visited = vec![*self];
         let mut pending = vec![*self];
         let mut facts = Vec::new();
@@ -715,8 +732,9 @@ mod tests {
         ]);
 
         // the two axes nest each other, so either one could contribute everything
-        assert_eq!(AnyAxis::of::<dyn Tested>().facts(), facts);
-        assert_eq!(AnyAxis::of::<dyn Nested>().facts(), facts);
+        assert_eq!(AnyAxis::of::<dyn Tested>().facts(), &facts);
+        assert_eq!(AnyAxis::of::<dyn Nested>().facts(), &facts);
+        assert_eq!(AnyAxis::of::<dyn Tested>().collect_facts(), facts);
     }
 
     /// An axis two of whose plugins share an id.

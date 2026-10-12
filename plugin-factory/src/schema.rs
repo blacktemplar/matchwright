@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 use crate::{
     Plugin,
     catalog::{AnyAxis, Axis},
-    config::{self, Config, ConfigError, Path, PluginConfig, Segment, Value},
+    config::{self, Config, ConfigError, Path, PluginConfig, Value},
 };
 
 /// Something configured by answering the fields of its [`Schema`]: a plugin, or the composite a
@@ -153,74 +153,51 @@ impl Schema {
         self.0.iter().find(|field| field.name() == name)
     }
 
-    /// `config` with every field of this schema answered, i.e. the answers of `config` and the
-    /// default of every field it leaves unanswered, which is what a [`Configurable`] is built
-    /// from.
+    /// `config`, the config at `at`, checked against this schema, and so the config of every
+    /// plugin answering one of its fields against the schema of that plugin, down the whole tree.
     ///
-    /// The config of a plugin answering a field is completed against the schema of that plugin
-    /// in turn, so that the whole tree is complete.
+    /// If `fill_defaults`, every field left unanswered is answered by its default, which is what
+    /// a [`Configurable`] is built from; otherwise it is left unanswered. A plugin answer is
+    /// written as [`AnyAxis::walk`] writes it.
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if `config` answers a field this schema does not
+    /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema does not
     /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, and [`ConfigError::Unanswered`] if a field without a default is unanswered, each
-    /// anchored to where in a nested answer it is.
-    pub(crate) fn complete(&self, config: &Config) -> Result<Config, ConfigError> {
-        self.check_known(config)?;
-        let mut completed = Config::new();
-        for field in self.fields() {
-            let answer = match config.get(field.name()) {
-                Some(answer) => answer,
-                None => field
-                    .default_value()
-                    .ok_or_else(|| ConfigError::Unanswered {
-                        path: Path::of(field.name()),
-                    })?,
-            };
-            // the default is checked like an answer, so that a plugin offering one of the wrong
-            // kind says so where it is configured rather than where it is built
-            let answer = field
-                .kind()
-                .complete(answer)
-                .map_err(|error| error.within(Segment::Field(field.name().to_owned())))?;
-            completed.set(field.name(), answer);
-        }
-        Ok(completed)
-    }
-
-    /// `config` with every answer checked as [`Self::complete`] checks it, but with the fields it
-    /// leaves unanswered left unanswered, here and in the configs of the plugins answering its
-    /// fields. A plugin answer is written as [`PluginConfig`] writes it.
-    ///
-    /// # Errors
-    /// Returns what [`Self::complete`] returns, except [`ConfigError::Unanswered`].
-    pub(crate) fn check(&self, config: &Config) -> Result<Config, ConfigError> {
-        self.check_known(config)?;
-        let mut checked = Config::new();
-        for field in self.fields() {
-            if let Some(answer) = config.get(field.name()) {
-                let answer = field
-                    .kind()
-                    .check(answer)
-                    .map_err(|error| error.within(Segment::Field(field.name().to_owned())))?;
-                checked.set(field.name(), answer);
-            }
-        }
-        Ok(checked)
-    }
-
-    /// Checks that `config` answers no field this schema does not have.
-    fn check_known(&self, config: &Config) -> Result<(), ConfigError> {
-        match config
+    /// axis, and, if `fill_defaults`, [`ConfigError::Unanswered`] if a field without a default is
+    /// unanswered, each with its path from the root.
+    pub(crate) fn walk(
+        &self,
+        config: &Config,
+        at: &Path,
+        fill_defaults: bool,
+    ) -> Result<Config, ConfigError> {
+        if let Some((answered, _)) = config
             .answers()
             .find(|(answered, _)| self.field_named(answered).is_none())
         {
-            Some((answered, _)) => Err(ConfigError::UnknownField {
-                path: Path::of(answered),
-            }),
-            None => Ok(()),
+            return Err(ConfigError::UnknownField {
+                path: at.clone().field(answered),
+            });
         }
+        let mut walked = Config::new();
+        for field in self.fields() {
+            let path = at.clone().field(field.name());
+            let answer = match config.get(field.name()) {
+                Some(answer) => answer,
+                None if !fill_defaults => continue,
+                None => field
+                    .default_value()
+                    .ok_or_else(|| ConfigError::Unanswered { path: path.clone() })?,
+            };
+            // the default is checked like an answer, so that a plugin offering one of the wrong
+            // kind says so where it is configured rather than where it is built
+            walked.set(
+                field.name(),
+                field.kind().walk(answer, &path, fill_defaults)?,
+            );
+        }
+        Ok(walked)
     }
 }
 
@@ -343,60 +320,42 @@ impl FieldKind {
         }
     }
 
-    /// `answer` with the config of every plugin in it completed against the schema of that
-    /// plugin, see [`Schema::complete`].
+    /// `answer`, the answer at `at`, checked against this kind, with the config of every plugin
+    /// in it walked as [`Schema::walk`] walks it.
     ///
     /// # Errors
-    /// Returns why `answer` is not one a field of this kind takes, as the config holding that
-    /// field sees it, i.e. to be prefixed by the field.
-    fn complete(&self, answer: &Value) -> Result<Value, ConfigError> {
-        self.map_plugins(answer, &|axis, plugin| axis.complete(plugin))
-    }
-
-    /// `answer` checked against this kind, with the config of every plugin in it checked against
-    /// the schema of that plugin but not completed, see [`Schema::check`].
-    ///
-    /// # Errors
-    /// Returns why `answer` is not one a field of this kind takes, as the config holding that
-    /// field sees it, i.e. to be prefixed by the field.
-    pub(crate) fn check(&self, answer: &Value) -> Result<Value, ConfigError> {
-        self.map_plugins(answer, &|axis, plugin| axis.check(plugin))
-    }
-
-    /// `answer` checked against this kind, with every plugin answer in it replaced by what
-    /// `plugin` makes of it.
-    fn map_plugins(
+    /// Returns what [`Schema::walk`] returns.
+    pub(crate) fn walk(
         &self,
         answer: &Value,
-        plugin: &dyn Fn(&AnyAxis, &PluginConfig) -> Result<Value, ConfigError>,
+        at: &Path,
+        fill_defaults: bool,
     ) -> Result<Value, ConfigError> {
         match (self, answer) {
             (Self::Bool, Value::Bool(_)) | (Self::Optional(_), Value::Null) => Ok(answer.clone()),
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
-            (Self::Optional(inner), _) => inner.map_plugins(answer, plugin),
+            (Self::Optional(inner), _) => inner.walk(answer, at, fill_defaults),
             (Self::List(element), Value::Array(answers)) => answers
                 .iter()
                 .enumerate()
                 .map(|(position, answer)| {
-                    element
-                        .map_plugins(answer, plugin)
-                        .map_err(|error| error.within(Segment::Index(position)))
+                    element.walk(answer, &at.clone().index(position), fill_defaults)
                 })
                 .collect::<Result<_, _>>()
                 .map(Value::Array),
             (Self::Plugin(axis), _) => match PluginConfig::from_answer(answer) {
-                Some(answer) => plugin(axis, &answer),
-                None => Err(self.wrong_kind(answer)),
+                Some(plugin) => axis.walk(&plugin, at, fill_defaults),
+                None => Err(self.wrong_kind(answer, at)),
             },
-            _ => Err(self.wrong_kind(answer)),
+            _ => Err(self.wrong_kind(answer, at)),
         }
     }
 
-    /// The error of `answer` not being of this kind, as the config holding the field sees it.
-    fn wrong_kind(&self, answer: &Value) -> ConfigError {
+    /// The error of `answer`, the answer at `at`, not being of this kind.
+    fn wrong_kind(&self, answer: &Value, at: &Path) -> ConfigError {
         ConfigError::WrongKind {
-            path: Path::ROOT,
+            path: at.clone(),
             expected: self.name(),
             found: config::name_of(answer),
         }
@@ -731,7 +690,7 @@ mod tests {
             .field(Field::new("rounds", "Rounds", FieldKind::Integer).with_default(true));
 
         assert_eq!(
-            schema.complete(&Config::new()),
+            schema.walk(&Config::new(), &Path::ROOT, true),
             Err(ConfigError::WrongKind {
                 path: Path::of("rounds"),
                 expected: "a whole number",
@@ -866,7 +825,7 @@ mod tests {
         let config = Config::new()
             .with("by", PluginConfig::of::<Points>().with("for_win", 2.0))
             .with("fallback", PluginConfig::of::<Matches>());
-        let completed = Ranker::schema().complete(&config).unwrap();
+        let completed = Ranker::schema().walk(&config, &Path::ROOT, true).unwrap();
         let built = PluginConfig::configured(Ranker::ID, config)
             .build::<dyn Configured>()
             .unwrap();
@@ -883,13 +842,49 @@ mod tests {
 
     #[test]
     fn a_plugin_without_parameters_is_completed_as_a_unit_struct_is_written() {
+        let walked = |entry: &PluginEntry, config, fill_defaults| {
+            entry.walk(&config, &Path::ROOT, fill_defaults)
+        };
+
         assert_eq!(
-            entry_of::<Matches>().complete(&Config::new()),
+            walked(entry_of::<Matches>(), Config::new(), true),
             Ok(Value::Null)
         );
+        // an answer still being edited keeps its config an object
         assert_eq!(
-            entry_of::<Threshold>().complete(&Config::new().with("least", 2)),
+            walked(entry_of::<Matches>(), Config::new(), false),
+            Ok(json!({}))
+        );
+        assert_eq!(
+            walked(
+                entry_of::<Threshold>(),
+                Config::new().with("least", 2),
+                true
+            ),
             Ok(json!({"least": 2, "weights": []}))
+        );
+    }
+
+    #[test]
+    fn an_answer_left_unanswered_is_no_error_unless_the_defaults_are_filled() {
+        let config = Config::new().with(
+            "tie_breakers",
+            vec![PluginConfig::of::<Threshold>().with("weights", vec![1.0])],
+        );
+
+        assert_eq!(
+            Ranker::schema()
+                .walk(&config, &Path::ROOT, false)
+                .map(Value::from),
+            Ok(json!({
+                "tie_breakers": [{"type": "threshold", "value": {"weights": [1.0]}}]
+            }))
+        );
+        assert_eq!(
+            Ranker::schema().walk(&config, &Path::ROOT, true),
+            Err(ConfigError::Unanswered {
+                path: Path::of("tie_breakers").index(0).field("least"),
+            })
         );
     }
 

@@ -1,6 +1,6 @@
 # Simplification plan
 
-Status: steps 1 to 7 done. The crate does everything it should, i.e. the catalog,
+Status: steps 1 to 8 done. The crate does everything it should, i.e. the catalog,
 schemas, configs, the compatibility checks, the builder, resolution and the
 derive are implemented and tested. This plan reduces it to its core without
 losing any of that: first the API a plugin author, a composite author and a UI

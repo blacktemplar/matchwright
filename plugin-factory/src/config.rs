@@ -90,7 +90,8 @@ impl PluginConfig {
     where
         Box<A>: DeserializeOwned,
     {
-        deserialize_plugin(&AnyAxis::of::<A>().complete(self)?)
+        let answer = AnyAxis::of::<A>().walk(self, &Path::ROOT, true)?;
+        deserialize_plugin(&answer, &Path::ROOT)
     }
 
     /// The plugin configured by `answer`, or [`None`] if `answer` is not a plugin.
@@ -163,28 +164,36 @@ impl Config {
     }
 }
 
-/// The plugin `P` deserialized from `config`, a completed config as
-/// [`PluginEntry::complete`](crate::catalog::PluginEntry::complete) writes it.
+/// `T` deserialized from `config`, a completed config at `at` as
+/// [`PluginEntry::walk`](crate::catalog::PluginEntry::walk) writes it.
+///
+/// # Errors
+/// Returns [`ConfigError::Rejected`] with the path of the answer `T` rejects.
+pub(crate) fn deserialize<T: DeserializeOwned>(
+    config: &Value,
+    at: &Path,
+) -> Result<T, ConfigError> {
+    deserialize_at(config, at, true)
+}
+
+/// The plugin `P` deserialized from `answer`, a completed plugin answer at `at` as
+/// [`AnyAxis::walk`] writes it, i.e. still tagged with its id.
 ///
 /// # Errors
 /// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
-pub(crate) fn deserialize<P: DeserializeOwned>(config: &Value) -> Result<P, ConfigError> {
-    deserialize_at(config, true)
+fn deserialize_plugin<P: DeserializeOwned>(answer: &Value, at: &Path) -> Result<P, ConfigError> {
+    deserialize_at(answer, at, false)
 }
 
-/// The plugin `P` deserialized from `answer`, a completed plugin answer as
-/// [`AnyAxis::complete`] writes it, i.e. still tagged with its id.
-///
-/// # Errors
-/// Returns [`ConfigError::Rejected`] with the path of the answer `P` rejects.
-fn deserialize_plugin<P: DeserializeOwned>(answer: &Value) -> Result<P, ConfigError> {
-    deserialize_at(answer, false)
-}
-
-/// `T` deserialized from `value`, which is a config if `is_config` and a plugin answer otherwise.
-fn deserialize_at<T: DeserializeOwned>(value: &Value, is_config: bool) -> Result<T, ConfigError> {
+/// `T` deserialized from `value` at `at`, which is a config if `is_config` and a plugin answer
+/// otherwise.
+fn deserialize_at<T: DeserializeOwned>(
+    value: &Value,
+    at: &Path,
+    is_config: bool,
+) -> Result<T, ConfigError> {
     serde_path_to_error::deserialize(value).map_err(|error| ConfigError::Rejected {
-        path: Path::of_deserialized(error.path(), is_config),
+        path: at.clone().deserialized(error.path(), is_config),
         reason: error.inner().to_string(),
     })
 }
@@ -235,6 +244,7 @@ impl Path {
     }
 
     /// The path of the field `field` of a config.
+    #[cfg(test)]
     pub(crate) fn of(field: impl Into<String>) -> Self {
         Self::ROOT.field(field)
     }
@@ -250,37 +260,14 @@ impl Path {
         self.0.starts_with(&prefix.0)
     }
 
-    /// The path of the config or list holding what this path addresses, i.e. this path without
-    /// its last segment. The parent of [`Self::ROOT`] is [`Self::ROOT`].
-    pub(crate) fn parent(&self) -> Self {
-        let mut parent = self.clone();
-        parent.0.pop();
-        parent
-    }
-
-    /// `error`, whose path is relative to what this path addresses, with its path seen from the
-    /// root, see [`ConfigError::within`].
-    pub(crate) fn prefix(&self, error: ConfigError) -> ConfigError {
-        self.0
-            .iter()
-            .rev()
-            .fold(error, |error, segment| error.within(segment.clone()))
-    }
-
-    /// Prefixes this path by `segment`, i.e. makes it the path of the same thing seen from one
-    /// config further out.
-    fn prepend(&mut self, segment: Segment) {
-        self.0.insert(0, segment);
-    }
-
-    /// The path of what deserializing a config, or a plugin answer unless `is_config`, failed at,
-    /// where `deserialized` is where in it as a [`Value`] that is.
-    fn of_deserialized(deserialized: &serde_path_to_error::Path, is_config: bool) -> Self {
+    /// This path followed by where deserializing the config it addresses, or the plugin answer
+    /// unless `is_config`, failed, where `deserialized` is where in it as a [`Value`] that is.
+    fn deserialized(self, deserialized: &serde_path_to_error::Path, is_config: bool) -> Self {
         use serde_path_to_error::Segment as Deserialized;
 
         // a config holds answers, a list holds answers, and a plugin answer holds its config under
         // "value"; its "type" is left out like anything not addressable as a field
-        let mut path = Self::ROOT;
+        let mut path = self;
         let mut in_config = is_config;
         for segment in deserialized.iter() {
             match segment {
@@ -359,7 +346,7 @@ pub enum Segment {
 }
 
 /// Why a config does not configure the plugin it is given to.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ConfigError {
     #[error("{path} is not a field of the schema")]
     UnknownField { path: Path },
@@ -388,20 +375,6 @@ impl ConfigError {
             | Self::UnknownPlugin { path }
             | Self::Rejected { path, .. } => path,
         }
-    }
-
-    /// This error as the config one level further out sees it, i.e. with `segment` in front of its
-    /// path.
-    #[must_use]
-    pub fn within(mut self, segment: Segment) -> Self {
-        match &mut self {
-            Self::UnknownField { path }
-            | Self::Unanswered { path }
-            | Self::WrongKind { path, .. }
-            | Self::UnknownPlugin { path }
-            | Self::Rejected { path, .. } => path.prepend(segment),
-        }
-        self
     }
 }
 
@@ -453,27 +426,17 @@ mod tests {
     }
 
     #[test]
-    fn an_error_seen_from_further_out_is_prefixed_by_the_field_it_is_in() {
+    fn an_error_reads_as_the_path_it_is_about() {
         let error = ConfigError::Rejected {
-            path: Path::of("points_for_win"),
+            path: nested(),
             reason: "cannot be negative".to_owned(),
-        }
-        .within(Segment::Index(1))
-        .within(Segment::Field("metrics".to_owned()));
+        };
 
         assert_eq!(error.path(), &nested());
         assert_eq!(
             error.to_string(),
             "metrics[1].points_for_win is rejected: cannot be negative"
         );
-    }
-
-    #[test]
-    fn an_unknown_plugin_is_reported_as_the_field_it_answers() {
-        let error = ConfigError::UnknownPlugin { path: Path::ROOT }
-            .within(Segment::Field("ranker".to_owned()));
-
-        assert_eq!(error.path(), &Path::of("ranker"));
     }
 
     #[test]
@@ -512,54 +475,55 @@ mod tests {
         );
     }
 
+    /// A plugin with a field rejecting a negative answer.
+    #[derive(Debug, Deserialize)]
+    struct Points {
+        #[serde(rename = "for_win")]
+        _for_win: u32,
+    }
+
+    /// A plugin answer as typetag writes it, of which only the config is read.
+    #[derive(Debug, Deserialize)]
+    struct Tagged {
+        #[serde(rename = "value")]
+        _value: Points,
+    }
+
+    /// A plugin made of plugins.
+    #[derive(Debug, Deserialize)]
+    struct Ranker {
+        #[serde(rename = "tie_breakers")]
+        _tie_breakers: Vec<Tagged>,
+    }
+
     #[test]
     fn the_path_of_a_deserialization_error_leaves_out_how_plugins_are_written() {
         let config = serde_json::json!({
             "tie_breakers": [{"type": "points", "value": {"for_win": -1.0}}]
         });
-        #[derive(Debug, Deserialize)]
-        struct Points {
-            #[serde(rename = "for_win")]
-            _for_win: u32,
-        }
-        #[derive(Debug, Deserialize)]
-        struct Tagged {
-            #[serde(rename = "value")]
-            _value: Points,
-        }
-        #[derive(Debug, Deserialize)]
-        struct Ranker {
-            #[serde(rename = "tie_breakers")]
-            _tie_breakers: Vec<Tagged>,
-        }
-
-        let error = serde_path_to_error::deserialize::<_, Ranker>(&config).unwrap_err();
 
         assert_eq!(
-            Path::of_deserialized(error.path(), true),
-            Path::of("tie_breakers").index(0).field("for_win")
+            deserialize::<Ranker>(&config, &Path::ROOT)
+                .unwrap_err()
+                .path(),
+            &Path::of("tie_breakers").index(0).field("for_win")
         );
     }
 
     #[test]
-    fn the_path_of_a_deserialization_error_in_a_plugin_answer_is_relative_to_the_plugin() {
+    fn the_path_of_a_deserialization_error_follows_the_path_of_the_plugin_answer() {
         let answer = serde_json::json!({"type": "points", "value": {"for_win": -1.0}});
-        #[derive(Debug, Deserialize)]
-        struct Points {
-            #[serde(rename = "for_win")]
-            _for_win: u32,
-        }
-        #[derive(Debug, Deserialize)]
-        struct Tagged {
-            #[serde(rename = "value")]
-            _value: Points,
-        }
+        let rejected_at = |at: &Path| {
+            deserialize_plugin::<Tagged>(&answer, at)
+                .unwrap_err()
+                .path()
+                .clone()
+        };
 
-        let error = serde_path_to_error::deserialize::<_, Tagged>(&answer).unwrap_err();
-
+        assert_eq!(rejected_at(&Path::ROOT), Path::of("for_win"));
         assert_eq!(
-            Path::of_deserialized(error.path(), false),
-            Path::of("for_win")
+            rejected_at(&Path::of("metrics").index(1)),
+            Path::of("metrics").index(1).field("for_win")
         );
     }
 }

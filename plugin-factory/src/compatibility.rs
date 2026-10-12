@@ -168,6 +168,11 @@ impl OpenFacts {
     pub(crate) fn contains(&self, type_id: TypeId) -> bool {
         self.0.contains(&type_id)
     }
+
+    /// The types of the facts that could still be provided.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = TypeId> + '_ {
+        self.0.iter().copied()
+    }
 }
 
 impl FromIterator<TypeId> for OpenFacts {
@@ -179,15 +184,6 @@ impl FromIterator<TypeId> for OpenFacts {
 impl Extend<TypeId> for OpenFacts {
     fn extend<I: IntoIterator<Item = TypeId>>(&mut self, types: I) {
         self.0.extend(types);
-    }
-}
-
-impl IntoIterator for OpenFacts {
-    type Item = TypeId;
-    type IntoIter = std::collections::btree_set::IntoIter<TypeId>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
     }
 }
 
@@ -275,7 +271,7 @@ fn declared(plugins: &[&dyn Plugin]) -> Vec<Declared> {
 
 /// The types of the facts required in `declarations` that none of them provides, in the order they
 /// are required in and with repetitions.
-pub(crate) fn unprovided(declarations: &[Declared]) -> impl Iterator<Item = TypeId> {
+pub(crate) fn unprovided<'a>(declarations: &'a [&'a Declared]) -> impl Iterator<Item = TypeId> {
     declarations
         .iter()
         .flat_map(|declared| declared.declaration.required())
@@ -343,41 +339,67 @@ pub(crate) fn check_facts(
     let mut facts = Facts::of(context);
     for declared in declarations {
         if let Some(conflict) = facts.conflict_with(declared) {
-            return Err(conflict);
+            return Err(conflict.incompatibility);
         }
         facts.add(declared);
     }
     for declared in declarations {
-        facts.check_requirements(declared, open)?;
+        if let Some(unmet) = facts.unmet(declared, open).next() {
+            return Err(unmet.incompatibility);
+        }
     }
     Ok(())
 }
 
+/// Why a plugin does not fit, about the fact of the type `fact`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Conflict {
+    pub(crate) fact: TypeId,
+    pub(crate) incompatibility: Incompatibility,
+}
+
 /// Checks whether the plugin with `addition` fits into a composite with `context` that has the
+/// plugins with `declarations`, see [`conflicts`].
+///
+/// # Errors
+/// Returns the first of the [`conflicts`].
+pub(crate) fn check_addition<'a>(
+    context: &'a Declaration,
+    declarations: impl IntoIterator<Item = &'a Declared>,
+    addition: &'a Declared,
+    open: &OpenFacts,
+) -> Result<(), Incompatibility> {
+    match conflicts(context, declarations, addition, open)
+        .into_iter()
+        .next()
+    {
+        Some(conflict) => Err(conflict.incompatibility),
+        None => Ok(()),
+    }
+}
+
+/// Why the plugin with `addition` does not fit into a composite with `context` that has the
 /// plugins with `declarations`, where the facts in `open` are the ones a plugin still to be
-/// chosen could provide.
+/// chosen could provide: the first fact it provides that is provided already, if any, then
+/// every requirement it does not meet, in the order it requires them in.
 ///
 /// Only what `addition` declares is checked: an incompatibility among `declarations` is not
 /// reported here, but by [`check_facts`].
-///
-/// # Errors
-/// Returns the first incompatibility found.
-pub(crate) fn check_addition(
-    context: &Declaration,
-    declarations: &[Declared],
-    addition: &Declared,
+pub(crate) fn conflicts<'a>(
+    context: &'a Declaration,
+    declarations: impl IntoIterator<Item = &'a Declared>,
+    addition: &'a Declared,
     open: &OpenFacts,
-) -> Result<(), Incompatibility> {
+) -> Vec<Conflict> {
     let mut facts = Facts::of(context);
     for declared in declarations {
         facts.add(declared);
     }
-    if let Some(conflict) = facts.conflict_with(addition) {
-        return Err(conflict);
-    }
+    let mut conflicts: Vec<_> = facts.conflict_with(addition).into_iter().collect();
     // its own facts count, since a plugin may require a fact it provides itself
     facts.add(addition);
-    facts.check_requirements(addition, open)
+    conflicts.extend(facts.unmet(addition, open));
+    conflicts
 }
 
 /// The facts of a composite by their type, each with the name of the plugin providing it, or
@@ -406,10 +428,10 @@ impl<'a> Facts<'a> {
 
     /// Why the plugin `provider` cannot be added to these facts, i.e. the fact of it the context
     /// or another plugin provides already.
-    fn conflict_with(&self, provider: &Declared) -> Option<Incompatibility> {
+    fn conflict_with(&self, provider: &Declared) -> Option<Conflict> {
         provider.declaration.provided().iter().find_map(|fact| {
             let (first, _) = self.0.get(&fact.type_id())?;
-            Some(match first {
+            let incompatibility = match first {
                 Some(first) => Incompatibility::FactProvidedTwice {
                     fact: format!("{:?}", fact.value()),
                     first: (*first).to_owned(),
@@ -419,44 +441,55 @@ impl<'a> Facts<'a> {
                     fact: format!("{:?}", fact.value()),
                     provider: provider.name.clone(),
                 },
+            };
+            Some(Conflict {
+                fact: fact.type_id(),
+                incompatibility,
             })
         })
     }
 
-    /// Checks the requirements of the plugin `required_by` against these facts, assuming that the
-    /// facts in `open` arrive.
-    fn check_requirements(
-        &self,
-        required_by: &Declared,
-        open: &OpenFacts,
-    ) -> Result<(), Incompatibility> {
+    /// The requirements of the plugin `required_by` these facts do not meet, assuming that the
+    /// facts in `open` arrive, in the order it requires them in.
+    fn unmet<'s>(
+        &'s self,
+        required_by: &'s Declared,
+        open: &'s OpenFacts,
+    ) -> impl Iterator<Item = Conflict> + 's {
         let Declared {
             name: required_by,
             declaration,
         } = required_by;
-        for requirement in declaration.required() {
-            // a provided fact is settled: nothing may provide it a second time, so whether its
-            // value meets the condition is decided however the composite is filled up
-            let Some(&(_, fact)) = self.0.get(&requirement.type_id()) else {
-                if open.contains(requirement.type_id()) {
-                    continue;
-                }
-                return Err(Incompatibility::FactNotProvided {
-                    fact: requirement.name(),
-                    required_by: required_by.to_owned(),
-                });
-            };
-            if let Some(condition) = &requirement.condition
-                && !(condition.holds)(fact.value())
-            {
-                return Err(Incompatibility::ConditionNotMet {
-                    condition: condition.description,
-                    required_by: required_by.to_owned(),
-                    provided: format!("{:?}", fact.value()),
-                });
-            }
-        }
-        Ok(())
+        declaration
+            .required()
+            .iter()
+            .filter_map(move |requirement| {
+                let fact = requirement.type_id();
+                // a provided fact is settled: nothing may provide it a second time, so whether its
+                // value meets the condition is decided however the composite is filled up
+                let incompatibility = match self.0.get(&fact) {
+                    None if open.contains(fact) => return None,
+                    None => Incompatibility::FactNotProvided {
+                        fact: requirement.name(),
+                        required_by: required_by.clone(),
+                    },
+                    Some(&(_, provided)) => {
+                        let condition = requirement
+                            .condition
+                            .as_ref()
+                            .filter(|condition| !(condition.holds)(provided.value()))?;
+                        Incompatibility::ConditionNotMet {
+                            condition: condition.description,
+                            required_by: required_by.clone(),
+                            provided: format!("{:?}", provided.value()),
+                        }
+                    }
+                };
+                Some(Conflict {
+                    fact,
+                    incompatibility,
+                })
+            })
     }
 }
 
@@ -661,7 +694,7 @@ mod tests {
         ];
 
         assert_eq!(
-            unprovided(&declarations).collect::<Vec<_>>(),
+            unprovided(&declarations.iter().collect::<Vec<_>>()).collect::<Vec<_>>(),
             vec![TypeId::of::<Annotated>()]
         );
     }
@@ -879,6 +912,40 @@ mod tests {
                 fact: "an annotation",
                 required_by: "calculator".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn the_conflicts_of_an_addition_are_every_requirement_it_does_not_meet() {
+        let context = Declaration::of(|declaration| {
+            declaration.provide(PAIRS);
+        });
+        let addition = declared("calculator", |declaration| {
+            declaration.require::<Annotated>("an annotation");
+            requires_single_players(declaration);
+            declaration.require::<Derived>("a derived fact");
+        });
+        let unprovided = |fact| Incompatibility::FactNotProvided {
+            fact,
+            required_by: "calculator".to_owned(),
+        };
+
+        assert_eq!(
+            conflicts(&context, &[], &addition, &open::<Derived>()),
+            [
+                Conflict {
+                    fact: TypeId::of::<Annotated>(),
+                    incompatibility: unprovided("an annotation"),
+                },
+                Conflict {
+                    fact: TypeId::of::<EntrantsPerRanking>(),
+                    incompatibility: Incompatibility::ConditionNotMet {
+                        condition: "rankings of single players",
+                        required_by: "calculator".to_owned(),
+                        provided: format!("{PAIRS:?}"),
+                    },
+                },
+            ]
         );
     }
 
