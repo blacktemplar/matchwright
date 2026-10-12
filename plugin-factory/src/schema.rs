@@ -27,6 +27,38 @@ use crate::{
 /// answer it rejects, e.g. through `#[serde(deserialize_with = ..)]` or a field type's
 /// `#[serde(try_from = ..)]`, is reported as [`ConfigError::Rejected`] with the path of the
 /// answer.
+///
+/// A field written as an `Option` is told apart from one answered with nothing even where it is
+/// deserialized without its schema, e.g. when loaded: it needs a function deserializing it, so
+/// that `serde` rejects it missing, or a `#[serde(default)]` it is read missing as.
+///
+/// ```compile_fail
+/// use plugin_factory::schema::Configurable;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize, Configurable)]
+/// struct Limits {
+///     #[plugin(label = "Cap")]
+///     cap: Option<u32>,
+/// }
+/// ```
+///
+/// # Examples
+/// ```
+/// use plugin_factory::schema::Configurable;
+/// use serde::Deserialize;
+/// use serde_json::json;
+///
+/// #[derive(Deserialize, Configurable)]
+/// struct Limits {
+///     #[serde(deserialize_with = "Option::deserialize")]
+///     #[plugin(label = "Cap")]
+///     cap: Option<u32>,
+/// }
+///
+/// assert!(serde_json::from_value::<Limits>(json!({"cap": null})).is_ok());
+/// assert!(serde_json::from_value::<Limits>(json!({})).is_err());
+/// ```
 pub trait Configurable: Sized + DeserializeOwned + 'static {
     /// Whether it is a unit struct, deserialized from `null`. Set by the derive; not part of the
     /// API.
@@ -53,12 +85,6 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 pub trait FieldType {
     /// The kind of answer a field of this type takes.
     fn kind() -> FieldKind;
-
-    /// What `serde` deserializes a missing field of this type as, which is the default of the
-    /// field, or [`None`] if a missing field is an error; only an `Option` has one.
-    fn missing() -> Option<Value> {
-        None
-    }
 
     /// Adds the plugins `self` holds to `plugins`; none by default.
     fn plugins<'a>(&'a self, _plugins: &mut Vec<&'a dyn Plugin>) {}
@@ -99,10 +125,6 @@ impl<A: Axis + ?Sized> FieldType for Box<A> {
 impl<T: FieldType> FieldType for Option<T> {
     fn kind() -> FieldKind {
         FieldKind::optional(T::kind())
-    }
-
-    fn missing() -> Option<Value> {
-        Some(Value::Null)
     }
 
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
@@ -282,8 +304,8 @@ pub enum FieldKind {
     List(Box<FieldKind>),
     /// An answer of the kind or nothing, answered by an answer of the kind or by [`Value::Null`].
     ///
-    /// Being answered with nothing is being answered, and is what such a field usually offers as
-    /// its default. An optional answer of an optional answer is just an optional answer.
+    /// Being answered with nothing is being answered. An optional answer of an optional answer is
+    /// just an optional answer.
     Optional(Box<FieldKind>),
 }
 
@@ -510,6 +532,7 @@ mod tests {
         #[serde(default)]
         #[plugin(label = "Tie breakers")]
         tie_breakers: Vec<Box<dyn Configured>>,
+        #[serde(deserialize_with = "Option::deserialize")]
         #[plugin(label = "Fall back to")]
         fallback: Option<Box<dyn Configured>>,
     }

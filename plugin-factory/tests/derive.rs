@@ -75,6 +75,7 @@ struct Points {
     #[serde(default)]
     #[plugin(label = "Rounds")]
     rounds: u32,
+    #[serde(default)]
     #[plugin(label = "Points for a bye")]
     for_bye: Option<f64>,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -181,7 +182,7 @@ struct Composite {
     #[serde(default)]
     #[plugin(label = "Others")]
     others: Vec<Box<dyn Derived>>,
-    #[serde(rename = "limit")]
+    #[serde(rename = "limit", deserialize_with = "Option::deserialize")]
     #[plugin(label = "Limit")]
     cap: Option<u32>,
 }
@@ -288,7 +289,7 @@ fn a_field_defaults_to_what_serde_fills_it_with() {
     assert_eq!(default("byes"), None);
     assert_eq!(default("rounds"), Some(json!(0)));
     assert_eq!(default("for_bye"), Some(Value::Null));
-    // an option deserialized by a function of its own has to be there
+    // an option offers nothing only by a default of its own
     assert_eq!(default("cap"), None);
     // written as the field is serialized
     assert_eq!(default("share"), Some(json!(50.0)));
@@ -431,7 +432,25 @@ fn a_composite_reads_its_schema_from_its_fields_as_a_plugin_does() {
         field("limit").kind(),
         &FieldKind::optional(FieldKind::Integer)
     );
-    assert_eq!(field("limit").default_value(), Some(&Value::Null));
+    assert_eq!(field("limit").default_value(), None);
+}
+
+#[test]
+fn an_option_without_a_default_is_not_read_missing_as_nothing() {
+    let composite = |limit: Option<Value>| {
+        let mut config = json!({"main": {"type": "derive::unit", "value": null}});
+        if let Some(limit) = limit {
+            config["limit"] = limit;
+        }
+        serde_json::from_value::<Composite>(config).map(|composite| composite.cap)
+    };
+
+    assert_eq!(composite(Some(Value::Null)).ok(), Some(None));
+    assert_eq!(composite(Some(json!(3))).ok(), Some(Some(3)));
+    assert_eq!(
+        composite(None).map_err(|error| error.to_string()),
+        Err("missing field `limit`".to_owned())
+    );
 }
 
 #[test]
@@ -439,6 +458,7 @@ fn the_plugins_of_a_composite_are_the_plugins_in_its_fields() {
     let composite: Composite = serde_json::from_value(json!({
         "main": {"type": "derive::unit", "value": null},
         "others": [{"type": "derive::points", "value": {"byes": true, "cap": null}}],
+        "limit": null,
     }))
     .unwrap();
 

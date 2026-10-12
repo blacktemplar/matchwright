@@ -92,9 +92,12 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
     let default = container_default(input, what)?;
     let is_unit = matches!(data.fields, Fields::Unit);
     let fields = match &data.fields {
-        Fields::Named(fields) => {
-            collect(fields.named.iter().map(|field| Field::parse(field, what)))?
-        }
+        Fields::Named(fields) => collect(
+            fields
+                .named
+                .iter()
+                .map(|field| Field::parse(field, what, default.is_some())),
+        )?,
         Fields::Unit => Vec::new(),
         Fields::Unnamed(_) => {
             return Err(Error::new_spanned(
@@ -232,15 +235,14 @@ struct Field {
     label: LitStr,
     description: Option<LitStr>,
     default: Option<SerdeDefault>,
-    /// `deserialize_with` or `with`, which disables the default `serde` gives a missing `Option`.
-    deserialized_with: bool,
     /// The function the field is serialized with instead of its `Serialize` impl.
     serialize_with: Option<ExprPath>,
 }
 
 impl Field {
-    /// The field `field` of a `what`, or [`None`] if `serde` does not deserialize it.
-    fn parse(field: &syn::Field, what: &str) -> Result<Option<Self>> {
+    /// The field `field` of a `what`, or [`None`] if `serde` does not deserialize it, given
+    /// whether the struct has a `#[serde(default)]`.
+    fn parse(field: &syn::Field, what: &str, container_default: bool) -> Result<Option<Self>> {
         let ident = field.ident.clone().expect("the fields are named");
         let mut name = LitStr::new(&ident.unraw().to_string(), ident.span());
         let mut default = None;
@@ -285,6 +287,18 @@ impl Field {
         if skipped {
             return Ok(None);
         }
+        // serde reads a missing `Option` as `None` unless a function of its own deserializes it,
+        // which would make an unanswered field indistinguishable from one answered with nothing
+        if is_option(&field.ty) && default.is_none() && !container_default && !deserialized_with {
+            return Err(Error::new_spanned(
+                &field.ty,
+                format!(
+                    "an `Option` field of a {what} has to be answered even with nothing: add \
+                     `#[serde(deserialize_with = \"Option::deserialize\")]` so that serde \
+                     rejects it missing, or `#[serde(default)]` to make it optional",
+                ),
+            ));
+        }
 
         let mut label = None;
         let mut description = None;
@@ -313,7 +327,6 @@ impl Field {
             label,
             description,
             default,
-            deserialized_with,
             serialize_with,
         }))
     }
@@ -327,7 +340,6 @@ impl Field {
             label,
             description,
             default,
-            deserialized_with,
             serialize_with,
         } = self;
         let described = description
@@ -344,28 +356,17 @@ impl Field {
             (None, Some(SerdeDefault::Function(function))) => Some(quote!(#function().#ident)),
             (None, None) => None,
         };
-        let default = match default {
-            Some(default) => {
-                let serialize = match serialize_with {
-                    Some(serialize_with) => serialize_with.to_token_stream(),
-                    None => quote!(::plugin_factory::__private::serde::Serialize::serialize),
-                };
-                quote! {
-                    let field = field.with_default(
-                        ::plugin_factory::__private::default_value(&#default, #serialize),
-                    );
-                }
+        let default = default.map(|default| {
+            let serialize = match serialize_with {
+                Some(serialize_with) => serialize_with.to_token_stream(),
+                None => quote!(::plugin_factory::__private::serde::Serialize::serialize),
+            };
+            quote! {
+                let field = field.with_default(
+                    ::plugin_factory::__private::default_value(&#default, #serialize),
+                );
             }
-            // serde deserializes a missing field as what its type deserializes from nothing,
-            // unless a function of its own deserializes it
-            None if !deserialized_with => quote! {
-                let field = match <#ty as ::plugin_factory::schema::FieldType>::missing() {
-                    ::std::option::Option::Some(default) => field.with_default(default),
-                    ::std::option::Option::None => field,
-                };
-            },
-            None => TokenStream::new(),
-        };
+        });
         quote! {
             {
                 let field = ::plugin_factory::schema::Field::new(
@@ -396,6 +397,23 @@ impl SerdeDefault {
         } else {
             Ok(Self::Trait)
         }
+    }
+}
+
+/// Whether `ty` is written as an `Option`, e.g. `Option<u32>` or `std::option::Option<u32>`.
+fn is_option(ty: &Type) -> bool {
+    match ty {
+        Type::Path(path) => {
+            path.qself.is_none()
+                && path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|last| last.ident == "Option")
+        }
+        Type::Group(group) => is_option(&group.elem),
+        Type::Paren(paren) => is_option(&paren.elem),
+        _ => false,
     }
 }
 

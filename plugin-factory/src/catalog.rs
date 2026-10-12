@@ -509,6 +509,7 @@ mod tests {
         description = "a plugin with a slot of another axis"
     )]
     struct Wrapper {
+        #[serde(deserialize_with = "Option::deserialize")]
         #[plugin(label = "Nested")]
         nested: Option<Box<dyn Nested>>,
     }
@@ -526,6 +527,7 @@ mod tests {
         declare_static = Self::declare_static
     )]
     struct DeepProvider {
+        #[serde(deserialize_with = "Option::deserialize")]
         #[plugin(label = "Inner")]
         inner: Option<Box<dyn Tested>>,
     }

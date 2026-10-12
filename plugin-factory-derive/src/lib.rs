@@ -39,17 +39,18 @@ pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
 /// - `label = "..."`, required, and `description = "..."`, optional.
 ///
 /// A field is in the schema under the name `serde` reads it by, and of the kind its type answers,
-/// see `FieldType`. Its default is what `serde` fills a missing field with:
-/// `#[serde(default)]`, on the field or the struct, or `None` for an `Option` that is not
-/// deserialized with a function of its own. A default is serialized as the field is. The plugins
-/// held by the fields are what `Configurable::plugins` returns.
+/// see `FieldType`. Its default is its `#[serde(default)]`, on the field or the struct, serialized
+/// as the field is. The plugins held by the fields are what `Configurable::plugins` returns.
 ///
 /// # Errors
 ///
 /// Fails to compile for anything but a struct with named fields or none, for a generic struct,
 /// and for `serde` attributes that make the fields differ from what is deserialized:
 /// `flatten`, `rename_all`, `transparent`, `from`, `try_from`, and a `rename` that differs between
-/// serializing and deserializing.
+/// serializing and deserializing. A field written as an `Option` needs `#[serde(default)]`, on
+/// the field or the struct, or a function deserializing it, such as
+/// `#[serde(deserialize_with = "Option::deserialize")]`, so that `serde` does not read it missing
+/// as `None`.
 #[proc_macro_derive(Plugin, attributes(plugin))]
 pub fn derive_plugin(input: TokenStream) -> TokenStream {
     derive::expand_plugin(&parse_macro_input!(input as DeriveInput))

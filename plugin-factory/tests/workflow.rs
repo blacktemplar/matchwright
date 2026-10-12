@@ -267,6 +267,7 @@ struct Phase {
     #[serde(default)]
     #[plugin(label = "Metrics")]
     metrics: Vec<Box<dyn Metric>>,
+    #[serde(default)]
     #[plugin(label = "Tie break")]
     tie_break: Option<Box<dyn Metric>>,
 }
