@@ -15,12 +15,12 @@ use tournament_engine::{
         metrics_calculator::{
             buchholz::{
                 Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
-                MoreBuchholz, MoreBuchholzOfBuchholz,
+                MoreBuchholz, MoreBuchholzOfBuchholz, MoreSonnebornBerger, SonnebornBerger,
+                SonnebornBergerCalculator,
             },
             matches::{Matches, MatchesCalculator},
             points::{MorePoints, Points, PointsCalculator},
             round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
-            sonneborn_berger::{MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::{KnockoutRound, SingleElimination},

@@ -27,11 +27,10 @@ use tournament_engine::{
         PhasePlugins,
         metrics_calculator::{
             MetricsCalculator,
-            buchholz::{Buchholz, BuchholzOfBuchholz},
+            buchholz::{Buchholz, BuchholzOfBuchholz, SonnebornBerger},
             points::Points,
             round_of_elimination::RoundOfElimination,
             round_of_first_loss::RoundOfFirstLoss,
-            sonneborn_berger::SonnebornBerger,
             wins_draws_losses::WinsDrawsLosses,
         },
         phase_format::{
@@ -816,8 +815,8 @@ fn table(header: &[&str], rows: &[Vec<String>]) -> String {
 mod tests {
     use tournament_engine::plugins::{
         metrics_calculator::{
+            buchholz::SonnebornBergerCalculator,
             points::{MorePoints, PointsCalculator},
-            sonneborn_berger::SonnebornBergerCalculator,
             wins_draws_losses::{FewerMatchesPlayed, MoreWins, WinsDrawsLossesCalculator},
         },
         phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},

@@ -172,6 +172,7 @@ mod tests {
                 Metric,
                 buchholz::{
                     Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
+                    MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
                 },
                 matches::{Matches, MatchesCalculator},
                 points::{MorePoints, Points, PointsCalculator},
@@ -179,9 +180,6 @@ mod tests {
                     Eliminates, LaterElimination, RoundOfEliminationCalculator,
                 },
                 round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss},
-                sonneborn_berger::{
-                    MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
-                },
                 wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
             },
             phase_format::{

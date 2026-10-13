@@ -12,10 +12,9 @@ use crate::{
         metrics_calculator::{
             buchholz::{
                 BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz,
-                MoreBuchholzOfBuchholz,
+                MoreBuchholzOfBuchholz, MoreSonnebornBerger, SonnebornBergerCalculator,
             },
             points::{MorePoints, PointsCalculator},
-            sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::{PhaseFormat, Schedule},

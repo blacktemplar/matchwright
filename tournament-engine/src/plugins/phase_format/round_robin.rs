@@ -9,8 +9,8 @@ use crate::{
     entities::competition::{Bye, Match, PhaseData},
     plugins::{
         metrics_calculator::{
+            buchholz::{MoreSonnebornBerger, SonnebornBergerCalculator},
             points::{MorePoints, PointsCalculator},
-            sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::{PhaseFormat, Schedule},
