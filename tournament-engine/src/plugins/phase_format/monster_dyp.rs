@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
@@ -8,8 +9,7 @@ use vec1::vec1;
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
     plugins::{
-        Plugin,
-        compatibility::{Declaration, EntrantsPerRanking},
+        facts::EntrantsPerRanking,
         phase_format::{PhaseFormat, Schedule},
     },
 };
@@ -24,8 +24,15 @@ use crate::{
 /// rankings nothing is scheduled.
 ///
 /// All rounds are scheduled at once, when the phase starts.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::monster_dyp",
+    label = "Monster DYP",
+    description = "every round, entrants are drawn into teams of two that play each other",
+    declare_static = Self::declare_static
+)]
 pub struct MonsterDyp {
+    #[plugin(label = "Rounds")]
     rounds: u32,
 }
 
@@ -34,19 +41,19 @@ impl MonsterDyp {
     pub const fn new(rounds: u32) -> Self {
         Self { rounds }
     }
-}
 
-impl Plugin for MonsterDyp {
-    fn declare(&self, declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         // the teams are drawn per match, so a ranking that already stands for a team of two
         // cannot be drawn into one
-        declaration.requires_that::<EntrantsPerRanking>("rankings of single players", |entrants| {
-            *entrants == EntrantsPerRanking::SINGLE
-        });
+        declaration.require_that::<EntrantsPerRanking>(
+            "the entrants per ranking",
+            "rankings of single players",
+            |entrants| *entrants == EntrantsPerRanking::SINGLE,
+        );
     }
 }
 
-#[typetag::serde]
+#[register]
 impl PhaseFormat for MonsterDyp {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         if !phase_data.matches().is_empty()

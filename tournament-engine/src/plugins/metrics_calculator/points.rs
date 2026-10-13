@@ -1,5 +1,6 @@
 use std::{any::TypeId, num::NonZeroU32};
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use super::Metric;
@@ -7,12 +8,8 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{
-            MetricsCalculator, MetricsCalculatorKind, wins_draws_losses::WinsDrawsLosses,
-        },
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
+        metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -36,7 +33,14 @@ impl AsRef<f32> for Points {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks by the [`Points`], where more points are better.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_points",
+    label = "points",
+    description = "more points are better",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MorePoints;
 
 impl RankingCriterion for MorePoints {
@@ -47,7 +51,7 @@ impl RankingCriterion for MorePoints {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MorePoints {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
@@ -56,13 +60,37 @@ impl SliceRanker for MorePoints {
 
 /// Calculates the [`Points`] of a ranking from its [`WinsDrawsLosses`], which therefore have to
 /// be calculated before.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+///
+/// Offered with the scoring system of chess and most other games scoring a draw as half a win,
+/// with a bye worth as much as a win.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::points",
+    label = "points",
+    description = "scored for every win, every draw and every bye",
+    declare_static = Self::declare_static
+)]
 pub struct PointsCalculator {
+    #[serde(default = "one")]
+    #[plugin(label = "Points for a win")]
     points_for_win: f32,
+    #[serde(default = "half")]
+    #[plugin(label = "Points for a draw")]
     points_for_draw: f32,
-    // defaulted so that a calculator configured before byes were scored still deserializes
-    #[serde(default)]
+    #[serde(default = "one")]
+    #[plugin(
+        label = "Points for a bye",
+        description = "a round without a match, e.g. with an odd number of entrants"
+    )]
     points_for_bye: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 impl PointsCalculator {
@@ -96,28 +124,15 @@ impl PointsCalculator {
                 + self.points_for_bye * byes as f32,
         ))
     }
-}
 
-impl Plugin for PointsCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provides(Points::default())
-            .requires::<WinsDrawsLosses>();
+            .provide(Points::default())
+            .require::<WinsDrawsLosses>("the wins, draws and losses");
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::points",
-        "points",
-        "scored for every win, every draw and every bye",
-    )
-    // the scoring system of chess and most other games scoring a draw as half a win, with a bye
-    // worth as much as a win
-    .with_default(|| Box::new(PointsCalculator::new(1.0, 0.5).with_points_for_bye(1.0)))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for PointsCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Points::default())

@@ -1,16 +1,13 @@
 use std::any::TypeId;
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use super::Metric;
 use crate::{
     entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{MetricsCalculator, MetricsCalculatorKind},
-    },
+    plugins::metrics_calculator::MetricsCalculator,
     type_map::TypeMapValue,
 };
 
@@ -20,25 +17,22 @@ pub struct Matches(pub Vec<MatchId>);
 #[typetag::serde]
 impl TypeMapValue for Matches {}
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::matches",
+    label = "match list",
+    description = "the matches an entrant played",
+    declare_static = Self::declare_static
+)]
 pub struct MatchesCalculator;
 
-impl Plugin for MatchesCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(Matches::default());
+impl MatchesCalculator {
+    fn declare_static(declaration: &mut Declaration) {
+        declaration.provide(Matches::default());
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::matches",
-        "match list",
-        "the matches an entrant played",
-    )
-    .with_default(|| Box::new(MatchesCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for MatchesCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Matches::default())

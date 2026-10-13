@@ -1,21 +1,28 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use plugin_factory::{Plugin, register};
 use rand::seq::{IteratorRandom, SliceRandom};
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
-    plugins::{
-        Plugin,
-        compatibility::Declaration,
-        phase_format::{PhaseFormat, Schedule},
-    },
+    plugins::phase_format::{PhaseFormat, Schedule},
 };
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Randomly chosen rounds of a round robin, see [`RandomRounds::new`].
+#[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::random_rounds",
+    label = "random rounds",
+    description = "randomly chosen rounds of a round robin"
+)]
 pub struct RandomRounds {
+    #[plugin(
+        label = "Rounds",
+        description = "a full round robin is scheduled if that is shorter"
+    )]
     rounds: u32,
 }
 
@@ -30,11 +37,7 @@ impl RandomRounds {
     }
 }
 
-impl Plugin for RandomRounds {
-    fn declare(&self, _: &mut Declaration) {}
-}
-
-#[typetag::serde]
+#[register]
 impl PhaseFormat for RandomRounds {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see

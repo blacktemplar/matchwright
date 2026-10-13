@@ -7,8 +7,8 @@ license.workspace = true
 [dependencies]
 dyn-clone.workspace = true
 indexmap.workspace = true
-inventory.workspace = true
 itertools.workspace = true
+plugin-factory.workspace = true
 rand.workspace = true
 rand_seeder.workspace = true
 rustc-hash.workspace = true

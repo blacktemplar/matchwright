@@ -36,11 +36,16 @@ pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// On every field `serde` deserializes:
 ///
-/// - `label = "..."`, required, and `description = "..."`, optional.
+/// - `label = "..."`, required, and `description = "..."`, optional;
+/// - or `skip` alone, which leaves the field out of the schema, e.g. for state a plugin builds up
+///   once it is configured. Such a field needs a `#[serde(default)]`, on the field or the struct,
+///   which is what a plugin built from a config holds in it; a config answering it is not
+///   rejected, but the answer is dropped.
 ///
 /// A field is in the schema under the name `serde` reads it by, and of the kind its type answers,
 /// see `FieldType`. Its default is its `#[serde(default)]`, on the field or the struct, serialized
-/// as the field is. The plugins held by the fields are what `Configurable::plugins` returns.
+/// as the field is. The plugins held by the fields of the schema are what
+/// `Configurable::plugins` returns.
 ///
 /// # Errors
 ///
@@ -64,7 +69,7 @@ pub fn derive_plugin(input: TokenStream) -> TokenStream {
 /// # Attributes
 ///
 /// None on the struct. On every field `serde` deserializes, `label = "..."`, required, and
-/// `description = "..."`, optional.
+/// `description = "..."`, optional, or `skip`, as for `Plugin`.
 ///
 /// # Errors
 ///

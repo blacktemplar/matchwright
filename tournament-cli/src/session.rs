@@ -6,12 +6,18 @@
 
 use std::{
     collections::HashSet,
-    fmt::Write as _,
+    fmt::{self, Write as _},
     fs, io,
     num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
 };
 
+use plugin_factory::{
+    catalog::AnyAxis,
+    compatibility::Incompatibility,
+    config::{ConfigError, Path as ConfigPath, PluginConfig},
+    draft::{self, Draft, Issue, Problem},
+};
 use thiserror::Error;
 use tournament_engine::{
     entities::competition::{
@@ -19,8 +25,9 @@ use tournament_engine::{
         RankingId,
     },
     plugins::{
-        compatibility::Incompatibility,
+        PhasePlugins,
         metrics_calculator::{
+            MetricsCalculator,
             buchholz::{Buchholz, BuchholzOfBuchholz},
             points::Points,
             round_of_elimination::RoundOfElimination,
@@ -101,6 +108,12 @@ pub enum Error {
     /// The plugins of a phase do not fit together.
     #[error(transparent)]
     Incompatible(#[from] Incompatibility),
+    /// The plugins of a phase do not fit together, or miss something nothing could be added for.
+    #[error("the phase cannot be played this way:{}", Issues(.0))]
+    Unsettled(Vec<Issue>),
+    /// A plugin added to a phase does not fit its configuration.
+    #[error(transparent)]
+    Configuration(#[from] ConfigError),
     #[error(transparent)]
     StateMachine(StateMachineError),
     #[error("cannot read {}: {source}", path.display())]
@@ -122,6 +135,36 @@ impl From<StateMachineError> for Error {
             StateMachineError::Transition(_, error) => Self::Rejected(error),
             error => Self::StateMachine(error),
         }
+    }
+}
+
+/// The issues of a phase, each on a line of its own, as [`Error::Unsettled`] shows them.
+struct Issues<'a>(&'a [Issue]);
+
+impl fmt::Display for Issues<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for issue in self.0 {
+            write!(formatter, "\n  {}: ", issue.path())?;
+            match issue.problem() {
+                Problem::Invalid(error) => write!(formatter, "{error}")?,
+                Problem::Incompatible(incompatibility) => write!(formatter, "{incompatibility}")?,
+                Problem::Unprovided {
+                    fact,
+                    required_by,
+                    providers,
+                    ..
+                } => {
+                    write!(
+                        formatter,
+                        "{required_by} requires {fact}, which nothing provides"
+                    )?;
+                    if !providers.is_empty() {
+                        write!(formatter, " (provided by {})", providers.join(", "))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -284,6 +327,9 @@ impl Session {
 
     /// Adds the phase `config` describes, which is the only phase the competition is played in.
     ///
+    /// Every metric a configured one is derived from is calculated as well: one that only a single
+    /// calculator provides is added with the parameters that calculator offers.
+    ///
     /// # Errors
     /// Returns an error if the competition already has a phase, does not accept one anymore
     /// because it has started, or if the plugins `config` describes do not fit together.
@@ -292,16 +338,55 @@ impl Session {
             return Err(Error::PhaseAlreadyAdded);
         }
         let summary = config.summary();
-        // the engine adds the calculators of the metrics these are derived from and runs them in
-        // the order it sorts them into
-        let (phase_format, ranker, calculators) = config.into_plugins();
-        self.apply(AddPhase::new(
-            PhaseId::new(Uuid::new_v4()),
-            phase_format,
-            ranker,
-            calculators,
-        )?)?;
+        let plugins = self.settled(config.into_plugins())?;
+        // the engine runs the calculators in the order it sorts them into
+        self.apply(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins)?)?;
         Ok(format!("phase added: {summary}"))
+    }
+
+    /// `plugins` with every metric added that one of them requires and nothing calculates, if a
+    /// single calculator does: the engine settles the ones that need no configuration, and the
+    /// others are configured with the answers they offer, as if the operator accepted those.
+    ///
+    /// # Errors
+    /// Returns [`Error::Unsettled`] with every issue left once nothing more can be added.
+    fn settled(&self, plugins: PhasePlugins) -> Result<PhasePlugins, Error> {
+        let context = |declaration: &mut _| self.competition().declare_phase_context(declaration);
+        let metrics = ConfigPath::ROOT.field("metrics");
+        let mut draft =
+            Draft::from_built(&plugins).expect("a built plugin is a configuration of itself");
+        loop {
+            let issues = match draft::finish(context, &draft) {
+                Ok(plugins) => return Ok(plugins),
+                Err(issues) => issues,
+            };
+            let single_provider = issues.iter().find_map(|issue| match issue.problem() {
+                Problem::Unprovided { providers, .. }
+                    if issue.path() == &metrics && providers.len() == 1 =>
+                {
+                    Some(providers[0])
+                }
+                _ => None,
+            });
+            let Some(provider) = single_provider else {
+                return Err(Error::Unsettled(issues));
+            };
+            let entry = AnyAxis::of::<dyn MetricsCalculator>()
+                .entry(provider)
+                .expect("a provider of the metrics is a calculator");
+            let mut calculator = PluginConfig::new(provider);
+            for field in entry.schema().fields() {
+                if let Some(default) = field.default_value() {
+                    calculator = calculator.with(field.name(), default.clone());
+                }
+            }
+            let calculators = draft
+                .answers()
+                .get("metrics")
+                .and_then(|answer| answer.as_array())
+                .map_or(0, Vec::len);
+            draft.set(&metrics.clone().index(calculators), calculator)?;
+        }
     }
 
     fn start(&mut self) -> Result<String, Error> {

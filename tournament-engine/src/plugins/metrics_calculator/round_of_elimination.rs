@@ -1,15 +1,15 @@
 use std::{any::TypeId, num::NonZeroU32};
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team},
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::{Declaration, MatchAnnotation},
-        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
+        facts::MatchAnnotation,
+        metrics_calculator::{Metric, MetricsCalculator},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -51,7 +51,13 @@ impl Compare for RoundOfElimination {
 
 /// Ranks by [`RoundOfElimination`]: the later a ranking was knocked out the better, still being in
 /// is best.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::later_elimination",
+    label = "round of elimination",
+    description = "the later the better, still being in is best",
+    declare_static = requires_metric::<Self>
+)]
 pub struct LaterElimination;
 
 impl RankingCriterion for LaterElimination {
@@ -62,34 +68,31 @@ impl RankingCriterion for LaterElimination {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for LaterElimination {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::round_of_elimination",
+    label = "round of elimination",
+    description = "the round in which an entrant was knocked out",
+    declare_static = Self::declare_static
+)]
 pub struct RoundOfEliminationCalculator;
 
-impl Plugin for RoundOfEliminationCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
+impl RoundOfEliminationCalculator {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provides(RoundOfElimination::default())
-            .requires::<MatchAnnotation<Eliminates>>();
+            .provide(RoundOfElimination::default())
+            .require::<MatchAnnotation<Eliminates>>("an elimination annotation on the matches");
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::round_of_elimination",
-        "round of elimination",
-        "the later the better, still being in is best",
-    )
-    .with_default(|| Box::new(RoundOfEliminationCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for RoundOfEliminationCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(RoundOfElimination::default())

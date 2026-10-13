@@ -5,6 +5,7 @@ use std::{
 };
 
 use itertools::{Either, Itertools};
+use plugin_factory::compatibility::Declaration;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use crate::{
     map::{IdAble, IdMap, Map},
     plugins::{
         PhasePlugins,
-        compatibility::{Declaration, EntrantsPerRanking},
+        facts::EntrantsPerRanking,
         metrics_calculator::{Metric, MetricsCalculator},
         phase_format::{PhaseFormat, Schedule},
         ranker::HierarchicalRanker,
@@ -64,9 +65,9 @@ impl Competition {
 
     pub(crate) fn add_phase(&mut self, id: PhaseId, plugins: PhasePlugins) {
         let PhasePlugins {
-            phase_format,
-            ranker,
-            metrics_calculators,
+            format: phase_format,
+            ranking,
+            metrics: metrics_calculators,
         } = plugins;
         let seed = self.new_seeded_std_rng(id).random();
         let phase = Phase {
@@ -81,17 +82,18 @@ impl Competition {
                 seed,
             },
             phase_format,
-            ranker,
+            ranker: HierarchicalRanker::new(ranking),
             metrics_calculators,
         };
         self.phases.insert(phase);
     }
 
     /// Declares the facts that hold for a phase added to this competition before any of its
-    /// plugins declare theirs.
-    pub(crate) fn declare_phase_context(&self, declaration: &mut Declaration) {
+    /// plugins declare theirs, i.e. the context of its [`PhasePlugins`] for the functions of
+    /// [`plugin_factory::draft`] and [`plugin_factory::compatibility`].
+    pub fn declare_phase_context(&self, declaration: &mut Declaration) {
         // every entrant gets a ranking of its own when the competition starts, see `Self::start`
-        declaration.provides(EntrantsPerRanking::SINGLE);
+        declaration.provide(EntrantsPerRanking::SINGLE);
     }
 
     pub fn phases(&self) -> &IdMap<Phase> {
@@ -340,12 +342,6 @@ impl Phase {
     /// Gives every ranking of this phase the default value of every metric calculated for this
     /// phase.
     fn initialize_metrics(&mut self) {
-        // check requirements of MetricsCalculator: a calculator provides the metric it calculates
-        debug_assert!(self.metrics_calculators.iter().all(|metrics_calculator| {
-            let metric = metrics_calculator.default_metric_value();
-            Declaration::of(|declaration| metrics_calculator.declare(declaration))
-                .provides_type((&*metric as &dyn Any).type_id())
-        }));
         let ranking_ids: Vec<_> = self.data.rankings.keys().copied().collect();
         let metrics: Vec<_> = self
             .metrics_calculators

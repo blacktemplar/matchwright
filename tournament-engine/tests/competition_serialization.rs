@@ -11,6 +11,7 @@ use tournament_engine::{
         Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
     },
     plugins::{
+        PhasePlugins,
         metrics_calculator::{
             buchholz::{
                 Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
@@ -23,7 +24,6 @@ use tournament_engine::{
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::single_elimination::{KnockoutRound, SingleElimination},
-        ranker::HierarchicalRanker,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
@@ -89,30 +89,31 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
         let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
         apply(&mut sm, AddEntrant::new(entrant));
     }
-    let ranker = HierarchicalRanker::new(vec![
-        Box::new(LaterFirstLoss),
-        Box::new(MorePoints),
-        Box::new(MoreBuchholz),
-        Box::new(MoreSonnebornBerger),
-        Box::new(MoreBuchholzOfBuchholz),
-    ]);
     apply(
         &mut sm,
         AddPhase::new(
             phase_id(),
-            Box::new(SingleElimination::new()),
-            ranker,
-            // the calculators run in this order, so every one of them that reads the metric of
-            // another one has to be listed after it
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
-                Box::new(BuchholzCalculator),
-                Box::new(SONNEBORN_BERGER),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
+            PhasePlugins::new(
+                Box::new(SingleElimination::new()),
+                vec![
+                    Box::new(LaterFirstLoss),
+                    Box::new(MorePoints),
+                    Box::new(MoreBuchholz),
+                    Box::new(MoreSonnebornBerger),
+                    Box::new(MoreBuchholzOfBuchholz),
+                ],
+                // the calculators run in this order, so every one of them that reads the metric of
+                // another one has to be listed after it
+                vec![
+                    Box::new(RoundOfFirstLossCalculator),
+                    Box::new(WinsDrawsLossesCalculator),
+                    Box::new(THREE_ONE),
+                    Box::new(MatchesCalculator),
+                    Box::new(BuchholzCalculator),
+                    Box::new(SONNEBORN_BERGER),
+                    Box::new(BuchholzOfBuchholzCalculator),
+                ],
+            ),
         )
         .unwrap(),
     );
@@ -397,9 +398,11 @@ fn a_competition_with_a_bye_round_trips() {
         &mut sm,
         AddPhase::new(
             phase_id(),
-            Box::new(SingleElimination::new()),
-            HierarchicalRanker::default(),
-            vec![Box::new(WinsDrawsLossesCalculator)],
+            PhasePlugins::new(
+                Box::new(SingleElimination::new()),
+                Vec::new(),
+                vec![Box::new(WinsDrawsLossesCalculator)],
+            ),
         )
         .unwrap(),
     );

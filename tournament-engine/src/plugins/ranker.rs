@@ -1,11 +1,12 @@
-use std::{cmp::Ordering, fmt::Debug, num::NonZeroU32};
+use std::{any::type_name, cmp::Ordering, fmt::Debug, num::NonZeroU32};
 
+use dyn_clone::DynClone;
 use itertools::Itertools;
+use plugin_factory::{Plugin, axis, compatibility::Declaration};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Ranking, RankingId},
-    plugins::{Plugin, compatibility::Declaration},
     type_map::TypeMapValue,
 };
 
@@ -62,9 +63,10 @@ impl HierarchicalRanker {
 
 /// Ranks rankings that are tied so far, as one step of a [`HierarchicalRanker`].
 ///
-/// A slice ranker sorting by a single metric is best written as a [`RankingCriterion`].
-#[typetag::serde(tag = "type", content = "value")]
-pub trait SliceRanker: Plugin {
+/// A slice ranker sorting by a single metric is best written as a [`RankingCriterion`]. A slice
+/// ranker may keep state as a [`PhaseFormat`](super::phase_format::PhaseFormat) does.
+#[axis]
+pub trait SliceRanker: Plugin + DynClone {
     /// Reorders `slice` by the new ranks and assigns them.
     ///
     /// All rankings of `slice` come in with the same rank `r`. Afterwards, ordered as the slice
@@ -81,25 +83,32 @@ impl Clone for Box<dyn SliceRanker> {
 
 /// A [`SliceRanker`] sorting by a single metric.
 ///
-/// A criterion is a [`Plugin`] requiring its [`Metric`](Self::Metric), so its [`SliceRanker`] impl
-/// only has to call [`rank_by`]. A criterion that compares its metric in an order other than the
-/// metric's own [`Compare`] impl should say in its name which way round it sorts.
+/// A criterion requires its [`Metric`](Self::Metric) by declaring [`requires_metric`] as its static
+/// declaration, so its [`SliceRanker`] impl only has to call [`rank_by`]. A criterion that compares
+/// its metric in an order other than the metric's own [`Compare`] impl should say in its name
+/// which way round it sorts.
 ///
 /// # Examples
 /// ```
 /// use std::num::NonZeroU32;
 ///
+/// use plugin_factory::{Plugin, register};
 /// use serde::{Deserialize, Serialize};
 /// use tournament_engine::{
 ///     entities::competition::{PhaseData, Ranking},
 ///     plugins::{
 ///         metrics_calculator::points::Points,
-///         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by},
+///         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
 ///     },
 /// };
 ///
 /// /// Ranks by the points, where fewer points are better.
-/// #[derive(Debug, Clone, Serialize, Deserialize)]
+/// #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+/// #[plugin(
+///     id = "my_crate::fewer_points",
+///     label = "fewer points",
+///     declare_static = requires_metric::<Self>
+/// )]
 /// struct FewerPoints;
 ///
 /// impl RankingCriterion for FewerPoints {
@@ -110,7 +119,7 @@ impl Clone for Box<dyn SliceRanker> {
 ///     }
 /// }
 ///
-/// #[typetag::serde]
+/// #[register]
 /// impl SliceRanker for FewerPoints {
 ///     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
 ///         rank_by(self, slice);
@@ -119,18 +128,16 @@ impl Clone for Box<dyn SliceRanker> {
 /// ```
 pub trait RankingCriterion: Debug + Clone {
     /// The metric this criterion sorts by.
-    type Metric: TypeMapValue;
+    type Metric: TypeMapValue + Sync;
 
     /// How a ranking whose metric is `first` compares to one whose metric is `second`.
     fn compare(&self, first: &Self::Metric, second: &Self::Metric) -> Comparison;
 }
 
-// Derived from the metric type, so that a criterion's requirement cannot drift from what it sorts
-// by.
-impl<C: RankingCriterion> Plugin for C {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration.requires::<C::Metric>();
-    }
+/// Declares that the criterion `C` requires its metric, which is what [`rank_by`] reads. Given to
+/// the derive of a criterion as `declare_static = requires_metric::<Self>`.
+pub fn requires_metric<C: RankingCriterion>(declaration: &mut Declaration) {
+    declaration.require::<C::Metric>(type_name::<C::Metric>());
 }
 
 /// Reorders `slice` by `criterion` and assigns the new ranks, as [`SliceRanker::update_ranks`]

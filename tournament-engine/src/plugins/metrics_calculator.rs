@@ -1,10 +1,11 @@
 use std::any::TypeId;
 
+use dyn_clone::DynClone;
+use plugin_factory::{Plugin, axis};
+
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugin_kind,
-    plugins::Plugin,
     type_map::TypeMapValue,
 };
 
@@ -24,11 +25,13 @@ pub type Metric = Box<dyn TypeMapValue>;
 
 /// Calculates one metric of every ranking of a phase.
 ///
-/// A calculator has to [declare](Plugin::declare) that it provides its metric, as a fact of the
-/// metric's type, and that it requires every fact it reads, in particular the metrics of other
-/// calculators. It runs after the calculators providing the facts it requires.
-#[typetag::serde(tag = "type", content = "value")]
-pub trait MetricsCalculator: Plugin {
+/// A calculator has to declare that it provides its metric, as a fact of the metric's type, and
+/// that it requires every fact it reads, in particular the metrics of other calculators. It runs
+/// after the calculators providing the facts it requires.
+///
+/// A calculator may keep state as a [`PhaseFormat`](super::phase_format::PhaseFormat) does.
+#[axis]
+pub trait MetricsCalculator: Plugin + DynClone {
     /// The value every ranking of a phase starts out with, whose type is the metric this
     /// calculator calculates.
     fn default_metric_value(&self) -> Metric;
@@ -68,13 +71,4 @@ impl Clone for Box<dyn MetricsCalculator> {
     fn clone(&self) -> Self {
         dyn_clone::clone_box(&**self)
     }
-}
-
-plugin_kind! {
-    /// The metrics calculators, i.e. the axis of [`MetricsCalculator`].
-    ///
-    /// This is the one kind of plugin a phase can be given more of, so a metric that is required
-    /// but not configured is calculated by the registered calculator of that metric, see
-    /// [`add_provider_of`](crate::plugins::catalog::add_provider_of).
-    pub MetricsCalculatorKind for dyn MetricsCalculator
 }

@@ -7,6 +7,7 @@ use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
     compatibility::{Declaration, Incompatibility, check},
     config::{ConfigError, Path, PluginConfig, Value},
+    draft::Draft,
     register,
     schema::{Configurable, Field, FieldKind, FieldType},
 };
@@ -174,8 +175,22 @@ impl Default for Ranker {
 #[register]
 impl Derived for Ranker {}
 
+/// A plugin keeping state it builds up once it is configured, which is no part of its schema.
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[plugin(id = "derive::counter", label = "counter")]
+struct Counter {
+    #[plugin(label = "Limit")]
+    limit: u32,
+    #[serde(default)]
+    #[plugin(skip)]
+    seen: u32,
+}
+
+#[register]
+impl Derived for Counter {}
+
 /// A composite, configured as a plugin is but not one itself.
-#[derive(Debug, Deserialize, Configurable)]
+#[derive(Debug, Serialize, Deserialize, Configurable)]
 struct Composite {
     #[plugin(label = "Main", description = "what the composite is built around")]
     main: Box<dyn Derived>,
@@ -223,7 +238,71 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), Some("points per result"));
     assert_eq!(entry_of::<Unit>().description(), None);
-    assert_eq!(AnyAxis::of::<dyn Derived>().entries().count(), 3);
+    assert_eq!(AnyAxis::of::<dyn Derived>().entries().count(), 4);
+}
+
+#[test]
+fn a_skipped_field_is_no_part_of_the_schema_but_of_the_plugin() {
+    let schema = entry_of::<Counter>().schema();
+    let built = PluginConfig::of::<Counter>()
+        .with("limit", 3)
+        .build::<dyn Derived>()
+        .unwrap();
+    let saved = json!({"type": "derive::counter", "value": {"limit": 3, "seen": 2}});
+
+    assert_eq!(
+        schema.fields().iter().map(Field::name).collect::<Vec<_>>(),
+        ["limit"]
+    );
+    // built from a config, it holds its default; saved, it holds what it had built up
+    assert_eq!(format!("{built:?}"), "Counter { limit: 3, seen: 0 }");
+    assert_eq!(
+        format!(
+            "{:?}",
+            serde_json::from_value::<Box<dyn Derived>>(saved).unwrap()
+        ),
+        "Counter { limit: 3, seen: 2 }"
+    );
+}
+
+#[test]
+fn an_answer_to_a_skipped_field_is_dropped() {
+    let built = PluginConfig::of::<Counter>()
+        .with("limit", 3)
+        .with("seen", 2)
+        .build::<dyn Derived>();
+
+    assert_eq!(format!("{built:?}"), "Ok(Counter { limit: 3, seen: 0 })");
+    assert_eq!(
+        PluginConfig::of::<Counter>()
+            .with("limit", 3)
+            .with("unknown", 2)
+            .build::<dyn Derived>()
+            .err(),
+        Some(ConfigError::UnknownField {
+            path: Path::ROOT.field("unknown"),
+        })
+    );
+}
+
+#[test]
+fn a_built_composite_with_state_is_drafted_without_it() {
+    let composite = Composite {
+        main: Box::new(Counter { limit: 3, seen: 2 }),
+        others: Vec::new(),
+        cap: None,
+    };
+
+    let draft = Draft::from_built(&composite).unwrap();
+
+    assert_eq!(
+        Value::from(draft.answers().clone()),
+        json!({
+            "main": {"type": "derive::counter", "value": {"limit": 3}},
+            "others": [],
+            "limit": null,
+        })
+    );
 }
 
 #[test]

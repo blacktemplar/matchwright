@@ -1243,6 +1243,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "inquire",
+ "plugin-factory",
  "rand",
  "rustyline",
  "serde",
@@ -1263,8 +1264,8 @@ dependencies = [
  "criterion",
  "dyn-clone",
  "indexmap",
- "inventory",
  "itertools 0.15.0",
+ "plugin-factory",
  "postcard",
  "rand",
  "rand_seeder",

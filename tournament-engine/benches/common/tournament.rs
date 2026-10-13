@@ -11,6 +11,7 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
     entities::competition::{Competition, Entrant, EntrantId, MatchId, MatchResult, PhaseId},
     plugins::{
+        PhasePlugins,
         metrics_calculator::{
             buchholz::{
                 BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz,
@@ -23,7 +24,6 @@ use tournament_engine::{
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::random_rounds::RandomRounds,
-        ranker::HierarchicalRanker,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
@@ -106,29 +106,30 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
         let id = EntrantId::new(Uuid::new_v4());
         apply(&mut sm, AddEntrant::new(Entrant::new(id)));
     }
-    let ranker = HierarchicalRanker::new(vec![
-        Box::new(MorePoints),
-        Box::new(MoreBuchholz),
-        Box::new(MoreSonnebornBerger),
-        Box::new(MoreBuchholzOfBuchholz),
-    ]);
     apply(
         &mut sm,
         AddPhase::new(
             phase_id(),
-            Box::new(RandomRounds::new(ROUNDS)),
-            ranker,
-            // the calculators run in this order, so every one of them that reads the metric of
-            // another one has to be listed after it
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
-                Box::new(BuchholzCalculator),
-                Box::new(SONNEBORN_BERGER),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
+            PhasePlugins::new(
+                Box::new(RandomRounds::new(ROUNDS)),
+                vec![
+                    Box::new(MorePoints),
+                    Box::new(MoreBuchholz),
+                    Box::new(MoreSonnebornBerger),
+                    Box::new(MoreBuchholzOfBuchholz),
+                ],
+                // the calculators run in this order, so every one of them that reads the metric of
+                // another one has to be listed after it
+                vec![
+                    Box::new(RoundOfFirstLossCalculator),
+                    Box::new(WinsDrawsLossesCalculator),
+                    Box::new(THREE_ONE),
+                    Box::new(MatchesCalculator),
+                    Box::new(BuchholzCalculator),
+                    Box::new(SONNEBORN_BERGER),
+                    Box::new(BuchholzOfBuchholzCalculator),
+                ],
+            ),
         )
         .unwrap(),
     );

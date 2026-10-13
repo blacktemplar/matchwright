@@ -1,12 +1,12 @@
 use std::num::NonZeroU32;
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Team},
     plugins::{
-        Plugin,
-        compatibility::{Declaration, MatchAnnotation},
+        facts::MatchAnnotation,
         metrics_calculator::round_of_elimination::Eliminates,
         phase_format::{
             PhaseFormat, Schedule,
@@ -43,10 +43,23 @@ use crate::{
 /// entrant out with [`Eliminates`]. Draws are not allowed.
 ///
 /// [`SingleElimination`]: super::single_elimination::SingleElimination
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::double_elimination",
+    label = "double elimination",
+    description = "an entrant is out after its second loss, draws are not allowed",
+    declare_static = Self::declare_static
+)]
 pub struct DoubleElimination {
+    #[plugin(
+        label = "Reset the grand final",
+        description = "if the champion of the winner bracket loses the grand final, the two play \
+                       it once more; without it losing the grand final knocks out either side"
+    )]
     grand_final_reset: bool,
     /// Built from the seeds on the first call.
+    #[serde(default)]
+    #[plugin(skip)]
     bracket: Option<Bracket>,
 }
 
@@ -67,6 +80,12 @@ impl DoubleElimination {
             grand_final_reset: true,
             bracket: None,
         }
+    }
+
+    fn declare_static(declaration: &mut Declaration) {
+        declaration
+            .provide(MatchAnnotation::<DoubleEliminationRound>::new())
+            .provide(MatchAnnotation::<Eliminates>::new());
     }
 }
 
@@ -106,15 +125,7 @@ pub enum DoubleEliminationRound {
 #[typetag::serde(name = "tournament_engine::double_elimination_round")]
 impl TypeMapValue for DoubleEliminationRound {}
 
-impl Plugin for DoubleElimination {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration
-            .provides(MatchAnnotation::<DoubleEliminationRound>::new())
-            .provides(MatchAnnotation::<Eliminates>::new());
-    }
-}
-
-#[typetag::serde]
+#[register]
 impl PhaseFormat for DoubleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let reset = self.grand_final_reset;

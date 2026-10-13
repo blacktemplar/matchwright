@@ -20,8 +20,8 @@ criterion = "0.8.2"
 dyn-clone = "1.0.20"
 indexmap = { version = "2.14.2", features = ["serde"] }
 inquire = "0.9.4"
-inventory = "0.3.24"
 itertools = "0.15.0"
+plugin-factory = { path = "plugin-factory" }
 postcard = { version = "1.1.3", features = ["use-std"] }
 rand = "0.10.3"
 rand_seeder = "0.5.0"

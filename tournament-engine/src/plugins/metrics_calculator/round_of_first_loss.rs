@@ -1,15 +1,14 @@
 use std::{any::TypeId, num::NonZeroU32};
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
+        metrics_calculator::{Metric, MetricsCalculator},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -32,7 +31,14 @@ impl Compare for RoundOfFirstLoss {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks by the [`RoundOfFirstLoss`]: the later the better, never having lost is best.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::later_first_loss",
+    label = "round of the first loss",
+    description = "the later the better, never having lost is best",
+    declare_static = requires_metric::<Self>
+)]
 pub struct LaterFirstLoss;
 
 impl RankingCriterion for LaterFirstLoss {
@@ -43,32 +49,29 @@ impl RankingCriterion for LaterFirstLoss {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for LaterFirstLoss {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::round_of_first_loss",
+    label = "round of the first loss",
+    description = "the round in which an entrant lost for the first time",
+    declare_static = Self::declare_static
+)]
 pub struct RoundOfFirstLossCalculator;
 
-impl Plugin for RoundOfFirstLossCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(RoundOfFirstLoss::default());
+impl RoundOfFirstLossCalculator {
+    fn declare_static(declaration: &mut Declaration) {
+        declaration.provide(RoundOfFirstLoss::default());
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::round_of_first_loss",
-        "round of the first loss",
-        "the later the better, never having lost is best",
-    )
-    .with_default(|| Box::new(RoundOfFirstLossCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for RoundOfFirstLossCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(RoundOfFirstLoss::default())

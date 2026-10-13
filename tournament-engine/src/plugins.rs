@@ -1,125 +1,113 @@
-use std::{any::TypeId, fmt::Debug, mem};
+//! The plugin axes of a phase and the plugins of this crate, built on `plugin_factory`.
+//!
+//! A phase is played in one [`PhaseFormat`], ranked by a list of [`SliceRanker`]s and calculates
+//! the metrics of a list of [`MetricsCalculator`]s; [`PhasePlugins`] is that composite. Every
+//! plugin registers itself in the catalog of its axis, see [`plugin_factory::catalog`], so a
+//! consumer configuring a phase finds them there, and declares what it provides to and requires of
+//! its phase, see [`facts`] and [`plugin_factory::compatibility`].
 
-use dyn_clone::DynClone;
+use std::mem;
 
-use crate::plugins::{
-    catalog::{Accepts, add_provider_of},
-    compatibility::{Declaration, Incompatibility, declaration_of, order, unprovided},
-    metrics_calculator::{MetricsCalculator, MetricsCalculatorKind},
-    phase_format::PhaseFormat,
-    ranker::HierarchicalRanker,
+use plugin_factory::{
+    compatibility::{self, Incompatibility},
+    draft::{self, Draft, Issue},
+    schema::Configurable,
+};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::{
+    entities::competition::Competition,
+    plugins::{
+        metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::SliceRanker,
+    },
 };
 
-pub mod catalog;
-pub mod compatibility;
+pub mod facts;
 pub mod metrics_calculator;
 pub mod phase_format;
 pub mod ranker;
 
-/// The supertrait of every plugin trait.
+/// The plugins of one phase: the format its matches are scheduled by, the slice rankers it is
+/// ranked by and the calculators of its metrics.
 ///
-/// A plugin may keep state in `self` and update it in its `&mut self` methods. That state is
-/// serialized together with the phase, and it must only depend on the [`PhaseData`] and the calls
-/// the plugin has seen, so that replaying the transition log recomputes it.
-///
-/// A plugin also declares what it provides to and requires of its phase, see [`Self::declare`].
-///
-/// [`PhaseData`]: crate::entities::competition::PhaseData
-pub trait Plugin: Debug + DynClone {
-    /// Declares the facts this plugin provides to and requires of the phase it is part of, see
-    /// [`Declaration`].
-    ///
-    /// The declaration must depend on the plugin's configuration alone, since it is made before
-    /// the phase exists.
-    fn declare(&self, declaration: &mut Declaration);
-}
-
-/// The plugins of one phase.
-#[derive(Debug, Clone)]
+/// It is configured as a composite of `plugin_factory`, e.g. through a [`Draft`] of it, whose
+/// [`draft::finish`] takes [`Competition::declare_phase_context`] as the context.
+#[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 pub struct PhasePlugins {
-    pub(crate) phase_format: Box<dyn PhaseFormat>,
-    pub(crate) ranker: HierarchicalRanker,
-    pub(crate) metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    #[plugin(label = "Format", description = "how the matches are scheduled")]
+    pub(crate) format: Box<dyn PhaseFormat>,
+    #[serde(default)]
+    #[plugin(
+        label = "Ranked by",
+        description = "best first, every criterion only breaks the ties of the ones before it"
+    )]
+    pub(crate) ranking: Vec<Box<dyn SliceRanker>>,
+    #[serde(default)]
+    #[plugin(label = "Metrics", description = "calculated for every entrant")]
+    pub(crate) metrics: Vec<Box<dyn MetricsCalculator>>,
 }
 
 impl PhasePlugins {
-    pub(crate) fn new(
-        phase_format: Box<dyn PhaseFormat>,
-        ranker: HierarchicalRanker,
-        metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    /// The plugins of a phase played in `format`, ranked by `ranking`, best first, and calculating
+    /// the metrics of `metrics`.
+    pub fn new(
+        format: Box<dyn PhaseFormat>,
+        ranking: Vec<Box<dyn SliceRanker>>,
+        metrics: Vec<Box<dyn MetricsCalculator>>,
     ) -> Self {
         Self {
-            phase_format,
-            ranker,
-            metrics_calculators,
+            format,
+            ranking,
+            metrics,
         }
     }
 
-    pub fn phase_format(&self) -> &dyn PhaseFormat {
-        &*self.phase_format
+    pub fn format(&self) -> &dyn PhaseFormat {
+        &*self.format
     }
 
-    pub fn ranker(&self) -> &HierarchicalRanker {
-        &self.ranker
+    /// The slice rankers, best first.
+    pub fn ranking(&self) -> &[Box<dyn SliceRanker>] {
+        &self.ranking
     }
 
-    /// The metrics calculators, in the order they run in.
-    pub fn metrics_calculators(&self) -> &[Box<dyn MetricsCalculator>] {
-        &self.metrics_calculators
+    /// The metrics calculators, in the order they run in once
+    /// [`AddPhase::new`](crate::transitions::add_phase::AddPhase::new) ordered them.
+    pub fn metrics(&self) -> &[Box<dyn MetricsCalculator>] {
+        &self.metrics
     }
 
-    /// The declarations of all plugins, each together with the name of its plugin.
-    pub(crate) fn declarations(&self) -> Vec<(String, Declaration)> {
-        [declaration_of(&*self.phase_format)]
-            .into_iter()
-            .chain(
-                self.ranker
-                    .slice_rankers()
-                    .iter()
-                    .map(|slice_ranker| declaration_of(&**slice_ranker)),
-            )
-            .chain(self.declarations_of_metrics_calculators())
-            .collect()
-    }
-
-    fn declarations_of_metrics_calculators(&self) -> Vec<(String, Declaration)> {
-        self.metrics_calculators
-            .iter()
-            .map(|metrics_calculator| declaration_of(&**metrics_calculator))
-            .collect()
-    }
-
-    /// Adds a plugin for every required fact nothing provides, including the facts the added
-    /// plugins require themselves, and orders the metrics calculators so that each runs after the
-    /// ones providing the facts it requires, keeping their order otherwise.
-    ///
-    /// The plugins come from the [catalog](catalog), which only settles a fact that exactly one
-    /// registered plugin of a kind the phase [accepts](Accepts) provides without configuration.
+    /// These plugins with every fact settled that the catalog settles in a phase of
+    /// `competition`, see [`draft::finish`]: e.g. the calculator of a metric another plugin
+    /// requires, if it is the only one and needs no configuration.
     ///
     /// # Errors
-    /// Returns an error if metrics calculators require facts of each other in a cycle.
-    pub(crate) fn resolve(&mut self) -> Result<(), Incompatibility> {
-        // every fact gets one try, so that a fact the catalog cannot settle does not stop the loop
-        // from ending
-        let mut tried = Vec::new();
-        loop {
-            let declarations = self.declarations();
-            let Some(fact) = unprovided(&declarations).find(|fact| !tried.contains(fact)) else {
-                break;
-            };
-            tried.push(fact);
-            self.add_provider_from_catalog(fact);
-        }
+    /// Returns every issue of the plugins so settled, e.g. a fact still nothing provides.
+    ///
+    /// # Panics
+    /// Panics if a plugin serializes to something other than an answer to its schema, which the
+    /// derive of a plugin rules out.
+    pub fn settle(&self, competition: &Competition) -> Result<Self, Vec<Issue>> {
+        let draft = Draft::from_built(self).expect("a built plugin is a configuration of itself");
+        draft::finish(
+            |declaration| competition.declare_phase_context(declaration),
+            &draft,
+        )
+    }
 
-        let order = order(&self.declarations_of_metrics_calculators())?;
-        let mut metrics_calculators: Vec<_> = mem::take(&mut self.metrics_calculators)
-            .into_iter()
-            .map(Some)
-            .collect();
-        self.metrics_calculators = order
+    /// Orders the metrics calculators so that each runs after the calculators providing the facts
+    /// it requires, keeping their order otherwise.
+    ///
+    /// # Errors
+    /// Returns an error if calculators require facts of each other in a cycle.
+    pub(crate) fn order_metrics(&mut self) -> Result<(), Incompatibility> {
+        let order = compatibility::order(&self.metrics_as_plugins())?;
+        let mut metrics: Vec<_> = mem::take(&mut self.metrics).into_iter().map(Some).collect();
+        self.metrics = order
             .into_iter()
             .map(|index| {
-                metrics_calculators[index]
+                metrics[index]
                     .take()
                     .expect("an order holds every index once")
             })
@@ -127,57 +115,65 @@ impl PhasePlugins {
         Ok(())
     }
 
-    /// Adds the plugin the catalog settles on for a fact of type `fact`, for every kind of plugin
-    /// a phase accepts.
-    fn add_provider_from_catalog(&mut self, fact: TypeId) {
-        // a phase is played in one format and ranked by one ranker, so its calculators are the
-        // only thing that can be added to; a second accepted kind is one more line here
-        add_provider_of::<MetricsCalculatorKind, _>(self, fact);
-    }
-
-    /// Checks that the metrics calculators are ordered as [`Self::resolve`] orders them.
+    /// Checks that the metrics calculators are ordered as [`Self::order_metrics`] orders them.
     ///
     /// # Errors
     /// Returns an error if they are not, or if they require facts of each other in a cycle.
-    pub(crate) fn check_order(&self) -> Result<(), Incompatibility> {
-        let order = order(&self.declarations_of_metrics_calculators())?;
+    pub(crate) fn check_order(&self) -> Result<(), OrderError> {
+        let order = compatibility::order(&self.metrics_as_plugins())?;
         match order
             .into_iter()
             .enumerate()
             .find(|(position, index)| position != index)
         {
-            Some((position, _)) => Err(Incompatibility::OutOfOrder {
-                plugin: format!("{:?}", self.metrics_calculators[position]),
+            Some((position, _)) => Err(OrderError::OutOfOrder {
+                plugin: format!("{:?}", self.metrics[position]),
             }),
             None => Ok(()),
         }
     }
-}
 
-// A phase can calculate any number of metrics, so a calculator the catalog settles on is added
-// after the ones already configured; `PhasePlugins::resolve` sorts them afterwards.
-impl Accepts<MetricsCalculatorKind> for PhasePlugins {
-    fn add(&mut self, plugin: Box<dyn MetricsCalculator>) {
-        self.metrics_calculators.push(plugin);
+    fn metrics_as_plugins(&self) -> Vec<&dyn plugin_factory::Plugin> {
+        self.metrics
+            .iter()
+            .map(|metric| &**metric as &dyn plugin_factory::Plugin)
+            .collect()
     }
 }
 
+/// Why the metrics calculators of a phase are not in the order they run in.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum OrderError {
+    #[error(transparent)]
+    Cyclic(#[from] Incompatibility),
+    #[error("{plugin} runs before a plugin providing a fact it requires")]
+    OutOfOrder { plugin: String },
+}
+
 /// What the plugins of this crate declare, i.e. the facts they provide to and require of their
-/// phase. The mechanism itself is tested in [`compatibility`].
+/// phase, and how a phase settles and orders them. The mechanism itself is tested in
+/// `plugin_factory`.
 #[cfg(test)]
 mod tests {
     use std::{
-        any::{Any, TypeId, type_name},
+        any::{TypeId, type_name},
+        fmt::Debug,
         num::NonZeroU32,
+    };
+
+    use plugin_factory::{
+        Plugin, PluginType, catalog::AnyAxis, compatibility::Declaration, config::PluginConfig,
+        draft::Problem, register,
     };
 
     use super::*;
     use crate::{
-        entities::competition::Competition,
+        entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+        map::Map,
         plugins::{
-            catalog::PluginKind,
-            compatibility::{EntrantsPerRanking, MatchAnnotation, check_facts, declaration_of},
+            facts::{EntrantsPerRanking, MatchAnnotation},
             metrics_calculator::{
+                Metric,
                 buchholz::{
                     Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
                 },
@@ -186,6 +182,7 @@ mod tests {
                 round_of_elimination::{
                     Eliminates, LaterElimination, RoundOfEliminationCalculator,
                 },
+                round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss},
                 sonneborn_berger::{
                     MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
                 },
@@ -197,8 +194,8 @@ mod tests {
                 round_robin::RoundRobin,
                 single_elimination::{KnockoutRound, SingleElimination},
             },
-            ranker::{HierarchicalRanker, SliceRanker},
         },
+        type_map::TypeMapValue,
     };
 
     /// The scoring system of chess: a win is worth a point, a draw half of one.
@@ -209,59 +206,76 @@ mod tests {
     /// Two entrants per ranking, i.e. the rankings a draw pairing the entrants up leaves behind.
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(NonZeroU32::new(2).unwrap());
 
-    /// A ranker sorting by `slice_ranker` alone.
-    fn ranked_by(slice_ranker: impl SliceRanker + 'static) -> HierarchicalRanker {
-        HierarchicalRanker::new(vec![Box::new(slice_ranker)])
+    /// The plugins of a phase played in `format`, ranked by `ranking` and calculating the metrics
+    /// of `metrics`.
+    fn phase(
+        format: impl PhaseFormat + 'static,
+        ranking: Vec<Box<dyn SliceRanker>>,
+        metrics: Vec<Box<dyn MetricsCalculator>>,
+    ) -> PhasePlugins {
+        PhasePlugins::new(Box::new(format), ranking, metrics)
     }
 
-    /// A ranker leaving every entrant tied, for a phase whose ranking is not what is tested.
-    fn unranked() -> HierarchicalRanker {
-        HierarchicalRanker::default()
+    /// Whether `plugins` fit together in a competition, i.e. what `AddPhase` checks.
+    fn check(plugins: &PhasePlugins) -> Result<(), Incompatibility> {
+        check_in(
+            |declaration| Competition::default().declare_phase_context(declaration),
+            plugins,
+        )
     }
 
-    /// Whether the plugins of a phase played in `format`, ranked by `ranker` and calculating the
-    /// metrics of `calculators` fit together in a competition, i.e. what `AddPhase` checks.
-    fn check(
-        format: Box<dyn PhaseFormat>,
-        ranker: HierarchicalRanker,
-        calculators: Vec<Box<dyn MetricsCalculator>>,
-    ) -> Result<(), Incompatibility> {
-        check_facts_of(&PhasePlugins::new(format, ranker, calculators))
-    }
-
-    /// Like [`check`], for a phase whose context provides `context` rather than a competition.
+    /// Like [`check`], for a phase whose context is `context` rather than a competition.
     fn check_in(
-        context: Declaration,
-        format: Box<dyn PhaseFormat>,
-        ranker: HierarchicalRanker,
-        calculators: Vec<Box<dyn MetricsCalculator>>,
+        context: impl FnOnce(&mut Declaration),
+        plugins: &PhasePlugins,
     ) -> Result<(), Incompatibility> {
-        let plugins = PhasePlugins::new(format, ranker, calculators);
-        check_facts(context, &plugins.declarations())
+        compatibility::check(context, &plugins.plugins())
     }
 
-    /// Whether the facts of `plugins` fit together in a competition, i.e. what `AddPhase` checks.
-    fn check_facts_of(plugins: &PhasePlugins) -> Result<(), Incompatibility> {
-        let competition = Competition::default();
-        let context = Declaration::of(|declaration| competition.declare_phase_context(declaration));
-        check_facts(context, &plugins.declarations())
+    /// Whether `plugin` provides a fact of type `T`: it does exactly if it conflicts with a
+    /// context providing one.
+    fn provides<T: Debug + Default + Sync + 'static>(plugin: &dyn Plugin) -> bool {
+        matches!(
+            compatibility::check(
+                |declaration| {
+                    declaration.provide(T::default());
+                },
+                &[plugin]
+            ),
+            Err(Incompatibility::FactProvidedByContext { .. })
+        )
     }
 
-    /// The metrics the calculators of `plugins` calculate, in the order they run in.
-    fn metrics(plugins: &PhasePlugins) -> Vec<TypeId> {
+    /// The [`Debug`] forms of the metrics the calculators of `plugins` calculate, in the order
+    /// they run in.
+    fn metrics(plugins: &PhasePlugins) -> Vec<String> {
         plugins
-            .metrics_calculators()
+            .metrics()
             .iter()
-            .map(|calculator| (&*calculator.default_metric_value() as &dyn Any).type_id())
+            .map(|calculator| format!("{:?}", calculator.default_metric_value()))
             .collect()
+    }
+
+    /// The [`Debug`] form of the default of each metric `M`.
+    macro_rules! metrics {
+        ($($metric:ty),* $(,)?) => {
+            vec![$(format!("{:?}", <$metric>::default())),*]
+        };
+    }
+
+    /// `plugins` settled in a competition and ordered, as a consumer adding them would.
+    fn settled(plugins: &PhasePlugins) -> Result<PhasePlugins, Vec<Issue>> {
+        let mut settled = plugins.settle(&Competition::default())?;
+        settled.order_metrics().unwrap();
+        Ok(settled)
     }
 
     #[test]
     fn a_calculator_runs_after_the_calculators_of_the_metrics_it_reads() {
         // listed so that every calculator reading a metric comes before the one calculating it
-        let mut plugins = PhasePlugins::new(
-            Box::new(RoundRobin),
-            unranked(),
+        let mut plugins = phase(
+            RoundRobin,
+            Vec::new(),
             vec![
                 Box::new(BuchholzOfBuchholzCalculator),
                 Box::new(FULL_HALF),
@@ -272,75 +286,119 @@ mod tests {
             ],
         );
 
-        plugins.resolve().unwrap();
+        plugins.order_metrics().unwrap();
 
         assert_eq!(
             metrics(&plugins),
-            [
-                TypeId::of::<Matches>(),
-                TypeId::of::<WinsDrawsLosses>(),
-                TypeId::of::<Points>(),
+            metrics![
+                Matches,
+                WinsDrawsLosses,
+                Points,
                 // the Sonneborn-Berger keeps its place before the Buchholz, as neither reads the
                 // other
-                TypeId::of::<SonnebornBerger>(),
-                TypeId::of::<Buchholz>(),
-                TypeId::of::<BuchholzOfBuchholz>(),
+                SonnebornBerger,
+                Buchholz,
+                BuchholzOfBuchholz,
             ]
+        );
+        assert_eq!(plugins.check_order(), Ok(()));
+    }
+
+    #[test]
+    fn calculators_out_of_order_fail_the_order_check() {
+        let plugins = phase(
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(ONE_HALF), Box::new(WinsDrawsLossesCalculator)],
+        );
+
+        assert_eq!(
+            plugins.check_order(),
+            Err(OrderError::OutOfOrder {
+                plugin: format!("{ONE_HALF:?}"),
+            })
         );
     }
 
     /// Nobody configuring a phase has to know that the Sonneborn-Berger sums the points of the
     /// opponents a ranking met, nor that the points are scored from its results: every metric a
-    /// configured calculator reads is calculated by the calculator the catalog registers for it.
+    /// configured calculator reads is calculated by the one calculator registered for it, as long
+    /// as it needs no configuration.
     #[test]
     fn the_metrics_a_configured_calculator_reads_are_added_from_the_catalog() {
-        let mut plugins =
-            PhasePlugins::new(Box::new(RoundRobin), unranked(), vec![Box::new(FULL_HALF)]);
+        let plugins = phase(
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(FULL_HALF), Box::new(ONE_HALF)],
+        );
 
-        plugins.resolve().unwrap();
+        let settled = settled(&plugins).unwrap();
 
         assert_eq!(
-            metrics(&plugins),
-            [
-                TypeId::of::<Matches>(),
-                TypeId::of::<WinsDrawsLosses>(),
-                TypeId::of::<Points>(),
-                TypeId::of::<SonnebornBerger>(),
-            ]
+            metrics(&settled),
+            metrics![Matches, WinsDrawsLosses, Points, SonnebornBerger]
         );
-        assert_eq!(check_facts_of(&plugins), Ok(()));
+        assert_eq!(check(&settled), Ok(()));
     }
 
-    /// A metric is required by the ranker as well as by a calculator, so ranking by one that is
-    /// not configured calculates it, with the parameters it is registered with.
+    /// A metric is required by a criterion as well as by a calculator, so ranking by one that is
+    /// not configured calculates it.
     #[test]
     fn a_metric_the_phase_is_ranked_by_is_added_from_the_catalog() {
-        let mut plugins =
-            PhasePlugins::new(Box::new(RoundRobin), ranked_by(MorePoints), Vec::new());
-
-        plugins.resolve().unwrap();
-
-        assert_eq!(
-            metrics(&plugins),
-            [TypeId::of::<WinsDrawsLosses>(), TypeId::of::<Points>()]
+        let plugins = phase(
+            SingleElimination::new(),
+            vec![Box::new(LaterFirstLoss)],
+            Vec::new(),
         );
-        assert_eq!(check_facts_of(&plugins), Ok(()));
+
+        let settled = settled(&plugins).unwrap();
+
+        assert_eq!(metrics(&settled), metrics![RoundOfFirstLoss]);
+        assert_eq!(check(&settled), Ok(()));
     }
 
-    /// The catalog finds a calculator by the fact it declares, so a registered calculator that
+    /// The points can be scored in many ways, so ranking by them without configuring how is an
+    /// issue rather than a guess.
+    #[test]
+    fn a_metric_whose_calculator_has_to_be_configured_is_not_added() {
+        let plugins = phase(RoundRobin, vec![Box::new(MorePoints)], Vec::new());
+
+        let issues = plugins.settle(&Competition::default()).unwrap_err();
+
+        assert!(
+            issues.iter().any(|issue| matches!(
+                issue.problem(),
+                Problem::Unprovided { fact, providers, .. }
+                    if *fact == type_name::<Points>()
+                        && providers.contains(&PointsCalculator::ID)
+            )),
+            "got {issues:?}"
+        );
+    }
+
+    /// A calculator is found and checked by the fact it declares, so a registered calculator that
     /// declares a metric other than the one it calculates would be added for the wrong metric and
     /// never for its own.
     #[test]
     fn every_registered_calculator_provides_the_metric_it_calculates() {
-        for entry in MetricsCalculatorKind::entries() {
-            let Some(calculator) = entry.create_default() else {
-                continue;
-            };
-            let metric = (&*calculator.default_metric_value() as &dyn Any).type_id();
-            let (_, declaration) = declaration_of(&*calculator);
+        for entry in AnyAxis::of::<dyn MetricsCalculator>().entries() {
+            // every calculator of this crate offers an answer to each of its fields
+            let mut config = PluginConfig::new(entry.id());
+            for field in entry.schema().fields() {
+                let default = field.default_value().expect("every field offers an answer");
+                config = config.with(field.name(), default.clone());
+            }
+            let calculator = config.build::<dyn MetricsCalculator>().unwrap();
+            let both: [&dyn Plugin; 2] = [&*calculator, &*calculator];
 
-            assert!(
-                declaration.provides_type(metric),
+            // a calculator providing its metric twice conflicts with itself about that metric
+            assert_eq!(
+                compatibility::check(|_| {}, &both).err(),
+                Some(Incompatibility::FactProvidedTwice {
+                    fact: format!("{:?}", calculator.default_metric_value()),
+                    first: format!("{calculator:?}"),
+                    second: format!("{calculator:?}"),
+                }),
                 "{} does not provide the metric it calculates",
                 entry.id()
             );
@@ -349,40 +407,38 @@ mod tests {
 
     #[test]
     fn a_round_robin_ranked_by_the_sonneborn_berger_fits_with_every_metric_it_reads() {
-        let ranker =
-            HierarchicalRanker::new(vec![Box::new(MorePoints), Box::new(MoreSonnebornBerger)]);
-
-        assert_eq!(
-            check(
-                Box::new(RoundRobin),
-                ranker,
-                vec![
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(ONE_HALF),
-                    Box::new(MatchesCalculator),
-                    Box::new(FULL_HALF),
-                ],
-            ),
-            Ok(())
+        let plugins = phase(
+            RoundRobin,
+            vec![Box::new(MorePoints), Box::new(MoreSonnebornBerger)],
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(ONE_HALF),
+                Box::new(MatchesCalculator),
+                Box::new(FULL_HALF),
+            ],
         );
+
+        assert_eq!(check(&plugins), Ok(()));
     }
 
     #[test]
     fn a_metric_a_calculator_reads_has_to_be_calculated_as_well() {
         // the Sonneborn-Berger sums the points of the opponents a ranking met, which it reads from
         // the matches of that ranking
+        let plugins = phase(
+            RoundRobin,
+            Vec::new(),
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(ONE_HALF),
+                Box::new(FULL_HALF),
+            ],
+        );
+
         assert_eq!(
-            check(
-                Box::new(RoundRobin),
-                unranked(),
-                vec![
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(ONE_HALF),
-                    Box::new(FULL_HALF),
-                ],
-            ),
+            check(&plugins),
             Err(Incompatibility::FactNotProvided {
-                fact: type_name::<Matches>(),
+                fact: "the matches",
                 required_by: format!("{FULL_HALF:?}"),
             })
         );
@@ -390,12 +446,14 @@ mod tests {
 
     #[test]
     fn ranking_by_a_metric_nothing_calculates_is_an_error() {
+        let plugins = phase(
+            RoundRobin,
+            vec![Box::new(MorePoints)],
+            vec![Box::new(WinsDrawsLossesCalculator)],
+        );
+
         assert_eq!(
-            check(
-                Box::new(RoundRobin),
-                ranked_by(MorePoints),
-                vec![Box::new(WinsDrawsLossesCalculator)],
-            ),
+            check(&plugins),
             Err(Incompatibility::FactNotProvided {
                 fact: type_name::<Points>(),
                 required_by: format!("{MorePoints:?}"),
@@ -407,8 +465,10 @@ mod tests {
     /// of its own.
     #[test]
     fn a_criterion_bringing_its_own_order_requires_its_metric_too() {
+        let plugins = phase(RoundRobin, vec![Box::new(FewerLosses)], Vec::new());
+
         assert_eq!(
-            check(Box::new(RoundRobin), ranked_by(FewerLosses), Vec::new()),
+            check(&plugins),
             Err(Incompatibility::FactNotProvided {
                 fact: type_name::<WinsDrawsLosses>(),
                 required_by: format!("{FewerLosses:?}"),
@@ -418,22 +478,21 @@ mod tests {
 
     #[test]
     fn the_round_of_elimination_needs_a_format_that_knocks_entrants_out() {
-        let ranker = ranked_by(LaterElimination);
-        let calculators: Vec<Box<dyn MetricsCalculator>> =
-            vec![Box::new(RoundOfEliminationCalculator)];
+        let ranking: Vec<Box<dyn SliceRanker>> = vec![Box::new(LaterElimination)];
+        let metrics: Vec<Box<dyn MetricsCalculator>> = vec![Box::new(RoundOfEliminationCalculator)];
 
         assert_eq!(
-            check(
-                Box::new(DoubleElimination::new()),
-                ranker.clone(),
-                calculators.clone(),
-            ),
+            check(&phase(
+                DoubleElimination::new(),
+                ranking.clone(),
+                metrics.clone()
+            )),
             Ok(())
         );
         assert_eq!(
-            check(Box::new(RoundRobin), ranker, calculators),
+            check(&phase(RoundRobin, ranking, metrics)),
             Err(Incompatibility::FactNotProvided {
-                fact: type_name::<MatchAnnotation<Eliminates>>(),
+                fact: "an elimination annotation on the matches",
                 required_by: format!("{RoundOfEliminationCalculator:?}"),
             })
         );
@@ -443,39 +502,142 @@ mod tests {
     /// plugin reading it — a display of the bracket, say — can require it.
     #[test]
     fn a_bracket_format_provides_the_annotations_it_writes() {
-        let (_, knockout) = declaration_of(&SingleElimination::new());
-        let (_, double_elimination) = declaration_of(&DoubleElimination::new());
-
-        assert!(knockout.provides_type(TypeId::of::<MatchAnnotation<KnockoutRound>>()));
-        assert!(
-            double_elimination
-                .provides_type(TypeId::of::<MatchAnnotation<DoubleEliminationRound>>())
-        );
-        assert!(double_elimination.provides_type(TypeId::of::<MatchAnnotation<Eliminates>>()));
+        assert!(provides::<MatchAnnotation<KnockoutRound>>(
+            &SingleElimination::new()
+        ));
+        assert!(provides::<MatchAnnotation<DoubleEliminationRound>>(
+            &DoubleElimination::new()
+        ));
+        assert!(provides::<MatchAnnotation<Eliminates>>(
+            &DoubleElimination::new()
+        ));
+        assert!(!provides::<MatchAnnotation<Eliminates>>(
+            &SingleElimination::new()
+        ));
     }
 
     #[test]
     fn a_monster_dyp_fits_a_competition_whose_rankings_are_single_entrants() {
         assert_eq!(
-            check(Box::new(MonsterDyp::new(3)), unranked(), Vec::new()),
+            check(&phase(MonsterDyp::new(3), Vec::new(), Vec::new())),
             Ok(())
         );
     }
 
     #[test]
     fn a_monster_dyp_cannot_follow_a_draw_that_paired_the_entrants_up() {
-        let pairs = Declaration::of(|declaration| {
-            declaration.provides(PAIRS);
-        });
         let format = MonsterDyp::new(3);
+        let pairs = |declaration: &mut Declaration| {
+            declaration.provide(PAIRS);
+        };
 
         assert_eq!(
-            check_in(pairs, Box::new(format.clone()), unranked(), Vec::new()),
+            check_in(pairs, &phase(format.clone(), Vec::new(), Vec::new())),
             Err(Incompatibility::ConditionNotMet {
                 condition: "rankings of single players",
                 required_by: format!("{format:?}"),
                 provided: format!("{PAIRS:?}"),
             })
         );
+    }
+
+    /// The metric of [`CircularCalculator`], which is never calculated.
+    #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+    struct Circular;
+
+    #[typetag::serde(name = "tournament_engine::plugins::tests::circular")]
+    impl TypeMapValue for Circular {}
+
+    /// The metric of [`Cycling`], which is never calculated.
+    #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+    struct Cycled;
+
+    #[typetag::serde(name = "tournament_engine::plugins::tests::cycled")]
+    impl TypeMapValue for Cycled {}
+
+    /// A calculator requiring the metric of [`Cycling`], which requires its own metric.
+    #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "tournament_engine::plugins::tests::circular",
+        label = "circular",
+        declare_static = Self::declare_static
+    )]
+    struct CircularCalculator;
+
+    impl CircularCalculator {
+        fn declare_static(declaration: &mut Declaration) {
+            declaration
+                .provide(Circular)
+                .require::<Cycled>("the cycled fact");
+        }
+    }
+
+    /// A calculator requiring the metric of [`CircularCalculator`], which requires its own one.
+    #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+    #[plugin(
+        id = "tournament_engine::plugins::tests::cycling",
+        label = "cycling",
+        declare_static = Self::declare_static
+    )]
+    struct Cycling;
+
+    impl Cycling {
+        fn declare_static(declaration: &mut Declaration) {
+            declaration
+                .provide(Cycled)
+                .require::<Circular>("the circular metric");
+        }
+    }
+
+    /// Calculates nothing, for the calculators of this module that only exist for what they
+    /// declare.
+    macro_rules! calculates_nothing {
+        ($calculator:ty, $metric:expr) => {
+            #[register]
+            impl MetricsCalculator for $calculator {
+                fn default_metric_value(&self) -> Metric {
+                    Box::new($metric)
+                }
+
+                fn update_after_match_result_changed(
+                    &mut self,
+                    _: &PhaseData,
+                    _: &Match,
+                    _: MatchResult,
+                    _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+                ) -> Vec<(RankingId, Metric)> {
+                    Vec::new()
+                }
+
+                fn update_after_bye(
+                    &mut self,
+                    _: &PhaseData,
+                    _: &Bye,
+                    _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+                ) -> Vec<(RankingId, Metric)> {
+                    Vec::new()
+                }
+            }
+        };
+    }
+
+    calculates_nothing!(CircularCalculator, Circular);
+    calculates_nothing!(Cycling, Cycled);
+
+    #[test]
+    fn calculators_requiring_each_other_cannot_be_ordered() {
+        let mut plugins = phase(
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(CircularCalculator), Box::new(Cycling)],
+        );
+
+        assert_eq!(
+            plugins.order_metrics(),
+            Err(Incompatibility::CyclicRequirements {
+                plugins: vec![format!("{CircularCalculator:?}"), format!("{Cycling:?}")],
+            })
+        );
+        assert!(matches!(plugins.check_order(), Err(OrderError::Cyclic(_))));
     }
 }

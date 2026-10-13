@@ -39,26 +39,29 @@ must never require touching another axis's trait.
 
 ### Decision
 
-Every axis is its own public, unsealed trait, selected as `Box<dyn Trait>` and
-constructed directly by the consumer. Implemented axes: `PhaseFormat`,
-`SliceRanker` and `MetricsCalculator`. They share the `Plugin` supertrait
-(`Debug + DynClone` plus `declare`, see
-[Compatibility between plugins](#compatibility-between-plugins)), and each has a
-hand-written `impl Clone for Box<dyn Trait>` delegating to `dyn_clone`.
+Every axis is its own public, unsealed trait, selected as `Box<dyn Trait>`.
+Implemented axes: `PhaseFormat`, `SliceRanker` and `MetricsCalculator`. The
+mechanics of an axis come from the `plugin-factory` crate: the trait is declared
+with `#[axis]` and has `plugin_factory::Plugin` as a supertrait, and a plugin
+derives `Plugin` and registers its impl of the axis trait with `#[register]`
+(see [The plugin catalog](#the-plugin-catalog)). On top of that, every axis
+trait of the engine has `DynClone` as a supertrait and a hand-written
+`impl Clone for Box<dyn Trait>`, since `AddPhase::apply` clones the plugins on
+every replay.
 
 **The ranker is not an axis.** A phase is always ranked by a
-`HierarchicalRanker`, a plain struct holding a list of `SliceRanker`s, each
-breaking the ties the ones before it left. Every way of ranking that was
-foreseen is such a chain, so a second axis above `SliceRanker` only added a
-layer of trait objects and tags. A slice ranker sorting by a single metric — a
-*criterion* such as `MorePoints` — implements the helper trait
-`RankingCriterion` (its metric type and a comparison) and calls `rank_by` from
-its `SliceRanker` impl; other slice rankers (e.g. head-to-head) implement
+`HierarchicalRanker`, a plain struct the phase builds from its list of
+`SliceRanker`s, each breaking the ties the ones before it left. Every way of
+ranking that was foreseen is such a chain, so a second axis above `SliceRanker`
+only added a layer of trait objects and tags. A slice ranker sorting by a single
+metric — a *criterion* such as `MorePoints` — implements the helper trait
+`RankingCriterion` (its metric type and a comparison), declares
+`declare_static = requires_metric::<Self>` and calls `rank_by` from its
+`SliceRanker` impl; other slice rankers (e.g. head-to-head) implement
 `SliceRanker` directly.
 
 This applies uniformly to future axes: each one gets a trait and a slot, with no
-per-axis judgment call. A string-keyed registry for loading a configuration from
-non-Rust sources can be layered on additively later; it is not a v1 requirement.
+per-axis judgment call.
 
 ### Alternatives
 
@@ -67,9 +70,14 @@ non-Rust sources can be layered on additively later; it is not a v1 requirement.
 - **Generic type parameters per axis.** Zero-cost, but conflicts with runtime
   selection, and every combination becomes a distinct type. Rejected.
 - **Name-driven registry from the start** (`inventory`/`linkme`). Not needed to
-  select an axis, since a consumer constructs the implementation it wants.
+  select an axis, since a consumer can construct the implementation it wants.
   Added later for what does need it, see
   [The plugin catalog](#the-plugin-catalog).
+- **The engine's own axis machinery** (the previous design): a hand-written
+  `Plugin` supertrait with a required `declare`, `plugin_kind!` generating the
+  registry of an axis, and an engine-side compatibility check and resolution.
+  Superseded by `plugin-factory`, which does the same for any composite and adds
+  schemas, configuration and drafts.
 
 ## Plugin state
 
@@ -94,6 +102,16 @@ fn update_after_match_result_changed(&mut self, phase_data: &PhaseData, /* ... *
 `HierarchicalRanker::update_ranks` takes `&mut self` too, since it calls its
 slice rankers. Methods that only describe a plugin's configuration
 (`default_metric_value`, `allows_draws`) stay `&self`.
+
+**State is a field left out of the schema.** Everything `plugin-factory` sees of
+a plugin is its configuration, so a field holding state, such as the bracket of
+`SingleElimination`, is marked `#[plugin(skip)]` and needs a
+`#[serde(default)]`: a plugin built from a configuration starts with the
+default, and a saved one comes back with the state it had. The field is always
+serialized, `None` included, since `skip_serializing_if` breaks postcard, which
+reads fields by position; instead a configuration answering a skipped field is
+not rejected, but the answer is dropped, so `Draft::from_built` of a plugin that
+holds state drafts its configuration alone.
 
 **Undo needs nothing extra.** A plugin is a field of its `Phase`, so its state is
 part of the competition state: it is in a snapshot, and undo — a replay of the
@@ -128,13 +146,22 @@ path, which postcard cannot deserialize.
 - **Passing `&Phase` with the plugin temporarily taken out** (`Option` or
   `mem::replace`). The plugin would observe a phase missing one of its plugins, a
   state that exists nowhere else. Rejected.
+- **Pure configuration plugins building a runtime object** (e.g.
+  `PhaseFormat::start` returning a separately tagged scheduler holding the
+  state). Separates configuration from state cleanly, but costs a second trait
+  and tag per stateful axis. Not chosen; a skipped field does the same within
+  one struct.
+- **Serializing state only when it is not the default**
+  (`skip_serializing_if`), so that a drafted plugin never carries it. Breaks
+  non-self-describing formats. Rejected.
+- **Rebuilding state lazily from `PhaseData`** after a load (`#[serde(skip)]`).
+  Every stateful plugin would need a replay of its own history. Rejected.
 
 ## Compatibility between plugins
 
-*Implemented: `plugins::compatibility`, `Plugin::declare`, `PhasePlugins`,
-`AddPhase`, every plugin of this workspace declaring what it provides and
-requires, and resolution reading the catalog (see
-[The plugin catalog](#the-plugin-catalog)).*
+*Implemented: the mechanism in `plugin-factory` (`compatibility`, `draft`), the
+engine's facts in `plugins::facts`, `PhasePlugins`, `AddPhase`, and every plugin
+of this workspace declaring what it provides and requires.*
 
 Not every combination of plugins is valid, and detecting that must not rely on a
 hardcoded list of concrete type pairs, which would be blind to third-party
@@ -163,39 +190,35 @@ order*).
 
 ### Decision
 
-**Compatibility is checked on typed facts.** A fact is any `'static` type
-describing something true of a phase, identified by its `TypeId` like a metric.
-The `Plugin` supertrait every axis trait shares carries the declaration, and is
-implemented by hand next to the axis trait:
+**Compatibility is checked on typed facts.** A fact is any `'static + Debug +
+Sync` type describing something true of a phase, identified by its `TypeId` like
+a metric. A plugin states what it provides and requires in a `plugin-factory`
+`Declaration`: `declare_static` for what every configuration of it declares,
+which the catalog reads before the plugin is configured, and `declare` for what
+depends on its configuration, both given to the derive:
 
 ```rust
-pub trait Plugin: Debug + DynClone {
-    fn declare(&self, declaration: &mut Declaration);
-}
-
 impl Declaration {
-    pub fn provides<F: Fact>(&mut self, fact: F) -> &mut Self;
-    pub fn requires<F: Fact>(&mut self) -> &mut Self;          // present at all
-    pub fn requires_that<F: Fact>(&mut self, what: &'static str,
-                                  holds: fn(&F) -> bool) -> &mut Self;
+    pub fn provide<T>(&mut self, value: T) -> &mut Self;
+    pub fn require<T>(&mut self, name: &'static str) -> &mut Self;  // present at all
+    pub fn require_that<T>(&mut self, name: &'static str, description: &'static str,
+                           holds: fn(&T) -> bool) -> &mut Self;
 }
 ```
 
-`declare` is required, so an implementation cannot silently forget it —
-composite plugins in particular have to forward to their parts. Having it on
-`Plugin` rather than on each axis trait lets the engine collect every
-declaration through `&dyn Plugin`, whatever the axis. The `HierarchicalRanker`
-is no plugin; `PhasePlugins` collects the declaration of each of its slice
-rankers, so an issue names the slice ranker that has it.
+What a plugin declares includes what the plugins in its fields declare, so a
+composite plugin forwards nothing by hand. The `HierarchicalRanker` is no
+plugin; each slice ranker of `PhasePlugins` is checked on its own, so an issue
+names the slice ranker that has it.
 
-A criterion's declaration is derived: a blanket
-`impl<C: RankingCriterion> Plugin for C` requires `C::Metric`, the metric type
-the criterion compares and `rank_by` reads.
+A criterion requires its metric through `requires_metric::<Self>`, which reads
+the requirement off `C::Metric`, the metric type the criterion compares and
+`rank_by` reads.
 
 Facts are provided by the phase's plugins and by its context: the competition,
-or the output the previous phase's format declares, e.g. `EntrantsPerRanking(1)`.
-A fact a plugin of the phase provides replaces the same fact of the context. The
-check collects all provided facts into a type-keyed map built only for the
+declared by `Competition::declare_phase_context`, e.g. `EntrantsPerRanking(1)`.
+A plugin providing a fact the context provides already is an incompatibility.
+The check collects all provided facts into a type-keyed map built only for the
 check (never stored or serialized) and evaluates every requirement against it.
 It is flat: any plugin may require a fact of any other plugin or of the context,
 and mutual requirements are fine, because a requirement states what must be true
@@ -206,7 +229,7 @@ The vocabulary is open. Core defines facts about concepts it owns
 that owns a concept defines facts about it (a match plugin crate defines
 `MatchDetail<Goals>`, which a goal-difference calculator in another crate
 requires). Incompatibilities are unmet conditions on facts — monster DYP
-`requires_that::<EntrantsPerRanking>("rankings of single players", ..)` —
+`require_that::<EntrantsPerRanking>(.., "rankings of single players", ..)` —
 never pairs of concrete types. A fact carries a value, so a requirement can ask
 *how* as well as *whether*, and a fact holding a `fn` or a `Box<dyn Trait>`
 carries behavior where a plugin needs some from another.
@@ -214,23 +237,26 @@ carries behavior where a plugin needs some from another.
 A fact provided twice within a phase is an error.
 
 **A metric is a fact**, keyed by the metric type itself, and a calculator is an
-ordinary plugin declaring that it provides it (`provides(Points::default())`).
+ordinary plugin declaring that it provides it (`provide(Points::default())`).
 There is no separate handling: a metric calculated by two calculators is a fact
 provided twice (the disjointness of metrics), and a required metric no
 calculator calculates is an unmet fact. That the declared metric is the one
-`default_metric_value()` returns is a debug assertion when the phase starts.
+`default_metric_value()` returns is checked by a test over every registered
+calculator; `plugin-factory` does not expose a plugin's declaration for a
+runtime assertion.
 
-**`compatibility` knows no axes.** It holds facts, declarations, the check and a
-generic order of any list of plugins. The one place that knows the axes is
-`PhasePlugins`, the plugins of a phase: it collects their declarations through
-`&dyn Plugin`, resolves defaults and orders its calculators.
+**The mechanism knows no axes.** `plugin-factory` holds declarations, the check,
+a generic order of any list of plugins and the settling of missing facts. The
+one place that knows the axes of a phase is `PhasePlugins`, a `Configurable`
+composite of one format, a list of slice rankers and a list of calculators.
 
-**Self-reported, except for criteria.** A criterion's requirement is its
-associated `Metric` type, so it cannot drift from what the criterion compares.
-Everything else is self-reported in `declare`. That is the
-trade-off accepted here: facts like "rankings are pairs" are not something the
-compiler can derive, and none of the alternatives can express conditions on
-values. Test helpers that build a phase from a plugin plus only the facts it
+**Self-reported.** Every declaration, a criterion's included, is stated by the
+plugin. That is the trade-off accepted here: facts like "rankings are pairs" are
+not something the compiler can derive, and none of the alternatives can express
+conditions on values. A criterion's requirement at least cannot drift from what
+it compares, since `requires_metric` reads it off `C::Metric`, but a criterion
+that leaves out `declare_static` requires nothing, and `rank_by` panics when the
+phase runs. Test helpers that build a phase from a plugin plus only the facts it
 declares catch reads it did not declare.
 
 **Execution order is fixed by the engine, except among calculators.** On a
@@ -246,19 +272,19 @@ error. Should a future axis also become a list of plugins building on each
 other within a pass, the same rule applies to it.
 
 **Missing providers come from the catalog.** For a required fact nothing
-provides, resolution asks the catalog for the registered plugins that provide it
-with their default configuration, and adds the one it finds if there is exactly
-one — `Matches` has exactly one calculator, so nobody is ever asked about it.
-Several candidates are an ambiguity the engine must not settle, so it adds
-nothing and the fact stays unprovided, as it does for a fact only a plugin that
-has to be configured provides. Which kinds of plugin may be added is
-`PhasePlugins`'s decision, expressed as `Accepts<K>` impls, so the resolution
-itself knows no axis. Resolution repeatedly collects the declarations and
-settles the first missing fact, each fact once, so it terminates even where
-nothing is added. A plugin configured explicitly always wins, since the fact it
-provides is never missing. Consumers only configure calculators that need their
-configuration (points per win, ...) or that they want calculated without ranking
-by them.
+provides, `draft::finish` looks among the axes of the composite's lists of
+plugins for the registered plugins that provide it and have no fields, and adds
+the one it finds if there is exactly one — `Matches` has exactly one calculator,
+so nobody is ever asked about it. Several candidates are an ambiguity it must
+not settle, so it adds nothing and the fact stays unprovided, as it does for a
+fact only a plugin with fields provides: a default a plugin offers is never
+filled in unasked. A field taking one plugin, such as the format, is never added
+to. Settling repeats until nothing changes, each fact tried once. A plugin
+configured explicitly always wins, since the fact it provides is never missing.
+Consumers only configure calculators that need their configuration (points per
+win, ...) or that they want calculated without ranking by them; a UI accepting
+offered defaults may add the single provider of a fact with them, as the CLI
+does.
 
 **A fact is settled all or nothing.** What an added plugin requires and nothing
 provides is settled the same way, in turn, and the plugins found for one missing
@@ -273,23 +299,19 @@ promise: a UI can mark or hide an unprovided fact that settling will fix, and
 show the plugins it will add, because adding them cannot make a new issue
 appear. Checking a chain needs the phase's context, since a requirement the
 context meets is no issue. Problems among the configured plugins themselves do
-not block an addition.
+not block an addition. A UI reads the additions ahead of finishing as
+`added_by_finish` of `draft::issues` and `draft::candidates`.
 
-*Implemented in `plugin-factory` (`draft::finish`, with the additions reported
-as `added_by_finish` by `draft::issues` and `draft::candidates`). The engine's
-`PhasePlugins::resolve` still adds a provider without checking it and reports
-what stays unmet; it is to be replaced by the plugin-factory mechanism rather
-than changed.*
-
-**Resolution happens before the transition, validation in it.** `AddPhase::new`
-resolves: it adds the missing plugins and sorts, and returns an error for a fact
-provided twice or a cycle. A fact that stays unprovided is not its concern,
-since the context may provide it. The transition then holds the complete, sorted
-list, so neither the log nor a snapshot depends on how calculators were picked —
-which it must not, because the catalog depends on which crates are linked in —
-and changing a registration or the way of picking later never changes a replay.
-Deserializing an `AddPhase` adds nothing — an unsorted list fails to load, and
-a missing calculator fails the replay. Facts are checked in
+**Settling and ordering happen before the transition, validation in it.**
+Settling is the consumer's step: it finishes a `Draft<PhasePlugins>` with the
+competition's phase context, or calls `PhasePlugins::settle` on plugins it built
+itself. `AddPhase::new` then only sorts the calculators and returns an error for
+a cycle. The transition holds the complete, sorted list, so neither the log nor
+a snapshot depends on how calculators were picked — which it must not, because
+the catalog depends on which crates are linked in — and changing a registration
+or the way of picking later never changes a replay. Deserializing an `AddPhase`
+adds nothing — an unsorted list fails to load, and a missing calculator fails
+the replay. Facts are checked in
 `AddPhase::check_applicable`, where the phase's context is known; facts only
 known at start, such as the number of entrants, are checked the same way at
 `StartCompetition`. All of this runs once
@@ -297,10 +319,10 @@ per phase; the result-reporting path loops over an already sorted list and pays
 nothing.
 
 *Planned, once a metric has a second calculator:* a preference among the
-candidates for one metric, so that resolution can settle what is an ambiguity
+candidates for one metric, so that settling can decide what is an ambiguity
 today — e.g. a match format offering the points calculator that understands its
-matches. This is additive, and since resolution is not part of the log it can
-change freely.
+matches (`Plugin::recommends` covers the offered default already). This is
+additive, and since settling is not part of the log it can change freely.
 
 ### Alternatives
 
@@ -332,7 +354,7 @@ change freely.
   could suggest different defaults for the same fact with nothing to settle
   which wins. Rejected; a requirement names a fact and nothing else.
 - **Adding a provider whatever it brings along**, checking it like every other
-  plugin afterwards (the engine's current resolution). A provider that does not
+  plugin afterwards (the engine's previous resolution). A provider that does not
   fit, or requires what nothing provides, turns one missing fact into a problem
   with a plugin the operator never chose and cannot see in what they
   configured, and a UI could not tell an issue settling fixes from one it
@@ -345,15 +367,23 @@ change freely.
 - **The engine adding a calculator's metric to its declaration** from
   `default_metric_value()`. Structural, but made calculators a special case of
   collecting declarations. Superseded by calculators declaring their metric,
-  checked by a debug assertion.
+  checked by a test.
 - **`declare` on each axis trait.** Repeated the same method per axis and left
   the engine no uniform way to ask a plugin. Superseded by `Plugin::declare`.
+- **A blanket `impl<C: RankingCriterion> Plugin for C`** (the previous design),
+  which made a criterion's requirement impossible to leave out. `Plugin` is a
+  trait of `plugin-factory` now, and the orphan rule forbids a blanket impl of a
+  foreign trait. Superseded by `requires_metric`.
+- **A plugin replacing a fact of the context** (the previous design), e.g. a
+  draw pairing entrants up providing `EntrantsPerRanking(2)` over the
+  competition's `EntrantsPerRanking(1)`. `plugin-factory` treats it as a fact
+  provided twice. To be revisited when a phase's context comes from the phase
+  before it.
 - **Criteria that are no plugins**, held by one `LexicographicalCriteria` slice
   ranker that declared their metrics by running each criterion against a
   recording `RankingOrder` (the previous design). Kept criteria out of the
   axes, but needed a second, closed mechanism to state an order and a second
-  trait object with tags of its own. Superseded by criteria being slice rankers
-  with a blanket `Plugin` impl.
+  trait object with tags of its own. Superseded by criteria being slice rankers.
 - **A `Ranker` axis above `SliceRanker`.** No ranking that was foreseen is not
   a chain of slice rankers, so it was a layer of trait objects without a second
   implementation. Removed; a phase is always ranked by a `HierarchicalRanker`.
@@ -368,55 +398,59 @@ change freely.
 
 ## The plugin catalog
 
-*Partly implemented — the registries, `PluginEntry` and resolution reading them
-exist. The schemas that let a UI ask for a plugin's parameters, the builder and
-the defaults are the remaining steps of `PROPOSAL-plugin-catalog.md`.*
+*Implemented by `plugin-factory`. The CLI still configures phases from tables of
+its own; a wizard driven by the schemas and a `Draft` is the next step.*
 
 Every consumer that configures a phase has to know every plugin: the CLI holds a
 table of labels, descriptions and default parameters, and a plugin of another
 crate appears in none of them. The engine needs the same knowledge to fill a gap
-a requirement leaves, which it had as a default provider per fact type.
+a requirement leaves.
 
 ### Decision
 
-**A plugin registers itself, described.** One `PluginEntry<K>` per plugin holds
-its id, its label, its description and, where the plugin needs no configuration,
-a `fn() -> Box<K::Object>` creating it. Entries are collected with `inventory`,
-so the catalog is whatever is linked in, plugins of other crates included, and
-nothing enumerates them.
-
-**One registry per axis, typed.** A `PluginKind` ties the axis trait to its
-registry through `K::Object`, so the catalog hands out a `Box<dyn
-MetricsCalculator>`, never something to downcast. `inventory` collects by type
-and only into a type of the crate declaring the collection, so the registry type
-is generated, by `plugin_kind!` next to the trait of the axis; that is the only
-reason the macro exists. It writes the axis trait out, which is what lets a
-registration name neither the entry type nor the kind twice:
+**A plugin registers itself, described.** A plugin derives `Plugin`, which
+states its id, label and description and reads its schema — the questions a UI
+asks to configure it, with the defaults it offers — from its fields and their
+`serde` attributes. `#[register]` on its impl of the axis trait submits its
+entry to the catalog of the axis, collected with `inventory`, so the catalog is
+whatever is linked in, plugins of other crates included, and nothing enumerates
+them:
 
 ```rust
-plugin_kind! {
-    pub MetricsCalculatorKind for dyn MetricsCalculator
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(id = "tournament_engine::points", label = "points",
+         description = "…", declare_static = Self::declare_static)]
+pub struct PointsCalculator {
+    #[serde(default = "one")]
+    #[plugin(label = "Points for a win")]
+    points_for_win: f32,
+    // …
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register("…::points", "points", "scored for every win, …")
-        .with_default(|| Box::new(PointsCalculator::new(1.0, 0.5)))
-}
+#[register]
+impl MetricsCalculator for PointsCalculator { /* … */ }
 ```
 
-**What may be added is the composite's decision**, stated as `Accepts<K>` impls:
-`PhasePlugins` accepts metrics calculators and nothing else, so "resolution adds
-a second phase format" cannot be written, and resolution stays generic over the
-axis.
+**One registry per axis, typed.** `#[axis]` generates the registry of an axis
+next to its trait, and a plugin is built as a plugin of its axis, so a consumer
+gets a `Box<dyn MetricsCalculator>`, never something to downcast.
 
-**The ids are a contract** as soon as something outside the process names a
-plugin — a saved configuration will, see the proposal. They are namespaced with
-the crate the plugin lives in, and a plugin's id and its `typetag` tag are meant
-to be the same string once the plugins get explicit tags.
+**What may be added is the composite's shape**: `draft::finish` only appends to
+the fields of `PhasePlugins` taking a list of plugins, so it never adds a
+second phase format.
+
+**The ids are a contract.** A plugin's id is its `typetag` tag, so it names the
+plugin in a saved log and snapshot as much as in a saved configuration. Ids are
+namespaced with the crate the plugin lives in (`tournament_engine::points`) and
+pinned in a test.
+
+**Defaults are offered, never filled in.** A field's `serde` default is what a
+UI offers as its answer, so the engine's plugins carry the defaults its catalog
+used to create them with (the points of chess, the classical Sonneborn-Berger
+weights). Building a plugin still needs every field answered.
 
 **UI text lives on the plugin**, which means the engine ships English;
-localisation would wrap it, keyed by the plugin id. It is what the CLI does
-today, one crate further out.
+localisation would wrap it, keyed by the plugin id.
 
 ### Alternatives
 
@@ -427,8 +461,12 @@ today, one crate further out.
   either way, and no third-party plugin ever appears in it. Rejected.
 - **A default provider per fact type**, see
   [Compatibility between plugins](#compatibility-between-plugins). Superseded.
-- **A derive macro for the registration.** Worth it once the entry shape has
-  stopped moving, not before. Deferred.
+- **A hand-written registration per plugin** (`plugin_kind!` and
+  `inventory::submit!` of a `PluginEntry` with an optional constructor, the
+  previous design). Strings repeated next to the type, and no schema. Superseded
+  by the derive.
+- **`Accepts<K>` impls stating which axes a composite may be added to** (the
+  previous design). Superseded by the shape of the composite.
 
 ## Metrics: plugin-produced ranking data
 
@@ -458,8 +496,8 @@ search.
 ranking from scratch:
 
 ```rust
-#[typetag::serde(tag = "type", content = "value")]
-pub trait MetricsCalculator: Plugin {
+#[axis]
+pub trait MetricsCalculator: Plugin + DynClone {
     fn default_metric_value(&self) -> Metric;
     fn update_after_match_result_changed(
         &mut self, phase_data: &PhaseData, r#match: &Match,
@@ -495,10 +533,9 @@ criteria into one sort over pre-extracted columns per metric (the previous
 `large_tournament` benchmark, since it extracted every metric for every ranking
 and compared through a trait object per column.
 
-*Planned:* the active calculators' metric types being pairwise disjoint, and
-metrics required by other plugins being present, are checked as facts once per
-phase, see [Compatibility between plugins](#compatibility-between-plugins).
-`AddPhase` currently only checks that the competition has not started.
+The active calculators' metric types being pairwise disjoint, and metrics
+required by other plugins being present, are checked as facts once per phase,
+see [Compatibility between plugins](#compatibility-between-plugins).
 
 ### Alternatives
 
@@ -571,7 +608,7 @@ the same type overwrites via `TypeMap::insert_boxed`.
 This requires `TypeMapValue: DynClone`, because `Transition::apply` takes
 `&self` and so must clone its payload on every replay. That ripples into
 `Metric`, but every metric type is a trivially-`Clone` plain struct, and it
-mirrors `Plugin: Debug + DynClone`. It also costs `Entrant` its `PartialEq`
+mirrors the `DynClone` supertrait of every plugin axis. It also costs `Entrant` its `PartialEq`
 derive; comparison becomes field-wise, as already done for `Ranking` in the
 serialization tests.
 
@@ -791,23 +828,23 @@ opponent and are a match result.
 `Competition` and everything in it — `Phase`, `Ranking`, every embedded plugin
 and metric — is serializable with [`typetag`](https://docs.rs/typetag). The trait
 opts in once and each impl should carry a short, explicitly chosen, namespaced
-tag:
+tag. For a plugin axis `#[axis]` and `#[register]` do both, the tag being the
+plugin's id; other traits name it themselves:
 
 ```rust
 #[typetag::serde(tag = "type", content = "value")]
-pub trait MetricsCalculator: Plugin { /* ... */ }
+pub trait TypeMapValue: Any + Debug + DynClone {}
 
-#[typetag::serde(name = "tournament_engine::buchholz")]
-impl MetricsCalculator for BuchholzCalculator { /* ... */ }
+#[typetag::serde(name = "tournament_engine::eliminates")]
+impl TypeMapValue for Eliminates {}
 ```
 
-*Outstanding:* no plugin or metric impl names its tag yet — all use bare
-`#[typetag::serde]`, so every tag on the snapshot path is currently the default
-bare type name (`"Buchholz"`, `"BuchholzCalculator"`, ...). That is both the
-collision risk this decision meant to avoid and a silent break of old snapshots
-on any type rename. Worth fixing before the first snapshot anyone needs to keep.
-The log path does not share the problem: every `CompetitionTransition` impl names
-its tag.
+*Outstanding:* most metric impls do not name their tag yet — they use bare
+`#[typetag::serde]`, so their tag is the default bare type name (`"Buchholz"`,
+`"Points"`, ...). That is both the collision risk this decision meant to avoid
+and a silent break of old snapshots on any type rename. Worth fixing before the
+first snapshot anyone needs to keep. Plugins and every `CompetitionTransition`
+impl name their tags.
 
 This gives `Box<dyn Trait>` a working `Serialize`/`Deserialize` backed by an
 `inventory`-populated tag → type registry inside `typetag`, with no registry
@@ -942,7 +979,9 @@ consumer, because finding the entry means knowing the shape of the log.
 - `typetag` (plus its internal `inventory` and `erased_serde`) and `serde` for
   serializing trait objects; `postcard` and `serde_json` exercise both a
   non-self-describing and a self-describing format in tests.
-- `dyn-clone` for cloning boxed plugins, and (*planned*) boxed `TypeMapValue`s.
+- `plugin-factory` (with `inventory`) for the plugin axes, their catalog,
+  schemas, drafts and the compatibility of plugins.
+- `dyn-clone` for cloning boxed plugins and boxed `TypeMapValue`s.
 - `indexmap` for deterministic iteration order, with `rustc-hash` as a faster
   hasher for small `Copy` id keys.
 - `uuid` (v5) for content-derived ids; `rand` and `rand_seeder` for seeded,

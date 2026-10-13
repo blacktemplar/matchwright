@@ -91,7 +91,7 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
     };
     let default = container_default(input, what)?;
     let is_unit = matches!(data.fields, Fields::Unit);
-    let fields = match &data.fields {
+    let parsed = match &data.fields {
         Fields::Named(fields) => collect(
             fields
                 .named
@@ -106,7 +106,14 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
             ));
         }
     };
-    let fields: Vec<_> = fields.into_iter().flatten().collect();
+    let mut fields = Vec::new();
+    let mut skipped = Vec::new();
+    for parsed in parsed.into_iter().flatten() {
+        match parsed {
+            Parsed::Asked(field) => fields.push(*field),
+            Parsed::Skipped(name) => skipped.push(name),
+        }
+    }
 
     let configurable = &input.ident;
     // a unit struct deserializes from `null` rather than from an empty config
@@ -135,7 +142,9 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
             #is_unit
 
             fn schema() -> ::plugin_factory::schema::Schema {
-                ::plugin_factory::schema::Schema::new() #(.field(#schema_fields))*
+                ::plugin_factory::schema::Schema::new()
+                    #(.field(#schema_fields))*
+                    #(.skip(#skipped))*
             }
 
             #plugins
@@ -226,7 +235,15 @@ impl Container {
     }
 }
 
-/// What the attributes of a field `serde` deserializes say.
+/// A field `serde` deserializes, as the schema takes it.
+enum Parsed {
+    /// A field of the schema.
+    Asked(Box<Field>),
+    /// A field left out of the schema with `#[plugin(skip)]`, by the name `serde` reads it by.
+    Skipped(LitStr),
+}
+
+/// What the attributes of a field of the schema say.
 struct Field {
     ident: Ident,
     ty: Type,
@@ -242,7 +259,7 @@ struct Field {
 impl Field {
     /// The field `field` of a `what`, or [`None`] if `serde` does not deserialize it, given
     /// whether the struct has a `#[serde(default)]`.
-    fn parse(field: &syn::Field, what: &str, container_default: bool) -> Result<Option<Self>> {
+    fn parse(field: &syn::Field, what: &str, container_default: bool) -> Result<Option<Parsed>> {
         let ident = field.ident.clone().expect("the fields are named");
         let mut name = LitStr::new(&ident.unraw().to_string(), ident.span());
         let mut default = None;
@@ -287,6 +304,42 @@ impl Field {
         if skipped {
             return Ok(None);
         }
+
+        let mut label = None;
+        let mut description = None;
+        let mut left_out = None;
+        for attribute in attributes(&field.attrs, "plugin") {
+            attribute.parse_nested_meta(|meta| {
+                if meta.path.is_ident("label") {
+                    set_once(&mut label, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("description") {
+                    set_once(&mut description, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("skip") {
+                    set_once(&mut left_out, &meta, meta.path.clone())
+                } else {
+                    Err(meta.error("expected `label`, `description` or `skip`"))
+                }
+            })?;
+        }
+        if let Some(left_out) = left_out {
+            if label.is_some() || description.is_some() {
+                return Err(Error::new_spanned(
+                    left_out,
+                    format!("a field of a {what} left out of the schema takes no label"),
+                ));
+            }
+            // a config never answers it, so building from one has to fill it in
+            if default.is_none() && !container_default {
+                return Err(Error::new_spanned(
+                    left_out,
+                    format!(
+                        "a field of a {what} left out of the schema is never answered: add \
+                         `#[serde(default)]` for what it is built with",
+                    ),
+                ));
+            }
+            return Ok(Some(Parsed::Skipped(name)));
+        }
         // serde reads a missing `Option` as `None` unless a function of its own deserializes it,
         // which would make an unanswered field indistinguishable from one answered with nothing
         if is_option(&field.ty) && default.is_none() && !container_default && !deserialized_with {
@@ -299,20 +352,6 @@ impl Field {
                 ),
             ));
         }
-
-        let mut label = None;
-        let mut description = None;
-        for attribute in attributes(&field.attrs, "plugin") {
-            attribute.parse_nested_meta(|meta| {
-                if meta.path.is_ident("label") {
-                    set_once(&mut label, &meta, meta.value()?.parse()?)
-                } else if meta.path.is_ident("description") {
-                    set_once(&mut description, &meta, meta.value()?.parse()?)
-                } else {
-                    Err(meta.error("expected `label` or `description`"))
-                }
-            })?;
-        }
         let label = label.ok_or_else(|| {
             Error::new_spanned(
                 &ident,
@@ -320,7 +359,7 @@ impl Field {
             )
         })?;
 
-        Ok(Some(Self {
+        Ok(Some(Parsed::Asked(Box::new(Self {
             ident,
             ty: field.ty.clone(),
             name,
@@ -328,7 +367,7 @@ impl Field {
             description,
             default,
             serialize_with,
-        }))
+        }))))
     }
 
     /// The `Field` of the schema, given the `#[serde(default)]` of the struct.
@@ -523,6 +562,44 @@ mod tests {
                 }
             })
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_field_left_out_of_the_schema_needs_a_default_but_no_label() {
+        let expanded = expand_plugin(&parse_quote! {
+            #[plugin(id = "points", label = "points")]
+            struct Points {
+                #[serde(default)]
+                #[plugin(skip)]
+                state: Option<i64>,
+            }
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(expanded.contains(&quote!(.skip("state")).to_string()));
+        assert!(!expanded.contains("Field :: new"));
+        assert!(
+            error_of(parse_quote! {
+                #[plugin(id = "points", label = "points")]
+                struct Points {
+                    #[plugin(skip)]
+                    state: Option<i64>,
+                }
+            })
+            .starts_with("a field of a plugin left out of the schema is never answered")
+        );
+        assert_eq!(
+            error_of(parse_quote! {
+                #[plugin(id = "points", label = "points")]
+                struct Points {
+                    #[serde(default)]
+                    #[plugin(skip, label = "state")]
+                    state: i64,
+                }
+            }),
+            "a field of a plugin left out of the schema takes no label"
         );
     }
 

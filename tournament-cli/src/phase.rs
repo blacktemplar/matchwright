@@ -11,6 +11,7 @@
 use std::num::NonZeroU32;
 
 use tournament_engine::plugins::{
+    PhasePlugins,
     metrics_calculator::{
         MetricsCalculator,
         buchholz::{
@@ -30,7 +31,7 @@ use tournament_engine::plugins::{
         random_rounds::RandomRounds, round_robin::RoundRobin,
         single_elimination::SingleElimination,
     },
-    ranker::{HierarchicalRanker, SliceRanker},
+    ranker::SliceRanker,
 };
 
 use crate::command::PhasePreset;
@@ -55,15 +56,6 @@ const DEFAULT_SONNEBORN_BERGER: MetricConfig = MetricConfig::SonnebornBerger {
     weight_for_win: 1.0,
     weight_for_draw: 0.5,
 };
-
-/// What the engine needs in order to run a phase: the format that schedules its matches, the
-/// ranker that sorts its entrants and the calculators of its metrics, in the order the metrics
-/// are calculated in.
-pub(crate) type PhasePlugins = (
-    Box<dyn PhaseFormat>,
-    HierarchicalRanker,
-    Vec<Box<dyn MetricsCalculator>>,
-);
 
 /// How the matches of a phase are scheduled, with the parameters of the format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,10 +483,10 @@ impl PhaseConfig {
     ///
     /// Everything `ranked_by` sorts by is calculated as well, with default parameters if `metrics`
     /// does not give any. A metric listed twice is calculated once, with the parameters it is
-    /// listed with first. The engine adds the metrics a calculated one is derived from, see
-    /// [`AddPhase::new`].
+    /// listed with first. The metrics a calculated one is derived from are added when the phase
+    /// is, see [`Session::add_phase`].
     ///
-    /// [`AddPhase::new`]: tournament_engine::transitions::add_phase::AddPhase::new
+    /// [`Session::add_phase`]: crate::session::Session::add_phase
     pub fn new(
         format: FormatConfig,
         metrics: impl IntoIterator<Item = MetricConfig>,
@@ -599,16 +591,14 @@ impl PhaseConfig {
         format!("{format}, ranked by {}", ranked_by.join(", then "))
     }
 
-    /// The plugins the engine runs the configured phase with, see [`PhasePlugins`].
+    /// The plugins the engine runs the configured phase with, before anything is settled.
     pub(crate) fn into_plugins(self) -> PhasePlugins {
-        (
+        PhasePlugins::new(
             self.format.plugin(),
-            HierarchicalRanker::new(
-                self.ranked_by
-                    .iter()
-                    .map(|criterion| criterion.slice_ranker())
-                    .collect(),
-            ),
+            self.ranked_by
+                .iter()
+                .map(|criterion| criterion.slice_ranker())
+                .collect(),
             self.metrics
                 .into_iter()
                 .map(MetricConfig::calculator)

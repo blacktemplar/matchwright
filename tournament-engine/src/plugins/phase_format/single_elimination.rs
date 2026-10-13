@@ -1,12 +1,12 @@
 use std::num::NonZeroU32;
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::PhaseData,
     plugins::{
-        Plugin,
-        compatibility::{Declaration, MatchAnnotation},
+        facts::MatchAnnotation,
         phase_format::{
             PhaseFormat, Schedule,
             bracket::{Bracket, Source},
@@ -24,11 +24,23 @@ use crate::{
 ///
 /// Optionally the two entrants knocked out in the semifinals play one more match, for third place,
 /// see [`SingleElimination::with_third_place_match`].
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::single_elimination",
+    label = "single elimination",
+    description = "the loser of a match is out, draws are not allowed",
+    declare_static = Self::declare_static
+)]
 pub struct SingleElimination {
+    #[plugin(
+        label = "Play a match for third place",
+        description = "the two entrants knocked out in the semifinals play it alongside the \
+                       final; without it they stay third equal"
+    )]
     third_place_match: bool,
-    /// Built from the seeds on the first call. Defaulted so that a phase added before the format
-    /// had state still deserializes.
+    /// Built from the seeds on the first call.
+    #[serde(default)]
+    #[plugin(skip)]
     bracket: Option<Bracket>,
 }
 
@@ -58,6 +70,10 @@ impl SingleElimination {
             third_place_match: true,
             bracket: None,
         }
+    }
+
+    fn declare_static(declaration: &mut Declaration) {
+        declaration.provide(MatchAnnotation::<KnockoutRound>::new());
     }
 }
 
@@ -109,13 +125,7 @@ impl KnockoutRound {
     }
 }
 
-impl Plugin for SingleElimination {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(MatchAnnotation::<KnockoutRound>::new());
-    }
-}
-
-#[typetag::serde]
+#[register]
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let third_place_match = self.third_place_match;

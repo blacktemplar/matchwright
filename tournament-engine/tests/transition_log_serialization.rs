@@ -16,6 +16,7 @@ use tournament_engine::{
         Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
     },
     plugins::{
+        PhasePlugins,
         metrics_calculator::{
             buchholz::BuchholzCalculator,
             matches::MatchesCalculator,
@@ -24,7 +25,6 @@ use tournament_engine::{
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
         phase_format::single_elimination::SingleElimination,
-        ranker::HierarchicalRanker,
     },
     transitions::{
         CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
@@ -98,22 +98,23 @@ fn played_competition() -> CompetitionStateMachine {
         &mut machine,
         RemoveEntrant::new(Entrant::new(entrant_id(4))),
     );
-    let ranker = HierarchicalRanker::new(vec![Box::new(LaterFirstLoss), Box::new(MorePoints)]);
     apply(
         &mut machine,
         AddPhase::new(
             phase_id(),
-            Box::new(SingleElimination::new()),
-            ranker,
-            // the calculators run in this order, so every one of them that reads the metric of
-            // another one has to be listed after it
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
-                Box::new(BuchholzCalculator),
-            ],
+            PhasePlugins::new(
+                Box::new(SingleElimination::new()),
+                vec![Box::new(LaterFirstLoss), Box::new(MorePoints)],
+                // the calculators run in this order, so every one of them that reads the metric of
+                // another one has to be listed after it
+                vec![
+                    Box::new(RoundOfFirstLossCalculator),
+                    Box::new(WinsDrawsLossesCalculator),
+                    Box::new(THREE_ONE),
+                    Box::new(MatchesCalculator),
+                    Box::new(BuchholzCalculator),
+                ],
+            ),
         )
         .unwrap(),
     );
@@ -389,6 +390,50 @@ fn a_round_tripped_log_can_continue_the_tournament() {
 
     let phase = &machine.current().phases()[&phase_id()];
     assert!(phase.matches().values().all(Match::is_finished));
+}
+
+/// A plugin is serialized under its id, which is as much a persistence contract as the tag of a
+/// transition, so every plugin in the log is pinned here as well.
+#[test]
+fn every_plugin_is_serialized_under_its_id() {
+    let log = serialized_log(&played_competition());
+    let plugins = log
+        .as_array()
+        .expect("a log must serialize to a sequence")
+        .iter()
+        .find(|entry| entry["kind"]["Apply"]["type"] == "tournament_engine::add_phase")
+        .expect("the log must hold the phase")["kind"]["Apply"]["value"]["plugins"]
+        .clone();
+    let ids = |plugins: &Value| -> Vec<String> {
+        plugins
+            .as_array()
+            .expect("a list of plugins must serialize to a sequence")
+            .iter()
+            .map(|plugin| plugin["type"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    assert_eq!(
+        plugins["format"]["type"],
+        "tournament_engine::single_elimination"
+    );
+    assert_eq!(
+        ids(&plugins["ranking"]),
+        [
+            "tournament_engine::later_first_loss",
+            "tournament_engine::more_points"
+        ]
+    );
+    assert_eq!(
+        ids(&plugins["metrics"]),
+        [
+            "tournament_engine::round_of_first_loss",
+            "tournament_engine::wins_draws_losses",
+            "tournament_engine::points",
+            "tournament_engine::matches",
+            "tournament_engine::buchholz",
+        ]
+    );
 }
 
 #[test]

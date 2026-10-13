@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 clap.workspace = true
 inquire.workspace = true
+plugin-factory.workspace = true
 rand.workspace = true
 rustyline.workspace = true
 serde.workspace = true

@@ -3,6 +3,7 @@ use std::{
     num::NonZeroU32,
 };
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,12 +12,8 @@ use crate::{
     },
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{
-            Metric, MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
-        },
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
+        metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -34,7 +31,14 @@ impl Compare for SonnebornBerger {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks by the [`SonnebornBerger`], where more is better.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_sonneborn_berger",
+    label = "Sonneborn-Berger",
+    description = "a higher Sonneborn-Berger is better",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MoreSonnebornBerger;
 
 impl RankingCriterion for MoreSonnebornBerger {
@@ -45,17 +49,43 @@ impl RankingCriterion for MoreSonnebornBerger {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MoreSonnebornBerger {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Offered with the classical weights: the points of a beaten opponent count fully, those of an
+/// opponent that was played to a draw count half.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::sonneborn_berger",
+    label = "Sonneborn-Berger",
+    description = "the points of the opponents that were beaten or played to a draw",
+    declare_static = Self::declare_static
+)]
 pub struct SonnebornBergerCalculator {
+    #[serde(default = "one")]
+    #[plugin(
+        label = "How much a beaten opponent counts",
+        description = "the points of that opponent are multiplied by this"
+    )]
     weight_for_win: f32,
+    #[serde(default = "half")]
+    #[plugin(
+        label = "How much an opponent played to a draw counts",
+        description = "the points of that opponent are multiplied by this"
+    )]
     weight_for_draw: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 impl SonnebornBergerCalculator {
@@ -68,29 +98,16 @@ impl SonnebornBergerCalculator {
             weight_for_draw,
         }
     }
-}
 
-impl Plugin for SonnebornBergerCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provides(SonnebornBerger::default())
-            .requires::<Points>()
-            .requires::<Matches>();
+            .provide(SonnebornBerger::default())
+            .require::<Points>("the points")
+            .require::<Matches>("the matches");
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::sonneborn_berger",
-        "Sonneborn-Berger",
-        "the points of the opponents that were beaten or played to a draw",
-    )
-    // the classical weights: the points of a beaten opponent count fully, those of an opponent
-    // that was played to a draw count half
-    .with_default(|| Box::new(SonnebornBergerCalculator::new(1.0, 0.5)))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for SonnebornBergerCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(SonnebornBerger::default())

@@ -4,6 +4,7 @@ use std::{
     num::NonZeroU32,
 };
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use super::Metric;
@@ -11,12 +12,8 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{
-            MetricsCalculator, MetricsCalculatorKind, matches::Matches, points::Points,
-        },
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by},
+        metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
+        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -46,7 +43,14 @@ impl From<f32> for Buchholz {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks by the [`Buchholz`], where more is better.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_buchholz",
+    label = "Buchholz",
+    description = "a higher Buchholz is better",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MoreBuchholz;
 
 impl RankingCriterion for MoreBuchholz {
@@ -57,35 +61,32 @@ impl RankingCriterion for MoreBuchholz {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MoreBuchholz {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::buchholz",
+    label = "Buchholz",
+    description = "the points of all opponents",
+    declare_static = Self::declare_static
+)]
 pub struct BuchholzCalculator;
 
-impl Plugin for BuchholzCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
+impl BuchholzCalculator {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provides(Buchholz::default())
-            .requires::<Points>()
-            .requires::<Matches>();
+            .provide(Buchholz::default())
+            .require::<Points>("the points")
+            .require::<Matches>("the matches");
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::buchholz",
-        "Buchholz",
-        "the points of all opponents",
-    )
-    .with_default(|| Box::new(BuchholzCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for BuchholzCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(Buchholz::default())
@@ -198,7 +199,14 @@ impl From<f32> for BuchholzOfBuchholz {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ranks by the [`BuchholzOfBuchholz`], where more is better.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_buchholz_of_buchholz",
+    label = "Buchholz of Buchholz",
+    description = "a higher Buchholz of Buchholz is better",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MoreBuchholzOfBuchholz;
 
 impl RankingCriterion for MoreBuchholzOfBuchholz {
@@ -209,35 +217,32 @@ impl RankingCriterion for MoreBuchholzOfBuchholz {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MoreBuchholzOfBuchholz {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::buchholz_of_buchholz",
+    label = "Buchholz of Buchholz",
+    description = "the Buchholz of all opponents",
+    declare_static = Self::declare_static
+)]
 pub struct BuchholzOfBuchholzCalculator;
 
-impl Plugin for BuchholzOfBuchholzCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
+impl BuchholzOfBuchholzCalculator {
+    fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provides(BuchholzOfBuchholz::default())
-            .requires::<Buchholz>()
-            .requires::<Matches>();
+            .provide(BuchholzOfBuchholz::default())
+            .require::<Buchholz>("the Buchholz")
+            .require::<Matches>("the matches");
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::buchholz_of_buchholz",
-        "Buchholz of Buchholz",
-        "the Buchholz of all opponents",
-    )
-    .with_default(|| Box::new(BuchholzOfBuchholzCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for BuchholzOfBuchholzCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(BuchholzOfBuchholz::default())

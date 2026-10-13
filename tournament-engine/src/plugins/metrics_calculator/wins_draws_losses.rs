@@ -1,15 +1,14 @@
 use std::{any::TypeId, num::NonZeroU32};
 
+use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
-        Plugin,
-        compatibility::Declaration,
-        metrics_calculator::{Metric, MetricsCalculator, MetricsCalculatorKind},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by},
+        metrics_calculator::{Metric, MetricsCalculator},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -43,7 +42,12 @@ impl WinsDrawsLosses {
 impl TypeMapValue for WinsDrawsLosses {}
 
 /// Ranks by the wins of [`WinsDrawsLosses`], where more wins are better.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_wins",
+    label = "more wins",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MoreWins;
 
 impl RankingCriterion for MoreWins {
@@ -54,7 +58,7 @@ impl RankingCriterion for MoreWins {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MoreWins {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
@@ -64,7 +68,12 @@ impl SliceRanker for MoreWins {
 /// Ranks by the draws of [`WinsDrawsLosses`], where more draws are better.
 ///
 /// Rank by [`FewerLosses`] instead where drawing a match should not rank above winning one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::more_draws",
+    label = "more draws",
+    declare_static = requires_metric::<Self>
+)]
 pub struct MoreDraws;
 
 impl RankingCriterion for MoreDraws {
@@ -75,7 +84,7 @@ impl RankingCriterion for MoreDraws {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for MoreDraws {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
@@ -83,7 +92,12 @@ impl SliceRanker for MoreDraws {
 }
 
 /// Ranks by the losses of [`WinsDrawsLosses`], where fewer losses are better.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::fewer_losses",
+    label = "fewer losses",
+    declare_static = requires_metric::<Self>
+)]
 pub struct FewerLosses;
 
 impl RankingCriterion for FewerLosses {
@@ -94,7 +108,7 @@ impl RankingCriterion for FewerLosses {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for FewerLosses {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
@@ -107,7 +121,13 @@ impl SliceRanker for FewerLosses {
 /// Meant as a tie break: of two rankings with the same result, the one that needed fewer matches
 /// for it ranks higher. A phase that means to reward lasting longer instead, e.g. a knockout, needs
 /// a criterion of its own that sorts the other way round.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::fewer_matches_played",
+    label = "fewer matches played",
+    description = "the same result out of fewer matches ranks higher",
+    declare_static = requires_metric::<Self>
+)]
 pub struct FewerMatchesPlayed;
 
 impl RankingCriterion for FewerMatchesPlayed {
@@ -118,32 +138,29 @@ impl RankingCriterion for FewerMatchesPlayed {
     }
 }
 
-#[typetag::serde]
+#[register]
 impl SliceRanker for FewerMatchesPlayed {
     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
         rank_by(self, slice);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::wins_draws_losses",
+    label = "W-D-L",
+    description = "how many matches were won, drawn and lost",
+    declare_static = Self::declare_static
+)]
 pub struct WinsDrawsLossesCalculator;
 
-impl Plugin for WinsDrawsLossesCalculator {
-    fn declare(&self, declaration: &mut Declaration) {
-        declaration.provides(WinsDrawsLosses::default());
+impl WinsDrawsLossesCalculator {
+    fn declare_static(declaration: &mut Declaration) {
+        declaration.provide(WinsDrawsLosses::default());
     }
 }
 
-inventory::submit! {
-    MetricsCalculatorKind::register(
-        "tournament_engine::metrics_calculator::wins_draws_losses",
-        "W-D-L",
-        "how many matches were won, drawn and lost",
-    )
-    .with_default(|| Box::new(WinsDrawsLossesCalculator))
-}
-
-#[typetag::serde]
+#[register]
 impl MetricsCalculator for WinsDrawsLossesCalculator {
     fn default_metric_value(&self) -> Metric {
         Box::new(WinsDrawsLosses::default())

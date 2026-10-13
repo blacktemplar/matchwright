@@ -229,14 +229,23 @@ impl<'a, T> IntoIterator for &'a Set<T> {
 }
 
 /// Everything a [`Configurable`] has to be told, in the order it is asked in.
+///
+/// A field the derive leaves out with `#[plugin(skip)]` is not part of it: a config answering
+/// such a field is not rejected, but the answer is dropped.
 #[derive(Debug, Clone)]
-pub struct Schema(Vec<Field>);
+pub struct Schema {
+    fields: Vec<Field>,
+    skipped: Vec<&'static str>,
+}
 
 impl Schema {
     /// A schema asking for nothing. Called by the derive; not part of the API.
     #[doc(hidden)]
     pub const fn new() -> Self {
-        Self(Vec::new())
+        Self {
+            fields: Vec::new(),
+            skipped: Vec::new(),
+        }
     }
 
     /// This schema with `field` asked after the fields it holds already. Called by the derive;
@@ -244,18 +253,27 @@ impl Schema {
     #[doc(hidden)]
     #[must_use]
     pub fn field(mut self, field: Field) -> Self {
-        self.0.push(field);
+        self.fields.push(field);
+        self
+    }
+
+    /// This schema with the field `name` left out, see [`Schema`]. Called by the derive; not part
+    /// of the API.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn skip(mut self, name: &'static str) -> Self {
+        self.skipped.push(name);
         self
     }
 
     /// The fields of this schema, in the order they are asked in.
     pub fn fields(&self) -> &[Field] {
-        &self.0
+        &self.fields
     }
 
     /// The field named `name`, or [`None`] if the schema has none.
     pub fn field_named(&self, name: &str) -> Option<&Field> {
-        self.0.iter().find(|field| field.name() == name)
+        self.fields.iter().find(|field| field.name() == name)
     }
 
     /// `config`, the config at `at`, checked against this schema, and so the config of every
@@ -263,11 +281,11 @@ impl Schema {
     ///
     /// If `complete`, every field has to be answered, as for building a [`Configurable`];
     /// otherwise a field may be left unanswered. A plugin answer is written as
-    /// [`AnyAxis::walk`] writes it.
+    /// [`AnyAxis::walk`] writes it. An answer to a field left out of the schema is dropped.
     ///
     /// # Errors
-    /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema does not
-    /// have, [`ConfigError::WrongKind`] if an answer is not one its field takes,
+    /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema neither has
+    /// nor leaves out, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
     /// axis, [`ConfigError::Duplicate`] if a list gives an answer twice, as
     /// [`FieldKind::List`] counts answers as the same, and, if `complete`,
@@ -278,10 +296,10 @@ impl Schema {
         at: &Path,
         complete: bool,
     ) -> Result<Config, ConfigError> {
-        if let Some((answered, _)) = config
-            .answers()
-            .find(|(answered, _)| self.field_named(answered).is_none())
-        {
+        if let Some((answered, _)) = config.answers().find(|(answered, _)| {
+            self.field_named(answered).is_none()
+                && !self.skipped.iter().any(|skipped| skipped == answered)
+        }) {
             return Err(ConfigError::UnknownField {
                 path: at.clone().field(answered),
             });

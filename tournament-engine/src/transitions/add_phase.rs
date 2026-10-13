@@ -1,24 +1,21 @@
+use plugin_factory::{
+    compatibility::{self, Incompatibility},
+    schema::Configurable,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
     entities::competition::{Competition, PhaseId},
-    plugins::{
-        PhasePlugins,
-        compatibility::{Declaration, Incompatibility, check_facts},
-        metrics_calculator::MetricsCalculator,
-        phase_format::PhaseFormat,
-        ranker::HierarchicalRanker,
-    },
+    plugins::{OrderError, PhasePlugins},
     transitions::CompetitionTransition,
 };
 
 /// Adds a phase to a competition that has not started yet.
 ///
-/// Applying it fails if a fact one of its plugins requires is neither provided by another one nor
-/// by the competition, or does not meet the condition it is required with, see
-/// [`Plugin::declare`](crate::plugins::Plugin::declare).
+/// Applying it fails if the plugins of the phase do not fit together in the competition, see
+/// [`compatibility::check`] with [`Competition::declare_phase_context`] as the context.
 ///
 /// Deserializing one fails if its metrics calculators are not ordered as [`AddPhase::new`] orders
 /// them.
@@ -33,67 +30,46 @@ pub struct AddPhase {
 #[derive(Serialize, Deserialize)]
 struct SerializedAddPhase {
     id: PhaseId,
-    phase_format: Box<dyn PhaseFormat>,
-    ranker: HierarchicalRanker,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+    plugins: PhasePlugins,
 }
 
 impl TryFrom<SerializedAddPhase> for AddPhase {
-    type Error = Incompatibility;
+    type Error = OrderError;
 
     fn try_from(serialized: SerializedAddPhase) -> Result<Self, Self::Error> {
-        let plugins = PhasePlugins::new(
-            serialized.phase_format,
-            serialized.ranker,
-            serialized.metrics_calculators,
-        );
-        plugins.check_order()?;
+        serialized.plugins.check_order()?;
         Ok(Self {
             id: serialized.id,
-            plugins,
+            plugins: serialized.plugins,
         })
     }
 }
 
 impl From<AddPhase> for SerializedAddPhase {
     fn from(add_phase: AddPhase) -> Self {
-        let PhasePlugins {
-            phase_format,
-            ranker,
-            metrics_calculators,
-        } = add_phase.plugins;
         Self {
             id: add_phase.id,
-            phase_format,
-            ranker,
-            metrics_calculators,
+            plugins: add_phase.plugins,
         }
     }
 }
 
 impl AddPhase {
-    /// Adds the phase `id`, played in `phase_format`, ranked by `ranker` and calculating the
-    /// metrics of `metrics_calculators`.
+    /// Adds the phase `id` with `plugins`, whose metrics calculators are ordered so that each one
+    /// runs after the calculators providing the facts it requires, keeping the given order
+    /// otherwise; [`AddPhase::plugins`] returns the result.
     ///
-    /// For every fact a plugin requires that nothing provides, the plugin the
-    /// [catalog](crate::plugins::catalog) settles on is added, if there is one. The metrics
-    /// calculators are ordered so that each one runs after the calculators providing the facts it
-    /// requires, keeping the given order otherwise; [`AddPhase::plugins`] returns the result.
+    /// Nothing is added to `plugins`: a fact they require that none of them provides is settled
+    /// beforehand, by finishing a draft of them or by [`PhasePlugins::settle`].
     ///
     /// # Errors
     /// Returns an error if metrics calculators require facts of each other in a cycle.
-    pub fn new(
-        id: PhaseId,
-        phase_format: Box<dyn PhaseFormat>,
-        ranker: HierarchicalRanker,
-        metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-    ) -> Result<Self, Incompatibility> {
-        let mut plugins = PhasePlugins::new(phase_format, ranker, metrics_calculators);
-        plugins.resolve()?;
+    pub fn new(id: PhaseId, mut plugins: PhasePlugins) -> Result<Self, Incompatibility> {
+        plugins.order_metrics()?;
         Ok(Self { id, plugins })
     }
 
-    /// The plugins of the phase, including the ones added by [`AddPhase::new`].
+    /// The plugins of the phase, ordered by [`AddPhase::new`].
     pub fn plugins(&self) -> &PhasePlugins {
         &self.plugins
     }
@@ -110,8 +86,10 @@ impl Transition<Competition> for AddPhase {
         if competition.is_started() {
             return Err(Box::new(AddPhaseError::TournamentAlreadyStarted));
         }
-        let context = Declaration::of(|declaration| competition.declare_phase_context(declaration));
-        check_facts(context, &self.plugins.declarations())?;
+        compatibility::check(
+            |declaration| competition.declare_phase_context(declaration),
+            &self.plugins.plugins(),
+        )?;
         Ok(())
     }
 

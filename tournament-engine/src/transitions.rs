@@ -116,7 +116,7 @@ pub trait CompetitionStateMachineExt {
     /// ```
     /// # use tournament_engine::{
     /// #     entities::competition::{Entrant, EntrantId, MatchResult, PhaseId},
-    /// #     plugins::{phase_format::round_robin::RoundRobin, ranker::HierarchicalRanker},
+    /// #     plugins::{PhasePlugins, phase_format::round_robin::RoundRobin},
     /// #     transitions::{
     /// #         CompetitionStateMachine, CompetitionStateMachineExt, CompetitionTransition,
     /// #         add_entrant::AddEntrant, add_phase::AddPhase,
@@ -150,9 +150,7 @@ pub trait CompetitionStateMachineExt {
     /// #     &mut machine,
     /// #     AddPhase::new(
     /// #         phase_id,
-    /// #         Box::new(RoundRobin),
-    /// #         HierarchicalRanker::default(),
-    /// #         Vec::new(),
+    /// #         PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new()),
     /// #     )
     /// #     .unwrap(),
     /// # );
@@ -236,9 +234,7 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::{Entrant, EntrantId, MatchResult},
-        plugins::{
-            phase_format::single_elimination::SingleElimination, ranker::HierarchicalRanker,
-        },
+        plugins::{PhasePlugins, phase_format::single_elimination::SingleElimination},
         transitions::{
             add_entrant::AddEntrant, add_phase::AddPhase, set_competition_seed::SetCompetitionSeed,
             start_competition::StartCompetition,
@@ -283,9 +279,7 @@ mod tests {
             &mut machine,
             AddPhase::new(
                 phase_id(),
-                Box::new(SingleElimination::new()),
-                HierarchicalRanker::default(),
-                Vec::new(),
+                PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new()),
             )
             .unwrap(),
         );

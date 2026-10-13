@@ -1,30 +1,28 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use plugin_factory::{Plugin, register};
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, Match, PhaseData},
-    plugins::{
-        Plugin,
-        compatibility::Declaration,
-        phase_format::{PhaseFormat, Schedule},
-    },
+    plugins::phase_format::{PhaseFormat, Schedule},
 };
 
 /// Everyone plays everyone once. With an odd number of rankings, every ranking has a bye in one of
 /// the rounds.
 ///
 /// All rounds are scheduled at once, when the phase starts.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::round_robin",
+    label = "round robin",
+    description = "everyone plays everyone"
+)]
 pub struct RoundRobin;
 
-impl Plugin for RoundRobin {
-    fn declare(&self, _: &mut Declaration) {}
-}
-
-#[typetag::serde]
+#[register]
 impl PhaseFormat for RoundRobin {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         // we use the circle method to generate rounds, see

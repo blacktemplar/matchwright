@@ -4,14 +4,13 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
+use plugin_factory::{Plugin, register};
 use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
     entities::competition::{Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
     plugins::{
-        Plugin,
-        compatibility::Declaration,
         metrics_calculator::MetricsCalculator,
         phase_format::{PhaseFormat, Schedule},
     },
@@ -34,18 +33,27 @@ pub(crate) type ByeSpec = (u32, usize);
 
 /// Test-only [`PhaseFormat`] that schedules a fixed list of matches all at once, and a fixed list
 /// of byes, each as soon as every match of the rounds before its own is finished.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FixedMatches(Vec<AnnotatedMatchSpec>, Vec<ByeSpec>);
-
-impl Plugin for FixedMatches {
-    fn declare(&self, _: &mut Declaration) {}
+///
+/// Its schedule is not configurable, so it is left out of its schema.
+#[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
+#[plugin(
+    id = "tournament_engine::test_utils::fixed_matches",
+    label = "fixed matches"
+)]
+struct FixedMatches {
+    #[serde(default)]
+    #[plugin(skip)]
+    matches: Vec<AnnotatedMatchSpec>,
+    #[serde(default)]
+    #[plugin(skip)]
+    byes: Vec<ByeSpec>,
 }
 
-#[typetag::serde]
+#[register]
 impl PhaseFormat for FixedMatches {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let all_matches: Vec<_> = self
-            .0
+            .matches
             .iter()
             .map(|((round, team_a, team_b), annotations)| {
                 Match::new(
@@ -58,7 +66,7 @@ impl PhaseFormat for FixedMatches {
             .collect();
         let ranking_ids = ranking_ids(phase_data);
         let byes = self
-            .1
+            .byes
             .iter()
             .map(|(round, ranking)| {
                 Bye::new(ranking_ids[*ranking], NonZeroU32::new(*round).unwrap())
@@ -122,7 +130,7 @@ pub(crate) fn phase_with_annotated_matches(
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 ) -> Phase {
     let mut builder =
-        PhaseBuilder::new(Box::new(FixedMatches(matches, byes))).with_players(num_players);
+        PhaseBuilder::new(Box::new(FixedMatches { matches, byes })).with_players(num_players);
     for metrics_calculator in metrics_calculators {
         builder = builder.metrics_calculator(metrics_calculator);
     }

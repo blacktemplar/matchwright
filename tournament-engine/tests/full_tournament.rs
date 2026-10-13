@@ -7,6 +7,7 @@ use tournament_engine::{
         Competition, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, Ranking,
     },
     plugins::{
+        PhasePlugins,
         metrics_calculator::{
             buchholz::{
                 Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
@@ -17,7 +18,6 @@ use tournament_engine::{
             wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
         phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
-        ranker::HierarchicalRanker,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
@@ -107,7 +107,6 @@ fn full_tournament() {
     let seed = rng().random();
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination::new());
-    let ranker = HierarchicalRanker::new(vec![Box::new(LaterFirstLoss)]);
 
     apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
     apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
@@ -120,18 +119,20 @@ fn full_tournament() {
         &mut sm,
         AddPhase::new(
             phase_id,
-            phase_format,
-            ranker,
-            // the calculators run in this order, so every one of them that reads the metric of
-            // another one has to be listed after it
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
-                Box::new(BuchholzCalculator),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
+            PhasePlugins::new(
+                phase_format,
+                vec![Box::new(LaterFirstLoss)],
+                // the calculators run in this order, so every one of them that reads the metric of
+                // another one has to be listed after it
+                vec![
+                    Box::new(RoundOfFirstLossCalculator),
+                    Box::new(WinsDrawsLossesCalculator),
+                    Box::new(THREE_ONE),
+                    Box::new(MatchesCalculator),
+                    Box::new(BuchholzCalculator),
+                    Box::new(BuchholzOfBuchholzCalculator),
+                ],
+            ),
         )
         .unwrap(),
     )
@@ -399,12 +400,14 @@ fn byes_are_scored_when_they_are_scheduled() {
         &mut sm,
         AddPhase::new(
             phase_id,
-            Box::new(RoundRobin),
-            HierarchicalRanker::new(vec![Box::new(MorePoints)]),
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE.with_points_for_bye(3.0)),
-            ],
+            PhasePlugins::new(
+                Box::new(RoundRobin),
+                vec![Box::new(MorePoints)],
+                vec![
+                    Box::new(WinsDrawsLossesCalculator),
+                    Box::new(THREE_ONE.with_points_for_bye(3.0)),
+                ],
+            ),
         )
         .unwrap(),
     )
@@ -435,9 +438,11 @@ fn single_elimination_rejects_a_draw() {
         &mut sm,
         AddPhase::new(
             phase_id,
-            Box::new(SingleElimination::new()),
-            HierarchicalRanker::new(vec![Box::new(LaterFirstLoss)]),
-            vec![Box::new(RoundOfFirstLossCalculator)],
+            PhasePlugins::new(
+                Box::new(SingleElimination::new()),
+                vec![Box::new(LaterFirstLoss)],
+                vec![Box::new(RoundOfFirstLossCalculator)],
+            ),
         )
         .unwrap(),
     )
