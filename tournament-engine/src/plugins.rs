@@ -46,7 +46,7 @@ pub struct PhasePlugins {
     ranking: Vec<Box<dyn SliceRanker>>,
     #[serde(default)]
     #[plugin(label = "Metrics", description = "calculated for every entrant")]
-    metrics: DependencyOrderedSet<Box<dyn MetricsCalculator>>,
+    metrics: DependencyOrderedSet<dyn MetricsCalculator>,
 }
 
 impl PhasePlugins {
@@ -78,7 +78,7 @@ impl PhasePlugins {
     }
 
     /// The metrics calculators, in the order they run in.
-    pub fn metrics(&self) -> &DependencyOrderedSet<Box<dyn MetricsCalculator>> {
+    pub fn metrics(&self) -> &DependencyOrderedSet<dyn MetricsCalculator> {
         &self.metrics
     }
 

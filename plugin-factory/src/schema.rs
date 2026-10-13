@@ -6,7 +6,10 @@
 //! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
 //! program reads the questions of a plugin before it is chosen and never names one.
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Debug, Formatter},
+};
 
 pub use plugin_factory_derive::Configurable;
 use serde::{
@@ -87,10 +90,10 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 /// takes.
 ///
 /// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
-/// a plugin axis, and `Option`, `Vec`, [`DependencyOrderedSet`] and `BTreeSet` of any of them. A
-/// `Vec` takes an ordered list, a `DependencyOrderedSet` or `BTreeSet` an unordered one. A type
-/// that deserializes from one of these answers, such as a newtype checking its value, implements
-/// it to be a field.
+/// a plugin axis, `Option`, `Vec` and `BTreeSet` of any of them, and
+/// [`DependencyOrderedSet`]`<dyn Trait>`. A `Vec` takes an ordered list, a `BTreeSet` and a
+/// `DependencyOrderedSet` an unordered one. A type that deserializes from one of these answers,
+/// such as a newtype checking its value, implements it to be a field.
 pub trait FieldType {
     /// The kind of answer a field of this type takes.
     fn kind() -> FieldKind;
@@ -99,20 +102,6 @@ pub trait FieldType {
     /// part of the API.
     #[doc(hidden)]
     fn plugins<'a>(&'a self, _plugins: &mut Vec<&'a dyn Plugin>) {}
-
-    /// `answers`, the answers of a [`DependencyOrderedSet`], in dependency order: plugins as
-    /// [`compatibility::order`] orders them, anything else as given. Called by
-    /// [`DependencyOrderedSet`]; not part of the API.
-    ///
-    /// # Errors
-    /// Returns an error if plugins require facts of each other in a cycle.
-    #[doc(hidden)]
-    fn in_dependency_order(answers: Vec<Self>) -> Result<Vec<Self>, Incompatibility>
-    where
-        Self: Sized,
-    {
-        Ok(answers)
-    }
 }
 
 impl FieldType for bool {
@@ -145,20 +134,6 @@ impl<A: Axis + ?Sized> FieldType for Box<A> {
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
         plugins.push(self.as_ref().as_plugin());
     }
-
-    fn in_dependency_order(answers: Vec<Self>) -> Result<Vec<Self>, Incompatibility> {
-        let plugins: Vec<_> = answers.iter().map(|answer| answer.as_plugin()).collect();
-        let order = compatibility::order(&plugins)?;
-        let mut answers: Vec<_> = answers.into_iter().map(Some).collect();
-        Ok(order
-            .into_iter()
-            .map(|index| {
-                answers[index]
-                    .take()
-                    .expect("an order holds every index once")
-            })
-            .collect())
-    }
 }
 
 impl<T: FieldType> FieldType for Option<T> {
@@ -185,14 +160,14 @@ impl<T: FieldType> FieldType for Vec<T> {
     }
 }
 
-impl<T: FieldType> FieldType for DependencyOrderedSet<T> {
+impl<A: Axis + ?Sized> FieldType for DependencyOrderedSet<A> {
     fn kind() -> FieldKind {
-        FieldKind::set(T::kind())
+        FieldKind::set(FieldKind::plugin::<A>())
     }
 
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
-        for answer in self {
-            answer.plugins(plugins);
+        for plugin in self {
+            plugin.plugins(plugins);
         }
     }
 }
@@ -210,29 +185,26 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
     }
 }
 
-/// A set of answers kept in dependency order: the answers to a field taking an unordered list,
-/// typically plugins that build on each other, such as calculators reading each other's results.
+/// A set of plugins of the axis `A`, kept in dependency order: the answer to a field taking an
+/// unordered list of plugins that build on each other, such as calculators reading each other's
+/// results.
 ///
 /// It upholds two invariants, however it is built — by [`DependencyOrderedSet::new`] or by
 /// deserializing it, which is also how a plugin or composite holding one is built from its
 /// config and how a saved one is loaded:
 ///
-/// - **Each answer once.** Answers count as the same as [`FieldKind::List`] counts them: two
-///   plugins if they are the same plugin, whatever they are configured with, anything else by
-///   value, so `1` and `1.0` are the same.
-/// - **Dependency order.** Plugins come in an order they can run in one after another: each after
-///   the plugins providing the facts it requires, see [`compatibility::order`]. Where the
-///   requirements leave the order open, the answers keep the order they are given in, so an order
-///   that is already valid stays as it is, and a saved set comes back in the order it was saved
-///   in. Answers that are no plugins require nothing, so they always keep the order given.
+/// - **Each plugin once.** Two plugins are the same if they are the same plugin, i.e. have the
+///   same [id](crate::PluginType::ID), whatever they are configured with, as [`FieldKind::List`]
+///   counts them.
+/// - **Dependency order.** The plugins come in an order they can run in one after another: each
+///   after the plugins providing the facts it requires, see [`compatibility::order`]. Where the
+///   requirements leave the order open, they keep the order they are given in, so an order that
+///   is already valid stays as it is, and a saved set comes back in the order it was saved in.
 ///
-/// Answers that would break either invariant are rejected, see [`DependencyOrderedSetError`].
+/// Plugins that would break either invariant are rejected, see [`DependencyOrderedSetError`].
 ///
-/// It is (de)serialized as the list of its answers, in dependency order. Iterating it yields them
+/// It is (de)serialized as the list of its plugins, in dependency order. Iterating it yields them
 /// in that order, so a program running the plugins one after another iterates the set.
-///
-/// For answers that need neither invariant beyond being distinct and that can be ordered, a
-/// `BTreeSet` takes the same kind of answer.
 ///
 /// # Examples
 /// ```
@@ -282,12 +254,12 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
 ///
 /// # fn main() {
 /// let metrics =
-///     DependencyOrderedSet::<Box<dyn Metric>>::new(vec![Box::new(Buchholz), Box::new(WinCount)])
+///     DependencyOrderedSet::<dyn Metric>::new(vec![Box::new(Buchholz), Box::new(WinCount)])
 ///         .unwrap();
 /// assert_eq!(format!("{:?}", metrics.iter().collect::<Vec<_>>()), "[WinCount, Buchholz]");
 ///
 /// // a saved set is put into dependency order as well
-/// let loaded: DependencyOrderedSet<Box<dyn Metric>> = serde_json::from_value(json!([
+/// let loaded: DependencyOrderedSet<dyn Metric> = serde_json::from_value(json!([
 ///     {"type": "my_crate::buchholz", "value": null},
 ///     {"type": "my_crate::win_count", "value": null},
 /// ]))
@@ -295,110 +267,141 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
 /// assert_eq!(format!("{:?}", loaded.iter().collect::<Vec<_>>()), "[WinCount, Buchholz]");
 ///
 /// assert_eq!(
-///     DependencyOrderedSet::<Box<dyn Metric>>::new(vec![Box::new(WinCount), Box::new(WinCount)])
+///     DependencyOrderedSet::<dyn Metric>::new(vec![Box::new(WinCount), Box::new(WinCount)])
 ///         .err(),
 ///     Some(DependencyOrderedSetError::Duplicate { position: 1 })
 /// );
 /// # }
 /// ```
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct DependencyOrderedSet<T>(Vec<T>);
+pub struct DependencyOrderedSet<A: Axis + ?Sized>(Vec<Box<A>>);
 
-impl<T: FieldType + Serialize> DependencyOrderedSet<T> {
-    /// The set of `answers`, put into dependency order, see [`DependencyOrderedSet`].
+impl<A: Axis + ?Sized> DependencyOrderedSet<A> {
+    /// The set of `plugins`, put into dependency order, see [`DependencyOrderedSet`].
     ///
     /// # Errors
-    /// Returns [`DependencyOrderedSetError::Duplicate`] if an answer is the same as one before
-    /// it, and [`DependencyOrderedSetError::Cyclic`] if the answers are plugins that require
-    /// facts of each other in a cycle, so that no order lets them run one after another.
-    ///
-    /// # Panics
-    /// Panics if an answer cannot be written as JSON, which is how answers are compared.
-    pub fn new(answers: Vec<T>) -> Result<Self, DependencyOrderedSetError> {
-        let element = T::kind();
-        let written: Vec<_> = answers
-            .iter()
-            .map(|answer| {
-                serde_json::to_value(answer)
-                    .unwrap_or_else(|error| panic!("an answer of a set cannot be written: {error}"))
-            })
-            .collect();
-        if let Some(position) = (1..written.len()).find(|&position| {
-            written[..position]
+    /// Returns [`DependencyOrderedSetError::Duplicate`] if a plugin is the same as one before it,
+    /// and [`DependencyOrderedSetError::Cyclic`] if plugins require facts of each other in a
+    /// cycle, so that no order lets them run one after another.
+    pub fn new(plugins: Vec<Box<A>>) -> Result<Self, DependencyOrderedSetError> {
+        if let Some(position) = (1..plugins.len()).find(|&position| {
+            plugins[..position]
                 .iter()
-                .any(|earlier| same_element(&element, earlier, &written[position], true))
+                .any(|earlier| earlier.id() == plugins[position].id())
         }) {
             return Err(DependencyOrderedSetError::Duplicate { position });
         }
-        Ok(Self(T::in_dependency_order(answers)?))
+        let order = compatibility::order(
+            &plugins
+                .iter()
+                .map(|plugin| plugin.as_plugin())
+                .collect::<Vec<_>>(),
+        )?;
+        let mut plugins: Vec<_> = plugins.into_iter().map(Some).collect();
+        Ok(Self(
+            order
+                .into_iter()
+                .map(|index| {
+                    plugins[index]
+                        .take()
+                        .expect("an order holds every index once")
+                })
+                .collect(),
+        ))
+    }
+
+    /// The plugins, in dependency order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Box<A>> {
+        self.0.iter()
+    }
+
+    /// How many plugins it holds.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether it holds no plugin.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
-/// Deserializes the list of answers and builds the set as [`DependencyOrderedSet::new`] does, so
+/// Writes the list of the plugins, in dependency order.
+impl<A: Axis + ?Sized> Serialize for DependencyOrderedSet<A>
+where
+    Box<A>: Serialize,
+{
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+/// Reads the list of the plugins and builds the set as [`DependencyOrderedSet::new`] does, so
 /// that a [`DependencyOrderedSetError`] is a deserialization error.
-impl<'de, T: FieldType + Serialize + Deserialize<'de>> Deserialize<'de>
-    for DependencyOrderedSet<T>
+impl<'de, A: Axis + ?Sized> Deserialize<'de> for DependencyOrderedSet<A>
+where
+    Box<A>: Deserialize<'de>,
 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Self::new(Vec::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
-/// Why answers do not make a [`DependencyOrderedSet`].
-#[derive(Debug, Clone, Error, PartialEq, Eq)]
-pub enum DependencyOrderedSetError {
-    /// The answer at `position`, in the order given, is the same as one before it.
-    #[error("the answer at position {position} repeats an earlier one, but a set takes each once")]
-    Duplicate { position: usize },
-    /// The answers are plugins that require facts of each other in a cycle, so no order lets them
-    /// run one after another.
-    #[error(transparent)]
-    Cyclic(#[from] Incompatibility),
+// written out rather than derived, which would demand `A: Clone` of the trait object
+impl<A: Axis + ?Sized> Clone for DependencyOrderedSet<A>
+where
+    Box<A>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
 }
 
-impl<T> DependencyOrderedSet<T> {
-    /// The answers, in dependency order.
-    pub fn iter(&self) -> std::slice::Iter<'_, T> {
-        self.0.iter()
-    }
-
-    /// How many answers it holds.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Whether it holds no answer.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+impl<A: Axis + ?Sized> Debug for DependencyOrderedSet<A> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("DependencyOrderedSet")
+            .field(&self.0)
+            .finish()
     }
 }
 
 /// The empty set.
-impl<T> Default for DependencyOrderedSet<T> {
+impl<A: Axis + ?Sized> Default for DependencyOrderedSet<A> {
     fn default() -> Self {
         Self(Vec::new())
     }
 }
 
-/// Yields the answers in dependency order.
-impl<T> IntoIterator for DependencyOrderedSet<T> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+/// Yields the plugins in dependency order.
+impl<A: Axis + ?Sized> IntoIterator for DependencyOrderedSet<A> {
+    type Item = Box<A>;
+    type IntoIter = std::vec::IntoIter<Box<A>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-/// Yields the answers in dependency order.
-impl<'a, T> IntoIterator for &'a DependencyOrderedSet<T> {
-    type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+/// Yields the plugins in dependency order.
+impl<'a, A: Axis + ?Sized> IntoIterator for &'a DependencyOrderedSet<A> {
+    type Item = &'a Box<A>;
+    type IntoIter = std::slice::Iter<'a, Box<A>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
+}
+
+/// Why plugins do not make a [`DependencyOrderedSet`].
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum DependencyOrderedSetError {
+    /// The plugin at `position`, in the order given, is the same plugin as one before it.
+    #[error("the plugin at position {position} repeats an earlier one, but a set takes each once")]
+    Duplicate { position: usize },
+    /// The plugins require facts of each other in a cycle, so no order lets them run one after
+    /// another.
+    #[error(transparent)]
+    Cyclic(#[from] Incompatibility),
 }
 
 /// Everything a [`Configurable`] has to be told, in the order it is asked in.
@@ -889,43 +892,33 @@ mod tests {
         Box::new(Matches)
     }
 
-    /// A plugin with fields taking unordered lists: of whole numbers, of numbers and of plugins.
+    /// A plugin with fields taking unordered lists: of whole numbers and of plugins.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(id = "pool", label = "pool", description = "a plugin taking sets")]
     struct Pool {
         #[plugin(label = "Rounds")]
         rounds: BTreeSet<i64>,
-        #[plugin(label = "Shares")]
-        shares: DependencyOrderedSet<f64>,
         #[plugin(label = "Members")]
-        members: DependencyOrderedSet<Box<dyn Configured>>,
+        members: DependencyOrderedSet<dyn Configured>,
     }
 
     #[register]
     impl Configured for Pool {
         fn summary(&self) -> String {
             let members: Vec<_> = self.members.iter().map(|member| member.summary()).collect();
-            format!(
-                "pool({:?}, {:?}, [{}])",
-                self.rounds,
-                self.shares,
-                members.join(", ")
-            )
+            format!("pool({:?}, [{}])", self.rounds, members.join(", "))
         }
     }
 
     /// The config of [`Pool`] answering every field with distinct answers.
     fn pool() -> Config {
-        Config::new()
-            .with("rounds", vec![3, 1])
-            .with("shares", vec![0.5, 1.0])
-            .with(
-                "members",
-                vec![
-                    PluginConfig::of::<Matches>(),
-                    PluginConfig::configured(Points::ID, points()),
-                ],
-            )
+        Config::new().with("rounds", vec![3, 1]).with(
+            "members",
+            vec![
+                PluginConfig::of::<Matches>(),
+                PluginConfig::configured(Points::ID, points()),
+            ],
+        )
     }
 
     #[register]
@@ -1011,7 +1004,6 @@ mod tests {
         let kind = |name| schema.field_named(name).map(Field::kind);
 
         assert_eq!(kind("rounds"), Some(&FieldKind::set(FieldKind::Integer)));
-        assert_eq!(kind("shares"), Some(&FieldKind::set(FieldKind::Decimal)));
         assert_eq!(
             kind("members"),
             Some(&FieldKind::set(FieldKind::plugin::<dyn Configured>()))
@@ -1030,9 +1022,7 @@ mod tests {
     fn a_set_of_distinct_answers_is_built() {
         assert_eq!(
             built::<Pool>(pool()).as_deref(),
-            Ok(
-                "pool({1, 3}, DependencyOrderedSet([0.5, 1.0]), [matches, points(1, 3, true, 0.5)])"
-            )
+            Ok("pool({1, 3}, [matches, points(1, 3, true, 0.5)])")
         );
     }
 
@@ -1046,10 +1036,6 @@ mod tests {
         assert_eq!(
             duplicate(pool().with("rounds", vec![1, 2, 1])).as_deref(),
             Some("rounds[2]")
-        );
-        assert_eq!(
-            duplicate(pool().with("shares", json!([1, 0.5, 1.0]))).as_deref(),
-            Some("shares[2]")
         );
         // a plugin is the same plugin whatever it is configured with
         assert_eq!(

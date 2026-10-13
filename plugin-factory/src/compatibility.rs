@@ -652,7 +652,7 @@ mod tests {
     impl Part for Composite {}
 
     /// A dependency ordered set of parts.
-    type Parts = DependencyOrderedSet<Box<dyn Part>>;
+    type Parts = DependencyOrderedSet<dyn Part>;
 
     #[test]
     fn a_set_of_plugins_keeps_them_in_the_order_they_run_in() {
@@ -685,13 +685,6 @@ mod tests {
         assert!(serde_json::from_value::<Parts>(saved).is_err());
     }
 
-    #[test]
-    fn a_set_of_anything_else_keeps_the_order_given() {
-        let set = DependencyOrderedSet::new(vec![3, 1, 2]).unwrap();
-
-        assert_eq!(set.iter().copied().collect::<Vec<_>>(), [3, 1, 2]);
-    }
-
     /// A plugin is the same plugin whatever it is configured with.
     #[test]
     fn a_set_holds_a_plugin_once() {
@@ -715,18 +708,6 @@ mod tests {
             Some(DependencyOrderedSetError::Duplicate { position: 3 })
         );
         assert!(serde_json::from_value::<Parts>(saved).is_err());
-    }
-
-    #[test]
-    fn a_set_holds_a_value_once_whichever_way_it_is_written() {
-        assert_eq!(
-            DependencyOrderedSet::new(vec![1.0, 0.5, 1.0]).err(),
-            Some(DependencyOrderedSetError::Duplicate { position: 2 })
-        );
-        assert!(
-            serde_json::from_value::<DependencyOrderedSet<f64>>(serde_json::json!([1, 0.5, 1.0]))
-                .is_err()
-        );
     }
 
     #[test]
