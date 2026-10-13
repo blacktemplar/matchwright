@@ -45,7 +45,7 @@ pub struct PhasePlugins {
     )]
     ranking: Vec<Box<dyn SliceRanker>>,
     #[serde(default)]
-    #[plugin(label = "Metrics", description = "calculated for every entrant")]
+    #[plugin(label = "Metrics", description = "calculated for every team")]
     metrics: DependencyOrderedSet<dyn MetricsCalculator>,
 }
 
