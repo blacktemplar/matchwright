@@ -7,6 +7,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
+        facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
@@ -156,7 +157,7 @@ pub struct WinsDrawsLossesCalculator;
 
 impl WinsDrawsLossesCalculator {
     fn declare_static(declaration: &mut Declaration) {
-        declaration.provide(WinsDrawsLosses::default());
+        declaration.provide(CalculatesMetric::<WinsDrawsLosses>::new());
     }
 }
 

@@ -1418,20 +1418,28 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Plugin, PluginType, axis, register};
+    use crate::{Plugin, PluginType, axis, compatibility::Fact, register};
 
     #[derive(Debug)]
     struct Points;
 
+    impl Fact for Points {}
+
     #[derive(Debug)]
     struct Matches;
+
+    impl Fact for Matches {}
 
     #[derive(Debug)]
     struct Eliminating;
 
+    impl Fact for Eliminating {}
+
     /// How many entrants a ranking stands for, the fact the context of the composite provides.
     #[derive(Debug)]
     struct EntrantsPerRanking(u32);
+
+    impl Fact for EntrantsPerRanking {}
 
     /// How the matches of a phase are scheduled.
     #[axis]
@@ -2440,33 +2448,53 @@ mod tests {
         #[derive(Debug)]
         struct Settled;
 
+        impl Fact for Settled {}
+
         #[derive(Debug)]
         struct Ambiguous;
+
+        impl Fact for Ambiguous {}
 
         #[derive(Debug)]
         struct Downstream;
 
+        impl Fact for Downstream {}
+
         #[derive(Debug)]
         struct Deep;
+
+        impl Fact for Deep {}
 
         #[derive(Debug)]
         struct Crosswise;
 
+        impl Fact for Crosswise {}
+
         #[derive(Debug)]
         struct Lone;
+
+        impl Fact for Lone {}
 
         #[derive(Debug)]
         struct Nested;
 
+        impl Fact for Nested {}
+
         #[derive(Debug)]
         struct Stranded;
+
+        impl Fact for Stranded {}
 
         #[derive(Debug)]
         struct Clash;
 
+        impl Fact for Clash {}
+
         /// A fact [`Clashing`] provides, so that it clashes with a context providing it too.
         #[derive(Debug)]
         struct Given;
+
+        impl Fact for Given {}
 
         /// The axis of [`Requiring`], taken by a single slot only.
         #[axis]

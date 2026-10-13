@@ -63,7 +63,7 @@ pub use plugin_factory_derive::{Plugin, axis, register};
 /// plugin behind a `dyn` is asked through. Not part of the API.
 #[doc(hidden)]
 pub mod __private {
-    use std::{any::Any, collections::BTreeMap, fmt::Debug, sync::OnceLock};
+    use std::{collections::BTreeMap, sync::OnceLock};
 
     // so that a crate declaring an axis or registering a plugin does not have to depend on them
     pub use inventory;
@@ -123,12 +123,6 @@ pub mod __private {
     pub const fn entry<P: PluginType>() -> PluginEntry {
         PluginEntry::new::<P>()
     }
-
-    /// A fact, see [`compatibility`](crate::compatibility): a value of any `'static + Debug +
-    /// Sync` type, identified by its type.
-    pub trait Fact: Any + Debug + Sync {}
-
-    impl<T: Any + Debug + Sync> Fact for T {}
 
     /// How the plugin `P` is registered for an axis: the value of the axis's registry that
     /// [`register`](crate::register) submits. Implemented by [`axis`](crate::axis) for every

@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use plugin_factory::{
     Plugin, PluginType, axis,
     catalog::{AnyAxis, PluginEntry},
-    compatibility::{Declaration, Incompatibility, check},
+    compatibility::{Declaration, Fact, Incompatibility, check},
     config::{ConfigError, Path, PluginConfig, Value},
     draft::Draft,
     register,
@@ -23,13 +23,19 @@ trait Derived: Plugin {}
 #[derive(Debug)]
 struct Scored;
 
+impl Fact for Scored {}
+
 /// A fact [`Points`] provides if it counts byes.
 #[derive(Debug)]
 struct ByesCounted;
 
+impl Fact for ByesCounted {}
+
 /// A fact [`Points`] requires.
 #[derive(Debug)]
 struct Matches;
+
+impl Fact for Matches {}
 
 /// A number of points that cannot be negative, a field type of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -453,7 +459,7 @@ fn the_declaration_is_forwarded_to_the_functions_given() {
 }
 
 /// A context providing the matches [`Points`] requires and `fact`.
-fn with<T: Debug + Sync + 'static>(fact: T) -> impl FnOnce(&mut Declaration) {
+fn with<T: Fact>(fact: T) -> impl FnOnce(&mut Declaration) {
     |declaration| {
         declaration.provide(Matches).provide(fact);
     }

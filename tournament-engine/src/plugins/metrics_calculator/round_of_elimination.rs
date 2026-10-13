@@ -7,7 +7,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team},
     map::Map,
     plugins::{
-        facts::MatchAnnotation,
+        facts::{CalculatesMetric, MatchAnnotation},
         metrics_calculator::{Metric, MetricsCalculator},
         ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
@@ -87,7 +87,7 @@ pub struct RoundOfEliminationCalculator;
 impl RoundOfEliminationCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provide(RoundOfElimination::default())
+            .provide(CalculatesMetric::<RoundOfElimination>::new())
             .require::<MatchAnnotation<Eliminates>>("an elimination annotation on the matches");
     }
 }

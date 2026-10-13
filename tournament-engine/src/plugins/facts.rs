@@ -1,10 +1,5 @@
 //! The facts about a phase that the engine defines, which its plugins and the phase's context
 //! provide and require, see [`plugin_factory::compatibility`].
-//!
-//! A metric is a fact too, keyed by its own type: a [`MetricsCalculator`] provides the metric it
-//! calculates, and everything reading a metric requires it.
-//!
-//! [`MetricsCalculator`]: super::metrics_calculator::MetricsCalculator
 
 use std::{
     any::type_name,
@@ -12,6 +7,8 @@ use std::{
     marker::PhantomData,
     num::NonZeroU32,
 };
+
+use plugin_factory::compatibility::Fact;
 
 use crate::type_map::TypeMapValue;
 
@@ -28,6 +25,40 @@ impl EntrantsPerRanking {
     /// One entrant per ranking, i.e. rankings of single players.
     pub const SINGLE: Self = Self(NonZeroU32::MIN);
 }
+
+impl Fact for EntrantsPerRanking {}
+
+/// Every ranking of the phase holds the metric `M`.
+///
+/// Provided by the [`MetricsCalculator`] calculating `M`, and required by everything reading it,
+/// e.g. a [`RankingCriterion`] sorting by it, see [`requires_metric`].
+///
+/// [`MetricsCalculator`]: crate::plugins::metrics_calculator::MetricsCalculator
+/// [`RankingCriterion`]: crate::plugins::ranker::RankingCriterion
+/// [`requires_metric`]: crate::plugins::ranker::requires_metric
+pub struct CalculatesMetric<M: TypeMapValue>(PhantomData<fn() -> M>);
+
+impl<M: TypeMapValue> CalculatesMetric<M> {
+    /// The fact that the phase calculates `M`.
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<M: TypeMapValue> Default for CalculatesMetric<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// written out rather than derived, which would print the `PhantomData` and demand `M: Debug`
+impl<M: TypeMapValue> Debug for CalculatesMetric<M> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "CalculatesMetric<{}>", type_name::<M>())
+    }
+}
+
+impl<M: TypeMapValue> Fact for CalculatesMetric<M> {}
 
 /// Every match the phase plays that `A` applies to carries it as an annotation.
 ///
@@ -58,3 +89,5 @@ impl<A: TypeMapValue> Debug for MatchAnnotation<A> {
         write!(f, "MatchAnnotation<{}>", type_name::<A>())
     }
 }
+
+impl<A: TypeMapValue> Fact for MatchAnnotation<A> {}

@@ -12,6 +12,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
+        facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
@@ -80,9 +81,9 @@ pub struct BuchholzCalculator;
 impl BuchholzCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provide(Buchholz::default())
-            .require::<Points>("the points")
-            .require::<Matches>("the matches");
+            .provide(CalculatesMetric::<Buchholz>::new())
+            .require::<CalculatesMetric<Points>>("the points")
+            .require::<CalculatesMetric<Matches>>("the matches");
     }
 }
 
@@ -236,9 +237,9 @@ pub struct BuchholzOfBuchholzCalculator;
 impl BuchholzOfBuchholzCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provide(BuchholzOfBuchholz::default())
-            .require::<Buchholz>("the Buchholz")
-            .require::<Matches>("the matches");
+            .provide(CalculatesMetric::<BuchholzOfBuchholz>::new())
+            .require::<CalculatesMetric<Buchholz>>("the Buchholz")
+            .require::<CalculatesMetric<Matches>>("the matches");
     }
 }
 

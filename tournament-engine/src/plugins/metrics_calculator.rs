@@ -25,9 +25,11 @@ pub type Metric = Box<dyn TypeMapValue>;
 
 /// Calculates one metric of every ranking of a phase.
 ///
-/// A calculator has to declare that it provides its metric, as a fact of the metric's type, and
-/// that it requires every fact it reads, in particular the metrics of other calculators. It runs
-/// after the calculators providing the facts it requires.
+/// A calculator has to declare that it provides the [`CalculatesMetric`] of its metric, and that it
+/// requires every fact it reads, in particular the [`CalculatesMetric`] of every other metric it
+/// reads. It runs after the calculators providing the facts it requires.
+///
+/// [`CalculatesMetric`]: super::facts::CalculatesMetric
 ///
 /// A calculator may keep state as a [`PhaseFormat`](super::phase_format::PhaseFormat) does.
 #[axis]

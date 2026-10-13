@@ -190,9 +190,10 @@ order*).
 
 ### Decision
 
-**Compatibility is checked on typed facts.** A fact is any `'static + Debug +
-Sync` type describing something true of a phase, identified by its `TypeId` like
-a metric. A plugin states what it provides and requires in a `plugin-factory`
+**Compatibility is checked on typed facts.** A fact is a value of a type
+implementing the marker trait `plugin_factory::compatibility::Fact` (`'static +
+Debug + Sync`), describing something true of a phase and identified by its
+`TypeId`. A plugin states what it provides and requires in a `plugin-factory`
 `Declaration`: `declare_static` for what every configuration of it declares,
 which the catalog reads before the plugin is configured, and `declare` for what
 depends on its configuration, both given to the derive:
@@ -212,8 +213,19 @@ plugin; each slice ranker of `PhasePlugins` is checked on its own, so an issue
 names the slice ranker that has it.
 
 A criterion requires its metric through `requires_metric::<Self>`, which reads
-the requirement off `C::Metric`, the metric type the criterion compares and
-`rank_by` reads.
+the requirement `CalculatesMetric<C::Metric>` off `C::Metric`, the metric type
+the criterion compares and `rank_by` reads.
+
+**Facts are opted into.** `Fact` has no blanket impl; a type becomes a fact only
+by an explicit `impl Fact for T {}`. Rejected: any `'static + Debug + Sync` type
+being a fact. That let a plugin require a type that is never provided as a
+fact, e.g. a metric itself instead of its `CalculatesMetric`, which compiled and
+only failed the check as unmet. And by the orphan rule a crate can only make its
+own types facts, so two crates cannot collide on a shared foreign type such as
+`bool` or `u32`: every fact belongs to the crate owning its concept. A derive
+for `Fact` is not worth it while the trait is an empty marker; it becomes one
+if a fact grows something to state, e.g. the name a requirement now passes by
+hand.
 
 Facts are provided by the phase's plugins and by its context: the competition,
 declared by `Competition::declare_phase_context`, e.g. `EntrantsPerRanking(1)`.
@@ -236,14 +248,18 @@ carries behavior where a plugin needs some from another.
 
 A fact provided twice within a phase is an error.
 
-**A metric is a fact**, keyed by the metric type itself, and a calculator is an
-ordinary plugin declaring that it provides it (`provide(Points::default())`).
-There is no separate handling: a metric calculated by two calculators is a fact
-provided twice (the disjointness of metrics), and a required metric no
-calculator calculates is an unmet fact. That the declared metric is the one
-`default_metric_value()` returns is checked by a test over every registered
-calculator; `plugin-factory` does not expose a plugin's declaration for a
-runtime assertion.
+**Calculating a metric is a fact**, `CalculatesMetric<M>`, and a calculator is
+an ordinary plugin declaring that it provides it
+(`provide(CalculatesMetric::<Points>::new())`). There is no separate handling: a
+metric calculated by two calculators is a fact provided twice (the disjointness
+of metrics), and a required metric no calculator calculates is an unmet fact.
+Rejected: the metric type itself as the fact, provided as its default value.
+That value meant nothing, yet a requirement could state a condition on it, and
+what a calculator promises is that every ranking will hold the metric, not a
+value of it. A metric type is no `Fact`, so requiring it by mistake does not
+compile. That the declared metric is the one `default_metric_value()` returns is
+checked by a test over every registered calculator; `plugin-factory` does not
+expose a plugin's declaration for a runtime assertion.
 
 **The mechanism knows no axes.** `plugin-factory` holds declarations, the check,
 a generic order of any list of plugins and the settling of missing facts. The

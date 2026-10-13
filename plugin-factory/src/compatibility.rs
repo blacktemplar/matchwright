@@ -1,9 +1,9 @@
 //! What plugins provide to and require of the composite they are part of, and the checks deciding
 //! whether they fit together.
 //!
-//! A fact is anything true of a composite, a value of any `'static + Debug + Sync` type,
-//! identified by its type; a fact may carry a value, so that a requirement can state a condition
-//! on it. A plugin states the facts it provides and requires in a [`Declaration`], in
+//! A fact is anything true of a composite, a value of a type implementing [`Fact`], identified by
+//! its type; a fact may carry a value, so that a requirement can state a condition on it. A plugin
+//! states the facts it provides and requires in a [`Declaration`], in
 //! [`PluginType::declare_static`](crate::PluginType::declare_static) and [`Plugin::declare`].
 //! [`check`] decides whether the plugins of a built composite fit together, and [`order`] in
 //! which order they can run.
@@ -16,7 +16,23 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{__private::Fact, Plugin};
+use crate::Plugin;
+
+/// A type whose values are facts about a composite, see the [module](self). A fact is identified
+/// by its type, so two facts of the same type are the same fact, possibly with different values.
+///
+/// Implemented explicitly, so that only types meant as facts can be provided or required:
+///
+/// ```
+/// use plugin_factory::compatibility::Fact;
+///
+/// /// The matches of the phase are played on a clock.
+/// #[derive(Debug)]
+/// struct Timed;
+///
+/// impl Fact for Timed {}
+/// ```
+pub trait Fact: Any + Debug + Sync {}
 
 /// A fact a declaration provides, together with its value.
 pub(crate) struct ProvidedFact(Box<dyn Fact>);
@@ -83,14 +99,14 @@ impl Declaration {
     ///
     /// Nothing else of the composite may provide a fact of the same type, neither another plugin
     /// nor its context.
-    pub fn provide<T: Debug + Sync + 'static>(&mut self, value: T) -> &mut Self {
+    pub fn provide<T: Fact>(&mut self, value: T) -> &mut Self {
         self.provided.push(ProvidedFact::new(value));
         self
     }
 
     /// Declares that a fact of type `T` has to hold. `name` is what the fact is called in an error
     /// message, e.g. "an elimination annotation on the matches".
-    pub fn require<T: Debug + Sync + 'static>(&mut self, name: &'static str) -> &mut Self {
+    pub fn require<T: Fact>(&mut self, name: &'static str) -> &mut Self {
         self.required.push(RequiredFact {
             type_id: TypeId::of::<T>(),
             name,
@@ -102,7 +118,7 @@ impl Declaration {
     /// Declares that a fact of type `T` has to hold and that its value has to meet `holds`. `name`
     /// is what the fact is called in an error message, as for [`Self::require`], and `description`
     /// what the condition is called, e.g. "rankings of single players".
-    pub fn require_that<T: Debug + Sync + 'static>(
+    pub fn require_that<T: Fact>(
         &mut self,
         name: &'static str,
         description: &'static str,
@@ -508,12 +524,18 @@ mod tests {
     #[derive(Debug)]
     struct Annotated;
 
+    impl Fact for Annotated {}
+
     #[derive(Debug)]
     struct Derived;
+
+    impl Fact for Derived {}
 
     /// How many entrants a ranking stands for, a fact with a value to state a condition on.
     #[derive(Debug, PartialEq, Eq)]
     struct EntrantsPerRanking(u32);
+
+    impl Fact for EntrantsPerRanking {}
 
     const SINGLE: EntrantsPerRanking = EntrantsPerRanking(1);
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(2);

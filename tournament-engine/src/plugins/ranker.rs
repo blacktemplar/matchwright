@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Ranking, RankingId},
+    plugins::facts::CalculatesMetric,
     type_map::TypeMapValue,
 };
 
@@ -128,16 +129,17 @@ impl Clone for Box<dyn SliceRanker> {
 /// ```
 pub trait RankingCriterion: Debug + Clone {
     /// The metric this criterion sorts by.
-    type Metric: TypeMapValue + Sync;
+    type Metric: TypeMapValue;
 
     /// How a ranking whose metric is `first` compares to one whose metric is `second`.
     fn compare(&self, first: &Self::Metric, second: &Self::Metric) -> Comparison;
 }
 
-/// Declares that the criterion `C` requires its metric, which is what [`rank_by`] reads. Given to
-/// the derive of a criterion as `declare_static = requires_metric::<Self>`.
+/// Declares that the criterion `C` requires the [`CalculatesMetric`] of its metric, which is what
+/// [`rank_by`] reads. Given to the derive of a criterion as
+/// `declare_static = requires_metric::<Self>`.
 pub fn requires_metric<C: RankingCriterion>(declaration: &mut Declaration) {
-    declaration.require::<C::Metric>(type_name::<C::Metric>());
+    declaration.require::<CalculatesMetric<C::Metric>>(type_name::<C::Metric>());
 }
 
 /// Reorders `slice` by `criterion` and assigns the new ranks, as [`SliceRanker::update_ranks`]

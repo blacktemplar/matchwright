@@ -127,7 +127,7 @@ mod tests {
     use plugin_factory::{
         Plugin, PluginType,
         catalog::AnyAxis,
-        compatibility::{self, Declaration, Incompatibility},
+        compatibility::{self, Declaration, Fact, Incompatibility},
         config::PluginConfig,
         draft::Problem,
         register,
@@ -138,7 +138,7 @@ mod tests {
         entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
         map::Map,
         plugins::{
-            facts::{EntrantsPerRanking, MatchAnnotation},
+            facts::{CalculatesMetric, EntrantsPerRanking, MatchAnnotation},
             metrics_calculator::{
                 Metric,
                 buchholz::{
@@ -201,7 +201,7 @@ mod tests {
 
     /// Whether `plugin` provides a fact of type `T`: it does exactly if it conflicts with a
     /// context providing one.
-    fn provides<T: Debug + Default + Sync + 'static>(plugin: &dyn Plugin) -> bool {
+    fn provides<T: Fact + Default>(plugin: &dyn Plugin) -> bool {
         matches!(
             compatibility::check(
                 |declaration| {
@@ -377,16 +377,22 @@ mod tests {
             }
             let calculator = config.build::<dyn MetricsCalculator>().unwrap();
             let both: [&dyn Plugin; 2] = [&*calculator, &*calculator];
+            // the type of a metric behind a `dyn` is only known by its derived `Debug` form, which
+            // starts with the name of the type
+            let metric: String = format!("{:?}", calculator.default_metric_value())
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
 
             // a calculator providing its metric twice conflicts with itself about that metric
-            assert_eq!(
-                compatibility::check(|_| {}, &both).err(),
-                Some(Incompatibility::FactProvidedTwice {
-                    fact: format!("{:?}", calculator.default_metric_value()),
-                    first: format!("{calculator:?}"),
-                    second: format!("{calculator:?}"),
-                }),
-                "{} does not provide the metric it calculates",
+            let Some(Incompatibility::FactProvidedTwice { fact, .. }) =
+                compatibility::check(|_| {}, &both).err()
+            else {
+                panic!("{} does not provide a fact only once", entry.id());
+            };
+            assert!(
+                fact.starts_with("CalculatesMetric<") && fact.ends_with(&format!("::{metric}>")),
+                "{} provides {fact} but calculates {metric}",
                 entry.id()
             );
         }
@@ -554,8 +560,8 @@ mod tests {
     impl CircularCalculator {
         fn declare_static(declaration: &mut Declaration) {
             declaration
-                .provide(Circular)
-                .require::<Cycled>("the cycled fact");
+                .provide(CalculatesMetric::<Circular>::new())
+                .require::<CalculatesMetric<Cycled>>("the cycled metric");
         }
     }
 
@@ -571,8 +577,8 @@ mod tests {
     impl Cycling {
         fn declare_static(declaration: &mut Declaration) {
             declaration
-                .provide(Cycled)
-                .require::<Circular>("the circular metric");
+                .provide(CalculatesMetric::<Cycled>::new())
+                .require::<CalculatesMetric<Circular>>("the circular metric");
         }
     }
 

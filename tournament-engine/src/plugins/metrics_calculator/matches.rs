@@ -7,7 +7,7 @@ use super::Metric;
 use crate::{
     entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
     map::Map,
-    plugins::metrics_calculator::MetricsCalculator,
+    plugins::{facts::CalculatesMetric, metrics_calculator::MetricsCalculator},
     type_map::TypeMapValue,
 };
 
@@ -28,7 +28,7 @@ pub struct MatchesCalculator;
 
 impl MatchesCalculator {
     fn declare_static(declaration: &mut Declaration) {
-        declaration.provide(Matches::default());
+        declaration.provide(CalculatesMetric::<Matches>::new());
     }
 }
 

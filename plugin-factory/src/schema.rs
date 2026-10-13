@@ -210,7 +210,7 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
 /// ```
 /// use plugin_factory::{
 ///     Plugin, axis,
-///     compatibility::Declaration,
+///     compatibility::{Declaration, Fact},
 ///     register,
 ///     schema::{DependencyOrderedSet, DependencyOrderedSetError},
 /// };
@@ -220,6 +220,8 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
 /// /// The fact that the wins are counted.
 /// #[derive(Debug)]
 /// struct Wins;
+///
+/// impl Fact for Wins {}
 ///
 /// #[axis]
 /// pub trait Metric: Plugin {}

@@ -343,7 +343,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        axis, register,
+        axis,
+        compatibility::Fact,
+        register,
         schema::{Configurable, Field},
     };
 
@@ -351,17 +353,25 @@ mod tests {
     #[derive(Debug)]
     struct Settled;
 
+    impl Fact for Settled {}
+
     /// A fact two registered plugins provide unasked.
     #[derive(Debug)]
     struct Ambiguous;
+
+    impl Fact for Ambiguous {}
 
     /// A fact only a plugin that has to be configured provides.
     #[derive(Debug)]
     struct Configured;
 
+    impl Fact for Configured {}
+
     /// A fact a plugin provides unasked and a plugin that has to be configured provides too.
     #[derive(Debug)]
     struct Shared;
+
+    impl Fact for Shared {}
 
     /// A plugin axis with no behavior at all, so that a test plugin is its declaration.
     #[axis]
@@ -443,6 +453,8 @@ mod tests {
     #[derive(Debug)]
     struct Deep;
 
+    impl Fact for Deep {}
+
     /// A plugin axis whose plugins only ever fill a field of a plugin of [`Tested`].
     #[axis]
     trait Nested: Plugin {}
@@ -492,9 +504,13 @@ mod tests {
     #[derive(Debug)]
     struct Downstream;
 
+    impl Fact for Downstream {}
+
     /// A fact a plugin of [`Tested`] and one of [`Nested`] provide unasked.
     #[derive(Debug)]
     struct Crosswise;
+
+    impl Fact for Crosswise {}
 
     /// The only plugin providing [`Downstream`], requiring what [`OnlyProvider`] provides.
     #[derive(Debug, Serialize, Deserialize, Plugin)]

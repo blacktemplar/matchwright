@@ -12,6 +12,7 @@ use crate::{
     },
     map::Map,
     plugins::{
+        facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricsCalculator, matches::Matches, points::Points},
         ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
@@ -101,9 +102,9 @@ impl SonnebornBergerCalculator {
 
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provide(SonnebornBerger::default())
-            .require::<Points>("the points")
-            .require::<Matches>("the matches");
+            .provide(CalculatesMetric::<SonnebornBerger>::new())
+            .require::<CalculatesMetric<Points>>("the points")
+            .require::<CalculatesMetric<Matches>>("the matches");
     }
 }
 

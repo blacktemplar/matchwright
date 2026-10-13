@@ -5,7 +5,7 @@
 use plugin_factory::{
     Plugin, PluginType, axis,
     catalog::AnyAxis,
-    compatibility::{Declaration, Incompatibility, check, order},
+    compatibility::{Declaration, Fact, Incompatibility, check, order},
     config::{Config, ConfigError, Path, PluginConfig, Value},
     draft::{self, Draft, Issue, Problem},
     register,
@@ -18,21 +18,31 @@ use serde_json::json;
 #[derive(Debug)]
 struct EntrantsPerRanking(u32);
 
+impl Fact for EntrantsPerRanking {}
+
 /// A fact a format provides if an entrant can be out of the phase.
 #[derive(Debug)]
 struct Eliminating;
+
+impl Fact for Eliminating {}
 
 /// A fact a format provides if an entrant can sit out a round.
 #[derive(Debug)]
 struct Byes;
 
+impl Fact for Byes {}
+
 /// A fact a metric provides if it awards points.
 #[derive(Debug)]
 struct Points;
 
+impl Fact for Points {}
+
 /// A fact a metric provides if it counts the matches played.
 #[derive(Debug)]
 struct Matches;
+
+impl Fact for Matches {}
 
 /// How the matches of a phase are scheduled.
 #[axis]

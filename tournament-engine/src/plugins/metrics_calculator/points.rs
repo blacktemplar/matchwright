@@ -8,6 +8,7 @@ use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     plugins::{
+        facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
@@ -127,8 +128,8 @@ impl PointsCalculator {
 
     fn declare_static(declaration: &mut Declaration) {
         declaration
-            .provide(Points::default())
-            .require::<WinsDrawsLosses>("the wins, draws and losses");
+            .provide(CalculatesMetric::<Points>::new())
+            .require::<CalculatesMetric<WinsDrawsLosses>>("the wins, draws and losses");
     }
 }
 
