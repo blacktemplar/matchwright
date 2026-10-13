@@ -48,8 +48,7 @@ impl From<f32> for Buchholz {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::more_buchholz",
-    label = "Buchholz",
-    description = "a higher Buchholz is better",
+    label = "more Buchholz",
     declare_static = requires_metric::<Self>
 )]
 pub struct MoreBuchholz;
@@ -204,8 +203,7 @@ impl From<f32> for BuchholzOfBuchholz {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::more_buchholz_of_buchholz",
-    label = "Buchholz of Buchholz",
-    description = "a higher Buchholz of Buchholz is better",
+    label = "more Buchholz of Buchholz",
     declare_static = requires_metric::<Self>
 )]
 pub struct MoreBuchholzOfBuchholz;

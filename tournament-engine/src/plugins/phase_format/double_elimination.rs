@@ -1,13 +1,16 @@
 use std::num::NonZeroU32;
 
-use plugin_factory::{Plugin, compatibility::Declaration, register};
+use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{PhaseData, Team},
     plugins::{
         facts::MatchAnnotation,
-        metrics_calculator::round_of_elimination::Eliminates,
+        metrics_calculator::{
+            round_of_elimination::{Eliminates, LaterElimination, RoundOfEliminationCalculator},
+            wins_draws_losses::{FewerLosses, WinsDrawsLossesCalculator},
+        },
         phase_format::{
             PhaseFormat, Schedule,
             bracket::{Bracket, Source},
@@ -48,13 +51,15 @@ use crate::{
     id = "tournament_engine::double_elimination",
     label = "double elimination",
     description = "an entrant is out after its second loss, draws are not allowed",
-    declare_static = Self::declare_static
+    declare_static = Self::declare_static,
+    recommends = Self::recommends
 )]
 pub struct DoubleElimination {
     #[plugin(
-        label = "Reset the grand final",
+        label = "grand final reset",
         description = "if the champion of the winner bracket loses the grand final, the two play \
-                       it once more; without it losing the grand final knocks out either side"
+                       it once more; without it losing the grand final knocks out either side",
+        default = true
     )]
     grand_final_reset: bool,
     /// Built from the seeds on the first call.
@@ -86,6 +91,20 @@ impl DoubleElimination {
         declaration
             .provide(MatchAnnotation::<DoubleEliminationRound>::new())
             .provide(MatchAnnotation::<Eliminates>::new());
+    }
+
+    /// Ranked by the round of elimination, then the losses, and showing the wins, draws and losses
+    /// as well.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        // an entrant drops into the loser bracket with its first loss, so it is the round it was
+        // knocked out in that tells how far it got; until then, the losses tell those still in the
+        // winner bracket from those that dropped
+        vec![
+            PluginConfig::of::<LaterElimination>(),
+            PluginConfig::of::<FewerLosses>(),
+            PluginConfig::of::<RoundOfEliminationCalculator>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+        ]
     }
 }
 

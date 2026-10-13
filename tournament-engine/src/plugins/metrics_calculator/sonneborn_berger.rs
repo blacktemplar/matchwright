@@ -36,8 +36,7 @@ impl Compare for SonnebornBerger {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::more_sonneborn_berger",
-    label = "Sonneborn-Berger",
-    description = "a higher Sonneborn-Berger is better",
+    label = "more Sonneborn-Berger",
     declare_static = requires_metric::<Self>
 )]
 pub struct MoreSonnebornBerger;
@@ -67,26 +66,18 @@ impl SliceRanker for MoreSonnebornBerger {
     declare_static = Self::declare_static
 )]
 pub struct SonnebornBergerCalculator {
-    #[serde(default = "one")]
     #[plugin(
-        label = "How much a beaten opponent counts",
-        description = "the points of that opponent are multiplied by this"
+        label = "weight of a beaten opponent",
+        description = "the points of that opponent are multiplied by this",
+        default = 1.0
     )]
     weight_for_win: f32,
-    #[serde(default = "half")]
     #[plugin(
-        label = "How much an opponent played to a draw counts",
-        description = "the points of that opponent are multiplied by this"
+        label = "weight of an opponent played to a draw",
+        description = "the points of that opponent are multiplied by this",
+        default = 0.5
     )]
     weight_for_draw: f32,
-}
-
-fn one() -> f32 {
-    1.0
-}
-
-fn half() -> f32 {
-    0.5
 }
 
 impl SonnebornBergerCalculator {

@@ -7,8 +7,10 @@ use std::{
 
 use clap::{Parser, Subcommand, ValueEnum};
 use thiserror::Error;
-
-use crate::phase::FormatConfig;
+use tournament_engine::plugins::phase_format::{
+    PhaseFormat, double_elimination::DoubleElimination, monster_dyp::MonsterDyp,
+    random_rounds::RandomRounds, round_robin::RoundRobin, single_elimination::SingleElimination,
+};
 
 /// A single command typed at the prompt.
 ///
@@ -79,8 +81,8 @@ pub enum Command {
 /// A phase format together with the metrics and the ranking it comes with, which is what
 /// `add-phase` adds without asking anything.
 ///
-/// A preset is the format it names with its defaults, see
-/// [`PhaseConfig::with_defaults`](crate::phase::PhaseConfig::with_defaults).
+/// A preset is the format it names, with every other part of the phase answered as the format
+/// recommends, see [`AcceptDefaults`](crate::questionnaire::AcceptDefaults).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum PhasePreset {
     /// Everyone plays everyone; ranked by points (1 for a win or a bye, 0.5 for a draw), then
@@ -113,21 +115,23 @@ pub enum PhasePreset {
 
 impl PhasePreset {
     /// The format the phase is played in, which is what the preset configures the phase for.
-    pub fn format(self) -> FormatConfig {
+    pub fn format(self) -> Box<dyn PhaseFormat> {
         match self {
-            Self::RoundRobin => FormatConfig::RoundRobin,
+            Self::RoundRobin => Box::new(RoundRobin),
             Self::SingleElimination {
-                no_third_place_match,
-            } => FormatConfig::SingleElimination {
-                third_place_match: !no_third_place_match,
-            },
+                no_third_place_match: false,
+            } => Box::new(SingleElimination::with_third_place_match()),
+            Self::SingleElimination {
+                no_third_place_match: true,
+            } => Box::new(SingleElimination::new()),
             Self::DoubleElimination {
-                no_grand_final_reset,
-            } => FormatConfig::DoubleElimination {
-                grand_final_reset: !no_grand_final_reset,
-            },
-            Self::RandomRounds { rounds } => FormatConfig::RandomRounds { rounds },
-            Self::MonsterDyp { rounds } => FormatConfig::MonsterDyp { rounds },
+                no_grand_final_reset: false,
+            } => Box::new(DoubleElimination::with_grand_final_reset()),
+            Self::DoubleElimination {
+                no_grand_final_reset: true,
+            } => Box::new(DoubleElimination::new()),
+            Self::RandomRounds { rounds } => Box::new(RandomRounds::new(rounds.get())),
+            Self::MonsterDyp { rounds } => Box::new(MonsterDyp::new(rounds.get())),
         }
     }
 }

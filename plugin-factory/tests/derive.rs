@@ -70,26 +70,29 @@ impl FieldType for NonNegative {
     recommends = Self::recommends
 )]
 struct Points {
+    // read missing as what it offers, which are two separate things
     #[serde(default = "one")]
     #[plugin(
         label = "Points for a win",
-        description = "what winning a match is worth"
+        description = "what winning a match is worth",
+        default = NonNegative(1.0)
     )]
     for_win: NonNegative,
     #[serde(rename = "byes")]
     #[plugin(label = "Count byes")]
     counts_byes: bool,
+    // read missing as 0, but offering nothing
     #[serde(default)]
     #[plugin(label = "Rounds")]
     rounds: u32,
     #[serde(default)]
-    #[plugin(label = "Points for a bye")]
+    #[plugin(label = "Points for a bye", default)]
     for_bye: Option<f64>,
     #[serde(deserialize_with = "Option::deserialize")]
     #[plugin(label = "Cap")]
     cap: Option<i64>,
     #[serde(with = "percent", default = "half")]
-    #[plugin(label = "Share in percent")]
+    #[plugin(label = "Share in percent", default = 0.5)]
     share: f64,
     #[serde(skip)]
     #[allow(dead_code)]
@@ -151,7 +154,8 @@ struct Unit;
 #[register]
 impl Derived for Unit {}
 
-/// A plugin made of other plugins, whose defaults come from its `Default` impl.
+/// A plugin made of other plugins, read missing as its `Default` impl, which offers nothing but
+/// what its fields offer.
 #[derive(Debug, Serialize, Deserialize, Plugin)]
 #[serde(default)]
 #[plugin(
@@ -160,9 +164,9 @@ impl Derived for Unit {}
     description = "a plugin made of plugins"
 )]
 struct Ranker {
-    #[plugin(label = "Rank by")]
+    #[plugin(label = "Rank by", default = Box::new(Unit))]
     by: Box<dyn Derived>,
-    #[plugin(label = "Tie breakers")]
+    #[plugin(label = "Tie breakers", default)]
     tie_breakers: Vec<Box<dyn Derived>>,
     #[plugin(label = "Fall back to")]
     fallback: Option<Box<dyn Derived>>,
@@ -200,8 +204,7 @@ impl Derived for Counter {}
 struct Composite {
     #[plugin(label = "Main", description = "what the composite is built around")]
     main: Box<dyn Derived>,
-    #[serde(default)]
-    #[plugin(label = "Others")]
+    #[plugin(label = "Others", default)]
     others: Vec<Box<dyn Derived>>,
     #[serde(rename = "limit", deserialize_with = "Option::deserialize")]
     #[plugin(label = "Limit")]
@@ -369,21 +372,21 @@ fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
 }
 
 #[test]
-fn a_field_defaults_to_what_serde_fills_it_with() {
+fn a_field_offers_the_default_of_its_plugin_attribute() {
     let default = |name| field_of::<Points>(name).default_value().cloned();
 
     assert_eq!(default("for_win"), Some(json!(1.0)));
     assert_eq!(default("byes"), None);
-    assert_eq!(default("rounds"), Some(json!(0)));
+    // what serde reads a missing field as is not offered
+    assert_eq!(default("rounds"), None);
     assert_eq!(default("for_bye"), Some(Value::Null));
-    // an option offers nothing only by a default of its own
     assert_eq!(default("cap"), None);
     // written as the field is serialized
     assert_eq!(default("share"), Some(json!(50.0)));
 }
 
 #[test]
-fn a_struct_default_is_the_default_of_every_field() {
+fn a_struct_default_offers_nothing() {
     let default = |name| field_of::<Ranker>(name).default_value().cloned();
 
     assert_eq!(
@@ -391,7 +394,7 @@ fn a_struct_default_is_the_default_of_every_field() {
         Some(json!({"type": "derive::unit", "value": null}))
     );
     assert_eq!(default("tie_breakers"), Some(json!([])));
-    assert_eq!(default("fallback"), Some(Value::Null));
+    assert_eq!(default("fallback"), None);
 }
 
 #[test]
@@ -525,7 +528,7 @@ fn a_composite_reads_its_schema_from_its_fields_as_a_plugin_does() {
 #[test]
 fn an_option_without_a_default_is_not_read_missing_as_nothing() {
     let composite = |limit: Option<Value>| {
-        let mut config = json!({"main": {"type": "derive::unit", "value": null}});
+        let mut config = json!({"main": {"type": "derive::unit", "value": null}, "others": []});
         if let Some(limit) = limit {
             config["limit"] = limit;
         }

@@ -49,7 +49,7 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 
 ### CLI
 
-`tournament-cli/src/lib.rs` holds everything testable. `command.rs` parses a line into a `Command`, and `session.rs` executes it against the state machine and handles save/load (atomic via temp file). `phase.rs` holds `PhaseConfig` and the presets. `wizard.rs` is the interactive `inquire`-based phase configuration. `annotations.rs` defines CLI-only entity data such as display names. `main.rs` only does terminal I/O (rustyline). The engine knows nothing about display.
+`tournament-cli/src/lib.rs` holds everything testable. `command.rs` parses a line into a `Command`, and `session.rs` executes it against the state machine and handles save/load (atomic via temp file). `questionnaire.rs` is the generic, schema-driven questionnaire: it fills a `Draft` of any `Configurable` through a `Prompter` (`Terminal` asks via `inquire`, `AcceptDefaults` takes every offered answer) and knows no plugin. `wizard.rs` applies it to `PhasePlugins`. A preset (`command.rs`) is only a phase format; everything else is what the format `recommends`, so the CLI keeps no table of plugins. `annotations.rs` defines CLI-only entity data such as display names. `main.rs` only does terminal I/O (rustyline). The engine knows nothing about display.
 
 ## Working style
 
@@ -58,4 +58,5 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 ## Conventions
 
 - The user prefers invariants enforced by types/the compiler over runtime checks or self-reported plugin facts, and is cautious about costs on the result-reporting hot path.
+- Plugin labels and descriptions follow the guidelines in the docs of `tournament_engine::plugins` ("Labelling a plugin"), checked in part by a test there. The answer a field offers is `#[plugin(default ..)]`; `#[serde(default)]` only governs loading and offers nothing.
 - Doc comments follow KISS: say what a public item does and everything a caller needs in order to use it (contract, panics, errors, ordering guarantees), nothing more. No historical rationale, no comparison with rejected alternatives — that belongs in `DESIGN.md`. Where a *maintainer* needs the reasoning, put it in a plain `//` comment next to the code instead of in the rustdoc.

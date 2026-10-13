@@ -21,8 +21,7 @@
 //! #[derive(Debug, Serialize, Deserialize, Plugin)]
 //! #[plugin(id = "my_crate::random", label = "random")]
 //! struct Random {
-//!     #[serde(default)]
-//!     #[plugin(label = "Keep the top seeds")]
+//!     #[plugin(label = "Keep the top seeds", default = 0)]
 //!     keep_top: u32,
 //! }
 //!

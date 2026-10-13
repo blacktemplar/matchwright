@@ -435,8 +435,9 @@ additive, and since settling is not part of the log it can change freely.
 
 ## The plugin catalog
 
-*Implemented by `plugin-factory`. The CLI still configures phases from tables of
-its own; a wizard driven by the schemas and a `Draft` is the next step.*
+*Implemented by `plugin-factory`. The CLI configures phases through a generic
+questionnaire driven by the schemas and a `Draft`; its presets are a format
+with every other question answered as offered, i.e. as the format recommends.*
 
 Every consumer that configures a phase has to know every plugin: the CLI holds a
 table of labels, descriptions and default parameters, and a plugin of another
@@ -458,8 +459,7 @@ them:
 #[plugin(id = "tournament_engine::points", label = "points",
          description = "…", declare_static = Self::declare_static)]
 pub struct PointsCalculator {
-    #[serde(default = "one")]
-    #[plugin(label = "Points for a win")]
+    #[plugin(label = "points for a win", default = 1.0)]
     points_for_win: f32,
     // …
 }
@@ -481,10 +481,14 @@ plugin in a saved log and snapshot as much as in a saved configuration. Ids are
 namespaced with the crate the plugin lives in (`tournament_engine::points`) and
 pinned in a test.
 
-**Defaults are offered, never filled in.** A field's `serde` default is what a
-UI offers as its answer, so the engine's plugins carry the defaults its catalog
-used to create them with (the points of chess, the classical Sonneborn-Berger
-weights). Building a plugin still needs every field answered.
+**Defaults are offered, never filled in.** A field's `#[plugin(default ..)]` is
+what a UI offers as its answer, so the engine's plugins carry the defaults its
+catalog used to create them with (the points of chess, the classical
+Sonneborn-Berger weights). Building a plugin still needs every field answered.
+The offered answer is separate from a `#[serde(default)]`, which only says what
+a missing field is read as when loading: offering an answer must not make a
+saved plugin that lacks the field load silently, and reading a field leniently
+must not suggest that value to an operator.
 
 **UI text lives on the plugin**, which means the engine ships English;
 localisation would wrap it, keyed by the plugin id.
@@ -504,6 +508,10 @@ localisation would wrap it, keyed by the plugin id.
   by the derive.
 - **`Accepts<K>` impls stating which axes a composite may be added to** (the
   previous design). Superseded by the shape of the composite.
+- **A field's `serde` default as the answer it offers** (the previous design).
+  One attribute for two concerns: offering a default made the field optional
+  when loading, and a field read leniently was suggested to operators.
+  Superseded by `#[plugin(default ..)]`.
 
 ## Metrics: plugin-produced ranking data
 

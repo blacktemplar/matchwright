@@ -1,12 +1,16 @@
 use std::num::NonZeroU32;
 
-use plugin_factory::{Plugin, compatibility::Declaration, register};
+use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::PhaseData,
     plugins::{
         facts::MatchAnnotation,
+        metrics_calculator::{
+            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLossCalculator},
+            wins_draws_losses::{FewerLosses, WinsDrawsLossesCalculator},
+        },
         phase_format::{
             PhaseFormat, Schedule,
             bracket::{Bracket, Source},
@@ -29,13 +33,15 @@ use crate::{
     id = "tournament_engine::single_elimination",
     label = "single elimination",
     description = "the loser of a match is out, draws are not allowed",
-    declare_static = Self::declare_static
+    declare_static = Self::declare_static,
+    recommends = Self::recommends
 )]
 pub struct SingleElimination {
     #[plugin(
-        label = "Play a match for third place",
+        label = "match for third place",
         description = "the two entrants knocked out in the semifinals play it alongside the \
-                       final; without it they stay third equal"
+                       final; without it they stay third equal",
+        default = true
     )]
     third_place_match: bool,
     /// Built from the seeds on the first call.
@@ -74,6 +80,22 @@ impl SingleElimination {
 
     fn declare_static(declaration: &mut Declaration) {
         declaration.provide(MatchAnnotation::<KnockoutRound>::new());
+    }
+
+    /// Ranked by the round of the first loss, then, with a match for third place, by the losses,
+    /// and showing the wins, draws and losses as well.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        let mut recommended = vec![PluginConfig::of::<LaterFirstLoss>()];
+        // the round of the first loss is the semifinal for both entrants playing for third place,
+        // so the losses are what that match is decided by in the ranking
+        if self.third_place_match {
+            recommended.push(PluginConfig::of::<FewerLosses>());
+        }
+        recommended.extend([
+            PluginConfig::of::<RoundOfFirstLossCalculator>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+        ]);
+        recommended
     }
 }
 

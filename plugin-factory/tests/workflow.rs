@@ -62,13 +62,8 @@ trait Metric: Plugin {}
     recommends = Self::recommends
 )]
 struct RoundRobin {
-    #[serde(default = "one_round")]
-    #[plugin(label = "Rounds")]
+    #[plugin(label = "Rounds", default = 1)]
     rounds: u32,
-}
-
-fn one_round() -> u32 {
-    1
 }
 
 impl RoundRobin {
@@ -93,8 +88,7 @@ impl Format for RoundRobin {}
     declare_static = Self::declare_static
 )]
 struct Knockout {
-    #[serde(default)]
-    #[plugin(label = "Play for third place")]
+    #[plugin(label = "Play for third place", default)]
     third_place: bool,
 }
 
@@ -140,16 +134,15 @@ impl Format for Doubles {}
     declare = Self::declare
 )]
 struct Wins {
-    #[serde(default = "one_point", deserialize_with = "non_negative")]
-    #[plugin(label = "Points for a win")]
+    #[serde(deserialize_with = "non_negative")]
+    #[plugin(label = "Points for a win", default = 1.0)]
     for_win: f64,
-    #[serde(default)]
-    #[plugin(label = "Count byes", description = "whether a bye counts as a win")]
+    #[plugin(
+        label = "Count byes",
+        description = "whether a bye counts as a win",
+        default
+    )]
     counts_byes: bool,
-}
-
-fn one_point() -> f64 {
-    1.0
 }
 
 fn non_negative<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -261,8 +254,7 @@ impl Metric for Losses {}
     description = "several metrics as one"
 )]
 struct Combined {
-    #[serde(default)]
-    #[plugin(label = "Parts")]
+    #[plugin(label = "Parts", default)]
     parts: Vec<Box<dyn Metric>>,
 }
 
@@ -274,11 +266,10 @@ impl Metric for Combined {}
 struct Phase {
     #[plugin(label = "Format", description = "how the matches are scheduled")]
     format: Box<dyn Format>,
-    #[serde(default)]
-    #[plugin(label = "Metrics")]
+    #[plugin(label = "Metrics", default)]
     metrics: Vec<Box<dyn Metric>>,
-    #[serde(default)]
-    #[plugin(label = "Tie break")]
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[plugin(label = "Tie break", default)]
     tie_break: Option<Box<dyn Metric>>,
 }
 

@@ -6,7 +6,7 @@
 
 use std::{
     collections::HashSet,
-    fmt::{self, Write as _},
+    fmt::Write as _,
     fs, io,
     num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
@@ -14,9 +14,8 @@ use std::{
 
 use plugin_factory::{
     catalog::AnyAxis,
-    config::{ConfigError, Path as ConfigPath, PluginConfig},
+    config::{ConfigError, Path as ConfigPath, PluginConfig, Value},
     draft::{self, Draft, Issue, Problem},
-    schema::DependencyOrderedSetError,
 };
 use thiserror::Error;
 use tournament_engine::{
@@ -36,8 +35,10 @@ use tournament_engine::{
             wins_draws_losses::WinsDrawsLosses,
         },
         phase_format::{
-            double_elimination::DoubleEliminationRound, single_elimination::KnockoutRound,
+            PhaseFormat, double_elimination::DoubleEliminationRound,
+            single_elimination::KnockoutRound,
         },
+        ranker::SliceRanker,
     },
     transitions::{
         CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
@@ -53,8 +54,9 @@ use uuid::Uuid;
 
 use crate::{
     annotations::DisplayName,
-    command::{Command, ReportedResult},
-    phase::PhaseConfig,
+    command::{Command, PhasePreset, ReportedResult},
+    questionnaire::{self, AcceptDefaults, IssueList},
+    wizard,
 };
 
 /// What the prompt does after a command was executed.
@@ -105,12 +107,12 @@ pub enum Error {
     /// after the start.
     #[error("{0}")]
     Rejected(TransitionError),
-    /// The metrics calculators of a phase do not make a set, e.g. two of them calculate the
-    /// same metric.
-    #[error(transparent)]
-    Metrics(#[from] DependencyOrderedSetError),
+    /// A preset does not answer everything about its phase, see
+    /// [`AcceptDefaults`].
+    #[error("the preset cannot be added: {0}")]
+    Preset(#[from] questionnaire::Error),
     /// The plugins of a phase do not fit together, or miss something nothing could be added for.
-    #[error("the phase cannot be played this way:{}", Issues(.0))]
+    #[error("the phase cannot be played this way:{}", IssueList(.0))]
     Unsettled(Vec<Issue>),
     /// A plugin added to a phase does not fit its configuration.
     #[error(transparent)]
@@ -136,36 +138,6 @@ impl From<StateMachineError> for Error {
             StateMachineError::Transition(_, error) => Self::Rejected(error),
             error => Self::StateMachine(error),
         }
-    }
-}
-
-/// The issues of a phase, each on a line of its own, as [`Error::Unsettled`] shows them.
-struct Issues<'a>(&'a [Issue]);
-
-impl fmt::Display for Issues<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for issue in self.0 {
-            write!(formatter, "\n  {}: ", issue.path())?;
-            match issue.problem() {
-                Problem::Invalid(error) => write!(formatter, "{error}")?,
-                Problem::Incompatible(incompatibility) => write!(formatter, "{incompatibility}")?,
-                Problem::Unprovided {
-                    fact,
-                    required_by,
-                    providers,
-                    ..
-                } => {
-                    write!(
-                        formatter,
-                        "{required_by} requires {fact}, which nothing provides"
-                    )?;
-                    if !providers.is_empty() {
-                        write!(formatter, " (provided by {})", providers.join(", "))?;
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -242,9 +214,7 @@ impl Session {
             Command::Entrants => self.entrants(),
             Command::AddEntrant { names } => self.add_entrants(names)?,
             Command::RemoveEntrant { name } => self.remove_entrant(&name)?,
-            Command::AddPhase { preset } => {
-                self.add_phase(PhaseConfig::preset(preset.ok_or(Error::NotConfigured)?))?
-            }
+            Command::AddPhase { preset } => self.add_preset(preset.ok_or(Error::NotConfigured)?)?,
             Command::Start => self.start()?,
             Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
@@ -326,35 +296,45 @@ impl Session {
         Ok(format!("{name} removed"))
     }
 
-    /// Adds the phase `config` describes, which is the only phase the competition is played in.
+    /// Adds the phase `draft` configures, which is the only phase the competition is played in.
     ///
     /// Every metric a configured one is derived from is calculated as well: one that only a single
     /// calculator provides is added with the parameters that calculator offers.
     ///
     /// # Errors
     /// Returns an error if the competition already has a phase, does not accept one anymore
-    /// because it has started, or if the plugins `config` describes do not fit together.
-    pub fn add_phase(&mut self, config: PhaseConfig) -> Result<String, Error> {
+    /// because it has started, or if the plugins `draft` configures do not fit together, e.g.
+    /// [`Error::Unsettled`].
+    pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
         if !self.competition().phases().is_empty() {
             return Err(Error::PhaseAlreadyAdded);
         }
-        let summary = config.summary();
-        let plugins = self.settled(config.into_plugins()?)?;
+        let plugins = self.settled(draft.clone())?;
+        let summary = summary(&plugins);
         self.apply(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
         Ok(format!("phase added: {summary}"))
     }
 
-    /// `plugins` with every metric added that one of them requires and nothing calculates, if a
-    /// single calculator does: the engine settles the ones that need no configuration, and the
-    /// others are configured with the answers they offer, as if the operator accepted those.
+    /// Adds the phase of `preset`: its format, with every other part answered as offered, see
+    /// [`AcceptDefaults`].
+    fn add_preset(&mut self, preset: PhasePreset) -> Result<String, Error> {
+        let mut draft = Draft::new();
+        let format = serde_json::to_value(preset.format()).map_err(Error::Serialize)?;
+        draft.set(&ConfigPath::ROOT.field("format"), format)?;
+        wizard::configure_phase(self.competition(), &mut draft, &mut AcceptDefaults)?;
+        self.add_phase(&draft)
+    }
+
+    /// `draft` finished, with every metric added that one of its plugins requires and nothing
+    /// calculates, if a single calculator does: the engine settles the ones that need no
+    /// configuration, and the others are configured with the answers they offer, as if the
+    /// operator accepted those.
     ///
     /// # Errors
     /// Returns [`Error::Unsettled`] with every issue left once nothing more can be added.
-    fn settled(&self, plugins: PhasePlugins) -> Result<PhasePlugins, Error> {
+    fn settled(&self, mut draft: Draft<PhasePlugins>) -> Result<PhasePlugins, Error> {
         let context = |declaration: &mut _| self.competition().declare_phase_context(declaration);
         let metrics = ConfigPath::ROOT.field("metrics");
-        let mut draft =
-            Draft::from_built(&plugins).expect("a built plugin is a configuration of itself");
         loop {
             let issues = match draft::finish(context, &draft) {
                 Ok(plugins) => return Ok(plugins),
@@ -383,7 +363,7 @@ impl Session {
             let calculators = draft
                 .answers()
                 .get("metrics")
-                .and_then(|answer| answer.as_array())
+                .and_then(Value::as_array)
                 .map_or(0, Vec::len);
             draft.set(&metrics.clone().index(calculators), calculator)?;
         }
@@ -655,6 +635,28 @@ impl Session {
     }
 }
 
+/// Names the format and the ranking of `plugins` in one line, the way a phase that was just added
+/// is reported, e.g. "round robin, ranked by more points, then more Sonneborn-Berger".
+fn summary(plugins: &PhasePlugins) -> String {
+    let draft = Draft::from_built(plugins).expect("a built plugin is a configuration of itself");
+    let answers = draft.answers();
+    let format = answers
+        .get("format")
+        .and_then(|format| questionnaire::describe(AnyAxis::of::<dyn PhaseFormat>(), format))
+        .expect("a phase has a format");
+    let ranked_by: Vec<_> = answers
+        .get("ranking")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|ranker| questionnaire::describe(AnyAxis::of::<dyn SliceRanker>(), ranker))
+        .collect();
+    if ranked_by.is_empty() {
+        return format!("{format}, not ranked by anything");
+    }
+    format!("{format}, ranked by {}", ranked_by.join(", then "))
+}
+
 /// The name `entrant` is shown with. Every entrant this CLI adds has one, so the fallback is only
 /// for a log written by someone else.
 fn name_of(entrant: &Entrant) -> &str {
@@ -812,11 +814,30 @@ fn table(header: &[&str], rows: &[Vec<String>]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use tournament_engine::plugins::{
+        metrics_calculator::{
+            points::{MorePoints, PointsCalculator},
+            sonneborn_berger::SonnebornBergerCalculator,
+            wins_draws_losses::{FewerMatchesPlayed, MoreWins, WinsDrawsLossesCalculator},
+        },
+        phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
+    };
+
     use super::*;
-    use crate::phase::{Criterion, FormatConfig, MetricConfig};
 
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
+
+    /// Adds the phase played in `format`, ranked by `ranking` and calculating `metrics`.
+    fn add_phase(
+        session: &mut Session,
+        format: impl PhaseFormat + 'static,
+        ranking: Vec<Box<dyn SliceRanker>>,
+        metrics: Vec<Box<dyn MetricsCalculator>>,
+    ) -> Result<String, Error> {
+        let plugins = PhasePlugins::new(Box::new(format), ranking, metrics).unwrap();
+        session.add_phase(&Draft::from_built(&plugins).unwrap())
+    }
 
     #[track_caller]
     fn execute(session: &mut Session, line: &str) -> Result<Outcome, Error> {
@@ -908,18 +929,70 @@ mod tests {
         assert!(matches!(result, Err(Error::PhaseAlreadyAdded)));
     }
 
-    /// Every format is offered with metrics that cover everything its ranking and its own
-    /// calculators read, which the engine checks against what the plugins declare when the phase
-    /// is added.
+    /// Every preset is its format with the plugins the format recommends, which the engine checks
+    /// against what the plugins declare when the phase is added.
     #[test]
-    fn every_format_is_offered_with_plugins_the_engine_accepts() {
-        for &format in FormatConfig::ALL {
+    fn every_preset_adds_the_phase_its_format_recommends() {
+        let presets = [
+            (
+                "round-robin",
+                "round robin, ranked by more points, then more Sonneborn-Berger",
+            ),
+            (
+                "single-elimination",
+                "single elimination (match for third place: yes), ranked by later first loss, \
+                 then fewer losses",
+            ),
+            (
+                "single-elimination --no-third-place-match",
+                "single elimination (match for third place: no), ranked by later first loss",
+            ),
+            (
+                "double-elimination",
+                "double elimination (grand final reset: yes), ranked by later elimination, then \
+                 fewer losses",
+            ),
+            (
+                "random-rounds 3",
+                "random rounds (rounds: 3), ranked by more points, then more Buchholz, then more \
+                 Sonneborn-Berger, then more Buchholz of Buchholz",
+            ),
+            (
+                "monster-dyp 4",
+                "Monster DYP (rounds: 4), ranked by more points",
+            ),
+        ];
+
+        for (preset, summary) in presets {
             let mut session = Session::new(None);
 
-            if let Err(error) = session.add_phase(PhaseConfig::with_defaults(format)) {
-                panic!("{format:?} is offered with plugins the engine rejects: {error}");
+            match execute(&mut session, &format!("add-phase {preset}")) {
+                Ok(Outcome::Continue(added)) => {
+                    assert_eq!(added, format!("phase added: {summary}"));
+                }
+                other => panic!("{preset} adds no phase: {other:?}"),
             }
         }
+    }
+
+    /// A preset of a format offering points calculates them the way the points calculator offers,
+    /// i.e. scoring a bye like a win.
+    #[test]
+    fn a_preset_calculates_the_metrics_its_format_recommends() {
+        let mut session = started("round-robin");
+
+        let ranking = output(&mut session, "ranking");
+
+        assert_eq!(
+            ranking
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "name", "W-D-L", "points", "Sonneborn-Berger"],
+            "{ranking}"
+        );
     }
 
     /// A session executes commands and never asks the operator anything, so the phase of an
@@ -940,22 +1013,19 @@ mod tests {
     fn a_configured_phase_is_played_the_way_it_was_configured() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let config = PhaseConfig::new(
-            FormatConfig::RoundRobin,
-            [
-                MetricConfig::WinsDrawsLosses,
-                MetricConfig::Points {
-                    for_win: 1.0,
-                    for_draw: 0.5,
-                    for_bye: 0.0,
-                },
+
+        let added = add_phase(
+            &mut session,
+            RoundRobin,
+            vec![Box::new(MorePoints)],
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(PointsCalculator::new(1.0, 0.5)),
             ],
-            [Criterion::MorePoints],
-        );
+        )
+        .unwrap();
 
-        let added = session.add_phase(config).unwrap();
-
-        assert_eq!(added, "phase added: round robin, ranked by points");
+        assert_eq!(added, "phase added: round robin, ranked by more points");
         output(&mut session, "start");
         for number in 1..=6 {
             output(&mut session, &format!("report {number} a"));
@@ -988,15 +1058,13 @@ mod tests {
     fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let config = PhaseConfig::new(
-            FormatConfig::RoundRobin,
-            [MetricConfig::SonnebornBerger {
-                weight_for_win: 1.0,
-                weight_for_draw: 0.5,
-            }],
-            [],
-        );
-        session.add_phase(config).unwrap();
+        add_phase(
+            &mut session,
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(SonnebornBergerCalculator::new(1.0, 0.5))],
+        )
+        .unwrap();
         output(&mut session, "start");
         for number in 1..=6 {
             output(&mut session, &format!("report {number} a"));
@@ -1022,9 +1090,13 @@ mod tests {
     fn a_phase_can_be_ranked_by_wins_alone() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let config = PhaseConfig::new(FormatConfig::RoundRobin, [], [Criterion::MoreWins]);
-
-        let added = session.add_phase(config).unwrap();
+        let added = add_phase(
+            &mut session,
+            RoundRobin,
+            vec![Box::new(MoreWins)],
+            Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(added, "phase added: round robin, ranked by more wins");
         output(&mut session, "start");
@@ -1069,16 +1141,15 @@ mod tests {
     fn ranking_by_the_matches_played_puts_the_entrants_that_played_fewest_first() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let config = PhaseConfig::new(
+        add_phase(
+            &mut session,
             // a match for third place would have every entrant play two matches, which is exactly
             // the tie this criterion is shown by breaking
-            FormatConfig::SingleElimination {
-                third_place_match: false,
-            },
-            [],
-            [Criterion::FewerMatchesPlayed],
-        );
-        session.add_phase(config).unwrap();
+            SingleElimination::new(),
+            vec![Box::new(FewerMatchesPlayed)],
+            Vec::new(),
+        )
+        .unwrap();
         output(&mut session, "start");
 
         output(&mut session, "report 1 a");
@@ -1109,12 +1180,14 @@ mod tests {
     fn a_phase_configured_without_a_ranking_leaves_every_entrant_tied() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let config = PhaseConfig::new(
-            FormatConfig::RoundRobin,
-            [MetricConfig::WinsDrawsLosses],
-            [],
-        );
-        session.add_phase(config).unwrap();
+        let added = add_phase(
+            &mut session,
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(WinsDrawsLossesCalculator)],
+        )
+        .unwrap();
+        assert_eq!(added, "phase added: round robin, not ranked by anything");
         output(&mut session, "start");
 
         for number in 1..=6 {

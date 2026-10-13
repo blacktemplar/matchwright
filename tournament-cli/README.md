@@ -18,7 +18,7 @@ a `*`.
 tournament> add Alice Bob "Carol C." Dave
 4 entrant(s) added, 4 in total
 tournament*> add-phase round-robin
-phase added: round robin, ranked by points, then Sonneborn-Berger
+phase added: round robin, ranked by more points, then more Sonneborn-Berger
 tournament*> start
 competition started, 6 match(es) scheduled
 tournament*> matches
@@ -70,52 +70,64 @@ Ctrl-C clears the line being typed, Ctrl-D behaves like `exit`.
 ## Configuring a phase
 
 `add-phase` without a preset asks for everything about the phase instead, one
-question at a time:
+question at a time. The questions are not written for the CLI: they are the
+schemas of the plugins the engine has registered, so a plugin of another crate
+that is linked in is asked for the same way.
 
 ```text
 tournament*> add-phase
-? Phase format
+? Format
+  double elimination — an entrant is out after its second loss, draws are not allowed
+  Monster DYP — every round, entrants are drawn into teams of two that play each other
+  random rounds — randomly chosen rounds of a round robin
 > round robin — everyone plays everyone
   single elimination — the loser of a match is out, draws are not allowed
-  double elimination — an entrant is out after its second loss, draws are not allowed
-  random rounds — randomly chosen rounds of a round robin
-  Monster DYP — every round, entrants are drawn into teams of two that play each other
-? Metrics to calculate
-> [x] W-D-L — how many matches were won, drawn and lost
+? Ranked by
+> more points
+  more Sonneborn-Berger
+  fewer losses
+  fewer matches played — the same result out of fewer matches ranks higher
+  …
+  (no further one)
+? Ranked by, then
+> more Sonneborn-Berger
+  …
+? Ranked by, then
+> (no further one)
+? Metrics
+  [x] win-draw-loss record — how many matches were won, drawn and lost
   [x] points — scored for every win, every draw and every bye
-  [ ] round of the first loss — the later the better, never having lost is best
-  [ ] round of elimination — the later the better, still being in is best
-  [ ] Buchholz — the points of all opponents
   [x] Sonneborn-Berger — the points of the opponents that were beaten or played to a draw
+  [ ] Buchholz — the points of all opponents
   [ ] Buchholz of Buchholz — the Buchholz of all opponents
-? Points for a win (1)
-? Points for a draw (0.5)
-? Points for a bye (1)
-? Sonneborn-Berger: how much a beaten opponent counts (1)
-? Sonneborn-Berger: how much an opponent played to a draw counts (0.5)
-? Rank by
-> points
-  Sonneborn-Berger
-  (no further metric)
-? Then by
-> Sonneborn-Berger
-  (no further metric)
-phase added: round robin, ranked by points, then Sonneborn-Berger
+  [ ] match list — the matches an entrant played
+  [ ] round of the first loss — the round in which an entrant lost for the first time
+? Points: points for a win (1)
+? Points: points for a draw (0.5)
+? Points: points for a bye (1)
+? Sonneborn-Berger: weight of a beaten opponent (1)
+? Sonneborn-Berger: weight of an opponent played to a draw (0.5)
+phase added: round robin, ranked by more points, then more Sonneborn-Berger
 ```
 
-Every question starts out at the answer the chosen format comes with, so
-accepting all of them with Enter adds exactly what the preset of that format
-does, and changing one thing means answering one question differently. Enter
-confirms, Space toggles a metric, `↑`/`↓` move and typing filters a list. Esc
-cancels the configuration and leaves the competition unchanged, which is also
-what Ctrl-C does during it.
+Every question after the format starts out at what the chosen format
+recommends, so accepting all of them with Enter adds exactly what the preset of
+that format does, and changing one thing means answering one question
+differently. What the chosen format recommends is listed first, everything
+else alphabetically. Enter confirms, Space toggles a metric, `↑`/`↓` move and typing
+filters a list. Esc cancels the configuration and leaves the competition
+unchanged, which is also what Ctrl-C does during it.
 
-The ranking is asked for one metric at a time, each one only breaking the ties
-of the ones before it, until `(no further metric)` is chosen or no metric is
-left. Only a metric that is calculated can be ranked by, and every metric a
-calculated one is derived from is calculated as well even when it was not
-picked: ranking by Sonneborn-Berger alone still calculates the points it sums
-and the results they are scored from, and the ranking shows them.
+Only what fits the answers given so far is offered: a metric that needs a format
+knocking entrants out is not offered for a round robin. The ranking is asked
+for one criterion at a time, each one only breaking the ties of the ones before
+it, until `(no further one)` is chosen. A metric the ranking needs starts out
+chosen, and every metric a calculated one is derived from is calculated as well
+even when it was not picked: ranking by Sonneborn-Berger alone still calculates
+the points it sums and the results they are scored from, and the ranking shows
+them. An answer a plugin rejects, such as a negative number of rounds, is asked
+again right away, and a phase whose plugins do not fit together is asked for
+again, starting out at the answers given.
 
 Since this needs a terminal to ask at, a piped `add-phase` has to name a
 preset.

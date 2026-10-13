@@ -769,37 +769,20 @@ mod tests {
         recommends = Self::recommends
     )]
     struct Points {
-        #[serde(default = "one", deserialize_with = "non_negative")]
+        #[serde(deserialize_with = "non_negative")]
         #[plugin(
             label = "Points for a win",
-            description = "what winning a match is worth"
+            description = "what winning a match is worth",
+            default = 1.0
         )]
         for_win: f64,
-        #[serde(default = "three")]
-        #[plugin(label = "Rounds")]
+        #[plugin(label = "Rounds", default = 3)]
         rounds: i64,
-        #[serde(default = "yes")]
-        #[plugin(label = "Count byes")]
+        #[plugin(label = "Count byes", default = true)]
         counts_byes: bool,
-        #[serde(default = "half")]
-        #[plugin(label = "Points for a bye")]
+        #[serde(deserialize_with = "Option::deserialize")]
+        #[plugin(label = "Points for a bye", default = Some(0.5))]
         for_bye: Option<f64>,
-    }
-
-    fn one() -> f64 {
-        1.0
-    }
-
-    fn three() -> i64 {
-        3
-    }
-
-    fn yes() -> bool {
-        true
-    }
-
-    fn half() -> Option<f64> {
-        Some(0.5)
     }
 
     fn non_negative<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -857,8 +840,7 @@ mod tests {
     struct Threshold {
         #[plugin(label = "Matches at least")]
         least: i64,
-        #[serde(default)]
-        #[plugin(label = "Weight per round")]
+        #[plugin(label = "Weight per round", default)]
         weights: Vec<f64>,
     }
 
@@ -879,19 +861,13 @@ mod tests {
         description = "a plugin made of other plugins"
     )]
     struct Ranker {
-        #[serde(default = "matches")]
-        #[plugin(label = "Rank by")]
+        #[plugin(label = "Rank by", default = Box::new(Matches))]
         by: Box<dyn Configured>,
-        #[serde(default)]
-        #[plugin(label = "Tie breakers")]
+        #[plugin(label = "Tie breakers", default)]
         tie_breakers: Vec<Box<dyn Configured>>,
         #[serde(deserialize_with = "Option::deserialize")]
         #[plugin(label = "Fall back to")]
         fallback: Option<Box<dyn Configured>>,
-    }
-
-    fn matches() -> Box<dyn Configured> {
-        Box::new(Matches)
     }
 
     /// A plugin with fields taking unordered lists: of whole numbers and of plugins.

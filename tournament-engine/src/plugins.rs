@@ -5,6 +5,35 @@
 //! plugin registers itself in the catalog of its axis, see [`plugin_factory::catalog`], so a
 //! consumer configuring a phase finds them there, and declares what it provides to and requires of
 //! its phase, see [`facts`] and [`plugin_factory::compatibility`].
+//!
+//! # Labelling a plugin
+//!
+//! A consumer shows a plugin and its fields by their labels and descriptions alone, in lists of
+//! options, in questions (`random rounds: rounds`) and in summaries (`round robin, ranked by more
+//! points, then more Sonneborn-Berger`; `single elimination (match for third place: yes)`). A
+//! plugin of any crate is shown next to the plugins of this one, so it should be labelled the same
+//! way:
+//!
+//! - **Labels are lowercase noun phrases** without a final period, written as they read in the
+//!   middle of a sentence. Proper names and established abbreviations keep their case
+//!   (`Monster DYP`, `Buchholz`). A consumer capitalizes a label where a sentence starts with it.
+//!   Labels contain no commas, since consumers list them separated by commas.
+//! - **A format is labelled by the name of the format** (`round robin`, `double elimination`).
+//! - **A metrics calculator is labelled by the metric it calculates**, as a column of a ranking
+//!   would be named (`points`, `win-draw-loss record`), not by what it does.
+//! - **A criterion states which way it sorts**: a comparative followed by what it compares, so that
+//!   `ranked by <label>` reads as a sentence (`more points`, `fewer losses`, `later first loss`).
+//!   Two criteria of one metric are told apart by their labels alone.
+//! - **A field is labelled by what its answer is**, so that `<label>: <answer>` reads naturally
+//!   (`rounds: 5`, `match for third place: yes`, `points for a win: 1`), not as a question or a
+//!   command (not `Play a match for third place?`). A consumer prefixes it with the label of its
+//!   plugin, so it does not repeat that.
+//! - **A description says what the label leaves open**, as a lowercase phrase without a final
+//!   period: what a format does, what a metric counts, how a criterion treats its extremes
+//!   (`never having lost is best`), what an answer means. Leave it out rather than restate the
+//!   label (no `more points are better` for `more points`).
+//! - **A field offers an answer**, with `#[plugin(default = ..)]`, wherever one value suits most
+//!   phases, e.g. the scoring of chess for points.
 
 use plugin_factory::{
     draft::{self, Draft, Issue},
@@ -36,16 +65,16 @@ pub mod ranker;
 /// set holds them in the order they run in, each after the calculators of the metrics it reads.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 pub struct PhasePlugins {
-    #[plugin(label = "Format", description = "how the matches are scheduled")]
+    #[plugin(label = "format", description = "how the matches are scheduled")]
     format: Box<dyn PhaseFormat>,
     #[serde(default)]
     #[plugin(
-        label = "Ranked by",
+        label = "ranked by",
         description = "best first, every criterion only breaks the ties of the ones before it"
     )]
     ranking: Vec<Box<dyn SliceRanker>>,
     #[serde(default)]
-    #[plugin(label = "Metrics", description = "calculated for every team")]
+    #[plugin(label = "metrics", description = "calculated for every team")]
     metrics: DependencyOrderedSet<dyn MetricsCalculator>,
 }
 
@@ -233,6 +262,64 @@ mod tests {
     /// `plugins` settled in a competition, as a consumer adding them would.
     fn settled(plugins: &PhasePlugins) -> Result<PhasePlugins, Vec<Issue>> {
         plugins.settle(&Competition::default())
+    }
+
+    /// What can be checked of the labelling guidelines of the module, for every plugin registered
+    /// and the fields of the composite.
+    #[test]
+    fn every_plugin_is_labelled_as_the_guidelines_say() {
+        fn check_text(text: &str, what: &str) {
+            assert!(
+                !text.is_empty()
+                    && text.trim() == text
+                    && !text.ends_with(['.', '?', '!'])
+                    && !text.starts_with(|c: char| c.is_uppercase()),
+                "{what} {text:?} is no lowercase phrase without a final period"
+            );
+        }
+
+        let axes = [
+            ("format", AnyAxis::of::<dyn PhaseFormat>()),
+            ("criterion", AnyAxis::of::<dyn SliceRanker>()),
+            ("calculator", AnyAxis::of::<dyn MetricsCalculator>()),
+        ];
+        let mut fields: Vec<_> = PhasePlugins::schema().fields().to_vec();
+        for (axis_name, axis) in axes {
+            let mut labels = Vec::new();
+            for entry in axis.entries() {
+                let label = entry.label();
+                assert!(
+                    !label.is_empty() && label.trim() == label && !label.contains([',', '.']),
+                    "the label of {} is {label:?}",
+                    entry.id()
+                );
+                assert!(
+                    !labels.contains(&label),
+                    "two {axis_name}s are labelled {label:?}"
+                );
+                labels.push(label);
+                if let Some(description) = entry.description() {
+                    check_text(description, "the description");
+                }
+                if axis_name == "criterion" {
+                    let comparative = label.split(' ').next().unwrap();
+                    assert!(
+                        [
+                            "more", "fewer", "less", "later", "earlier", "higher", "lower"
+                        ]
+                        .contains(&comparative),
+                        "the criterion {label:?} does not say which way it sorts"
+                    );
+                }
+                fields.extend(entry.schema().fields().iter().cloned());
+            }
+        }
+        for field in fields {
+            check_text(field.label(), "the field label");
+            if let Some(description) = field.description() {
+                check_text(description, "the description");
+            }
+        }
     }
 
     #[test]

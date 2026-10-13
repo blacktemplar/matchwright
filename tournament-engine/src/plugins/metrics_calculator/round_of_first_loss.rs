@@ -36,8 +36,8 @@ impl Compare for RoundOfFirstLoss {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::later_first_loss",
-    label = "round of the first loss",
-    description = "the later the better, never having lost is best",
+    label = "later first loss",
+    description = "by the round of the first loss; never having lost is best",
     declare_static = requires_metric::<Self>
 )]
 pub struct LaterFirstLoss;

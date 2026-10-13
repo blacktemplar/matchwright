@@ -1,14 +1,25 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
-use plugin_factory::{Plugin, register};
+use plugin_factory::{Plugin, config::PluginConfig, register};
 use rand::seq::{IteratorRandom, SliceRandom};
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
-    plugins::phase_format::{PhaseFormat, Schedule},
+    plugins::{
+        metrics_calculator::{
+            buchholz::{
+                BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz,
+                MoreBuchholzOfBuchholz,
+            },
+            points::{MorePoints, PointsCalculator},
+            sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
+        phase_format::{PhaseFormat, Schedule},
+    },
 };
 
 /// Randomly chosen rounds of a round robin, see [`RandomRounds::new`].
@@ -16,12 +27,14 @@ use crate::{
 #[plugin(
     id = "tournament_engine::random_rounds",
     label = "random rounds",
-    description = "randomly chosen rounds of a round robin"
+    description = "randomly chosen rounds of a round robin",
+    recommends = Self::recommends
 )]
 pub struct RandomRounds {
     #[plugin(
-        label = "Rounds",
-        description = "a full round robin is scheduled if that is shorter"
+        label = "rounds",
+        description = "a full round robin is scheduled if that is shorter",
+        default = 5
     )]
     rounds: u32,
 }
@@ -34,6 +47,22 @@ impl RandomRounds {
     /// and no ranking has two.
     pub const fn new(rounds: u32) -> Self {
         Self { rounds }
+    }
+
+    /// Ranked by points, then Buchholz, Sonneborn-Berger and Buchholz of Buchholz, and showing the
+    /// wins, draws and losses as well.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        vec![
+            PluginConfig::of::<MorePoints>(),
+            PluginConfig::of::<MoreBuchholz>(),
+            PluginConfig::of::<MoreSonnebornBerger>(),
+            PluginConfig::of::<MoreBuchholzOfBuchholz>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+            PluginConfig::of::<PointsCalculator>(),
+            PluginConfig::of::<BuchholzCalculator>(),
+            PluginConfig::of::<SonnebornBergerCalculator>(),
+            PluginConfig::of::<BuchholzOfBuchholzCalculator>(),
+        ]
     }
 }
 

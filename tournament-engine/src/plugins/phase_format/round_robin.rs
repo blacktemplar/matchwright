@@ -1,13 +1,20 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
-use plugin_factory::{Plugin, register};
+use plugin_factory::{Plugin, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
     entities::competition::{Bye, Match, PhaseData},
-    plugins::phase_format::{PhaseFormat, Schedule},
+    plugins::{
+        metrics_calculator::{
+            points::{MorePoints, PointsCalculator},
+            sonneborn_berger::{MoreSonnebornBerger, SonnebornBergerCalculator},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
+        phase_format::{PhaseFormat, Schedule},
+    },
 };
 
 /// Everyone plays everyone once. With an odd number of rankings, every ranking has a bye in one of
@@ -18,9 +25,23 @@ use crate::{
 #[plugin(
     id = "tournament_engine::round_robin",
     label = "round robin",
-    description = "everyone plays everyone"
+    description = "everyone plays everyone",
+    recommends = Self::recommends
 )]
 pub struct RoundRobin;
+
+impl RoundRobin {
+    /// Ranked by points, then Sonneborn-Berger, and showing the wins, draws and losses as well.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        vec![
+            PluginConfig::of::<MorePoints>(),
+            PluginConfig::of::<MoreSonnebornBerger>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+            PluginConfig::of::<PointsCalculator>(),
+            PluginConfig::of::<SonnebornBergerCalculator>(),
+        ]
+    }
+}
 
 #[register]
 impl PhaseFormat for RoundRobin {

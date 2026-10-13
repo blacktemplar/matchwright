@@ -54,8 +54,8 @@ impl Compare for RoundOfElimination {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::later_elimination",
-    label = "round of elimination",
-    description = "the later the better, still being in is best",
+    label = "later elimination",
+    description = "by the round of elimination; still being in is best",
     declare_static = requires_metric::<Self>
 )]
 pub struct LaterElimination;

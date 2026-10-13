@@ -38,8 +38,7 @@ impl AsRef<f32> for Points {
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::more_points",
-    label = "points",
-    description = "more points are better",
+    label = "more points",
     declare_static = requires_metric::<Self>
 )]
 pub struct MorePoints;
@@ -72,26 +71,16 @@ impl SliceRanker for MorePoints {
     declare_static = Self::declare_static
 )]
 pub struct PointsCalculator {
-    #[serde(default = "one")]
-    #[plugin(label = "Points for a win")]
+    #[plugin(label = "points for a win", default = 1.0)]
     points_for_win: f32,
-    #[serde(default = "half")]
-    #[plugin(label = "Points for a draw")]
+    #[plugin(label = "points for a draw", default = 0.5)]
     points_for_draw: f32,
-    #[serde(default = "one")]
     #[plugin(
-        label = "Points for a bye",
-        description = "a round without a match, e.g. with an odd number of entrants"
+        label = "points for a bye",
+        description = "a round without a match, e.g. with an odd number of entrants",
+        default = 1.0
     )]
     points_for_bye: f32,
-}
-
-fn one() -> f32 {
-    1.0
-}
-
-fn half() -> f32 {
-    0.5
 }
 
 impl PointsCalculator {

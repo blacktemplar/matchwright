@@ -15,10 +15,12 @@ use std::{
 
 use clap::Parser;
 use inquire::InquireError;
+use plugin_factory::draft::Draft;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use thiserror::Error;
 use tournament_cli::{
     command::{Command, ParseError},
+    questionnaire::{self, Terminal},
     session::{self, Outcome, Session},
     wizard,
 };
@@ -37,7 +39,7 @@ enum Error {
     #[error(transparent)]
     Session(#[from] session::Error),
     #[error("cannot configure the phase: {0}")]
-    Configure(InquireError),
+    Configure(questionnaire::Error),
     #[error("cannot read from the terminal: {0}")]
     Terminal(#[from] ReadlineError),
     #[error("cannot write to the terminal: {0}")]
@@ -110,20 +112,29 @@ fn run(mut session: Session) -> Result<(), Error> {
 }
 
 /// Configures a phase at the prompt and adds it, leaving the competition untouched if the
-/// operator cancels the configuration.
+/// operator cancels the configuration. A phase whose plugins do not fit together is configured
+/// again, starting out at the answers given.
 fn add_configured_phase(session: &mut Session) -> Result<Outcome, Error> {
-    match wizard::configure_phase() {
-        Ok(config) => session
-            .add_phase(config)
-            .map(Outcome::Continue)
-            .map_err(Error::Session),
-        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-            Ok(Outcome::Continue("cancelled, no phase added".to_owned()))
+    let mut draft = Draft::new();
+    loop {
+        match wizard::configure_phase(session.competition(), &mut draft, &mut Terminal) {
+            Ok(()) => {}
+            Err(questionnaire::Error::Prompt(
+                InquireError::OperationCanceled | InquireError::OperationInterrupted,
+            )) => return Ok(Outcome::Continue("cancelled, no phase added".to_owned())),
+            // input that is piped in cannot answer any question, which is what the session says
+            // when it is handed an unconfigured phase itself
+            Err(questionnaire::Error::Prompt(InquireError::NotTTY)) => {
+                return Err(Error::Session(session::Error::NotConfigured));
+            }
+            Err(error) => return Err(Error::Configure(error)),
         }
-        // input that is piped in cannot answer any question, which is what the session says when
-        // it is handed an unconfigured phase itself
-        Err(InquireError::NotTTY) => Err(Error::Session(session::Error::NotConfigured)),
-        Err(error) => Err(Error::Configure(error)),
+        match session.add_phase(&draft) {
+            Err(error @ session::Error::Unsettled(_)) => {
+                eprintln!("error: {error}\nplease answer again");
+            }
+            added => return added.map(Outcome::Continue).map_err(Error::Session),
+        }
     }
 }
 

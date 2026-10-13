@@ -89,14 +89,14 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
             format!("a {what} can only be derived for a struct"),
         ));
     };
-    let default = container_default(input, what)?;
+    let container_default = container_default(input, what)?;
     let is_unit = matches!(data.fields, Fields::Unit);
     let parsed = match &data.fields {
         Fields::Named(fields) => collect(
             fields
                 .named
                 .iter()
-                .map(|field| Field::parse(field, what, default.is_some())),
+                .map(|field| Field::parse(field, what, container_default)),
         )?,
         Fields::Unit => Vec::new(),
         Fields::Unnamed(_) => {
@@ -122,9 +122,7 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
             const IS_UNIT: bool = true;
         )
     });
-    let schema_fields = fields
-        .iter()
-        .map(|field| field.schema_field(default.as_ref()));
+    let schema_fields = fields.iter().map(Field::schema_field);
     // a struct without fields keeps the default, so that it reads as one written by hand would
     let plugins = (!fields.is_empty()).then(|| {
         let field_names = fields.iter().map(|field| &field.ident);
@@ -152,14 +150,14 @@ fn configurable(input: &DeriveInput, what: &str) -> Result<TokenStream> {
     })
 }
 
-/// The `#[serde(default)]` on the struct `input`, a `what`.
-fn container_default(input: &DeriveInput, what: &str) -> Result<Option<SerdeDefault>> {
-    let mut default = None;
+/// Whether the struct `input`, a `what`, has a `#[serde(default)]`.
+fn container_default(input: &DeriveInput, what: &str) -> Result<bool> {
+    let mut default = false;
     for attribute in attributes(&input.attrs, "serde") {
         attribute.parse_nested_meta(|meta| {
             if meta.path.is_ident("default") {
-                default = Some(SerdeDefault::parse(&meta)?);
-                Ok(())
+                default = true;
+                skip(&meta)
             } else if ["rename_all", "transparent", "from", "try_from"]
                 .iter()
                 .any(|unsupported| meta.path.is_ident(unsupported))
@@ -251,7 +249,8 @@ struct Field {
     name: LitStr,
     label: LitStr,
     description: Option<LitStr>,
-    default: Option<SerdeDefault>,
+    /// The answer the schema offers, from `#[plugin(default ..)]`.
+    default: Option<Offered>,
     /// The function the field is serialized with instead of its `Serialize` impl.
     serialize_with: Option<ExprPath>,
 }
@@ -262,7 +261,7 @@ impl Field {
     fn parse(field: &syn::Field, what: &str, container_default: bool) -> Result<Option<Parsed>> {
         let ident = field.ident.clone().expect("the fields are named");
         let mut name = LitStr::new(&ident.unraw().to_string(), ident.span());
-        let mut default = None;
+        let mut serde_default = false;
         let mut skipped = false;
         let mut deserialized_with = false;
         let mut serialize_with = None;
@@ -277,7 +276,8 @@ impl Field {
                     }
                     name = meta.value()?.parse()?;
                 } else if meta.path.is_ident("default") {
-                    default = Some(SerdeDefault::parse(&meta)?);
+                    serde_default = true;
+                    skip(&meta)?;
                 } else if meta.path.is_ident("skip") || meta.path.is_ident("skip_deserializing") {
                     skipped = true;
                 } else if meta.path.is_ident("flatten") {
@@ -307,6 +307,7 @@ impl Field {
 
         let mut label = None;
         let mut description = None;
+        let mut default = None;
         let mut left_out = None;
         for attribute in attributes(&field.attrs, "plugin") {
             attribute.parse_nested_meta(|meta| {
@@ -314,22 +315,27 @@ impl Field {
                     set_once(&mut label, &meta, meta.value()?.parse()?)
                 } else if meta.path.is_ident("description") {
                     set_once(&mut description, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("default") {
+                    set_once(&mut default, &meta, Offered::parse(&meta)?)
                 } else if meta.path.is_ident("skip") {
                     set_once(&mut left_out, &meta, meta.path.clone())
                 } else {
-                    Err(meta.error("expected `label`, `description` or `skip`"))
+                    Err(meta.error("expected `label`, `description`, `default` or `skip`"))
                 }
             })?;
         }
         if let Some(left_out) = left_out {
-            if label.is_some() || description.is_some() {
+            if label.is_some() || description.is_some() || default.is_some() {
                 return Err(Error::new_spanned(
                     left_out,
-                    format!("a field of a {what} left out of the schema takes no label"),
+                    format!(
+                        "a field of a {what} left out of the schema takes no label, description \
+                         or default"
+                    ),
                 ));
             }
             // a config never answers it, so building from one has to fill it in
-            if default.is_none() && !container_default {
+            if !serde_default && !container_default {
                 return Err(Error::new_spanned(
                     left_out,
                     format!(
@@ -342,7 +348,7 @@ impl Field {
         }
         // serde reads a missing `Option` as `None` unless a function of its own deserializes it,
         // which would make an unanswered field indistinguishable from one answered with nothing
-        if is_option(&field.ty) && default.is_none() && !container_default && !deserialized_with {
+        if is_option(&field.ty) && !serde_default && !container_default && !deserialized_with {
             return Err(Error::new_spanned(
                 &field.ty,
                 format!(
@@ -370,10 +376,10 @@ impl Field {
         }))))
     }
 
-    /// The `Field` of the schema, given the `#[serde(default)]` of the struct.
-    fn schema_field(&self, container_default: Option<&SerdeDefault>) -> TokenStream {
+    /// The `Field` of the schema.
+    fn schema_field(&self) -> TokenStream {
         let Self {
-            ident,
+            ident: _,
             ty,
             name,
             label,
@@ -384,25 +390,21 @@ impl Field {
         let described = description
             .as_ref()
             .map(|description| quote!(let field = field.described(#description);));
-        let default = match (default, container_default) {
-            (Some(SerdeDefault::Trait), _) => {
-                Some(quote!(<#ty as ::core::default::Default>::default()))
-            }
-            (Some(SerdeDefault::Function(function)), _) => Some(quote!(#function())),
-            (None, Some(SerdeDefault::Trait)) => {
-                Some(quote!(<Self as ::core::default::Default>::default().#ident))
-            }
-            (None, Some(SerdeDefault::Function(function))) => Some(quote!(#function().#ident)),
-            (None, None) => None,
-        };
-        let default = default.map(|default| {
+        let default = default.as_ref().map(|default| {
+            let default = match default {
+                Offered::Trait => quote!(<#ty as ::core::default::Default>::default()),
+                Offered::Value(value) => quote!(#value),
+            };
             let serialize = match serialize_with {
                 Some(serialize_with) => serialize_with.to_token_stream(),
                 None => quote!(::plugin_factory::__private::serde::Serialize::serialize),
             };
+            // typed as the field, so that a literal or a coercion to a trait object needs no
+            // annotation
             quote! {
+                let default: #ty = #default;
                 let field = field.with_default(
-                    ::plugin_factory::__private::default_value(&#default, #serialize),
+                    ::plugin_factory::__private::default_value(&default, #serialize),
                 );
             }
         });
@@ -421,18 +423,18 @@ impl Field {
     }
 }
 
-/// A `#[serde(default)]`.
-enum SerdeDefault {
-    /// `default`, i.e. the `Default` impl.
+/// A `#[plugin(default ..)]`: the answer a field offers.
+enum Offered {
+    /// `default`, i.e. the `Default` impl of the field's type.
     Trait,
-    /// `default = "function"`.
-    Function(ExprPath),
+    /// `default = expression`, an expression of the field's type.
+    Value(Expr),
 }
 
-impl SerdeDefault {
+impl Offered {
     fn parse(meta: &ParseNestedMeta) -> Result<Self> {
         if meta.input.peek(Token![=]) {
-            Ok(Self::Function(meta.value()?.parse::<LitStr>()?.parse()?))
+            Ok(Self::Value(meta.value()?.parse()?))
         } else {
             Ok(Self::Trait)
         }
@@ -599,8 +601,39 @@ mod tests {
                     state: i64,
                 }
             }),
-            "a field of a plugin left out of the schema takes no label"
+            "a field of a plugin left out of the schema takes no label, description or default"
         );
+    }
+
+    /// What a field offers is told apart from what `serde` reads it missing as.
+    #[test]
+    fn a_field_offers_only_the_default_of_its_plugin_attribute() {
+        let expanded = |input: DeriveInput| expand_plugin(&input).unwrap().to_string();
+
+        assert!(
+            !expanded(parse_quote! {
+                #[plugin(id = "points", label = "points")]
+                struct Points {
+                    #[serde(default = "one")]
+                    #[plugin(label = "for a win")]
+                    for_win: f64,
+                }
+            })
+            .contains("with_default")
+        );
+        let offered = expanded(parse_quote! {
+            #[plugin(id = "points", label = "points")]
+            struct Points {
+                #[plugin(label = "for a win", default = 1.0)]
+                for_win: f64,
+                #[plugin(label = "rounds", default)]
+                rounds: u32,
+            }
+        });
+        assert!(offered.contains(&quote!(let default: f64 = 1.0;).to_string()));
+        assert!(offered.contains(
+            &quote!(let default: u32 = <u32 as ::core::default::Default>::default();).to_string()
+        ));
     }
 
     #[test]

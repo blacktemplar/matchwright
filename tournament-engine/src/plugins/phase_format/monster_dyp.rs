@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use itertools::Itertools;
-use plugin_factory::{Plugin, compatibility::Declaration, register};
+use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use vec1::vec1;
@@ -10,6 +10,10 @@ use crate::{
     entities::competition::{Bye, EntropyTypes, Match, PhaseData},
     plugins::{
         facts::EntrantsPerRanking,
+        metrics_calculator::{
+            points::{MorePoints, PointsCalculator},
+            wins_draws_losses::WinsDrawsLossesCalculator,
+        },
         phase_format::{PhaseFormat, Schedule},
     },
 };
@@ -29,10 +33,11 @@ use crate::{
     id = "tournament_engine::monster_dyp",
     label = "Monster DYP",
     description = "every round, entrants are drawn into teams of two that play each other",
-    declare_static = Self::declare_static
+    declare_static = Self::declare_static,
+    recommends = Self::recommends
 )]
 pub struct MonsterDyp {
-    #[plugin(label = "Rounds")]
+    #[plugin(label = "rounds", default = 5)]
     rounds: u32,
 }
 
@@ -50,6 +55,16 @@ impl MonsterDyp {
             "rankings of single players",
             |entrants| *entrants == EntrantsPerRanking::SINGLE,
         );
+    }
+
+    /// Ranked by points, and showing the wins, draws and losses as well.
+    fn recommends(&self) -> Vec<PluginConfig> {
+        // sitting a round out scores like a win, so the matches played need no tie break
+        vec![
+            PluginConfig::of::<MorePoints>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+            PluginConfig::of::<PointsCalculator>(),
+        ]
     }
 }
 

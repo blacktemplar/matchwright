@@ -149,7 +149,7 @@ impl SliceRanker for FewerMatchesPlayed {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(
     id = "tournament_engine::wins_draws_losses",
-    label = "W-D-L",
+    label = "win-draw-loss record",
     description = "how many matches were won, drawn and lost",
     declare_static = Self::declare_static
 )]
