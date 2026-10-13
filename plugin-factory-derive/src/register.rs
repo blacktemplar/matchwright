@@ -16,7 +16,7 @@ pub fn expand(arguments: TokenStream, input: ItemImpl) -> Result<TokenStream> {
             "a plugin cannot be registered by a generic impl",
         ));
     }
-    let Some((None, object, _)) = &input.trait_ else {
+    let (None, Some((object, _))) = (&input.modifiers.polarity, &input.trait_) else {
         return Err(Error::new_spanned(
             &input.self_ty,
             "`register` goes on the impl of the trait of a plugin axis",
