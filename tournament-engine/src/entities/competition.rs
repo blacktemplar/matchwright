@@ -64,11 +64,7 @@ impl Competition {
     }
 
     pub(crate) fn add_phase(&mut self, id: PhaseId, plugins: PhasePlugins) {
-        let PhasePlugins {
-            format: phase_format,
-            ranking,
-            metrics: metrics_calculators,
-        } = plugins;
+        let (phase_format, ranker, metrics_calculators) = plugins.into_parts();
         let seed = self.new_seeded_std_rng(id).random();
         let phase = Phase {
             id,
@@ -82,7 +78,7 @@ impl Competition {
                 seed,
             },
             phase_format,
-            ranker: HierarchicalRanker::new(ranking),
+            ranker,
             metrics_calculators,
         };
         self.phases.insert(phase);

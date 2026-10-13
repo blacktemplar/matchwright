@@ -105,8 +105,6 @@ fn played_competition() -> CompetitionStateMachine {
             PhasePlugins::new(
                 Box::new(SingleElimination::new()),
                 vec![Box::new(LaterFirstLoss), Box::new(MorePoints)],
-                // the calculators run in this order, so every one of them that reads the metric of
-                // another one has to be listed after it
                 vec![
                     Box::new(RoundOfFirstLossCalculator),
                     Box::new(WinsDrawsLossesCalculator),
@@ -114,9 +112,9 @@ fn played_competition() -> CompetitionStateMachine {
                     Box::new(MatchesCalculator),
                     Box::new(BuchholzCalculator),
                 ],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     );
     apply(&mut machine, StartCompetition);
     for match_id in matches_of_round(&machine.current().phases()[&phase_id()], 1) {

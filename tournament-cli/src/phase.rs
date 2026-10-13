@@ -10,6 +10,7 @@
 
 use std::num::NonZeroU32;
 
+use plugin_factory::schema::DependencyOrderedSetError;
 use tournament_engine::plugins::{
     PhasePlugins,
     metrics_calculator::{
@@ -592,7 +593,11 @@ impl PhaseConfig {
     }
 
     /// The plugins the engine runs the configured phase with, before anything is settled.
-    pub(crate) fn into_plugins(self) -> PhasePlugins {
+    ///
+    /// # Errors
+    /// Returns an error if the configured calculators do not make a set, see
+    /// [`PhasePlugins::new`].
+    pub(crate) fn into_plugins(self) -> Result<PhasePlugins, DependencyOrderedSetError> {
         PhasePlugins::new(
             self.format.plugin(),
             self.ranked_by

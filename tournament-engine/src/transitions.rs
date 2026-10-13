@@ -150,9 +150,8 @@ pub trait CompetitionStateMachineExt {
     /// #     &mut machine,
     /// #     AddPhase::new(
     /// #         phase_id,
-    /// #         PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new()),
-    /// #     )
-    /// #     .unwrap(),
+    /// #         PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new()).unwrap(),
+    /// #     ),
     /// # );
     /// # apply(&mut machine, StartCompetition);
     /// // a round robin between four entrants, with the first and the last match reported
@@ -279,9 +278,9 @@ mod tests {
             &mut machine,
             AddPhase::new(
                 phase_id(),
-                PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new()),
-            )
-            .unwrap(),
+                PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new())
+                    .unwrap(),
+            ),
         );
         apply(&mut machine, StartCompetition);
         machine

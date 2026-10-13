@@ -122,8 +122,6 @@ fn full_tournament() {
             PhasePlugins::new(
                 phase_format,
                 vec![Box::new(LaterFirstLoss)],
-                // the calculators run in this order, so every one of them that reads the metric of
-                // another one has to be listed after it
                 vec![
                     Box::new(RoundOfFirstLossCalculator),
                     Box::new(WinsDrawsLossesCalculator),
@@ -132,9 +130,9 @@ fn full_tournament() {
                     Box::new(BuchholzCalculator),
                     Box::new(BuchholzOfBuchholzCalculator),
                 ],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     )
     .unwrap();
     apply(&mut sm, StartCompetition).unwrap();
@@ -407,9 +405,9 @@ fn byes_are_scored_when_they_are_scheduled() {
                     Box::new(WinsDrawsLossesCalculator),
                     Box::new(THREE_ONE.with_points_for_bye(3.0)),
                 ],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     )
     .unwrap();
 
@@ -442,9 +440,9 @@ fn single_elimination_rejects_a_draw() {
                 Box::new(SingleElimination::new()),
                 vec![Box::new(LaterFirstLoss)],
                 vec![Box::new(RoundOfFirstLossCalculator)],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     )
     .unwrap();
     apply(&mut sm, StartCompetition).unwrap();

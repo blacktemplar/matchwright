@@ -500,7 +500,10 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::{axis, register};
+    use crate::{
+        axis, register,
+        schema::{DependencyOrderedSet, DependencyOrderedSetError},
+    };
 
     #[derive(Debug)]
     struct Annotated;
@@ -642,6 +645,88 @@ mod tests {
         );
         assert_eq!(order(&[&Leaf, &Deriving]), Ok(vec![0, 1]));
         assert_eq!(order(&[&Deriving, &Leaf]), Ok(vec![1, 0]));
+    }
+
+    // registered so that a set of parts can hold one, which closes a cycle with `Deriving`
+    #[register]
+    impl Part for Composite {}
+
+    /// A dependency ordered set of parts.
+    type Parts = DependencyOrderedSet<Box<dyn Part>>;
+
+    #[test]
+    fn a_set_of_plugins_keeps_them_in_the_order_they_run_in() {
+        let parts: Vec<Box<dyn Part>> = vec![Box::new(Deriving), Box::new(Leaf)];
+        let saved = serde_json::json!([
+            {"type": "deriving", "value": null},
+            {"type": "leaf", "value": null},
+        ]);
+        let ids = |set: &Parts| set.iter().map(|part| part.id()).collect::<Vec<_>>();
+
+        assert_eq!(ids(&Parts::new(parts).unwrap()), ["leaf", "deriving"]);
+        let loaded: Parts = serde_json::from_value(saved).unwrap();
+        assert_eq!(ids(&loaded), ["leaf", "deriving"]);
+    }
+
+    #[test]
+    fn a_set_of_plugins_requiring_facts_of_each_other_cannot_be_built() {
+        let parts: Vec<Box<dyn Part>> = vec![Box::new(composite()), Box::new(Deriving)];
+        let saved = serde_json::json!([
+            {"type": "composite", "value": {"part": {"type": "leaf", "value": null}}},
+            {"type": "deriving", "value": null},
+        ]);
+
+        assert!(matches!(
+            Parts::new(parts),
+            Err(DependencyOrderedSetError::Cyclic(
+                Incompatibility::CyclicRequirements { .. }
+            ))
+        ));
+        assert!(serde_json::from_value::<Parts>(saved).is_err());
+    }
+
+    #[test]
+    fn a_set_of_anything_else_keeps_the_order_given() {
+        let set = DependencyOrderedSet::new(vec![3, 1, 2]).unwrap();
+
+        assert_eq!(set.iter().copied().collect::<Vec<_>>(), [3, 1, 2]);
+    }
+
+    /// A plugin is the same plugin whatever it is configured with.
+    #[test]
+    fn a_set_holds_a_plugin_once() {
+        let parts: Vec<Box<dyn Part>> = vec![
+            Box::new(Leaf),
+            Box::new(Deriving),
+            Box::new(Composite {
+                part: Box::new(Leaf),
+            }),
+            Box::new(Composite {
+                part: Box::new(Deriving),
+            }),
+        ];
+        let saved = serde_json::json!([
+            {"type": "leaf", "value": null},
+            {"type": "leaf", "value": null},
+        ]);
+
+        assert_eq!(
+            Parts::new(parts).err(),
+            Some(DependencyOrderedSetError::Duplicate { position: 3 })
+        );
+        assert!(serde_json::from_value::<Parts>(saved).is_err());
+    }
+
+    #[test]
+    fn a_set_holds_a_value_once_whichever_way_it_is_written() {
+        assert_eq!(
+            DependencyOrderedSet::new(vec![1.0, 0.5, 1.0]).err(),
+            Some(DependencyOrderedSetError::Duplicate { position: 2 })
+        );
+        assert!(
+            serde_json::from_value::<DependencyOrderedSet<f64>>(serde_json::json!([1, 0.5, 1.0]))
+                .is_err()
+        );
     }
 
     #[test]

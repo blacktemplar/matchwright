@@ -102,8 +102,6 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
                     Box::new(MoreSonnebornBerger),
                     Box::new(MoreBuchholzOfBuchholz),
                 ],
-                // the calculators run in this order, so every one of them that reads the metric of
-                // another one has to be listed after it
                 vec![
                     Box::new(RoundOfFirstLossCalculator),
                     Box::new(WinsDrawsLossesCalculator),
@@ -113,9 +111,9 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
                     Box::new(SONNEBORN_BERGER),
                     Box::new(BuchholzOfBuchholzCalculator),
                 ],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     );
     sm
 }
@@ -402,9 +400,9 @@ fn a_competition_with_a_bye_round_trips() {
                 Box::new(SingleElimination::new()),
                 Vec::new(),
                 vec![Box::new(WinsDrawsLossesCalculator)],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     );
     apply(&mut sm, StartCompetition);
     let bye = sm.current().phases()[&phase_id()]

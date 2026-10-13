@@ -118,8 +118,6 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
                     Box::new(MoreSonnebornBerger),
                     Box::new(MoreBuchholzOfBuchholz),
                 ],
-                // the calculators run in this order, so every one of them that reads the metric of
-                // another one has to be listed after it
                 vec![
                     Box::new(RoundOfFirstLossCalculator),
                     Box::new(WinsDrawsLossesCalculator),
@@ -129,9 +127,9 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
                     Box::new(SONNEBORN_BERGER),
                     Box::new(BuchholzOfBuchholzCalculator),
                 ],
-            ),
-        )
-        .unwrap(),
+            )
+            .unwrap(),
+        ),
     );
     // this creates the rankings, initializes all metrics and schedules the matches of all rounds
     apply(&mut sm, StartCompetition);

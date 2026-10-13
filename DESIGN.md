@@ -271,6 +271,21 @@ the configured order (deterministic, so replay is unaffected), and a cycle is an
 error. Should a future axis also become a list of plugins building on each
 other within a pass, the same rule applies to it.
 
+**Running order is an invariant of a set of plugins.** The calculators of a phase
+are a `plugin_factory::schema::DependencyOrderedSet`, since their order means
+nothing but the order they run in, and a set of plugins keeps itself in that
+order: `DependencyOrderedSet::new` and deserializing a set both sort it, and fail
+on a cycle. Both also reject a
+plugin given twice, whatever it is configured with, so a phase cannot calculate
+a metric with two configurations of one calculator. Deserializing is
+how `draft::finish` builds a composite, and how a saved `AddPhase` comes back,
+so neither a finished draft, nor a loaded log, nor `PhasePlugins::new` needs a
+step of its own. The sort keeps an order that is already valid as it is, so a
+saved set replays in the order it was saved in, and one in an order its
+calculators cannot run in, e.g. edited by hand, is put into running order rather
+than run wrong. The slice rankers stay a `Vec`, since their order is the
+ranking.
+
 **Missing providers come from the catalog.** For a required fact nothing
 provides, `draft::finish` looks among the axes of the composite's lists of
 plugins for the registered plugins that provide it and have no fields, and adds
@@ -302,16 +317,14 @@ context meets is no issue. Problems among the configured plugins themselves do
 not block an addition. A UI reads the additions ahead of finishing as
 `added_by_finish` of `draft::issues` and `draft::candidates`.
 
-**Settling and ordering happen before the transition, validation in it.**
-Settling is the consumer's step: it finishes a `Draft<PhasePlugins>` with the
-competition's phase context, or calls `PhasePlugins::settle` on plugins it built
-itself. `AddPhase::new` then only sorts the calculators and returns an error for
-a cycle. The transition holds the complete, sorted list, so neither the log nor
-a snapshot depends on how calculators were picked — which it must not, because
-the catalog depends on which crates are linked in — and changing a registration
-or the way of picking later never changes a replay. Deserializing an `AddPhase`
-adds nothing — an unsorted list fails to load, and a missing calculator fails
-the replay. Facts are checked in
+**Settling happens before the transition, validation in it.** Settling is the
+consumer's step: it finishes a `Draft<PhasePlugins>` with the competition's
+phase context, or calls `PhasePlugins::settle` on plugins it built itself. The
+transition holds the complete, sorted list, so neither the log nor a snapshot
+depends on how calculators were picked — which it must not, because the catalog
+depends on which crates are linked in — and changing a registration or the way
+of picking later never changes a replay. Deserializing an `AddPhase` adds
+nothing — a missing calculator fails the replay. Facts are checked in
 `AddPhase::check_applicable`, where the phase's context is known; facts only
 known at start, such as the number of entrants, are checked the same way at
 `StartCompetition`. All of this runs once
@@ -362,6 +375,14 @@ additive, and since settling is not part of the log it can change freely.
 - **Resolving inside `AddPhase::apply`.** Replay would then depend on which
   plugins are registered, so linking a crate in would change every saved log.
   Rejected.
+- **Sorting in `AddPhase::new` and rejecting an unsorted list on load** (the
+  previous design). Left a `PhasePlugins` that was not in running order to
+  exist, and every way of building one had to remember the sort. Superseded by
+  the invariant.
+- **Sorting in the engine**, in `PhasePlugins::new` and a `deserialize_with` on
+  its list of calculators. Kept the invariant, but in the one composite that
+  knew about it rather than in the type of the list. Superseded by
+  `DependencyOrderedSet`.
 - **Metrics as a kind of requirement of their own** (`required_metrics` next to
   `required`). Duplicated every rule for facts. Superseded.
 - **The engine adding a calculator's metric to its declaration** from

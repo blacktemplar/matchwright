@@ -14,9 +14,9 @@ use std::{
 
 use plugin_factory::{
     catalog::AnyAxis,
-    compatibility::Incompatibility,
     config::{ConfigError, Path as ConfigPath, PluginConfig},
     draft::{self, Draft, Issue, Problem},
+    schema::DependencyOrderedSetError,
 };
 use thiserror::Error;
 use tournament_engine::{
@@ -105,9 +105,10 @@ pub enum Error {
     /// after the start.
     #[error("{0}")]
     Rejected(TransitionError),
-    /// The plugins of a phase do not fit together.
+    /// The metrics calculators of a phase do not make a set, e.g. two of them calculate the
+    /// same metric.
     #[error(transparent)]
-    Incompatible(#[from] Incompatibility),
+    Metrics(#[from] DependencyOrderedSetError),
     /// The plugins of a phase do not fit together, or miss something nothing could be added for.
     #[error("the phase cannot be played this way:{}", Issues(.0))]
     Unsettled(Vec<Issue>),
@@ -338,9 +339,8 @@ impl Session {
             return Err(Error::PhaseAlreadyAdded);
         }
         let summary = config.summary();
-        let plugins = self.settled(config.into_plugins())?;
-        // the engine runs the calculators in the order it sorts them into
-        self.apply(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins)?)?;
+        let plugins = self.settled(config.into_plugins()?)?;
+        self.apply(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
         Ok(format!("phase added: {summary}"))
     }
 

@@ -6,20 +6,18 @@
 //! consumer configuring a phase finds them there, and declares what it provides to and requires of
 //! its phase, see [`facts`] and [`plugin_factory::compatibility`].
 
-use std::mem;
-
 use plugin_factory::{
-    compatibility::{self, Incompatibility},
     draft::{self, Draft, Issue},
-    schema::Configurable,
+    schema::{Configurable, DependencyOrderedSet, DependencyOrderedSetError},
 };
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::{
     entities::competition::Competition,
     plugins::{
-        metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::SliceRanker,
+        metrics_calculator::MetricsCalculator,
+        phase_format::PhaseFormat,
+        ranker::{HierarchicalRanker, SliceRanker},
     },
 };
 
@@ -33,34 +31,41 @@ pub mod ranker;
 ///
 /// It is configured as a composite of `plugin_factory`, e.g. through a [`Draft`] of it, whose
 /// [`draft::finish`] takes [`Competition::declare_phase_context`] as the context.
+///
+/// The calculators are a [`DependencyOrderedSet`]: a phase calculates each metric once, and the
+/// set holds them in the order they run in, each after the calculators of the metrics it reads.
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 pub struct PhasePlugins {
     #[plugin(label = "Format", description = "how the matches are scheduled")]
-    pub(crate) format: Box<dyn PhaseFormat>,
+    format: Box<dyn PhaseFormat>,
     #[serde(default)]
     #[plugin(
         label = "Ranked by",
         description = "best first, every criterion only breaks the ties of the ones before it"
     )]
-    pub(crate) ranking: Vec<Box<dyn SliceRanker>>,
+    ranking: Vec<Box<dyn SliceRanker>>,
     #[serde(default)]
     #[plugin(label = "Metrics", description = "calculated for every entrant")]
-    pub(crate) metrics: Vec<Box<dyn MetricsCalculator>>,
+    metrics: DependencyOrderedSet<Box<dyn MetricsCalculator>>,
 }
 
 impl PhasePlugins {
     /// The plugins of a phase played in `format`, ranked by `ranking`, best first, and calculating
-    /// the metrics of `metrics`.
+    /// the metrics of `metrics`, put into the order they run in, see [`DependencyOrderedSet`].
+    ///
+    /// # Errors
+    /// Returns an error if `metrics` holds a calculator twice, or calculators that require facts
+    /// of each other in a cycle, see [`DependencyOrderedSet::new`].
     pub fn new(
         format: Box<dyn PhaseFormat>,
         ranking: Vec<Box<dyn SliceRanker>>,
         metrics: Vec<Box<dyn MetricsCalculator>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, DependencyOrderedSetError> {
+        Ok(Self {
             format,
             ranking,
-            metrics,
-        }
+            metrics: DependencyOrderedSet::new(metrics)?,
+        })
     }
 
     pub fn format(&self) -> &dyn PhaseFormat {
@@ -72,9 +77,8 @@ impl PhasePlugins {
         &self.ranking
     }
 
-    /// The metrics calculators, in the order they run in once
-    /// [`AddPhase::new`](crate::transitions::add_phase::AddPhase::new) ordered them.
-    pub fn metrics(&self) -> &[Box<dyn MetricsCalculator>] {
+    /// The metrics calculators, in the order they run in.
+    pub fn metrics(&self) -> &DependencyOrderedSet<Box<dyn MetricsCalculator>> {
         &self.metrics
     }
 
@@ -96,59 +100,18 @@ impl PhasePlugins {
         )
     }
 
-    /// Orders the metrics calculators so that each runs after the calculators providing the facts
-    /// it requires, keeping their order otherwise.
-    ///
-    /// # Errors
-    /// Returns an error if calculators require facts of each other in a cycle.
-    pub(crate) fn order_metrics(&mut self) -> Result<(), Incompatibility> {
-        let order = compatibility::order(&self.metrics_as_plugins())?;
-        let mut metrics: Vec<_> = mem::take(&mut self.metrics).into_iter().map(Some).collect();
-        self.metrics = order
-            .into_iter()
-            .map(|index| {
-                metrics[index]
-                    .take()
-                    .expect("an order holds every index once")
-            })
-            .collect();
-        Ok(())
-    }
-
-    /// Checks that the metrics calculators are ordered as [`Self::order_metrics`] orders them.
-    ///
-    /// # Errors
-    /// Returns an error if they are not, or if they require facts of each other in a cycle.
-    pub(crate) fn check_order(&self) -> Result<(), OrderError> {
-        let order = compatibility::order(&self.metrics_as_plugins())?;
-        match order
-            .into_iter()
-            .enumerate()
-            .find(|(position, index)| position != index)
-        {
-            Some((position, _)) => Err(OrderError::OutOfOrder {
-                plugin: format!("{:?}", self.metrics[position]),
-            }),
-            None => Ok(()),
-        }
-    }
-
-    fn metrics_as_plugins(&self) -> Vec<&dyn plugin_factory::Plugin> {
-        self.metrics
-            .iter()
-            .map(|metric| &**metric as &dyn plugin_factory::Plugin)
-            .collect()
+    /// The format, the ranker and the metrics calculators a phase is run with.
+    pub(crate) fn into_parts(self) -> (Box<dyn PhaseFormat>, HierarchicalRanker, Metrics) {
+        (
+            self.format,
+            HierarchicalRanker::new(self.ranking),
+            self.metrics.into_iter().collect(),
+        )
     }
 }
 
-/// Why the metrics calculators of a phase are not in the order they run in.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum OrderError {
-    #[error(transparent)]
-    Cyclic(#[from] Incompatibility),
-    #[error("{plugin} runs before a plugin providing a fact it requires")]
-    OutOfOrder { plugin: String },
-}
+/// The metrics calculators of a phase, in the order they run in.
+pub(crate) type Metrics = Vec<Box<dyn MetricsCalculator>>;
 
 /// What the plugins of this crate declare, i.e. the facts they provide to and require of their
 /// phase, and how a phase settles and orders them. The mechanism itself is tested in
@@ -162,8 +125,12 @@ mod tests {
     };
 
     use plugin_factory::{
-        Plugin, PluginType, catalog::AnyAxis, compatibility::Declaration, config::PluginConfig,
-        draft::Problem, register,
+        Plugin, PluginType,
+        catalog::AnyAxis,
+        compatibility::{self, Declaration, Incompatibility},
+        config::PluginConfig,
+        draft::Problem,
+        register,
     };
 
     use super::*;
@@ -213,7 +180,7 @@ mod tests {
         ranking: Vec<Box<dyn SliceRanker>>,
         metrics: Vec<Box<dyn MetricsCalculator>>,
     ) -> PhasePlugins {
-        PhasePlugins::new(Box::new(format), ranking, metrics)
+        PhasePlugins::new(Box::new(format), ranking, metrics).unwrap()
     }
 
     /// Whether `plugins` fit together in a competition, i.e. what `AddPhase` checks.
@@ -263,17 +230,15 @@ mod tests {
         };
     }
 
-    /// `plugins` settled in a competition and ordered, as a consumer adding them would.
+    /// `plugins` settled in a competition, as a consumer adding them would.
     fn settled(plugins: &PhasePlugins) -> Result<PhasePlugins, Vec<Issue>> {
-        let mut settled = plugins.settle(&Competition::default())?;
-        settled.order_metrics().unwrap();
-        Ok(settled)
+        plugins.settle(&Competition::default())
     }
 
     #[test]
     fn a_calculator_runs_after_the_calculators_of_the_metrics_it_reads() {
         // listed so that every calculator reading a metric comes before the one calculating it
-        let mut plugins = phase(
+        let plugins = phase(
             RoundRobin,
             Vec::new(),
             vec![
@@ -285,8 +250,6 @@ mod tests {
                 Box::new(WinsDrawsLossesCalculator),
             ],
         );
-
-        plugins.order_metrics().unwrap();
 
         assert_eq!(
             metrics(&plugins),
@@ -301,23 +264,46 @@ mod tests {
                 BuchholzOfBuchholz,
             ]
         );
-        assert_eq!(plugins.check_order(), Ok(()));
     }
 
+    /// A calculator is the same plugin whatever it is configured with, so a phase cannot score
+    /// its points two ways.
     #[test]
-    fn calculators_out_of_order_fail_the_order_check() {
-        let plugins = phase(
-            RoundRobin,
+    fn a_phase_takes_a_calculator_once() {
+        let built = PhasePlugins::new(
+            Box::new(RoundRobin),
             Vec::new(),
-            vec![Box::new(ONE_HALF), Box::new(WinsDrawsLossesCalculator)],
+            vec![
+                Box::new(ONE_HALF),
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(PointsCalculator::new(3.0, 1.0)),
+            ],
         );
 
         assert_eq!(
-            plugins.check_order(),
-            Err(OrderError::OutOfOrder {
-                plugin: format!("{ONE_HALF:?}"),
-            })
+            built.err(),
+            Some(DependencyOrderedSetError::Duplicate { position: 2 })
         );
+    }
+
+    /// A phase saved in an order its calculators cannot run in, e.g. edited by hand, is put into
+    /// running order when it is loaded, while a saved valid order stays as it is.
+    #[test]
+    fn deserialized_calculators_are_put_into_running_order() {
+        let ordered = phase(
+            RoundRobin,
+            Vec::new(),
+            vec![Box::new(WinsDrawsLossesCalculator), Box::new(ONE_HALF)],
+        );
+        let mut saved = serde_json::to_value(&ordered).unwrap();
+        saved["metrics"].as_array_mut().unwrap().reverse();
+
+        let loaded: PhasePlugins = serde_json::from_value(saved).unwrap();
+
+        assert_eq!(metrics(&loaded), metrics![WinsDrawsLosses, Points]);
+        let reloaded: PhasePlugins =
+            serde_json::from_value(serde_json::to_value(&loaded).unwrap()).unwrap();
+        assert_eq!(metrics(&reloaded), metrics(&loaded));
     }
 
     /// Nobody configuring a phase has to know that the Sonneborn-Berger sums the points of the
@@ -334,9 +320,10 @@ mod tests {
 
         let settled = settled(&plugins).unwrap();
 
+        // the added calculators are put into running order as well
         assert_eq!(
             metrics(&settled),
-            metrics![Matches, WinsDrawsLosses, Points, SonnebornBerger]
+            metrics![WinsDrawsLosses, Points, Matches, SonnebornBerger]
         );
         assert_eq!(check(&settled), Ok(()));
     }
@@ -626,18 +613,28 @@ mod tests {
 
     #[test]
     fn calculators_requiring_each_other_cannot_be_ordered() {
-        let mut plugins = phase(
-            RoundRobin,
+        let built = PhasePlugins::new(
+            Box::new(RoundRobin),
             Vec::new(),
             vec![Box::new(CircularCalculator), Box::new(Cycling)],
         );
+        let saved = serde_json::json!({
+            "format": {"type": RoundRobin::ID, "value": null},
+            "ranking": [],
+            "metrics": [
+                {"type": CircularCalculator::ID, "value": null},
+                {"type": Cycling::ID, "value": null},
+            ],
+        });
 
         assert_eq!(
-            plugins.order_metrics(),
-            Err(Incompatibility::CyclicRequirements {
-                plugins: vec![format!("{CircularCalculator:?}"), format!("{Cycling:?}")],
-            })
+            built.err(),
+            Some(DependencyOrderedSetError::Cyclic(
+                Incompatibility::CyclicRequirements {
+                    plugins: vec![format!("{CircularCalculator:?}"), format!("{Cycling:?}")],
+                }
+            ))
         );
-        assert!(matches!(plugins.check_order(), Err(OrderError::Cyclic(_))));
+        assert!(serde_json::from_value::<PhasePlugins>(saved).is_err());
     }
 }
