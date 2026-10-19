@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 inventory = "0.3.25"
 plugin-factory-derive = { version = "0.1.0", path = "../plugin-factory-derive" }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 serde_path_to_error = "0.1.20"
 thiserror = "2.0.21"
 
