@@ -13,7 +13,7 @@ use crate::{
         },
         phase_format::{
             PhaseFormat, Schedule,
-            bracket::{Bracket, Source},
+            bracket::{Bracket, Source, phase_round},
         },
     },
     type_map::{TypeMap, TypeMapValue},
@@ -113,7 +113,7 @@ impl DoubleElimination {
 ///
 /// # Examples
 /// ```
-/// # use tournament_engine::entities::competition::Match;
+/// # use tournament_engine::entities::competition::{Annotated, Match};
 /// # use tournament_engine::plugins::phase_format::double_elimination::DoubleEliminationRound;
 /// fn stage_name(r#match: &Match) -> String {
 ///     match r#match.annotation::<DoubleEliminationRound>() {
@@ -163,7 +163,7 @@ impl PhaseFormat for DoubleElimination {
 fn bracket(phase_data: &PhaseData, grand_final_reset: bool) -> Bracket {
     let mut bracket = Bracket::default();
     let winners = bracket.add_knockout(phase_data, winner_bracket_slot, |round, rounds| {
-        annotations(DoubleEliminationRound::Winners { round, rounds }, None)
+        TypeMap::new().with(DoubleEliminationRound::Winners { round, rounds })
     });
     let Some(winner_bracket_final) = winners.last() else {
         return bracket;
@@ -199,24 +199,23 @@ fn bracket(phase_data: &PhaseData, grand_final_reset: bool) -> Bracket {
         losers = pairs
             .into_iter()
             .map(|sources| {
-                let annotations = annotations(stage, Some(Eliminates::Loser));
-                Source::WinnerOf(bracket.add_pairing(slot(round + 1), sources, annotations))
+                let annotations = TypeMap::new().with(stage).with(Eliminates::Loser);
+                Source::WinnerOf(bracket.add_pairing(phase_round(round + 1), sources, annotations))
             })
             .collect();
     }
 
-    let grand_final_slot = slot(2 * winner_rounds);
+    let grand_final_slot = phase_round(2 * winner_rounds);
     let grand_final = bracket.add_pairing(
         grand_final_slot,
         [Source::WinnerOf(winner_bracket_final[0]), losers[0]],
-        annotations(
-            DoubleEliminationRound::GrandFinal,
-            Some(if grand_final_reset {
+        TypeMap::new()
+            .with(DoubleEliminationRound::GrandFinal)
+            .with(if grand_final_reset {
                 Eliminates::Only(Team::B)
             } else {
                 Eliminates::Loser
             }),
-        ),
     );
     if grand_final_reset {
         // only played if the champion of the loser bracket, side B, won the grand final, and then
@@ -224,33 +223,19 @@ fn bracket(phase_data: &PhaseData, grand_final_reset: bool) -> Bracket {
         bracket.add_pairing(
             grand_final_slot.saturating_add(1),
             [Source::LoserOf(grand_final), Source::WinnerOf(grand_final)],
-            annotations(
-                DoubleEliminationRound::GrandFinalReset,
-                Some(Eliminates::Loser),
-            ),
+            TypeMap::new()
+                .with(DoubleEliminationRound::GrandFinalReset)
+                .with(Eliminates::Loser),
         );
         bracket.advance_only_if_won_by(grand_final, Team::B);
     }
     bracket
 }
 
-fn annotations(stage: DoubleEliminationRound, eliminates: Option<Eliminates>) -> TypeMap {
-    let mut annotations = TypeMap::new();
-    annotations.insert(stage);
-    if let Some(eliminates) = eliminates {
-        annotations.insert(eliminates);
-    }
-    annotations
-}
-
 /// The phase round that round `round` of the winner bracket is played in, see the table of
 /// [`DoubleElimination`]. Round `i` of the loser bracket is played in phase round `i + 1`.
 fn winner_bracket_slot(round: u32) -> NonZeroU32 {
-    slot(if round == 1 { 1 } else { 2 * round - 2 })
-}
-
-fn slot(round: u32) -> NonZeroU32 {
-    NonZeroU32::new(round).expect("rounds are counted from 1")
+    phase_round(if round == 1 { 1 } else { 2 * round - 2 })
 }
 
 #[cfg(test)]
@@ -260,7 +245,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
+        entities::competition::{
+            Annotated, Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId,
+        },
         plugins::{
             metrics_calculator::{
                 round_of_elimination::{

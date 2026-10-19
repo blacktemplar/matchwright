@@ -23,12 +23,13 @@ pub trait PhaseFormat: Plugin + DynClone {
     /// played, since metrics such as [`RoundOfFirstLoss`] read a later round as a later match.
     ///
     /// Anything a consumer needs to know about a match or a bye beyond its round, e.g. the stage of
-    /// a bracket it belongs to, is attached with [`Match::with_annotation`] or
-    /// [`Bye::with_annotation`]. Every annotation a format writes has to be provided as a
+    /// a bracket it belongs to, is attached to it with [`Annotated::with_annotation`]. Every
+    /// annotation a format writes has to be provided as a
     /// [`MatchAnnotation`](crate::plugins::facts::MatchAnnotation) in its declaration, so that the
     /// plugins reading it can require it.
     ///
     /// [`RoundOfFirstLoss`]: super::metrics_calculator::round_of_first_loss::RoundOfFirstLoss
+    /// [`Annotated::with_annotation`]: crate::entities::competition::Annotated::with_annotation
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;
 
     /// Whether a match of this format may end in a [`MatchResult::Draw`].

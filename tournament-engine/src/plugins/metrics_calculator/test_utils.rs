@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use vec1::Vec1;
 
 use crate::{
-    entities::competition::{Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId},
+    entities::competition::{
+        Annotated, Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId,
+    },
     plugins::{
         metrics_calculator::MetricsCalculator,
         phase_format::{PhaseFormat, Schedule},

@@ -1,5 +1,3 @@
-use std::num::NonZeroU32;
-
 use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +11,7 @@ use crate::{
         },
         phase_format::{
             PhaseFormat, Schedule,
-            bracket::{Bracket, Source},
+            bracket::{Bracket, Source, phase_round},
         },
     },
     type_map::{TypeMap, TypeMapValue},
@@ -104,7 +102,7 @@ impl SingleElimination {
 ///
 /// # Examples
 /// ```
-/// # use tournament_engine::entities::competition::Match;
+/// # use tournament_engine::entities::competition::{Annotated, Match};
 /// # use tournament_engine::plugins::phase_format::single_elimination::KnockoutRound;
 /// fn stage_name(r#match: &Match) -> String {
 ///     match r#match.annotation::<KnockoutRound>() {
@@ -165,32 +163,22 @@ impl PhaseFormat for SingleElimination {
 /// The whole knockout between the rankings of `phase_data`, see [`SingleElimination`].
 fn bracket(phase_data: &PhaseData, third_place_match: bool) -> Bracket {
     let mut bracket = Bracket::default();
-    let knockout = bracket.add_knockout(phase_data, round, |round, rounds| {
-        annotations(KnockoutRound::RoundOf(1 << (rounds - round + 1)))
+    let knockout = bracket.add_knockout(phase_data, phase_round, |round, rounds| {
+        TypeMap::new().with(KnockoutRound::RoundOf(1 << (rounds - round + 1)))
     });
     if third_place_match && let [.., semifinals, _] = &knockout[..] {
         // In a bracket of three, one of the semifinals is a bye, whose loser is nobody, so the
         // match for third place is decided without being played.
         bracket.add_pairing(
-            round(knockout.len() as u32),
+            phase_round(knockout.len() as u32),
             [
                 Source::LoserOf(semifinals[1]),
                 Source::LoserOf(semifinals[0]),
             ],
-            annotations(KnockoutRound::ThirdPlace),
+            TypeMap::new().with(KnockoutRound::ThirdPlace),
         );
     }
     bracket
-}
-
-fn annotations(stage: KnockoutRound) -> TypeMap {
-    let mut annotations = TypeMap::new();
-    annotations.insert(stage);
-    annotations
-}
-
-fn round(round: u32) -> NonZeroU32 {
-    NonZeroU32::new(round).expect("rounds are counted from 1")
 }
 
 #[cfg(test)]
@@ -198,7 +186,9 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::entities::competition::{Match, MatchResult, Phase, PhaseBuilder, RankingId};
+    use crate::entities::competition::{
+        Annotated, Match, MatchResult, Phase, PhaseBuilder, RankingId,
+    };
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {

@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId, Team},
+    entities::competition::{
+        Annotated, Bye, Match, MatchId, MatchResult, PhaseData, RankingId, Team,
+    },
     plugins::phase_format::Schedule,
     type_map::TypeMap,
 };
@@ -247,6 +249,14 @@ impl Bracket {
             }
         }
     }
+}
+
+/// Phase round number `round`, counted from 1.
+///
+/// # Panics
+/// If `round` is 0.
+pub(super) fn phase_round(round: u32) -> NonZeroU32 {
+    NonZeroU32::new(round).expect("rounds are counted from 1")
 }
 
 fn index(side: Team) -> usize {

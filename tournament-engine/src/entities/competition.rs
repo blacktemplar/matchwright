@@ -184,40 +184,65 @@ impl Entrant {
         }
     }
 
-    /// Returns this entrant with `annotation` added, replacing an annotation of the same type.
-    ///
-    /// # Examples
-    /// ```
-    /// # use serde::{Deserialize, Serialize};
-    /// # use tournament_engine::entities::competition::{Entrant, EntrantId};
-    /// # use tournament_engine::type_map::TypeMapValue;
-    /// # use uuid::Uuid;
-    /// #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    /// struct DatabaseId(u64);
-    ///
-    /// #[typetag::serde(name = "example::database_id")]
-    /// impl TypeMapValue for DatabaseId {}
-    ///
-    /// let entrant = Entrant::new(EntrantId::new(Uuid::nil())).with_annotation(DatabaseId(17));
-    ///
-    /// assert_eq!(entrant.annotation::<DatabaseId>(), Some(&DatabaseId(17)));
-    /// ```
-    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
-        self.annotations.insert(annotation);
-        self
-    }
-
     pub fn id(&self) -> EntrantId {
         self.id
     }
+}
 
-    /// The annotation of type `T` this entrant was created with, if any.
-    pub fn annotation<T: 'static>(&self) -> Option<&T> {
-        self.annotations.get::<T>()
+impl Annotated for Entrant {
+    fn annotations(&self) -> &TypeMap {
+        &self.annotations
     }
 
-    pub fn annotations(&self) -> &TypeMap {
-        &self.annotations
+    fn annotations_mut(&mut self) -> &mut TypeMap {
+        &mut self.annotations
+    }
+}
+
+/// An entity carrying annotations: data about it keyed by type, such as the display name of an
+/// [`Entrant`] or the knockout stage of a [`Match`].
+///
+/// Annotations are given while building the entity, before the transition that creates it. Once it
+/// is part of a [`Competition`] they cannot be changed, and they never take part in its id.
+///
+/// # Examples
+/// ```
+/// # use serde::{Deserialize, Serialize};
+/// # use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
+/// # use tournament_engine::type_map::TypeMapValue;
+/// # use uuid::Uuid;
+/// #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// struct DatabaseId(u64);
+///
+/// #[typetag::serde(name = "example::database_id")]
+/// impl TypeMapValue for DatabaseId {}
+///
+/// let entrant = Entrant::new(EntrantId::new(Uuid::nil())).with_annotation(DatabaseId(17));
+///
+/// assert_eq!(entrant.annotation::<DatabaseId>(), Some(&DatabaseId(17)));
+/// ```
+pub trait Annotated: Sized {
+    /// All annotations of this entity.
+    fn annotations(&self) -> &TypeMap;
+
+    /// All annotations of this entity, for building it.
+    fn annotations_mut(&mut self) -> &mut TypeMap;
+
+    /// The annotation of type `T`, if any.
+    fn annotation<T: 'static>(&self) -> Option<&T> {
+        self.annotations().get::<T>()
+    }
+
+    /// Returns this entity with `annotation` added, replacing an annotation of the same type.
+    fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
+        self.annotations_mut().insert(annotation);
+        self
+    }
+
+    /// Returns this entity with `annotations` as its annotations, replacing any it had.
+    fn with_annotations(mut self, annotations: TypeMap) -> Self {
+        *self.annotations_mut() = annotations;
+        self
     }
 }
 
@@ -666,7 +691,7 @@ impl MatchId {
 /// Beyond who plays it, its round and its result, a match holds `annotations`: data that describes
 /// it, keyed by type, such as which stage of a knockout it belongs to. The
 /// [`PhaseFormat`] scheduling the match gives them when
-/// creating it, with [`Match::with_annotation`].
+/// creating it, with [`Annotated::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Match {
     id: MatchId,
@@ -724,29 +749,6 @@ impl Match {
             result: MatchResult::NotFinished,
             annotations: TypeMap::new(),
         }
-    }
-
-    /// Returns this match with `annotation` added, replacing an annotation of the same type.
-    ///
-    /// Annotations do not take part in the [`MatchId`].
-    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
-        self.annotations.insert(annotation);
-        self
-    }
-
-    /// Returns this match with `annotations` as its annotations, replacing any it had.
-    pub(crate) fn with_annotations(mut self, annotations: TypeMap) -> Self {
-        self.annotations = annotations;
-        self
-    }
-
-    /// The annotation of type `T` this match was created with, if any.
-    pub fn annotation<T: 'static>(&self) -> Option<&T> {
-        self.annotations.get::<T>()
-    }
-
-    pub fn annotations(&self) -> &TypeMap {
-        &self.annotations
     }
 
     pub fn team_of(&self, ranking_id: &RankingId) -> Option<Team> {
@@ -818,6 +820,16 @@ impl Match {
     }
 }
 
+impl Annotated for Match {
+    fn annotations(&self) -> &TypeMap {
+        &self.annotations
+    }
+
+    fn annotations_mut(&mut self) -> &mut TypeMap {
+        &mut self.annotations
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ByeId(Uuid);
 
@@ -826,7 +838,7 @@ pub struct ByeId(Uuid);
 ///
 /// A bye is final as soon as it is scheduled: it has no result to report, and the metrics of its
 /// ranking are updated right away, see [`MetricsCalculator::update_after_bye`]. Like a match it
-/// holds `annotations`, given by the format when creating it with [`Bye::with_annotation`].
+/// holds `annotations`, given by the format when creating it with [`Annotated::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bye {
     id: ByeId,
@@ -854,29 +866,6 @@ impl Bye {
         }
     }
 
-    /// Returns this bye with `annotation` added, replacing an annotation of the same type.
-    ///
-    /// Annotations do not take part in the [`ByeId`].
-    pub fn with_annotation<T: TypeMapValue>(mut self, annotation: T) -> Self {
-        self.annotations.insert(annotation);
-        self
-    }
-
-    /// Returns this bye with `annotations` as its annotations, replacing any it had.
-    pub(crate) fn with_annotations(mut self, annotations: TypeMap) -> Self {
-        self.annotations = annotations;
-        self
-    }
-
-    /// The annotation of type `T` this bye was created with, if any.
-    pub fn annotation<T: 'static>(&self) -> Option<&T> {
-        self.annotations.get::<T>()
-    }
-
-    pub fn annotations(&self) -> &TypeMap {
-        &self.annotations
-    }
-
     pub fn id(&self) -> ByeId {
         self.id
     }
@@ -890,6 +879,16 @@ impl Bye {
     /// has in that round, see [`Match::round`].
     pub fn round(&self) -> NonZeroU32 {
         self.round
+    }
+}
+
+impl Annotated for Bye {
+    fn annotations(&self) -> &TypeMap {
+        &self.annotations
+    }
+
+    fn annotations_mut(&mut self) -> &mut TypeMap {
+        &mut self.annotations
     }
 }
 

@@ -4,7 +4,9 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team},
+    entities::competition::{
+        Annotated, Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team,
+    },
     plugins::{
         facts::{CalculatesMetric, MatchAnnotation},
         metrics_calculator::{Metric, MetricsCalculator, OldMetrics},

@@ -20,7 +20,7 @@ use tournament_engine::type_map::TypeMapValue;
 /// # Examples
 /// ```
 /// use tournament_cli::annotations::DisplayName;
-/// use tournament_engine::entities::competition::{Entrant, EntrantId};
+/// use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
 /// use uuid::Uuid;
 ///
 /// let entrant =
@@ -62,7 +62,7 @@ impl From<DisplayName> for String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tournament_engine::entities::competition::{Entrant, EntrantId};
+    use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
     use uuid::Uuid;
 
     use super::*;

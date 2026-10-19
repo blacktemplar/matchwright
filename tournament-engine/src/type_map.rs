@@ -91,6 +91,22 @@ impl TypeMap {
         self.0.insert(Box::new(value));
     }
 
+    /// Returns this map with `value` inserted, see [`insert`](Self::insert).
+    ///
+    /// # Examples
+    /// ```
+    /// # use tournament_engine::{
+    /// #     plugins::metrics_calculator::points::Points, type_map::TypeMap,
+    /// # };
+    /// let map = TypeMap::new().with(Points(1.0)).with(Points(2.0));
+    ///
+    /// assert_eq!(map.get::<Points>(), Some(&Points(2.0)));
+    /// ```
+    pub fn with<T: TypeMapValue>(mut self, value: T) -> Self {
+        self.insert(value);
+        self
+    }
+
     /// Like [`insert`](Self::insert) for an already boxed value, returning the value it replaced.
     pub fn insert_boxed(&mut self, value: Box<dyn TypeMapValue>) -> Option<Box<dyn TypeMapValue>> {
         self.0.insert(value)

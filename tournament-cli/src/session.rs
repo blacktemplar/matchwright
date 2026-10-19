@@ -20,8 +20,8 @@ use plugin_factory::{
 use thiserror::Error;
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData, PhaseId,
-        Ranking, RankingId, Seed,
+        Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData,
+        PhaseId, Ranking, RankingId, Seed,
     },
     plugins::{
         PhasePlugins,

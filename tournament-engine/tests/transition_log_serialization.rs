@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Seed,
+        Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
+        Seed,
     },
     plugins::{
         PhasePlugins,
