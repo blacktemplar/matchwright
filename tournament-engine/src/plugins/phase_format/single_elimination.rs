@@ -213,6 +213,7 @@ mod tests {
     /// ascending order so that the pairings of a round can be compared as a whole.
     fn pairings(phase: &Phase, round: u32) -> Vec<(u32, u32)> {
         phase
+            .data()
             .matches()
             .values()
             .filter(|r#match| r#match.round().get() == round)
@@ -223,7 +224,7 @@ mod tests {
 
     /// The initial unique ranks of the two sides of `match`.
     fn pairing_of(phase: &Phase, r#match: &Match) -> (u32, u32) {
-        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
+        let rank_of = |id: &RankingId| phase.data().rankings()[id].initial_unique_rank().get();
         (rank_of(&r#match.team_a()[0]), rank_of(&r#match.team_b()[0]))
     }
 
@@ -231,6 +232,7 @@ mod tests {
     /// lets the favourites advance, and schedules whatever follows from that.
     fn play_round(phase: &mut Phase, round: u32) {
         let match_ids = phase
+            .data()
             .matches()
             .values()
             .filter(|r#match| r#match.round().get() == round)
@@ -252,7 +254,7 @@ mod tests {
 
         assert_eq!(pairings(&phase, 2), [(1, 2)], "the final, and nothing else");
         play_round(&mut phase, 2);
-        assert_eq!(phase.matches().len(), 3);
+        assert_eq!(phase.data().matches().len(), 3);
     }
 
     #[test]
@@ -267,7 +269,11 @@ mod tests {
             "the two losers of the semifinals play in the round of the final"
         );
         play_round(&mut phase, 2);
-        assert_eq!(phase.matches().len(), 4, "the bracket is over afterwards");
+        assert_eq!(
+            phase.data().matches().len(),
+            4,
+            "the bracket is over afterwards"
+        );
     }
 
     /// The match is played between whoever lost the semifinals, not between whoever entered the
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn the_losers_of_the_semifinals_play_for_third_place() {
         let mut phase = knockout(SingleElimination::with_third_place_match(), 4);
-        for match_id in phase.matches().values().map(Match::id).collect_vec() {
+        for match_id in phase.data().matches().values().map(Match::id).collect_vec() {
             // the lower ranked side wins both semifinals, so 1 and 2 are the ones knocked out
             phase.report_match_result(match_id, MatchResult::BWins);
         }
@@ -300,13 +306,14 @@ mod tests {
 
         assert_eq!(pairings(&phase, 2), [(1, 2)]);
         play_round(&mut phase, 2);
-        assert_eq!(phase.matches().len(), 2);
+        assert_eq!(phase.data().matches().len(), 2);
     }
 
     /// The stages of the matches of `round`, in the order the pairings of [`pairings`] list them.
     fn stages(phase: &Phase, round: u32) -> Vec<KnockoutRound> {
-        let rank_of = |id: &RankingId| phase.rankings()[id].initial_unique_rank().get();
+        let rank_of = |id: &RankingId| phase.data().rankings()[id].initial_unique_rank().get();
         phase
+            .data()
             .matches()
             .values()
             .filter(|r#match| r#match.round().get() == round)
@@ -337,7 +344,7 @@ mod tests {
     #[test]
     fn a_stage_is_serialized_under_its_explicitly_chosen_tag() {
         let phase = knockout(SingleElimination::new(), 2);
-        let the_final = phase.matches().values().next().unwrap();
+        let the_final = phase.data().matches().values().next().unwrap();
 
         let value = serde_json::to_value(the_final).expect("serializing must not fail");
 
@@ -357,6 +364,7 @@ mod tests {
         let mut phase = knockout(SingleElimination::new(), 7);
         assert_eq!(pairings(&phase, 1), [(2, 7), (3, 6), (4, 5)]);
         let four_against_five = phase
+            .data()
             .matches()
             .values()
             .find(|r#match| pairing_of(&phase, r#match) == (4, 5))
@@ -373,6 +381,7 @@ mod tests {
     #[test]
     fn the_best_seeds_get_the_byes() {
         let phase = knockout(SingleElimination::new(), 6);
+        let phase = phase.data();
 
         let byes = phase
             .byes()
@@ -412,7 +421,7 @@ mod tests {
         assert_eq!(pairings(&phase, 1), [(1, 2)]);
         play_round(&mut phase, 1);
 
-        assert_eq!(phase.matches().len(), 1);
+        assert_eq!(phase.data().matches().len(), 1);
     }
 
     /// Only the semifinals decide who plays for third place, so the earlier rounds of a larger
@@ -429,6 +438,6 @@ mod tests {
 
         assert_eq!(pairings(&phase, 3), [(1, 2), (3, 4)]);
         play_round(&mut phase, 3);
-        assert_eq!(phase.matches().len(), 6);
+        assert_eq!(phase.data().matches().len(), 6);
     }
 }

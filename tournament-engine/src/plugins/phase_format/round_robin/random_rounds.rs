@@ -72,7 +72,9 @@ impl PhaseFormat for RandomRounds {
             return Schedule::default();
         }
         let circle = Circle::new(phase_data);
-        let mut rng = phase_data.new_seeded_std_rng(EntropyTypes::PhaseFormat);
+        let mut rng = phase_data
+            .seed()
+            .new_seeded_std_rng(EntropyTypes::PhaseFormat);
         let mut rotations = (0..circle.rotations()).sample(&mut rng, self.rounds as usize);
         rotations.shuffle(&mut rng);
         let mut schedule = Schedule::default();
@@ -90,9 +92,9 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::entities::competition::{Bye, Match, Phase, PhaseBuilder};
+    use crate::entities::competition::{Bye, Match, PhaseBuilder};
 
-    fn assert_every_pair_played_at_most_once(phase: &Phase) {
+    fn assert_every_pair_played_at_most_once(phase: &PhaseData) {
         assert!(phase.matches().values().all(|m| m.team_a().len() == 1));
         assert!(phase.matches().values().all(|m| m.team_b().len() == 1));
         assert!(
@@ -112,7 +114,8 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_every_pair_played_at_most_once(&phase);
+        let phase = phase.data();
+        assert_every_pair_played_at_most_once(phase);
         assert_eq!(phase.matches().len(), 3 * 3);
         assert_eq!(
             phase.matches().values().map(Match::round).max(),
@@ -128,7 +131,8 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_every_pair_played_at_most_once(&phase);
+        let phase = phase.data();
+        assert_every_pair_played_at_most_once(phase);
         assert_eq!(phase.matches().len(), 3 * 3);
         assert_eq!(
             phase.matches().values().map(Match::round).max(),
@@ -144,6 +148,7 @@ mod tests {
 
         phase.create_new_matches();
 
+        let phase = phase.data();
         assert_eq!(
             phase
                 .byes()
@@ -164,7 +169,8 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_every_pair_played_at_most_once(&phase);
+        let phase = phase.data();
+        assert_every_pair_played_at_most_once(phase);
         assert_eq!(phase.matches().len(), 7 * 3);
         assert_eq!(
             phase.matches().values().map(Match::round).max(),

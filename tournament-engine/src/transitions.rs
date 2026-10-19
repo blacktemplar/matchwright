@@ -180,7 +180,7 @@ pub trait CompetitionStateMachineExt {
     /// # Examples
     /// ```
     /// # use tournament_engine::{
-    /// #     entities::competition::{Entrant, EntrantId, MatchResult, PhaseId},
+    /// #     entities::competition::{Entrant, EntrantId, MatchResult, PhaseId, Seed},
     /// #     plugins::{PhasePlugins, phase_format::round_robin::RoundRobin},
     /// #     transitions::{
     /// #         CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
@@ -191,7 +191,7 @@ pub trait CompetitionStateMachineExt {
     /// # use uuid::Uuid;
     /// # let phase_id = PhaseId::new(Uuid::from_u128(1));
     /// # let mut machine = CompetitionStateMachine::default();
-    /// # machine.apply_transition(SetCompetitionSeed::new(*b"doc-test!!!!"))?;
+    /// # machine.apply_transition(SetCompetitionSeed::new(Seed::new(*b"doc-test!!!!")))?;
     /// # for entrant in 0..4 {
     /// #     let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
     /// #     machine.apply_transition(AddEntrant::new(entrant))?;
@@ -203,6 +203,7 @@ pub trait CompetitionStateMachineExt {
     /// # machine.apply_transition(StartCompetition)?;
     /// // a round robin between four entrants, with the first and the last match reported
     /// let matches: Vec<_> = machine.current().phases()[&phase_id]
+    ///     .data()
     ///     .matches()
     ///     .keys()
     ///     .copied()
@@ -217,7 +218,7 @@ pub trait CompetitionStateMachineExt {
     ///
     /// machine.undo_match_result(phase_id, matches[0])?;
     ///
-    /// let phase = &machine.current().phases()[&phase_id];
+    /// let phase = machine.current().phases()[&phase_id].data();
     /// assert_eq!(
     ///     phase.matches()[&matches[0]].result(),
     ///     MatchResult::NotFinished
@@ -319,7 +320,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{Entrant, EntrantId, MatchResult},
+        entities::competition::{Entrant, EntrantId, MatchResult, Seed},
         plugins::{PhasePlugins, phase_format::single_elimination::SingleElimination},
         transitions::{
             add_entrant::AddEntrant, add_phase::AddPhase, set_competition_seed::SetCompetitionSeed,
@@ -345,7 +346,7 @@ mod tests {
     fn knockout() -> CompetitionStateMachine {
         let mut machine = CompetitionStateMachine::default();
         machine
-            .apply_transition(SetCompetitionSeed::new(*b"undo-test!!!"))
+            .apply_transition(SetCompetitionSeed::new(Seed::new(*b"undo-test!!!")))
             .unwrap();
         for entrant in 0..4 {
             let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
@@ -365,6 +366,7 @@ mod tests {
     /// The matches of the phase, in the order they were scheduled in.
     fn matches(machine: &CompetitionStateMachine) -> Vec<MatchId> {
         machine.current().phases()[&phase_id()]
+            .data()
             .matches()
             .keys()
             .copied()
@@ -372,7 +374,7 @@ mod tests {
     }
 
     fn result_of(machine: &CompetitionStateMachine, match_id: MatchId) -> MatchResult {
-        machine.current().phases()[&phase_id()].matches()[&match_id].result()
+        machine.current().phases()[&phase_id()].data().matches()[&match_id].result()
     }
 
     #[track_caller]
@@ -436,13 +438,13 @@ mod tests {
         let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(0)));
         machine.apply_transition(AddEntrant::new(entrant)).unwrap();
         machine
-            .apply_transition(SetCompetitionSeed::new(*b"undo-test!!!"))
+            .apply_transition(SetCompetitionSeed::new(Seed::new(*b"undo-test!!!")))
             .unwrap();
 
         machine.undo_last().expect("the entrant was added");
 
         assert!(machine.current().entrants().is_empty());
-        assert_eq!(machine.current().seed(), *b"undo-test!!!");
+        assert_eq!(machine.current().seed(), Seed::new(*b"undo-test!!!"));
         let log_len = machine.log().len();
         assert_eq!(machine.undo_last(), None);
         assert_eq!(machine.log().len(), log_len, "the log must stay unchanged");

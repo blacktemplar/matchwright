@@ -31,7 +31,45 @@ pub struct Competition {
     phases: IdMap<Phase>,
     phase_transitions: Vec<PhaseTransition>,
     started: bool,
-    seed: [u8; 12],
+    seed: Seed,
+}
+
+/// The source of all randomness of a competition, or of one of its phases.
+///
+/// Every random stream is derived from a seed and some entropy, so replaying the same transitions
+/// gives the same results.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Seed([u8; 12]);
+
+impl Seed {
+    pub const fn new(bytes: [u8; 12]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn bytes(self) -> [u8; 12] {
+        self.0
+    }
+
+    /// Constructs a seeded [`SeedableRng`] by mixing this seed with `entropy`.
+    ///
+    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
+    /// different values give independent random streams, the same value always gives the same one.
+    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(self, entropy: H) -> R {
+        Seeder::from((self.0, entropy)).into_rng()
+    }
+
+    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
+    /// returns a [`StdRng`].
+    pub fn new_seeded_std_rng<H: Hash>(self, entropy: H) -> StdRng {
+        self.new_seeded_rng(entropy)
+    }
+}
+
+impl From<[u8; 12]> for Seed {
+    fn from(bytes: [u8; 12]) -> Self {
+        Self(bytes)
+    }
 }
 
 impl Competition {
@@ -51,33 +89,24 @@ impl Competition {
         self.entrants.remove(&entrant.id());
     }
 
-    pub(crate) fn set_seed(&mut self, seed: [u8; 12]) {
+    pub(crate) fn set_seed(&mut self, seed: Seed) {
         self.seed = seed;
     }
 
-    pub fn seed(&self) -> [u8; 12] {
+    pub fn seed(&self) -> Seed {
         self.seed
     }
 
     pub(crate) fn add_phase(&mut self, id: PhaseId, plugins: PhasePlugins) {
         let (phase_format, ranker, metrics_calculators) = plugins.into_parts();
-        let seed = self.new_seeded_std_rng(id).random();
-        let phase = Phase {
+        let seed = Seed(self.seed.new_seeded_std_rng(id).random());
+        self.phases.insert(Phase::new(
             id,
-            outgoing_phase_transitions: vec![],
-            incoming_phase_transitions: vec![],
-            data: PhaseData {
-                rankings: IdMap::default(),
-                ranking_ids_ordered_by_unique_rank: vec![],
-                matches: IdMap::new(),
-                byes: IdMap::new(),
-                seed,
-            },
             phase_format,
             ranker,
             metrics_calculators,
-        };
-        self.phases.insert(phase);
+            seed,
+        ));
     }
 
     /// Declares the facts that hold for a phase added to this competition before any of its
@@ -100,26 +129,12 @@ impl Competition {
         self.phases.get(phase_id)
     }
 
-    /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
-    ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
-    /// different values give independent random streams, the same value always gives the same one.
-    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
-        Seeder::from((self.seed, entropy)).into_rng()
-    }
-
-    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
-    /// returns a [`StdRng`].
-    pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
-        self.new_seeded_rng(entropy)
-    }
-
     pub(crate) fn start(&mut self) {
         let mut ranking_entrants: Vec<_> = self.entrants().keys().map(|e| vec1![*e]).collect();
         // Note that keys() is not guaranteed to give a stable ordering. To make sure ordering is
         // stable we sort before shuffling
         ranking_entrants.sort_by_key(|e| e[0].0);
-        let mut rng = self.new_seeded_std_rng(EntropyTypes::CompetitionStart);
+        let mut rng = self.seed.new_seeded_std_rng(EntropyTypes::CompetitionStart);
         ranking_entrants.shuffle(&mut rng);
         if self.phases().len() != 1 {
             unimplemented!("Multi-phase competition not yet supported");
@@ -232,7 +247,7 @@ pub struct PhaseData {
     ranking_ids_ordered_by_unique_rank: Vec<RankingId>,
     matches: IdMap<Match>,
     byes: IdMap<Bye>,
-    seed: [u8; 12],
+    seed: Seed,
 }
 
 impl IdAble for Phase {
@@ -261,18 +276,9 @@ impl PhaseData {
         &self.byes
     }
 
-    /// Constructs a seeded [`SeedableRng`] by mixing the competition seed with `entropy`.
-    ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
-    /// different values give independent random streams, the same value always gives the same one.
-    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
-        Seeder::from((self.seed, entropy)).into_rng()
-    }
-
-    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
-    /// returns a [`StdRng`].
-    pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
-        self.new_seeded_rng(entropy)
+    /// The seed of this phase, derived from the competition seed and the phase id.
+    pub fn seed(&self) -> Seed {
+        self.seed
     }
 
     /// The position of the match in [`PhaseData::matches`], which can be used as a stable match
@@ -283,6 +289,31 @@ impl PhaseData {
 }
 
 impl Phase {
+    /// A phase without rankings, matches and byes yet.
+    fn new(
+        id: PhaseId,
+        phase_format: Box<dyn PhaseFormat>,
+        ranker: HierarchicalRanker,
+        metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
+        seed: Seed,
+    ) -> Self {
+        Self {
+            id,
+            outgoing_phase_transitions: vec![],
+            incoming_phase_transitions: vec![],
+            data: PhaseData {
+                rankings: IdMap::new(),
+                ranking_ids_ordered_by_unique_rank: vec![],
+                matches: IdMap::new(),
+                byes: IdMap::new(),
+                seed,
+            },
+            phase_format,
+            ranker,
+            metrics_calculators,
+        }
+    }
+
     pub fn id(&self) -> PhaseId {
         self.id
     }
@@ -290,26 +321,6 @@ impl Phase {
     /// The rankings, matches and seed of this phase, i.e. everything but its plugins.
     pub fn data(&self) -> &PhaseData {
         &self.data
-    }
-
-    /// See [`PhaseData::rankings`].
-    pub fn rankings(&self) -> &IdMap<Ranking> {
-        self.data.rankings()
-    }
-
-    /// See [`PhaseData::ranking_ids_ordered_by_unique_rank`].
-    pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
-        self.data.ranking_ids_ordered_by_unique_rank()
-    }
-
-    /// See [`PhaseData::matches`].
-    pub fn matches(&self) -> &IdMap<Match> {
-        self.data.matches()
-    }
-
-    /// See [`PhaseData::byes`].
-    pub fn byes(&self) -> &IdMap<Bye> {
-        self.data.byes()
     }
 
     pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
@@ -382,10 +393,11 @@ impl Phase {
         debug_assert_eq!(self.data.byes.len(), num_byes_before + new_bye_ids.len());
         // check that ranking ids are unique within a round
         debug_assert!(
-            self.matches()
+            self.data
+                .matches
                 .values()
                 .flat_map(|m| m.rankings().map(|r| (m.round, *r)))
-                .chain(self.byes().values().map(|b| (b.round, b.ranking)))
+                .chain(self.data.byes.values().map(|b| (b.round, b.ranking)))
                 .all_unique()
         );
 
@@ -492,21 +504,6 @@ impl Phase {
                 .all(|[(_, r1), (i2, r2)]| r1.rank == r2.rank || r2.rank.get() == i2 as u32 + 1)
         );
     }
-
-    /// See [`PhaseData::new_seeded_rng`].
-    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(&self, entropy: H) -> R {
-        self.data.new_seeded_rng(entropy)
-    }
-
-    /// See [`PhaseData::new_seeded_std_rng`].
-    pub fn new_seeded_std_rng<H: Hash>(&self, entropy: H) -> StdRng {
-        self.data.new_seeded_std_rng(entropy)
-    }
-
-    /// See [`PhaseData::get_match_index`].
-    pub fn get_match_index(&self, match_id: &MatchId) -> usize {
-        self.data.get_match_index(match_id)
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -549,15 +546,30 @@ impl IdAble for Ranking {
     }
 }
 
-pub fn bytes_from_uuids(uuids: impl Iterator<Item = Uuid>) -> Vec<u8> {
-    uuids.flat_map(|uuid| uuid.into_bytes()).collect()
+/// The UUIDv5 in `namespace` of the bytes of `uuids`, followed by those of `round` if given.
+fn derive_id(
+    namespace: &Uuid,
+    uuids: impl IntoIterator<Item = Uuid>,
+    round: Option<NonZeroU32>,
+) -> Uuid {
+    let bytes: Vec<u8> = uuids
+        .into_iter()
+        .flat_map(Uuid::into_bytes)
+        .chain(
+            round
+                .into_iter()
+                .flat_map(|round| round.get().to_le_bytes()),
+        )
+        .collect();
+    Uuid::new_v5(namespace, &bytes)
 }
 
 impl Ranking {
     pub fn new(entrants: Vec1<EntrantId>, unique_rank: NonZeroU32) -> Self {
-        let id = RankingId(Uuid::new_v5(
+        let id = RankingId(derive_id(
             &NAMESPACE_RANKING,
-            &bytes_from_uuids(entrants.iter().map(|e| e.0)),
+            entrants.iter().map(|e| e.0),
+            None,
         ));
         Self {
             id,
@@ -699,15 +711,10 @@ pub enum ResultOfTeam {
 impl Match {
     pub fn new(team_a: Vec1<RankingId>, team_b: Vec1<RankingId>, round: NonZeroU32) -> Self {
         assert!(team_a.iter().all(|id| !team_b.contains(id)));
-        let id = MatchId(Uuid::new_v5(
+        let id = MatchId(derive_id(
             &NAMESPACE_MATCH,
-            &team_a
-                .iter()
-                .chain(team_b.iter())
-                .copied()
-                .flat_map(|uuid| uuid.0.into_bytes())
-                .chain(round.get().to_le_bytes())
-                .collect::<Vec<_>>(),
+            team_a.iter().chain(team_b.iter()).map(|ranking| ranking.0),
+            Some(round),
         ));
         Self {
             id,
@@ -838,15 +845,7 @@ impl IdAble for Bye {
 
 impl Bye {
     pub fn new(ranking: RankingId, round: NonZeroU32) -> Self {
-        let id = ByeId(Uuid::new_v5(
-            &NAMESPACE_BYE,
-            &ranking
-                .0
-                .into_bytes()
-                .into_iter()
-                .chain(round.get().to_le_bytes())
-                .collect::<Vec<_>>(),
-        ));
+        let id = ByeId(derive_id(&NAMESPACE_BYE, [ranking.0], Some(round)));
         Self {
             id,
             ranking,
@@ -945,23 +944,16 @@ impl PhaseBuilder {
     }
 
     pub(crate) fn build(self) -> Phase {
-        let ranking_ids_ordered_by_unique_rank = self.rankings.iter().map(Ranking::id).collect();
-        let rankings = self.rankings.into_iter().collect();
-        let mut phase = Phase {
-            id: PhaseId::new(Uuid::nil()),
-            outgoing_phase_transitions: vec![],
-            incoming_phase_transitions: vec![],
-            data: PhaseData {
-                rankings,
-                ranking_ids_ordered_by_unique_rank,
-                matches: IdMap::new(),
-                byes: IdMap::new(),
-                seed: [0; 12],
-            },
-            phase_format: self.phase_format,
-            ranker: self.ranker,
-            metrics_calculators: self.metrics_calculators,
-        };
+        let mut phase = Phase::new(
+            PhaseId::new(Uuid::nil()),
+            self.phase_format,
+            self.ranker,
+            self.metrics_calculators,
+            Seed::default(),
+        );
+        phase.data.ranking_ids_ordered_by_unique_rank =
+            self.rankings.iter().map(Ranking::id).collect();
+        phase.data.rankings = self.rankings.into_iter().collect();
         phase.initialize_metrics();
         phase
     }

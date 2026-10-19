@@ -163,7 +163,7 @@ pub(crate) fn match_id(phase: &Phase, round: u32, team_a: &[usize], team_b: &[us
         NonZeroU32::new(round).unwrap(),
     )
     .id();
-    assert!(phase.matches().contains_key(&match_id));
+    assert!(phase.data().matches().contains_key(&match_id));
     match_id
 }
 
@@ -175,7 +175,7 @@ pub(crate) fn metric_of<M: Copy + 'static>(phase: &Phase, ranking_index: usize) 
 
 /// Like [`metric_of`], but for metrics that are not [`Copy`].
 pub(crate) fn metric_ref_of<M: 'static>(phase: &Phase, ranking_index: usize) -> &M {
-    phase.rankings()[&ranking_ids(phase.data())[ranking_index]]
+    phase.data().rankings()[&ranking_ids(phase.data())[ranking_index]]
         .metric::<M>()
         .expect("the metric must be initialized")
 }

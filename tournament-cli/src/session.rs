@@ -20,8 +20,8 @@ use plugin_factory::{
 use thiserror::Error;
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
-        RankingId,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData, PhaseId,
+        Ranking, RankingId, Seed,
     },
     plugins::{
         PhasePlugins,
@@ -155,7 +155,7 @@ impl Session {
     pub fn new(path: Option<PathBuf>) -> Self {
         let mut machine = CompetitionStateMachine::default();
         machine
-            .apply_transition(SetCompetitionSeed::new(rand::random()))
+            .apply_transition(SetCompetitionSeed::new(Seed::new(rand::random())))
             .expect("a new competition must accept a seed");
         Self {
             saved_log_len: machine.log().len(),
@@ -325,7 +325,7 @@ impl Session {
         self.machine.apply_transition(StartCompetition)?;
         Ok(format!(
             "competition started, {} match(es) scheduled",
-            self.phase()?.matches().len()
+            self.phase()?.data().matches().len()
         ))
     }
 
@@ -345,7 +345,7 @@ impl Session {
     /// Lists the matches, numbered the way [`Self::report`] addresses them and independently of
     /// the filters applied, followed by the byes unless only open matches are asked for.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
-        let phase = self.phase()?;
+        let phase = self.phase()?.data();
         // only a format that names its stages gets a column for them
         let has_stages = phase
             .matches()
@@ -415,6 +415,7 @@ impl Session {
     fn match_numbered(&self, number: NonZeroUsize) -> Result<(PhaseId, MatchId), Error> {
         let phase = self.phase()?;
         let (match_id, _) = phase
+            .data()
             .matches()
             .get_index(number.get() - 1)
             .ok_or(Error::UnknownMatch(number))?;
@@ -423,7 +424,7 @@ impl Session {
 
     fn report(&mut self, number: NonZeroUsize, result: ReportedResult) -> Result<String, Error> {
         let (phase_id, match_id) = self.match_numbered(number)?;
-        let matches_before = self.phase()?.matches().len();
+        let matches_before = self.phase()?.data().matches().len();
         let result = match result {
             ReportedResult::A => MatchResult::AWins,
             ReportedResult::B => MatchResult::BWins,
@@ -432,7 +433,7 @@ impl Session {
         self.machine
             .apply_transition(ReportMatchResult::new(phase_id, match_id, result))?;
 
-        let phase = self.phase()?;
+        let phase = self.phase()?.data();
         let mut output = format!(
             "#{number}: {}",
             self.result_text(phase, &phase.matches()[&match_id])
@@ -450,7 +451,7 @@ impl Session {
     /// than only the one reported last. Every other change stays in effect.
     fn undo_report(&mut self, number: NonZeroUsize) -> Result<String, Error> {
         let (phase_id, match_id) = self.match_numbered(number)?;
-        let matches_before = self.phase()?.matches().len();
+        let matches_before = self.phase()?.data().matches().len();
         self.machine
             .undo_match_result(phase_id, match_id)
             .map_err(|error| match error {
@@ -458,7 +459,7 @@ impl Session {
                 UndoMatchResultError::Rejected(_) => Error::ReportDependedOn(number),
             })?;
 
-        let phase = self.phase()?;
+        let phase = self.phase()?.data();
         let r#match = &phase.matches()[&match_id];
         let mut output = format!(
             "#{number} is open again: {} vs {}",
@@ -474,7 +475,7 @@ impl Session {
     }
 
     fn ranking(&self) -> Result<String, Error> {
-        let phase = self.phase()?;
+        let phase = self.phase()?.data();
         let rankings: Vec<_> = phase
             .ranking_ids_ordered_by_unique_rank()
             .iter()
@@ -542,7 +543,7 @@ impl Session {
         Ok(output)
     }
 
-    fn team_name(&self, phase: &Phase, rankings: &[RankingId]) -> String {
+    fn team_name(&self, phase: &PhaseData, rankings: &[RankingId]) -> String {
         rankings
             .iter()
             .flat_map(|id| phase.rankings()[id].entrants())
@@ -551,7 +552,7 @@ impl Session {
             .join(" & ")
     }
 
-    fn result_text(&self, phase: &Phase, r#match: &Match) -> String {
+    fn result_text(&self, phase: &PhaseData, r#match: &Match) -> String {
         let a = self.team_name(phase, r#match.team_a());
         let b = self.team_name(phase, r#match.team_b());
         match r#match.result() {

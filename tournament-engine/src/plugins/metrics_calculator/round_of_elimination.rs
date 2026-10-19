@@ -297,7 +297,7 @@ mod tests {
             vec![Box::new(RoundOfEliminationCalculator)],
         );
 
-        assert_eq!(phase.byes().len(), 1);
+        assert_eq!(phase.data().byes().len(), 1);
         assert_eq!(metric_of(&phase, 0), STILL_IN);
     }
 

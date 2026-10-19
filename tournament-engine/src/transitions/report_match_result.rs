@@ -55,6 +55,7 @@ impl Transition<Competition> for ReportMatchResult {
             .get(&self.phase_id)
             .ok_or(ReportMatchResultError::PhaseDoesNotExist)?;
         let r#match = phase
+            .data()
             .matches()
             .get(&self.match_id)
             .ok_or(ReportMatchResultError::MatchDoesNotExist)?;

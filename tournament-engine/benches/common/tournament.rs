@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
-    entities::competition::{Entrant, EntrantId, MatchId, MatchResult, PhaseId},
+    entities::competition::{Entrant, EntrantId, MatchId, MatchResult, PhaseId, Seed},
     plugins::{
         PhasePlugins,
         metrics_calculator::{
@@ -40,7 +40,7 @@ const ROUNDS: u32 = 10;
 
 /// The competition seed, the pairings and the reported results are seeded, so that a run only
 /// differs from another one in its randomly generated ids.
-const SEED: [u8; 12] = *b"bench-seed!!";
+const SEED: Seed = Seed::new(*b"bench-seed!!");
 
 /// The scoring system of most association football leagues.
 const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
@@ -63,7 +63,7 @@ pub fn phase_id() -> PhaseId {
 /// which is unique and unaffected by any reported result, so that the schedule does not depend on
 /// the iteration order of the match map.
 fn reporting_schedule(sm: &CompetitionStateMachine) -> Vec<(MatchId, MatchResult)> {
-    let phase = &sm.current().phases()[&phase_id()];
+    let phase = sm.current().phases()[&phase_id()].data();
     let mut rng = StdRng::seed_from_u64(0x7e57_5eed);
     phase
         .matches()

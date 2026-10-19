@@ -90,7 +90,9 @@ impl PhaseFormat for MonsterDyp {
         let num_sitting_out = ranking_ids.len() % 4;
         let mut rounds_sat_out = vec![0_u32; ranking_ids.len()];
         let mut order = (0..ranking_ids.len()).collect_vec();
-        let mut rng = phase_data.new_seeded_std_rng(EntropyTypes::PhaseFormat);
+        let mut rng = phase_data
+            .seed()
+            .new_seeded_std_rng(EntropyTypes::PhaseFormat);
         let mut schedule = Schedule::default();
         for round in 1..=self.rounds {
             let round = NonZeroU32::new(round).unwrap();
@@ -142,7 +144,7 @@ mod tests {
         phase
     }
 
-    fn matches_per_ranking(phase: &Phase) -> Map<RankingId, u32> {
+    fn matches_per_ranking(phase: &PhaseData) -> Map<RankingId, u32> {
         let mut matches_per_ranking: Map<_, _> = phase.rankings().keys().map(|r| (*r, 0)).collect();
         for ranking_id in phase.matches().values().flat_map(Match::rankings) {
             matches_per_ranking[ranking_id] += 1;
@@ -153,6 +155,7 @@ mod tests {
     #[test]
     fn every_ranking_plays_every_round_in_a_team_of_two_if_the_rankings_are_a_multiple_of_four() {
         let phase = phase(3, 8);
+        let phase = phase.data();
 
         assert_eq!(phase.matches().len(), 3 * 2);
         assert!(
@@ -161,7 +164,7 @@ mod tests {
                 .values()
                 .all(|m| m.team_a().len() == 2 && m.team_b().len() == 2)
         );
-        assert!(matches_per_ranking(&phase).values().all(|&n| n == 3));
+        assert!(matches_per_ranking(phase).values().all(|&n| n == 3));
         assert_eq!(
             phase.matches().values().map(Match::round).max(),
             NonZeroU32::new(3)
@@ -172,9 +175,10 @@ mod tests {
     fn the_rankings_left_over_take_turns_sitting_out() {
         // 2 of 10 rankings sit out every round, so in 5 rounds every ranking sits out once
         let phase = phase(5, 10);
+        let phase = phase.data();
 
         assert_eq!(phase.matches().len(), 5 * 2);
-        assert!(matches_per_ranking(&phase).values().all(|&n| n == 4));
+        assert!(matches_per_ranking(phase).values().all(|&n| n == 4));
         assert_eq!(phase.byes().len(), 5 * 2);
         assert!(
             phase
@@ -188,8 +192,9 @@ mod tests {
     fn the_numbers_of_matches_played_differ_by_at_most_one() {
         // 3 of 7 rankings sit out every round
         let phase = phase(5, 7);
+        let phase = phase.data();
 
-        let (min, max) = matches_per_ranking(&phase)
+        let (min, max) = matches_per_ranking(phase)
             .values()
             .copied()
             .minmax()
@@ -202,6 +207,7 @@ mod tests {
     #[test]
     fn the_teams_are_drawn_anew_every_round() {
         let phase = phase(5, 8);
+        let phase = phase.data();
 
         let teams = phase
             .matches()
@@ -221,6 +227,7 @@ mod tests {
     #[test]
     fn nothing_is_scheduled_for_fewer_than_four_rankings() {
         let phase = phase(5, 3);
+        let phase = phase.data();
 
         assert!(phase.matches().is_empty());
         assert!(phase.byes().is_empty());
@@ -229,17 +236,17 @@ mod tests {
     #[test]
     fn nothing_is_scheduled_after_the_first_call() {
         let mut phase = phase(5, 8);
-        let num_matches = phase.matches().len();
+        let num_matches = phase.data().matches().len();
 
         phase.create_new_matches();
 
-        assert_eq!(phase.matches().len(), num_matches);
+        assert_eq!(phase.data().matches().len(), num_matches);
     }
 
     #[test]
     fn both_rankings_of_a_team_get_its_result() {
         let mut phase = phase(1, 4);
-        let r#match = phase.matches().values().next().unwrap();
+        let r#match = phase.data().matches().values().next().unwrap();
         let (match_id, winners, losers) = (
             r#match.id(),
             r#match.team_a().clone(),
@@ -270,7 +277,7 @@ mod tests {
         ] {
             for ranking_id in team {
                 assert_eq!(
-                    phase.rankings()[&ranking_id].metric::<WinsDrawsLosses>(),
+                    phase.data().rankings()[&ranking_id].metric::<WinsDrawsLosses>(),
                     Some(&expected)
                 );
             }

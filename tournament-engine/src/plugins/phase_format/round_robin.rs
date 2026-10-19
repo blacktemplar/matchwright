@@ -70,11 +70,11 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::entities::competition::{Bye, Match, Phase, PhaseBuilder};
+    use crate::entities::competition::{Bye, Match, PhaseBuilder};
 
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.
-    fn assert_every_pair_played_exactly_once(phase: &Phase) {
+    fn assert_every_pair_played_exactly_once(phase: &PhaseData) {
         let mut expected_pairs = phase
             .rankings()
             .keys()
@@ -106,9 +106,9 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_every_pair_played_exactly_once(&phase);
+        assert_every_pair_played_exactly_once(phase.data());
         assert_eq!(
-            phase.matches().values().map(Match::round).max(),
+            phase.data().matches().values().map(Match::round).max(),
             Some(NonZero::new(5).unwrap())
         );
     }
@@ -121,9 +121,9 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_every_pair_played_exactly_once(&phase);
+        assert_every_pair_played_exactly_once(phase.data());
         assert_eq!(
-            phase.matches().values().map(Match::round).max(),
+            phase.data().matches().values().map(Match::round).max(),
             Some(NonZero::new(7).unwrap())
         );
     }
@@ -136,9 +136,10 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert_eq!(phase.byes().len(), 7);
-        assert!(phase.byes().values().map(Bye::ranking).all_unique());
-        assert!(phase.byes().values().map(Bye::round).all_unique());
+        let byes = phase.data().byes();
+        assert_eq!(byes.len(), 7);
+        assert!(byes.values().map(Bye::ranking).all_unique());
+        assert!(byes.values().map(Bye::round).all_unique());
     }
 
     #[test]
@@ -149,6 +150,6 @@ mod tests {
 
         phase.create_new_matches();
 
-        assert!(phase.byes().is_empty());
+        assert!(phase.data().byes().is_empty());
     }
 }

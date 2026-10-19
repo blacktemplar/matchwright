@@ -2,17 +2,17 @@ use serde::{Deserialize, Serialize};
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
-    entities::competition::Competition,
+    entities::competition::{Competition, Seed},
     transitions::{CompetitionTransition, ensure_not_started},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SetCompetitionSeed {
-    seed: [u8; 12],
+    seed: Seed,
 }
 
 impl SetCompetitionSeed {
-    pub fn new(seed: [u8; 12]) -> Self {
+    pub fn new(seed: Seed) -> Self {
         Self { seed }
     }
 }

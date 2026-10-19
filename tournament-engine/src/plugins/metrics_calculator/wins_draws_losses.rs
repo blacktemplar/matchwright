@@ -495,7 +495,7 @@ mod tests {
 
         WinsDrawsLossesCalculator.update_after_match_result_changed(
             phase.data(),
-            &phase.matches()[&match_id],
+            &phase.data().matches()[&match_id],
             MatchResult::AWins,
             &OldMetrics::default(),
         );

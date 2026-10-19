@@ -288,13 +288,16 @@ mod tests {
     }
 
     fn seed_of(phase: &Phase, ranking_id: &RankingId) -> u32 {
-        phase.rankings()[ranking_id].initial_unique_rank().get()
+        phase.data().rankings()[ranking_id]
+            .initial_unique_rank()
+            .get()
     }
 
     /// Every match as its round, its stage and the seeds of its two sides, in the order the
     /// matches were scheduled in.
     fn schedule(phase: &Phase) -> Vec<(u32, DoubleEliminationRound, (u32, u32))> {
         phase
+            .data()
             .matches()
             .values()
             .map(|r#match| {
@@ -313,7 +316,7 @@ mod tests {
     /// Reports the open matches one at a time, in the order they were scheduled in, as won by the
     /// side `winner` picks given the match and the seeds of its sides, until none is left.
     fn play_out(phase: &mut Phase, winner: impl Fn(&Match, u32, u32) -> Team) {
-        while let Some(r#match) = phase.matches().values().find(|m| !m.is_finished()) {
+        while let Some(r#match) = phase.data().matches().values().find(|m| !m.is_finished()) {
             let seeds = (
                 seed_of(phase, &r#match.team_a()[0]),
                 seed_of(phase, &r#match.team_b()[0]),
@@ -341,6 +344,7 @@ mod tests {
     /// The rank and the round of elimination of every entrant, ordered by seed.
     fn standings(phase: &Phase) -> Vec<(u32, Option<u32>)> {
         phase
+            .data()
             .rankings()
             .values()
             .sorted_by_key(|ranking| ranking.initial_unique_rank())
@@ -405,7 +409,11 @@ mod tests {
 
         play_out(&mut phase, underdog_wins_the_grand_final);
 
-        assert_eq!(phase.matches().len(), 6, "nothing follows the grand final");
+        assert_eq!(
+            phase.data().matches().len(),
+            6,
+            "nothing follows the grand final"
+        );
         assert_eq!(
             standings(&phase)[..2],
             [(2, Some(4)), (1, None)],
@@ -436,7 +444,7 @@ mod tests {
 
         play_out(&mut phase, favourite);
 
-        assert_eq!(phase.matches().len(), 6);
+        assert_eq!(phase.data().matches().len(), 6);
     }
 
     /// With a reset to come, losing the grand final only knocks out the champion of the loser
@@ -451,10 +459,10 @@ mod tests {
             ),
         ] {
             let mut phase = bracket(format, 2);
-            let first = *phase.matches().keys().next().unwrap();
+            let first = *phase.data().matches().keys().next().unwrap();
             phase.report_match_result(first, MatchResult::AWins);
 
-            let grand_final = phase.matches().values().last().unwrap();
+            let grand_final = phase.data().matches().values().last().unwrap();
 
             assert_eq!(grand_final.annotation(), Some(&GrandFinal));
             assert_eq!(grand_final.annotation(), Some(&eliminates));
@@ -466,7 +474,7 @@ mod tests {
     #[test]
     fn a_match_is_scheduled_as_soon_as_both_of_its_entrants_are_known() {
         let mut phase = bracket(DoubleElimination::new(), 8);
-        let first_two: Vec<MatchId> = phase.matches().keys().take(2).copied().collect();
+        let first_two: Vec<MatchId> = phase.data().matches().keys().take(2).copied().collect();
 
         for match_id in first_two {
             phase.report_match_result(match_id, MatchResult::AWins);
@@ -517,6 +525,7 @@ mod tests {
         play_out(&mut phase, favourite);
 
         let byes = phase
+            .data()
             .byes()
             .values()
             .map(|bye| {
@@ -574,6 +583,7 @@ mod tests {
             play_out(&mut phase, mixed);
 
             let context = format!("{num_players} entrants, reset: {reset}");
+            let phase = phase.data();
             let reset_played = phase
                 .matches()
                 .values()
@@ -617,7 +627,7 @@ mod tests {
     #[test]
     fn the_stage_is_serialized_under_its_explicitly_chosen_tag() {
         let phase = bracket(DoubleElimination::new(), 2);
-        let first = phase.matches().values().next().unwrap();
+        let first = phase.data().matches().values().next().unwrap();
 
         let value = serde_json::to_value(first).expect("serializing must not fail");
 

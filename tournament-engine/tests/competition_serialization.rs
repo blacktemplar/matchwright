@@ -3,12 +3,12 @@
 //! plugins (phase format, ranker, metrics calculators) and the metrics of its rankings.
 
 use itertools::Itertools;
-use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Ranking,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseData, PhaseId, Ranking,
+        Seed,
     },
     plugins::{
         PhasePlugins,
@@ -36,7 +36,7 @@ use undoable_state_machine::Transition;
 use uuid::Uuid;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
-const SEED: [u8; 12] = *b"round-trip!!";
+const SEED: Seed = Seed::new(*b"round-trip!!");
 
 /// The scoring system of most association football leagues.
 const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
@@ -120,7 +120,7 @@ fn started_competition() -> CompetitionStateMachine {
 /// phase holds updated metrics, reranked rankings and the freshly scheduled final.
 fn competition_in_the_final() -> CompetitionStateMachine {
     let mut sm = started_competition();
-    for match_id in matches_of_round(&sm.current().phases()[&phase_id()], 1) {
+    for match_id in matches_of_round(sm.current().phases()[&phase_id()].data(), 1) {
         sm.apply_transition(ReportMatchResult::new(
             phase_id(),
             match_id,
@@ -134,7 +134,7 @@ fn competition_in_the_final() -> CompetitionStateMachine {
 /// The matches of `round`, ordered by the initial unique rank of the first ranking of their team
 /// A, which is unique within a round and unaffected by any reported result, so that the order does
 /// not depend on the iteration order of the match map.
-fn matches_of_round(phase: &Phase, round: u32) -> Vec<MatchId> {
+fn matches_of_round(phase: &PhaseData, round: u32) -> Vec<MatchId> {
     phase
         .matches()
         .values()
@@ -231,6 +231,8 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             .get(&phase.id())
             .expect("the phase must exist");
         assert_eq!(phase.id(), other.id());
+        let (phase, other) = (phase.data(), other.data());
+        assert_eq!(phase.seed(), other.seed());
         assert_eq!(
             phase.ranking_ids_ordered_by_unique_rank(),
             other.ranking_ids_ordered_by_unique_rank()
@@ -264,11 +266,6 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
             assert_eq!(bye.ranking(), other_bye.ranking());
             assert_eq!(bye.round(), other_bye.round());
         }
-        // the phase seed is private and only observable through the random streams it produces
-        assert_eq!(
-            phase.new_seeded_std_rng("entropy").random::<u64>(),
-            other.new_seeded_std_rng("entropy").random::<u64>()
-        );
     }
     assert_eq!(serialized(left), serialized(right));
 }
@@ -280,7 +277,7 @@ fn an_empty_competition_round_trips() {
     assert!(!competition.is_started());
     assert!(competition.entrants().is_empty());
     assert!(competition.phases().is_empty());
-    assert_eq!(competition.seed(), [0; 12]);
+    assert_eq!(competition.seed(), Seed::default());
     assert_same_competition(&Competition::default(), &competition);
 }
 
@@ -293,7 +290,7 @@ fn a_competition_that_has_not_started_round_trips() {
     assert!(!competition.is_started());
     assert_eq!(competition.seed(), SEED);
     assert_eq!(competition.entrants().len(), 4);
-    let phase = &competition.phases()[&phase_id()];
+    let phase = competition.phases()[&phase_id()].data();
     assert!(phase.rankings().is_empty());
     assert!(phase.matches().is_empty());
     assert_same_competition(sm.current(), &competition);
@@ -306,7 +303,7 @@ fn a_started_competition_round_trips() {
     let competition = round_trip(sm.current());
 
     assert!(competition.is_started());
-    let phase = &competition.phases()[&phase_id()];
+    let phase = competition.phases()[&phase_id()].data();
     assert_eq!(phase.rankings().len(), 4);
     assert_eq!(phase.matches().len(), 2);
     // the metrics of a started competition are all at their default value, so this only shows
@@ -326,7 +323,7 @@ fn a_partially_played_competition_round_trips() {
 
     let competition = round_trip(sm.current());
 
-    let phase = &competition.phases()[&phase_id()];
+    let phase = competition.phases()[&phase_id()].data();
     // the two first round matches plus the final that reporting them scheduled
     assert_eq!(phase.matches().len(), 3);
     assert_eq!(
@@ -360,6 +357,7 @@ fn a_played_competition_round_trips_through_a_binary_format() {
     // the match ids that a plain round trip would silently write in the wrong representation
     assert!(
         sm.current().phases()[&phase_id()]
+            .data()
             .rankings()
             .values()
             .any(|ranking| ranking
@@ -394,6 +392,7 @@ fn a_competition_with_a_bye_round_trips() {
     .unwrap();
     sm.apply_transition(StartCompetition).unwrap();
     let bye = sm.current().phases()[&phase_id()]
+        .data()
         .byes()
         .values()
         .exactly_one()
@@ -418,7 +417,7 @@ fn a_round_tripped_competition_can_be_started() {
     sm.apply_transition(StartCompetition).unwrap();
     apply_directly(&mut competition, &StartCompetition);
 
-    assert_eq!(competition.phases()[&phase_id()].matches().len(), 2);
+    assert_eq!(competition.phases()[&phase_id()].data().matches().len(), 2);
     assert_same_competition(sm.current(), &competition);
 }
 
@@ -426,7 +425,7 @@ fn a_round_tripped_competition_can_be_started() {
 fn a_round_tripped_competition_can_continue_the_tournament() {
     let mut sm = competition_in_the_final();
     let mut competition = round_trip(sm.current());
-    let final_match = matches_of_round(&competition.phases()[&phase_id()], 2)[0];
+    let final_match = matches_of_round(competition.phases()[&phase_id()].data(), 2)[0];
     let report = ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins);
 
     sm.apply_transition(ReportMatchResult::new(
@@ -437,7 +436,7 @@ fn a_round_tripped_competition_can_continue_the_tournament() {
     .unwrap();
     apply_directly(&mut competition, &report);
 
-    let phase = &competition.phases()[&phase_id()];
+    let phase = competition.phases()[&phase_id()].data();
     assert!(phase.matches().values().all(Match::is_finished));
     assert_same_competition(sm.current(), &competition);
 }
@@ -458,10 +457,6 @@ fn the_competition_seed_survives_a_round_trip() {
     let competition = round_trip(sm.current());
 
     assert_eq!(competition.seed(), SEED);
-    assert_eq!(
-        competition.new_seeded_std_rng("entropy").random::<u64>(),
-        sm.current().new_seeded_std_rng("entropy").random::<u64>()
-    );
 }
 
 #[test]

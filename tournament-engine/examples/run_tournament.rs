@@ -98,6 +98,7 @@ fn main() {
     let elapsed = start.elapsed();
     // the finished competition is huge, so it is dropped after the time is taken
     let matches = sm.current().phases()[&tournament::phase_id()]
+        .data()
         .matches()
         .len();
     println!("{entrants} entrants: {matches} matches reported in {elapsed:.2?}");

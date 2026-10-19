@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tournament_engine::{
     entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
+        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId, Seed,
     },
     plugins::{
         PhasePlugins,
@@ -37,7 +37,7 @@ use undoable_state_machine::{LogEntry, LogEntryKind, TransitionId};
 use uuid::Uuid;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
-const SEED: [u8; 12] = *b"log-trip!!!!";
+const SEED: Seed = Seed::new(*b"log-trip!!!!");
 
 /// The scoring system of most association football leagues.
 const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
@@ -120,6 +120,7 @@ fn played_competition() -> CompetitionStateMachine {
 /// which is unique within a round and unaffected by any reported result, so that the order does not
 /// depend on the iteration order of the match map.
 fn matches_of_round(phase: &Phase, round: u32) -> Vec<MatchId> {
+    let phase = phase.data();
     phase
         .matches()
         .values()
@@ -333,7 +334,7 @@ fn a_round_tripped_log_can_still_be_undone() {
 
     // one of the two first round results is gone, so the final it scheduled is gone with it and
     // only one ranking holds the points of a win
-    let phase = &restored.current().phases()[&phase_id()];
+    let phase = restored.current().phases()[&phase_id()].data();
     assert_eq!(phase.matches().len(), 2);
     assert_eq!(
         phase
@@ -382,7 +383,7 @@ fn a_round_tripped_log_can_continue_the_tournament() {
         ))
         .unwrap();
 
-    let phase = &machine.current().phases()[&phase_id()];
+    let phase = machine.current().phases()[&phase_id()].data();
     assert!(phase.matches().values().all(Match::is_finished));
 }
 
