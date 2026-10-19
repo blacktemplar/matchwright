@@ -66,9 +66,8 @@ impl RandomRounds {
 #[register]
 impl PhaseFormat for RandomRounds {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
-        if !phase_data.matches().is_empty() || !phase_data.byes().is_empty() {
-            // we generate all rounds at once, so as soon as one match or bye exists nothing is to
-            // be done
+        // all rounds are scheduled at once
+        if phase_data.has_schedule() {
             return Schedule::default();
         }
         let circle = Circle::new(phase_data);

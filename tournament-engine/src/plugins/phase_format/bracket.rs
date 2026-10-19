@@ -135,10 +135,13 @@ impl Bracket {
             .len()
             .next_power_of_two()
             .trailing_zeros();
-        let mut seeds = vec![Source::Bye; 1 << rounds];
-        for ranking in phase_data.rankings().values() {
-            seeds[ranking.initial_unique_rank().get() as usize - 1] = Source::Ranking(ranking.id());
-        }
+        let mut seeds: Vec<_> = phase_data
+            .rankings()
+            .keys()
+            .copied()
+            .map(Source::Ranking)
+            .collect();
+        seeds.resize(1 << rounds, Source::Bye);
         let mut sources: Vec<_> = seeding_order(rounds)
             .into_iter()
             .map(|seed| seeds[seed])

@@ -71,22 +71,11 @@ impl MonsterDyp {
 #[register]
 impl PhaseFormat for MonsterDyp {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
-        if !phase_data.matches().is_empty()
-            || !phase_data.byes().is_empty()
-            || phase_data.rankings().len() < 4
-        {
-            // we generate all rounds at once, so as soon as one match or bye exists nothing is to
-            // be done
+        // all rounds are scheduled at once
+        if phase_data.has_schedule() || phase_data.rankings().len() < 4 {
             return Schedule::default();
         }
-        // sorted, because the iteration order of the rankings is not the same for every phase
-        // with the same seeding
-        let ranking_ids = phase_data
-            .rankings()
-            .values()
-            .sorted_by_key(|r| r.initial_unique_rank())
-            .map(|r| r.id())
-            .collect_vec();
+        let ranking_ids = phase_data.rankings().keys().copied().collect_vec();
         let num_sitting_out = ranking_ids.len() % 4;
         let mut rounds_sat_out = vec![0_u32; ranking_ids.len()];
         let mut order = (0..ranking_ids.len()).collect_vec();

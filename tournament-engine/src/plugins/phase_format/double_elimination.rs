@@ -334,7 +334,6 @@ mod tests {
             .data()
             .rankings()
             .values()
-            .sorted_by_key(|ranking| ranking.initial_unique_rank())
             .map(|ranking| {
                 let eliminated = ranking.metric::<RoundOfElimination>().unwrap().0;
                 (ranking.rank().get(), eliminated.map(NonZeroU32::get))

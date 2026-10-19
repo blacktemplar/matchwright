@@ -284,6 +284,7 @@ impl IdAble for Phase {
 }
 
 impl PhaseData {
+    /// The rankings of this phase, ordered by their [`Ranking::initial_unique_rank`].
     pub fn rankings(&self) -> &IdMap<Ranking> {
         &self.rankings
     }
@@ -304,6 +305,11 @@ impl PhaseData {
     /// The seed of this phase, derived from the competition seed and the phase id.
     pub fn seed(&self) -> Seed {
         self.seed
+    }
+
+    /// Whether any match or bye has been scheduled in this phase.
+    pub fn has_schedule(&self) -> bool {
+        !self.matches.is_empty() || !self.byes.is_empty()
     }
 
     /// The position of the match in [`PhaseData::matches`], which can be used as a stable match

@@ -26,12 +26,7 @@ impl Circle {
     ///
     /// If `phase_data` has fewer than two rankings.
     pub(super) fn new(phase_data: &PhaseData) -> Self {
-        let ranking_ids = phase_data
-            .rankings()
-            .values()
-            .sorted_by_key(|r| r.initial_unique_rank())
-            .map(|r| r.id())
-            .collect_vec();
+        let ranking_ids = phase_data.rankings().keys().copied().collect_vec();
         assert!(ranking_ids.len() > 1);
         let seats = ranking_ids.len().next_multiple_of(2);
         Self { ranking_ids, seats }
