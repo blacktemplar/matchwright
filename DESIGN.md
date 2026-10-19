@@ -45,8 +45,8 @@ mechanics of an axis come from the `plugin-factory` crate: the trait is declared
 with `#[axis]` and has `plugin_factory::Plugin` as a supertrait, and a plugin
 derives `Plugin` and registers its impl of the axis trait with `#[register]`
 (see [The plugin catalog](#the-plugin-catalog)). On top of that, every axis
-trait of the engine has `DynClone` as a supertrait and a hand-written
-`impl Clone for Box<dyn Trait>`, since `AddPhase::apply` clones the plugins on
+trait of the engine has `DynClone` as a supertrait and implements `Clone` for
+`Box<dyn Trait>` with `dyn_clone::clone_trait_object!`, since `AddPhase::apply` clones the plugins on
 every replay.
 
 **The ranker is not an axis.** A phase is always ranked by a

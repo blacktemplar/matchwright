@@ -43,11 +43,7 @@ pub trait PhaseFormat: Plugin + DynClone {
     }
 }
 
-impl Clone for Box<dyn PhaseFormat> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
+dyn_clone::clone_trait_object!(PhaseFormat);
 
 /// What a [`PhaseFormat`] schedules at once, see [`PhaseFormat::create_new_matches`].
 #[derive(Debug, Default)]

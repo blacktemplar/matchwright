@@ -17,11 +17,7 @@ use crate::map::{IdAble, IdMap};
 #[typetag::serde(tag = "type", content = "value")]
 pub trait TypeMapValue: Any + Debug + DynClone {}
 
-impl Clone for Box<dyn TypeMapValue> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
+dyn_clone::clone_trait_object!(TypeMapValue);
 
 /// Downcasts `value` to `&T` without checking that its concrete type really is `T`.
 ///

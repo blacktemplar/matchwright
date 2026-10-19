@@ -99,8 +99,4 @@ pub trait MetricsCalculator: Plugin + DynClone {
     ) -> Vec<(RankingId, Metric)>;
 }
 
-impl Clone for Box<dyn MetricsCalculator> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
+dyn_clone::clone_trait_object!(MetricsCalculator);

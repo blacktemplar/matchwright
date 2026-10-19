@@ -76,11 +76,7 @@ pub trait SliceRanker: Plugin + DynClone {
     fn update_ranks(&mut self, phase_data: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]);
 }
 
-impl Clone for Box<dyn SliceRanker> {
-    fn clone(&self) -> Self {
-        dyn_clone::clone_box(&**self)
-    }
-}
+dyn_clone::clone_trait_object!(SliceRanker);
 
 /// A [`SliceRanker`] sorting by a single metric.
 ///
