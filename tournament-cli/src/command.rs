@@ -8,8 +8,11 @@ use std::{
 use clap::{Parser, Subcommand, ValueEnum};
 use thiserror::Error;
 use tournament_engine::plugins::phase_format::{
-    PhaseFormat, double_elimination::DoubleElimination, monster_dyp::MonsterDyp,
-    random_rounds::RandomRounds, round_robin::RoundRobin, single_elimination::SingleElimination,
+    PhaseFormat,
+    double_elimination::DoubleElimination,
+    monster_dyp::MonsterDyp,
+    round_robin::{RoundRobin, random_rounds::RandomRounds},
+    single_elimination::SingleElimination,
 };
 
 /// A single command typed at the prompt.

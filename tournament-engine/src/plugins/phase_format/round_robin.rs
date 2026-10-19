@@ -1,12 +1,10 @@
 use std::num::NonZeroU32;
 
-use itertools::Itertools;
 use plugin_factory::{Plugin, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
-use vec1::vec1;
 
 use crate::{
-    entities::competition::{Bye, Match, PhaseData},
+    entities::competition::PhaseData,
     plugins::{
         metrics_calculator::{
             buchholz::{MoreSonnebornBerger, SonnebornBergerCalculator},
@@ -16,6 +14,11 @@ use crate::{
         phase_format::{PhaseFormat, Schedule},
     },
 };
+
+mod circle;
+pub mod random_rounds;
+
+use circle::Circle;
 
 /// Everyone plays everyone once. With an odd number of rankings, every ranking has a bye in one of
 /// the rounds.
@@ -46,55 +49,17 @@ impl RoundRobin {
 #[register]
 impl PhaseFormat for RoundRobin {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
-        // we use the circle method to generate rounds, see
-        // https://en.wikipedia.org/wiki/Round-robin_tournament#Circle_method
         if !phase_data.matches().is_empty() || !phase_data.byes().is_empty() {
             // we generate all rounds at once, so as soon as one match or bye exists nothing is to
             // be done
             return Schedule::default();
         }
-        let num_teams = phase_data.rankings().len();
-        let num_teams_is_odd = num_teams % 2 == 1;
-        // We always fix the last element, but if we have an odd number of players the last element
-        // is the by which is not part of the ranking_ids_by_initial_unique_rank vec.
-        let num_teams_with_bye = if num_teams_is_odd {
-            num_teams + 1
-        } else {
-            num_teams
-        };
-        assert!(num_teams_with_bye > 1);
-        let mut ranking_ids = phase_data
-            .rankings()
-            .values()
-            .sorted_by_key(|r| r.initial_unique_rank())
-            .map(|r| r.id())
-            .collect_vec();
-        let first_playing_index = if num_teams_is_odd { 1 } else { 0 };
-        let mut matches = Vec::with_capacity(num_teams * (num_teams - 1) / 2);
-        let mut byes = Vec::new();
-        for round in
-            NonZeroU32::new(1).unwrap()..NonZeroU32::new(num_teams_with_bye as u32).unwrap()
-        {
-            if round != NonZeroU32::new(1).unwrap() {
-                // We rotate everything except the last element. Note that if num teams is odd
-                // the last element is the bye which is not part of the vector, so in this case
-                // we rotate the whole vector.
-                ranking_ids[..(num_teams_with_bye - 1)].rotate_right(1);
-            }
-
-            // now index 0 plays against index num_players_with_bye - 1 (if existing), index 1
-            // against num_players_with_bye - 2, and in general index `i` against
-            // `num_players_with_bye - i - 1`
-            if num_teams_is_odd {
-                byes.push(Bye::new(ranking_ids[0], round));
-            }
-            matches.extend((first_playing_index..(num_teams_with_bye / 2)).map(|i| {
-                let team_a = vec1![ranking_ids[i]];
-                let team_b = vec1![ranking_ids[num_teams_with_bye - i - 1]];
-                Match::new(team_a, team_b, round)
-            }));
+        let circle = Circle::new(phase_data);
+        let mut schedule = Schedule::default();
+        for (rotation, round) in (0..circle.rotations()).zip(NonZeroU32::MIN..) {
+            circle.schedule_round(rotation, round, &mut schedule);
         }
-        Schedule { matches, byes }
+        schedule
     }
 }
 
@@ -102,8 +67,10 @@ impl PhaseFormat for RoundRobin {
 mod tests {
     use std::num::NonZero;
 
+    use itertools::Itertools;
+
     use super::*;
-    use crate::entities::competition::{Phase, PhaseBuilder};
+    use crate::entities::competition::{Bye, Match, Phase, PhaseBuilder};
 
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.

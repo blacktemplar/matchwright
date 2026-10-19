@@ -240,7 +240,9 @@ pub fn fill<T: Configurable>(
 /// ```
 /// use plugin_factory::{catalog::AnyAxis, config::PluginConfig};
 /// use tournament_cli::questionnaire;
-/// use tournament_engine::plugins::phase_format::{PhaseFormat, random_rounds::RandomRounds};
+/// use tournament_engine::plugins::phase_format::{
+///     PhaseFormat, round_robin::random_rounds::RandomRounds,
+/// };
 ///
 /// let answer = PluginConfig::of::<RandomRounds>().with("rounds", 5).into();
 ///

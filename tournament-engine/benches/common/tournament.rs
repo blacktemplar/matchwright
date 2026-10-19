@@ -22,7 +22,7 @@ use tournament_engine::{
             round_of_first_loss::RoundOfFirstLossCalculator,
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
-        phase_format::random_rounds::RandomRounds,
+        phase_format::round_robin::random_rounds::RandomRounds,
     },
     transitions::{
         add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
