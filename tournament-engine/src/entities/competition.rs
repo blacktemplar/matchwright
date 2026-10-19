@@ -622,6 +622,22 @@ pub enum MatchResult {
     NotFinished,
 }
 
+impl MatchResult {
+    /// The team that won, or `None` for a draw or a match that is not finished.
+    pub fn winner(self) -> Option<Team> {
+        match self {
+            MatchResult::AWins => Some(Team::A),
+            MatchResult::BWins => Some(Team::B),
+            MatchResult::Draw | MatchResult::NotFinished => None,
+        }
+    }
+
+    /// The team that lost, or `None` for a draw or a match that is not finished.
+    pub fn loser(self) -> Option<Team> {
+        self.winner().map(Team::opponent)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RankingId(Uuid);
 
@@ -776,12 +792,10 @@ impl Match {
     }
 
     pub fn non_losing_rankings(&self) -> impl Iterator<Item = &RankingId> {
-        match self.result {
-            MatchResult::AWins => Either::Left(self.team_a.iter()),
-            MatchResult::BWins => Either::Left(self.team_b.iter()),
-            MatchResult::Draw => Either::Right(self.rankings()),
-            // technically no team is losing yet if result is not finished
-            MatchResult::NotFinished => Either::Right(self.rankings()),
+        // technically no team is losing yet if result is not finished
+        match self.result.winner() {
+            Some(winner) => Either::Left(self.rankings_of(winner).iter()),
+            None => Either::Right(self.rankings()),
         }
     }
 

@@ -89,12 +89,11 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         assert_eq!(old_match_result, MatchResult::NotFinished);
 
         assert!(r#match.is_finished());
-        let losing_ranking_ids = match r#match.result() {
-            MatchResult::AWins => r#match.team_b(),
-            MatchResult::BWins => r#match.team_a(),
-            _ => return vec![], // nothing to update
+        let Some(loser) = r#match.result().loser() else {
+            return vec![]; // nothing to update
         };
-        losing_ranking_ids
+        r#match
+            .rankings_of(loser)
             .iter()
             .map(|r_id| {
                 let old_value = phase_data.rankings()[r_id]

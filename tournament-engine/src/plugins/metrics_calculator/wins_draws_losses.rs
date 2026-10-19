@@ -4,7 +4,9 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
+    entities::competition::{
+        Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
+    },
     map::Map,
     plugins::{
         facts::CalculatesMetric,
@@ -178,39 +180,25 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         assert_eq!(old_match_result, MatchResult::NotFinished);
 
         assert!(r#match.is_finished());
-        let (winning_team, losing_team) = match r#match.result() {
-            MatchResult::AWins => (r#match.team_a(), r#match.team_b()),
-            MatchResult::BWins => (r#match.team_b(), r#match.team_a()),
-            MatchResult::Draw => {
-                return r#match
-                    .rankings()
-                    .map(|r_id| {
-                        let mut metric = *phase_data.rankings()[r_id]
-                            .metric::<WinsDrawsLosses>()
-                            .unwrap();
-                        metric.draws += 1;
-                        (*r_id, Box::new(metric) as Metric)
-                    })
-                    .collect();
-            }
-            _ => unreachable!("We expect the match to be finished above"),
-        };
-        winning_team
-            .iter()
-            .map(|r_id| {
-                let mut metric = *phase_data.rankings()[r_id]
-                    .metric::<WinsDrawsLosses>()
-                    .unwrap();
-                metric.wins += 1;
-                (*r_id, Box::new(metric) as Metric)
+        [Team::A, Team::B]
+            .into_iter()
+            .flat_map(|team| {
+                let result = r#match.result_of_team(team);
+                r#match.rankings_of(team).iter().map(move |r_id| {
+                    let mut metric = *phase_data.rankings()[r_id]
+                        .metric::<WinsDrawsLosses>()
+                        .unwrap();
+                    match result {
+                        ResultOfTeam::Win => metric.wins += 1,
+                        ResultOfTeam::Draw => metric.draws += 1,
+                        ResultOfTeam::Loss => metric.losses += 1,
+                        ResultOfTeam::NotFinished => {
+                            unreachable!("We expect the match to be finished above")
+                        }
+                    }
+                    (*r_id, Box::new(metric) as Metric)
+                })
             })
-            .chain(losing_team.iter().map(|r_id| {
-                let mut metric = *phase_data.rankings()[r_id]
-                    .metric::<WinsDrawsLosses>()
-                    .unwrap();
-                metric.losses += 1;
-                (*r_id, Box::new(metric) as Metric)
-            }))
             .collect()
     }
 

@@ -111,10 +111,8 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
         let Some(eliminates) = r#match.annotation::<Eliminates>() else {
             return vec![];
         };
-        let loser = match r#match.result() {
-            MatchResult::AWins => Team::B,
-            MatchResult::BWins => Team::A,
-            MatchResult::Draw | MatchResult::NotFinished => return vec![],
+        let Some(loser) = r#match.result().loser() else {
+            return vec![];
         };
         if matches!(eliminates, Eliminates::Only(team) if *team != loser) {
             return vec![];

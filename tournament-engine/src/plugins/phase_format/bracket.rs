@@ -187,11 +187,9 @@ impl Bracket {
                             self.in_play.push(id);
                             continue;
                         }
-                        Some(MatchResult::AWins) => Team::A,
-                        Some(MatchResult::BWins) => Team::B,
-                        Some(MatchResult::Draw) => {
-                            unreachable!("draws are rejected since knockouts do not allow them")
-                        }
+                        Some(result) => result
+                            .winner()
+                            .expect("draws are rejected since knockouts do not allow them"),
                     }
                 }
                 (Seat::Ranking(a), Seat::Bye) => {
