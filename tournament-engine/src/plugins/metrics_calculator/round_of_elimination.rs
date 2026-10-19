@@ -10,7 +10,7 @@ use crate::{
     plugins::{
         facts::{CalculatesMetric, MatchAnnotation},
         metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -38,18 +38,6 @@ pub struct RoundOfElimination(pub Option<NonZeroU32>);
 #[typetag::serde]
 impl TypeMapValue for RoundOfElimination {}
 
-// Higher values are better, None is best.
-impl Compare for RoundOfElimination {
-    fn compare(&self, other: &Self) -> Comparison {
-        match (self.0, other.0) {
-            (None, None) => Comparison::Equal,
-            (None, Some(_)) => Comparison::Better,
-            (Some(_), None) => Comparison::Worse,
-            (Some(x), Some(y)) => Comparison::greater_is_better(x.cmp(&y)),
-        }
-    }
-}
-
 /// Ranks by [`RoundOfElimination`]: the later a ranking was knocked out the better, still being in
 /// is best.
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
@@ -65,7 +53,7 @@ impl RankingCriterion for LaterElimination {
     type Metric = RoundOfElimination;
 
     fn compare(&self, first: &RoundOfElimination, second: &RoundOfElimination) -> Comparison {
-        first.compare(second)
+        Comparison::none_or_greater_is_better(first.0, second.0)
     }
 }
 
@@ -305,19 +293,12 @@ mod tests {
 
     #[test]
     fn a_later_elimination_is_better_and_still_being_in_is_best() {
-        assert_eq!(STILL_IN.compare(&out_in(3)), Comparison::Better);
-        assert_eq!(out_in(3).compare(&STILL_IN), Comparison::Worse);
-        assert_eq!(out_in(3).compare(&out_in(2)), Comparison::Better);
-        assert_eq!(out_in(2).compare(&out_in(3)), Comparison::Worse);
-        assert_eq!(out_in(2).compare(&out_in(2)), Comparison::Equal);
-        assert_eq!(STILL_IN.compare(&STILL_IN), Comparison::Equal);
-    }
-
-    #[test]
-    fn the_criterion_ranks_by_the_round_of_elimination() {
-        assert_eq!(
-            LaterElimination.compare(&STILL_IN, &out_in(1)),
-            Comparison::Better
-        );
+        let compare = |first, second| LaterElimination.compare(&first, &second);
+        assert_eq!(compare(STILL_IN, out_in(3)), Comparison::Better);
+        assert_eq!(compare(out_in(3), STILL_IN), Comparison::Worse);
+        assert_eq!(compare(out_in(3), out_in(2)), Comparison::Better);
+        assert_eq!(compare(out_in(2), out_in(3)), Comparison::Worse);
+        assert_eq!(compare(out_in(2), out_in(2)), Comparison::Equal);
+        assert_eq!(compare(STILL_IN, STILL_IN), Comparison::Equal);
     }
 }

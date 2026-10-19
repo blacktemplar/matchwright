@@ -85,9 +85,8 @@ impl Clone for Box<dyn SliceRanker> {
 /// A [`SliceRanker`] sorting by a single metric.
 ///
 /// A criterion requires its [`Metric`](Self::Metric) by declaring [`requires_metric`] as its static
-/// declaration, so its [`SliceRanker`] impl only has to call [`rank_by`]. A criterion that compares
-/// its metric in an order other than the metric's own [`Compare`] impl should say in its name
-/// which way round it sorts.
+/// declaration, so its [`SliceRanker`] impl only has to call [`rank_by`]. A criterion should say in
+/// its name which way round it sorts, e.g. "more points".
 ///
 /// # Examples
 /// ```
@@ -207,16 +206,17 @@ impl Comparison {
             Ordering::Equal => Comparison::Equal,
         }
     }
-}
 
-/// The one order a metric is naturally compared in, which a [`RankingCriterion`] over that metric
-/// can sort by without naming a direction of its own.
-///
-/// Only implement this for a metric with a single obvious better end — more points, a later first
-/// loss. Leave it out for one that counts several things, or that different phases want sorted
-/// different ways round, so that every criterion over it has to state its direction.
-pub trait Compare {
-    fn compare(&self, other: &Self) -> Comparison;
+    /// Compares two optional values where `None` is better than any value, and of two values the
+    /// greater one is better, e.g. for a round that is `None` while it has not happened yet.
+    pub fn none_or_greater_is_better<T: Ord>(first: Option<T>, second: Option<T>) -> Self {
+        Self::greater_is_better(
+            first
+                .is_none()
+                .cmp(&second.is_none())
+                .then_with(|| first.cmp(&second)),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -271,6 +271,17 @@ mod tests {
                 (rankings[2].id(), 7),
             ]
         );
+    }
+
+    #[test]
+    fn none_is_better_than_any_value_and_the_greater_value_is_better() {
+        let compare = Comparison::none_or_greater_is_better;
+        assert_eq!(compare(None, Some(3)), Comparison::Better);
+        assert_eq!(compare(Some(3), None), Comparison::Worse);
+        assert_eq!(compare(Some(3), Some(2)), Comparison::Better);
+        assert_eq!(compare(Some(2), Some(3)), Comparison::Worse);
+        assert_eq!(compare(Some(2), Some(2)), Comparison::Equal);
+        assert_eq!(compare(None::<u32>, None), Comparison::Equal);
     }
 
     #[test]

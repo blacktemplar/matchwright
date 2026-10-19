@@ -8,7 +8,7 @@ use crate::{
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -18,18 +18,6 @@ pub struct RoundOfFirstLoss(pub Option<NonZeroU32>);
 
 #[typetag::serde]
 impl TypeMapValue for RoundOfFirstLoss {}
-
-// Higher values are better, None is best.
-impl Compare for RoundOfFirstLoss {
-    fn compare(&self, other: &Self) -> Comparison {
-        match (self.0, other.0) {
-            (None, None) => Comparison::Equal,
-            (None, Some(_)) => Comparison::Better,
-            (Some(_), None) => Comparison::Worse,
-            (Some(x), Some(y)) => Comparison::greater_is_better(x.cmp(&y)),
-        }
-    }
-}
 
 /// Ranks by the [`RoundOfFirstLoss`]: the later the better, never having lost is best.
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
@@ -45,7 +33,7 @@ impl RankingCriterion for LaterFirstLoss {
     type Metric = RoundOfFirstLoss;
 
     fn compare(&self, first: &RoundOfFirstLoss, second: &RoundOfFirstLoss) -> Comparison {
-        first.compare(second)
+        Comparison::none_or_greater_is_better(first.0, second.0)
     }
 }
 
@@ -237,19 +225,12 @@ mod tests {
 
     #[test]
     fn a_later_first_loss_is_better_and_never_having_lost_is_best() {
-        assert_eq!(UNBEATEN.compare(&lost_in(3)), Comparison::Better);
-        assert_eq!(lost_in(3).compare(&UNBEATEN), Comparison::Worse);
-        assert_eq!(lost_in(3).compare(&lost_in(2)), Comparison::Better);
-        assert_eq!(lost_in(2).compare(&lost_in(3)), Comparison::Worse);
-        assert_eq!(lost_in(2).compare(&lost_in(2)), Comparison::Equal);
-        assert_eq!(UNBEATEN.compare(&UNBEATEN), Comparison::Equal);
-    }
-
-    #[test]
-    fn the_criterion_ranks_by_the_round_of_the_first_loss() {
-        assert_eq!(
-            LaterFirstLoss.compare(&UNBEATEN, &lost_in(1)),
-            Comparison::Better
-        );
+        let compare = |first, second| LaterFirstLoss.compare(&first, &second);
+        assert_eq!(compare(UNBEATEN, lost_in(3)), Comparison::Better);
+        assert_eq!(compare(lost_in(3), UNBEATEN), Comparison::Worse);
+        assert_eq!(compare(lost_in(3), lost_in(2)), Comparison::Better);
+        assert_eq!(compare(lost_in(2), lost_in(3)), Comparison::Worse);
+        assert_eq!(compare(lost_in(2), lost_in(2)), Comparison::Equal);
+        assert_eq!(compare(UNBEATEN, UNBEATEN), Comparison::Equal);
     }
 }

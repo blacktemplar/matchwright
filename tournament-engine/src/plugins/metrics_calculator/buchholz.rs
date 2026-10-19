@@ -12,7 +12,7 @@ use crate::{
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -22,13 +22,6 @@ pub struct Buchholz(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for Buchholz {}
-
-// Higher values are better
-impl Compare for Buchholz {
-    fn compare(&self, other: &Self) -> Comparison {
-        Comparison::greater_is_better(self.0.total_cmp(&other.0))
-    }
-}
 
 impl AsRef<f32> for Buchholz {
     fn as_ref(&self) -> &f32 {
@@ -55,7 +48,7 @@ impl RankingCriterion for MoreBuchholz {
     type Metric = Buchholz;
 
     fn compare(&self, first: &Buchholz, second: &Buchholz) -> Comparison {
-        first.compare(second)
+        Comparison::greater_is_better(first.0.total_cmp(&second.0))
     }
 }
 
@@ -123,13 +116,6 @@ pub struct BuchholzOfBuchholz(pub f32);
 #[typetag::serde]
 impl TypeMapValue for BuchholzOfBuchholz {}
 
-// Higher values are better
-impl Compare for BuchholzOfBuchholz {
-    fn compare(&self, other: &Self) -> Comparison {
-        Comparison::greater_is_better(self.0.total_cmp(&other.0))
-    }
-}
-
 impl AsRef<f32> for BuchholzOfBuchholz {
     fn as_ref(&self) -> &f32 {
         &self.0
@@ -155,7 +141,7 @@ impl RankingCriterion for MoreBuchholzOfBuchholz {
     type Metric = BuchholzOfBuchholz;
 
     fn compare(&self, first: &BuchholzOfBuchholz, second: &BuchholzOfBuchholz) -> Comparison {
-        first.compare(second)
+        Comparison::greater_is_better(first.0.total_cmp(&second.0))
     }
 }
 
@@ -228,13 +214,6 @@ pub struct SonnebornBerger(pub f32);
 #[typetag::serde]
 impl TypeMapValue for SonnebornBerger {}
 
-// Higher values are better
-impl Compare for SonnebornBerger {
-    fn compare(&self, other: &Self) -> Comparison {
-        Comparison::greater_is_better(self.0.total_cmp(&other.0))
-    }
-}
-
 impl AsRef<f32> for SonnebornBerger {
     fn as_ref(&self) -> &f32 {
         &self.0
@@ -260,7 +239,7 @@ impl RankingCriterion for MoreSonnebornBerger {
     type Metric = SonnebornBerger;
 
     fn compare(&self, first: &SonnebornBerger, second: &SonnebornBerger) -> Comparison {
-        first.compare(second)
+        Comparison::greater_is_better(first.0.total_cmp(&second.0))
     }
 }
 
@@ -726,10 +705,11 @@ mod tests {
 
     #[test]
     fn a_higher_buchholz_is_better() {
-        assert_eq!(Buchholz(7.0).compare(&Buchholz(3.0)), Comparison::Better);
-        assert_eq!(Buchholz(3.0).compare(&Buchholz(7.0)), Comparison::Worse);
-        assert_eq!(Buchholz(0.5).compare(&Buchholz(0.0)), Comparison::Better);
-        assert_eq!(Buchholz(3.0).compare(&Buchholz(3.0)), Comparison::Equal);
+        let compare = |first, second| MoreBuchholz.compare(&Buchholz(first), &Buchholz(second));
+        assert_eq!(compare(7.0, 3.0), Comparison::Better);
+        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
+        assert_eq!(compare(0.5, 0.0), Comparison::Better);
+        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
     }
 
     #[test]
@@ -883,22 +863,13 @@ mod tests {
 
     #[test]
     fn a_higher_buchholz_of_buchholz_is_better() {
-        assert_eq!(
-            BuchholzOfBuchholz(7.0).compare(&BuchholzOfBuchholz(3.0)),
-            Comparison::Better
-        );
-        assert_eq!(
-            BuchholzOfBuchholz(3.0).compare(&BuchholzOfBuchholz(7.0)),
-            Comparison::Worse
-        );
-        assert_eq!(
-            BuchholzOfBuchholz(0.5).compare(&BuchholzOfBuchholz(0.0)),
-            Comparison::Better
-        );
-        assert_eq!(
-            BuchholzOfBuchholz(3.0).compare(&BuchholzOfBuchholz(3.0)),
-            Comparison::Equal
-        );
+        let compare = |first, second| {
+            MoreBuchholzOfBuchholz.compare(&BuchholzOfBuchholz(first), &BuchholzOfBuchholz(second))
+        };
+        assert_eq!(compare(7.0, 3.0), Comparison::Better);
+        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
+        assert_eq!(compare(0.5, 0.0), Comparison::Better);
+        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
     }
 
     #[test]
@@ -1226,21 +1197,12 @@ mod tests {
 
     #[test]
     fn a_higher_sonneborn_berger_is_better() {
-        assert_eq!(
-            SonnebornBerger(7.0).compare(&SonnebornBerger(3.0)),
-            Comparison::Better
-        );
-        assert_eq!(
-            SonnebornBerger(3.0).compare(&SonnebornBerger(7.0)),
-            Comparison::Worse
-        );
-        assert_eq!(
-            SonnebornBerger(0.5).compare(&SonnebornBerger(0.0)),
-            Comparison::Better
-        );
-        assert_eq!(
-            SonnebornBerger(3.0).compare(&SonnebornBerger(3.0)),
-            Comparison::Equal
-        );
+        let compare = |first, second| {
+            MoreSonnebornBerger.compare(&SonnebornBerger(first), &SonnebornBerger(second))
+        };
+        assert_eq!(compare(7.0, 3.0), Comparison::Better);
+        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
+        assert_eq!(compare(0.5, 0.0), Comparison::Better);
+        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
-        ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -19,13 +19,6 @@ pub struct Points(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for Points {}
-
-// Higher values are better
-impl Compare for Points {
-    fn compare(&self, other: &Self) -> Comparison {
-        Comparison::greater_is_better(self.0.total_cmp(&other.0))
-    }
-}
 
 impl AsRef<f32> for Points {
     fn as_ref(&self) -> &f32 {
@@ -46,7 +39,7 @@ impl RankingCriterion for MorePoints {
     type Metric = Points;
 
     fn compare(&self, first: &Points, second: &Points) -> Comparison {
-        first.compare(second)
+        Comparison::greater_is_better(first.0.total_cmp(&second.0))
     }
 }
 
@@ -377,9 +370,10 @@ mod tests {
 
     #[test]
     fn more_points_are_better() {
-        assert_eq!(Points(3.0).compare(&Points(1.0)), Comparison::Better);
-        assert_eq!(Points(1.0).compare(&Points(3.0)), Comparison::Worse);
-        assert_eq!(Points(1.5).compare(&Points(1.0)), Comparison::Better);
-        assert_eq!(Points(1.5).compare(&Points(1.5)), Comparison::Equal);
+        let compare = |first, second| MorePoints.compare(&Points(first), &Points(second));
+        assert_eq!(compare(3.0, 1.0), Comparison::Better);
+        assert_eq!(compare(1.0, 3.0), Comparison::Worse);
+        assert_eq!(compare(1.5, 1.0), Comparison::Better);
+        assert_eq!(compare(1.5, 1.5), Comparison::Equal);
     }
 }

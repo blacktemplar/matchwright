@@ -19,8 +19,7 @@ use crate::{
 ///
 /// Each of the first three counts orders a ranking on its own, as does the number of matches they
 /// add up to, see [`MoreWins`], [`MoreDraws`], [`FewerLosses`] and [`FewerMatchesPlayed`]. A bye is
-/// not a match, so it counts as none of them. The struct as a whole has no order and so does not
-/// implement [`Compare`](crate::plugins::ranker::Compare).
+/// not a match, so it counts as none of them.
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct WinsDrawsLosses {
     pub wins: u32,
