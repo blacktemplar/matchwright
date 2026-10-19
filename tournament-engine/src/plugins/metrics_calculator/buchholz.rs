@@ -1,9 +1,12 @@
-use std::{fmt::Debug, num::NonZeroU32};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    num::NonZeroU32,
+};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::{Metric, OldMetrics};
+use super::{Metric, MetricColumn, OldMetrics};
 use crate::{
     entities::competition::{
         Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
@@ -22,6 +25,12 @@ pub struct Buchholz(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for Buchholz {}
+
+impl Display for Buchholz {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 impl AsRef<f32> for Buchholz {
     fn as_ref(&self) -> &f32 {
@@ -108,6 +117,10 @@ impl MetricsCalculator for BuchholzCalculator {
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, Buchholz>(phase_data, None, old_metrics, |_| 1.)
     }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<Buchholz>("Buchholz"))
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -115,6 +128,12 @@ pub struct BuchholzOfBuchholz(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for BuchholzOfBuchholz {}
+
+impl Display for BuchholzOfBuchholz {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 impl AsRef<f32> for BuchholzOfBuchholz {
     fn as_ref(&self) -> &f32 {
@@ -206,6 +225,12 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
             |_| 1.,
         )
     }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<BuchholzOfBuchholz>(
+            "Buchholz of Buchholz",
+        ))
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
@@ -213,6 +238,12 @@ pub struct SonnebornBerger(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for SonnebornBerger {}
+
+impl Display for SonnebornBerger {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 impl AsRef<f32> for SonnebornBerger {
     fn as_ref(&self) -> &f32 {
@@ -337,6 +368,10 @@ impl MetricsCalculator for SonnebornBergerCalculator {
             |result| self.weight(result),
         )
     }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<SonnebornBerger>("Sonneborn-Berger"))
+    }
 }
 
 /// The updates of the metric `B`, which sums the metric `M` of all opponents of a ranking, each
@@ -415,7 +450,7 @@ mod tests {
         plugins::metrics_calculator::{
             matches::MatchesCalculator,
             points::PointsCalculator,
-            test_utils::{self, MatchSpec, match_id},
+            test_utils::{self, MatchSpec, SCENARIO, match_id, play_scenario, scenario_matches},
             wins_draws_losses::WinsDrawsLossesCalculator,
         },
     };
@@ -510,36 +545,9 @@ mod tests {
         test_utils::metric_of(phase, ranking_index)
     }
 
-    /// The schedule of [`play_scenario`], as (round, team a, team b, result).
-    const SCENARIO: [(u32, &[usize], &[usize], MatchResult); 5] = [
-        (1, &[0], &[1], MatchResult::AWins),
-        (1, &[2], &[3], MatchResult::Draw),
-        (2, &[0], &[2], MatchResult::BWins),
-        (2, &[1], &[3], MatchResult::AWins),
-        (3, &[1], &[2], MatchResult::BWins),
-    ];
-
-    /// The matches of [`SCENARIO`], as the schedule of a phase playing it.
-    fn scenario_matches() -> Vec<MatchSpec> {
-        SCENARIO
-            .iter()
-            .map(|(round, team_a, team_b, _)| (*round, team_a.to_vec(), team_b.to_vec()))
-            .collect()
-    }
-
-    /// Plays [`SCENARIO`] in `phase`, which has to be a phase of four players scheduled with
-    /// [`scenario_matches`], reporting its matches in the given order. That leaves them with the
-    /// following points: `0`: 3, `1`: 3, `2`: 7, `3`: 1.
-    fn play_scenario(mut phase: Phase, report_order: impl Iterator<Item = usize>) -> Phase {
-        for index in report_order {
-            let (round, team_a, team_b, result) = SCENARIO[index];
-            let match_id = match_id(&phase, round, team_a, team_b);
-            phase.report_match_result(match_id, result);
-        }
-        phase
-    }
-
-    /// Plays [`SCENARIO`] in a phase calculating the buchholz, see [`play_scenario`].
+    /// Plays [`SCENARIO`] in a phase calculating the buchholz, see [`play_scenario`]. Scored with
+    /// [`THREE_ONE`], it leaves the players with the following points: `0`: 3, `1`: 3, `2`: 7,
+    /// `3`: 1.
     fn scenario(report_order: impl Iterator<Item = usize>) -> Phase {
         play_scenario(phase_with(4, scenario_matches()), report_order)
     }

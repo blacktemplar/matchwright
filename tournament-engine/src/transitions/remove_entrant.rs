@@ -3,18 +3,18 @@ use thiserror::Error;
 use undoable_state_machine::Transition;
 
 use crate::{
-    entities::competition::{Competition, Entrant},
+    entities::competition::{Competition, EntrantId},
     transitions::{CompetitionTransition, ensure_not_started},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemoveEntrant {
-    entrant: Entrant,
+    entrant_id: EntrantId,
 }
 
 impl RemoveEntrant {
-    pub fn new(entrant: Entrant) -> Self {
-        Self { entrant }
+    pub fn new(entrant_id: EntrantId) -> Self {
+        Self { entrant_id }
     }
 }
 
@@ -33,7 +33,7 @@ impl Transition<Competition> for RemoveEntrant {
     ) -> Result<(), undoable_state_machine::TransitionError> {
         ensure_not_started(competition)?;
 
-        if competition.entrants().contains_key(&self.entrant.id()) {
+        if competition.entrants().contains_key(&self.entrant_id) {
             Ok(())
         } else {
             Err(Box::new(RemoveEntrantError::EntrantIsNotAttending))
@@ -44,7 +44,7 @@ impl Transition<Competition> for RemoveEntrant {
         &self,
         competition: &mut Competition,
     ) -> Result<(), undoable_state_machine::TransitionError> {
-        competition.remove_entrant(&self.entrant);
+        competition.remove_entrant(&self.entrant_id);
         Ok(())
     }
 }

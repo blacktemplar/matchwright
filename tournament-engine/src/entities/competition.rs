@@ -85,8 +85,8 @@ impl Competition {
         self.entrants.insert(entrant);
     }
 
-    pub(crate) fn remove_entrant(&mut self, entrant: &Entrant) {
-        self.entrants.remove(&entrant.id());
+    pub(crate) fn remove_entrant(&mut self, entrant_id: &EntrantId) {
+        self.entrants.remove(entrant_id);
     }
 
     pub(crate) fn set_seed(&mut self, seed: Seed) {
@@ -125,7 +125,7 @@ impl Competition {
         &mut self.phases
     }
 
-    pub fn phase(&mut self, phase_id: &PhaseId) -> Option<&Phase> {
+    pub fn phase(&self, phase_id: &PhaseId) -> Option<&Phase> {
         self.phases.get(phase_id)
     }
 
@@ -352,6 +352,11 @@ impl Phase {
     /// The rankings, matches and seed of this phase, i.e. everything but its plugins.
     pub fn data(&self) -> &PhaseData {
         &self.data
+    }
+
+    /// The calculators of this phase's metrics, in the order they run in.
+    pub fn metrics_calculators(&self) -> &[Box<dyn MetricsCalculator>] {
+        &self.metrics_calculators
     }
 
     pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {

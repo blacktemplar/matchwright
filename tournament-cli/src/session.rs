@@ -21,17 +21,11 @@ use thiserror::Error;
 use tournament_engine::{
     entities::competition::{
         Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData,
-        PhaseId, Ranking, RankingId, Seed,
+        PhaseId, RankingId, Seed,
     },
     plugins::{
         PhasePlugins,
-        metrics_calculator::{
-            buchholz::{Buchholz, BuchholzOfBuchholz, SonnebornBerger},
-            points::Points,
-            round_of_elimination::RoundOfElimination,
-            round_of_first_loss::RoundOfFirstLoss,
-            wins_draws_losses::WinsDrawsLosses,
-        },
+        metrics_calculator::MetricColumn,
         phase_format::{
             PhaseFormat, double_elimination::DoubleEliminationRound,
             single_elimination::KnockoutRound,
@@ -271,11 +265,12 @@ impl Session {
     }
 
     fn remove_entrant(&mut self, name: &str) -> Result<String, Error> {
-        let entrant = self
+        let entrant_id = self
             .entrant_named(name)
             .ok_or_else(|| Error::UnknownEntrant(name.to_owned()))?
-            .clone();
-        self.machine.apply_transition(RemoveEntrant::new(entrant))?;
+            .id();
+        self.machine
+            .apply_transition(RemoveEntrant::new(entrant_id))?;
         Ok(format!("{name} removed"))
     }
 
@@ -475,20 +470,21 @@ impl Session {
     }
 
     fn ranking(&self) -> Result<String, Error> {
-        let phase = self.phase()?.data();
+        let phase = self.phase()?;
+        let columns: Vec<_> = phase
+            .metrics_calculators()
+            .iter()
+            .filter_map(|calculator| calculator.column())
+            .collect();
+        let phase = phase.data();
         let rankings: Vec<_> = phase
             .ranking_ids_ordered_by_unique_rank()
             .iter()
             .map(|id| &phase.rankings()[id])
             .collect();
-        // every ranking of a phase has the same metrics, so the first one tells which to show
-        let columns: Vec<_> = METRIC_COLUMNS
-            .iter()
-            .filter(|(_, cell)| cell(rankings[0]).is_some())
-            .collect();
         let header: Vec<_> = ["#", "name"]
             .into_iter()
-            .chain(columns.iter().map(|(header, _)| *header))
+            .chain(columns.iter().map(MetricColumn::header))
             .collect();
         let rows: Vec<_> = rankings
             .iter()
@@ -498,7 +494,12 @@ impl Session {
                     self.team_name(phase, &[ranking.id()]),
                 ]
                 .into_iter()
-                .chain(columns.iter().map(|(_, cell)| cell(ranking).unwrap()))
+                // a column of a metric its calculator does not calculate is left empty
+                .chain(
+                    columns
+                        .iter()
+                        .map(|column| column.cell(ranking).unwrap_or_default()),
+                )
                 .collect()
             })
             .collect();
@@ -643,52 +644,6 @@ fn ordinal_suffix(n: u32) -> &'static str {
         _ => "th",
     }
 }
-
-/// The metrics the ranking can show, each with its column header. Only those a phase calculates
-/// are shown for it.
-type MetricColumn = (&'static str, fn(&Ranking) -> Option<String>);
-
-const METRIC_COLUMNS: &[MetricColumn] = &[
-    ("lost in", |ranking| {
-        ranking.metric::<RoundOfFirstLoss>().map(|lost_in| {
-            lost_in
-                .0
-                .map_or("-".to_owned(), |round| format!("round {round}"))
-        })
-    }),
-    ("out in", |ranking| {
-        ranking.metric::<RoundOfElimination>().map(|out_in| {
-            out_in
-                .0
-                .map_or("-".to_owned(), |round| format!("round {round}"))
-        })
-    }),
-    ("W-D-L", |ranking| {
-        ranking
-            .metric::<WinsDrawsLosses>()
-            .map(|wdl| format!("{}-{}-{}", wdl.wins, wdl.draws, wdl.losses))
-    }),
-    ("points", |ranking| {
-        ranking
-            .metric::<Points>()
-            .map(|points| points.0.to_string())
-    }),
-    ("Buchholz", |ranking| {
-        ranking
-            .metric::<Buchholz>()
-            .map(|value| value.0.to_string())
-    }),
-    ("Sonneborn-Berger", |ranking| {
-        ranking
-            .metric::<SonnebornBerger>()
-            .map(|value| value.0.to_string())
-    }),
-    ("Buchholz of Buchholz", |ranking| {
-        ranking
-            .metric::<BuchholzOfBuchholz>()
-            .map(|value| value.0.to_string())
-    }),
-];
 
 /// Lays `header` and `rows` out as left-aligned columns, with the header underlined.
 fn table(header: &[&str], rows: &[Vec<String>]) -> String {

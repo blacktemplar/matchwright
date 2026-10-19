@@ -84,7 +84,7 @@ fn played_competition() -> CompetitionStateMachine {
         machine.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
     machine
-        .apply_transition(RemoveEntrant::new(Entrant::new(entrant_id(4))))
+        .apply_transition(RemoveEntrant::new(entrant_id(4)))
         .unwrap();
     machine
         .apply_transition(AddPhase::new(

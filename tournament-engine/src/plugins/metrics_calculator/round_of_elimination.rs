@@ -1,4 +1,7 @@
-use std::num::NonZeroU32;
+use std::{
+    fmt::{self, Display, Formatter},
+    num::NonZeroU32,
+};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
@@ -9,7 +12,7 @@ use crate::{
     },
     plugins::{
         facts::{CalculatesMetric, MatchAnnotation},
-        metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
+        metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
@@ -34,6 +37,16 @@ impl TypeMapValue for Eliminates {}
 /// it is still in.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct RoundOfElimination(pub Option<NonZeroU32>);
+
+/// Shows the round as e.g. `round 3`, and `-` while the ranking is still in.
+impl Display for RoundOfElimination {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(round) => write!(f, "round {round}"),
+            None => f.write_str("-"),
+        }
+    }
+}
 
 #[typetag::serde]
 impl TypeMapValue for RoundOfElimination {}
@@ -129,6 +142,10 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         vec![]
+    }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<RoundOfElimination>("out in"))
     }
 }
 

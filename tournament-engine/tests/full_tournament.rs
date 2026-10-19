@@ -105,7 +105,7 @@ fn full_tournament() {
         .unwrap();
     sm.apply_transition(AddEntrant::new(entrant_e.clone()))
         .unwrap();
-    sm.apply_transition(RemoveEntrant::new(entrant_c.clone()))
+    sm.apply_transition(RemoveEntrant::new(entrant_c.id()))
         .unwrap();
     sm.apply_transition(AddPhase::new(
         phase_id,

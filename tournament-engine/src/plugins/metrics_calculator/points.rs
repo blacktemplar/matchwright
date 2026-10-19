@@ -1,9 +1,12 @@
-use std::num::NonZeroU32;
+use std::{
+    fmt::{self, Display, Formatter},
+    num::NonZeroU32,
+};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::{Metric, OldMetrics};
+use super::{Metric, MetricColumn, OldMetrics};
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     plugins::{
@@ -19,6 +22,12 @@ pub struct Points(pub f32);
 
 #[typetag::serde]
 impl TypeMapValue for Points {}
+
+impl Display for Points {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 impl AsRef<f32> for Points {
     fn as_ref(&self) -> &f32 {
@@ -144,6 +153,10 @@ impl MetricsCalculator for PointsCalculator {
         }
         vec![(bye.ranking(), self.points_of(&bye.ranking(), phase_data))]
     }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<Points>("points"))
+    }
 }
 
 #[cfg(test)]
@@ -190,28 +203,12 @@ mod tests {
         test_utils::metric_of(phase, ranking_index)
     }
 
-    /// The schedule of [`play_scenario`], as (round, team a, team b, result).
-    const SCENARIO: [(u32, &[usize], &[usize], MatchResult); 5] = [
-        (1, &[0], &[1], MatchResult::AWins),
-        (1, &[2], &[3], MatchResult::Draw),
-        (2, &[0], &[2], MatchResult::BWins),
-        (2, &[1], &[3], MatchResult::AWins),
-        (3, &[1], &[2], MatchResult::BWins),
-    ];
-
-    /// Plays [`SCENARIO`] between four players, which leaves them with the following
-    /// wins/draws/losses: `0`: 1/0/1, `1`: 1/0/2, `2`: 2/1/0, `3`: 0/1/1.
+    /// Plays all of [`SCENARIO`](test_utils::SCENARIO), scoring with `calculator`.
     fn play_scenario(calculator: PointsCalculator) -> Phase {
-        let matches = SCENARIO
-            .iter()
-            .map(|(round, team_a, team_b, _)| (*round, team_a.to_vec(), team_b.to_vec()))
-            .collect();
-        let mut phase = phase_with(4, matches, calculator);
-        for (round, team_a, team_b, result) in SCENARIO {
-            let match_id = match_id(&phase, round, team_a, team_b);
-            phase.report_match_result(match_id, result);
-        }
-        phase
+        test_utils::play_scenario(
+            phase_with(4, test_utils::scenario_matches(), calculator),
+            0..test_utils::SCENARIO.len(),
+        )
     }
 
     #[test]

@@ -10,7 +10,10 @@
 //! answers the composite as its plugins recommend. [`Terminal`] asks at the terminal, and
 //! [`AcceptDefaults`] accepts every offered answer without asking anything.
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
 use plugin_factory::{
@@ -310,38 +313,20 @@ pub struct Terminal;
 
 impl Prompter for Terminal {
     fn confirm(&mut self, question: &Question, default: Option<bool>) -> Result<bool, Error> {
-        let mut prompt = Confirm::new(question.label());
-        if let Some(default) = default {
-            prompt = prompt.with_default(default);
-        }
-        if let Some(description) = question.description() {
-            prompt = prompt.with_help_message(description);
-        }
+        let prompt = Confirm {
+            default,
+            help_message: question.description(),
+            ..Confirm::new(question.label())
+        };
         Ok(prompt.prompt()?)
     }
 
     fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
-        let mut prompt =
-            CustomType::new(question.label()).with_error_message("this takes a whole number");
-        if let Some(default) = default {
-            prompt = prompt.with_default(default);
-        }
-        if let Some(description) = question.description() {
-            prompt = prompt.with_help_message(description);
-        }
-        Ok(prompt.prompt()?)
+        ask_number(question, default, "this takes a whole number")
     }
 
     fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
-        let mut prompt =
-            CustomType::new(question.label()).with_error_message("this takes a number");
-        if let Some(default) = default {
-            prompt = prompt.with_default(default);
-        }
-        if let Some(description) = question.description() {
-            prompt = prompt.with_help_message(description);
-        }
-        Ok(prompt.prompt()?)
+        ask_number(question, default, "this takes a number")
     }
 
     fn select(
@@ -350,11 +335,11 @@ impl Prompter for Terminal {
         options: &[Choice],
         default: Option<usize>,
     ) -> Result<usize, Error> {
-        let mut prompt = Select::new(question.label(), options.to_vec())
-            .with_starting_cursor(default.unwrap_or(0));
-        if let Some(description) = question.description() {
-            prompt = prompt.with_help_message(description);
-        }
+        let prompt = Select {
+            starting_cursor: default.unwrap_or(0),
+            help_message: question.description(),
+            ..Select::new(question.label(), options.to_vec())
+        };
         Ok(prompt.raw_prompt()?.index)
     }
 
@@ -382,6 +367,21 @@ impl Prompter for Terminal {
         );
         Ok(())
     }
+}
+
+/// Asks `question` at the terminal for a number, repeating it with `error_message` until the
+/// answer is one.
+fn ask_number<T: Clone + FromStr + ToString>(
+    question: &Question,
+    default: Option<T>,
+    error_message: &str,
+) -> Result<T, Error> {
+    let prompt = CustomType {
+        default,
+        help_message: question.description(),
+        ..CustomType::new(question.label()).with_error_message(error_message)
+    };
+    Ok(prompt.prompt()?)
 }
 
 /// Accepts the answer every question offers, without asking anything.

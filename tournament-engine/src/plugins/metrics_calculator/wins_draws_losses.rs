@@ -1,4 +1,7 @@
-use std::num::NonZeroU32;
+use std::{
+    fmt::{self, Display, Formatter},
+    num::NonZeroU32,
+};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
@@ -9,7 +12,7 @@ use crate::{
     },
     plugins::{
         facts::CalculatesMetric,
-        metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
+        metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
@@ -36,6 +39,13 @@ impl WinsDrawsLosses {
     /// metric to be calculated.
     pub const fn matches_played(&self) -> u32 {
         self.wins + self.draws + self.losses
+    }
+}
+
+/// Shows the wins, draws and losses as e.g. `2-1-0`, without the byes.
+impl Display for WinsDrawsLosses {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}-{}", self.wins, self.draws, self.losses)
     }
 }
 
@@ -211,6 +221,10 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
             .unwrap();
         metric.byes += 1;
         vec![(bye.ranking(), Box::new(metric) as Metric)]
+    }
+
+    fn column(&self) -> Option<MetricColumn> {
+        Some(MetricColumn::new::<WinsDrawsLosses>("W-D-L"))
     }
 }
 

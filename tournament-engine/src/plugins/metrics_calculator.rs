@@ -1,10 +1,13 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    fmt::Display,
+};
 
 use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
     map::Map,
     type_map::{TypeMapValue, downcast_unchecked_ref},
 };
@@ -97,6 +100,39 @@ pub trait MetricsCalculator: Plugin + DynClone {
         bye: &Bye,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
+
+    /// The column showing this calculator's metric in a table of standings, or `None` if the
+    /// metric is not meant to be shown.
+    fn column(&self) -> Option<MetricColumn> {
+        None
+    }
 }
 
 dyn_clone::clone_trait_object!(MetricsCalculator);
+
+/// A column of a table of standings showing one metric: its header and the text of every
+/// ranking's value.
+#[derive(Debug, Clone, Copy)]
+pub struct MetricColumn {
+    header: &'static str,
+    cell: fn(&Ranking) -> Option<String>,
+}
+
+impl MetricColumn {
+    /// The column headed `header` that shows the metric `M` of a ranking through its [`Display`].
+    pub fn new<M: TypeMapValue + Display>(header: &'static str) -> Self {
+        Self {
+            header,
+            cell: |ranking| ranking.metric::<M>().map(ToString::to_string),
+        }
+    }
+
+    pub fn header(&self) -> &'static str {
+        self.header
+    }
+
+    /// The text of the metric of `ranking`, or `None` if `ranking` has no such metric.
+    pub fn cell(&self, ranking: &Ranking) -> Option<String> {
+        (self.cell)(ranking)
+    }
+}

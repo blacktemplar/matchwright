@@ -10,7 +10,7 @@ use vec1::Vec1;
 
 use crate::{
     entities::competition::{
-        Annotated, Bye, Match, MatchId, Phase, PhaseBuilder, PhaseData, RankingId,
+        Annotated, Bye, Match, MatchId, MatchResult, Phase, PhaseBuilder, PhaseData, RankingId,
     },
     plugins::{
         metrics_calculator::MetricsCalculator,
@@ -167,6 +167,36 @@ pub(crate) fn match_id(phase: &Phase, round: u32, team_a: &[usize], team_b: &[us
     .id();
     assert!(phase.data().matches().contains_key(&match_id));
     match_id
+}
+
+/// A schedule of four players with its results, as (round, team a, team b, result). Played in
+/// full, it leaves them with the following wins/draws/losses: `0`: 1/0/1, `1`: 1/0/2, `2`: 2/1/0,
+/// `3`: 0/1/1.
+pub(crate) const SCENARIO: [(u32, &[usize], &[usize], MatchResult); 5] = [
+    (1, &[0], &[1], MatchResult::AWins),
+    (1, &[2], &[3], MatchResult::Draw),
+    (2, &[0], &[2], MatchResult::BWins),
+    (2, &[1], &[3], MatchResult::AWins),
+    (3, &[1], &[2], MatchResult::BWins),
+];
+
+/// The matches of [`SCENARIO`], as the schedule of a phase playing it.
+pub(crate) fn scenario_matches() -> Vec<MatchSpec> {
+    SCENARIO
+        .iter()
+        .map(|(round, team_a, team_b, _)| (*round, team_a.to_vec(), team_b.to_vec()))
+        .collect()
+}
+
+/// Plays [`SCENARIO`] in `phase`, which has to be a phase of four players scheduled with
+/// [`scenario_matches`], reporting its matches in the given order.
+pub(crate) fn play_scenario(mut phase: Phase, report_order: impl Iterator<Item = usize>) -> Phase {
+    for index in report_order {
+        let (round, team_a, team_b, result) = SCENARIO[index];
+        let match_id = match_id(&phase, round, team_a, team_b);
+        phase.report_match_result(match_id, result);
+    }
+    phase
 }
 
 /// The metric of type `M` of the ranking with the given index in the ordering by initial unique
