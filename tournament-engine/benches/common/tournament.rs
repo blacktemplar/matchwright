@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
-    entities::competition::{Competition, Entrant, EntrantId, MatchId, MatchResult, PhaseId},
+    entities::competition::{Entrant, EntrantId, MatchId, MatchResult, PhaseId},
     plugins::{
         PhasePlugins,
         metrics_calculator::{
@@ -25,14 +25,12 @@ use tournament_engine::{
         phase_format::round_robin::random_rounds::RandomRounds,
     },
     transitions::{
-        add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
+        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
+        add_phase::AddPhase, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
 };
-use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
 use uuid::Uuid;
-
-pub type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
 
 /// The number of entrants used if nothing else is configured.
 pub const DEFAULT_ENTRANTS: usize = 1000;
@@ -57,14 +55,6 @@ const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::n
 pub fn phase_id() -> PhaseId {
     static PHASE_ID: LazyLock<PhaseId> = LazyLock::new(|| PhaseId::new(Uuid::new_v4()));
     *PHASE_ID
-}
-
-fn apply(sm: &mut CompetitionStateMachine, transition: impl Transition<Competition> + 'static) {
-    sm.apply(LogEntry::new(
-        TransitionId::new(),
-        LogEntryKind::Apply(Box::new(transition)),
-    ))
-    .expect("transition must be applicable");
 }
 
 /// The matches of the phase paired with the result they are reported with, ordered round by round.
@@ -100,44 +90,41 @@ fn reporting_schedule(sm: &CompetitionStateMachine) -> Vec<(MatchId, MatchResult
 /// Buchholz of Buchholz, starts the competition and finally reports the result of every match.
 pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
     let mut sm = CompetitionStateMachine::default();
-    apply(&mut sm, SetCompetitionSeed::new(SEED));
+    sm.apply_transition(SetCompetitionSeed::new(SEED)).unwrap();
     for _ in 0..entrants {
         let id = EntrantId::new(Uuid::new_v4());
-        apply(&mut sm, AddEntrant::new(Entrant::new(id)));
+        sm.apply_transition(AddEntrant::new(Entrant::new(id)))
+            .unwrap();
     }
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id(),
-            PhasePlugins::new(
-                Box::new(RandomRounds::new(ROUNDS)),
-                vec![
-                    Box::new(MorePoints),
-                    Box::new(MoreBuchholz),
-                    Box::new(MoreSonnebornBerger),
-                    Box::new(MoreBuchholzOfBuchholz),
-                ],
-                vec![
-                    Box::new(RoundOfFirstLossCalculator),
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
-                    Box::new(BuchholzCalculator),
-                    Box::new(SONNEBORN_BERGER),
-                    Box::new(BuchholzOfBuchholzCalculator),
-                ],
-            )
-            .unwrap(),
-        ),
-    );
+    sm.apply_transition(AddPhase::new(
+        phase_id(),
+        PhasePlugins::new(
+            Box::new(RandomRounds::new(ROUNDS)),
+            vec![
+                Box::new(MorePoints),
+                Box::new(MoreBuchholz),
+                Box::new(MoreSonnebornBerger),
+                Box::new(MoreBuchholzOfBuchholz),
+            ],
+            vec![
+                Box::new(RoundOfFirstLossCalculator),
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+                Box::new(SONNEBORN_BERGER),
+                Box::new(BuchholzOfBuchholzCalculator),
+            ],
+        )
+        .unwrap(),
+    ))
+    .unwrap();
     // this creates the rankings, initializes all metrics and schedules the matches of all rounds
-    apply(&mut sm, StartCompetition);
+    sm.apply_transition(StartCompetition).unwrap();
     // every single result updates all metrics and reranks the whole phase
     for (match_id, result) in reporting_schedule(&sm) {
-        apply(
-            &mut sm,
-            ReportMatchResult::new(phase_id(), match_id, result),
-        );
+        sm.apply_transition(ReportMatchResult::new(phase_id(), match_id, result))
+            .unwrap();
     }
     sm
 }

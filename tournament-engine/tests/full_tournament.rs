@@ -20,18 +20,14 @@ use tournament_engine::{
         phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
     },
     transitions::{
-        add_entrant::AddEntrant, add_phase::AddPhase, remove_entrant::RemoveEntrant,
-        report_match_result::ReportMatchResult, set_competition_seed::SetCompetitionSeed,
-        start_competition::StartCompetition,
+        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
+        add_phase::AddPhase, remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
+        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
 };
-use undoable_state_machine::{
-    LogEntry, LogEntryKind, StateMachine, StateMachineError, Transition, TransitionId,
-};
+use undoable_state_machine::StateMachineError;
 use uuid::Uuid;
 use vec1::vec1;
-
-type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
 
 fn entrant() -> Entrant {
     Entrant::new(EntrantId::new(Uuid::new_v4()))
@@ -39,16 +35,6 @@ fn entrant() -> Entrant {
 
 fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {
     competition.entrants().contains_key(&entrant.id())
-}
-
-fn apply(
-    sm: &mut CompetitionStateMachine,
-    transition: impl Transition<Competition> + 'static,
-) -> Result<(), StateMachineError> {
-    sm.apply(LogEntry::new(
-        TransitionId::new(),
-        LogEntryKind::Apply(Box::new(transition)),
-    ))
 }
 
 /// The scoring system of most association football leagues, used by the phase of this test.
@@ -108,34 +94,37 @@ fn full_tournament() {
     let phase_id = PhaseId::new(Uuid::new_v4());
     let phase_format = Box::new(SingleElimination::new());
 
-    apply(&mut sm, SetCompetitionSeed::new(seed)).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant_a.clone())).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant_b.clone())).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant_c.clone())).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant_d.clone())).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant_e.clone())).unwrap();
-    apply(&mut sm, RemoveEntrant::new(entrant_c.clone())).unwrap();
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id,
-            PhasePlugins::new(
-                phase_format,
-                vec![Box::new(LaterFirstLoss)],
-                vec![
-                    Box::new(RoundOfFirstLossCalculator),
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
-                    Box::new(BuchholzCalculator),
-                    Box::new(BuchholzOfBuchholzCalculator),
-                ],
-            )
-            .unwrap(),
-        ),
-    )
+    sm.apply_transition(SetCompetitionSeed::new(seed)).unwrap();
+    sm.apply_transition(AddEntrant::new(entrant_a.clone()))
+        .unwrap();
+    sm.apply_transition(AddEntrant::new(entrant_b.clone()))
+        .unwrap();
+    sm.apply_transition(AddEntrant::new(entrant_c.clone()))
+        .unwrap();
+    sm.apply_transition(AddEntrant::new(entrant_d.clone()))
+        .unwrap();
+    sm.apply_transition(AddEntrant::new(entrant_e.clone()))
+        .unwrap();
+    sm.apply_transition(RemoveEntrant::new(entrant_c.clone()))
+        .unwrap();
+    sm.apply_transition(AddPhase::new(
+        phase_id,
+        PhasePlugins::new(
+            phase_format,
+            vec![Box::new(LaterFirstLoss)],
+            vec![
+                Box::new(RoundOfFirstLossCalculator),
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+                Box::new(BuchholzOfBuchholzCalculator),
+            ],
+        )
+        .unwrap(),
+    ))
     .unwrap();
-    apply(&mut sm, StartCompetition).unwrap();
+    sm.apply_transition(StartCompetition).unwrap();
 
     // asserts for the state after the competition start
     assert!(is_attending(sm.current(), &entrant_a));
@@ -212,16 +201,18 @@ fn full_tournament() {
 
     // now continue the tournament
     // rankings[3] wins against rankings[0]
-    apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id, match_0_vs_3_id, MatchResult::BWins),
-    )
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        match_0_vs_3_id,
+        MatchResult::BWins,
+    ))
     .unwrap();
     // rankings[1] wins against rankings[2]
-    apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id, match_1_vs_2_id, MatchResult::AWins),
-    )
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        match_1_vs_2_id,
+        MatchResult::AWins,
+    ))
     .unwrap();
 
     // asserts after the first round of single elimination
@@ -307,10 +298,11 @@ fn full_tournament() {
     assert_eq!(match_3_vs_1.result(), MatchResult::NotFinished);
 
     // finish the tournament
-    apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id, match_3_vs_1_id, MatchResult::AWins),
-    )
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        match_3_vs_1_id,
+        MatchResult::AWins,
+    ))
     .unwrap();
 
     // final asserts
@@ -392,26 +384,23 @@ fn byes_are_scored_when_they_are_scheduled() {
     let mut sm = CompetitionStateMachine::default();
     let phase_id = PhaseId::new(Uuid::new_v4());
     for _ in 0..3 {
-        apply(&mut sm, AddEntrant::new(entrant())).unwrap();
+        sm.apply_transition(AddEntrant::new(entrant())).unwrap();
     }
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id,
-            PhasePlugins::new(
-                Box::new(RoundRobin),
-                vec![Box::new(MorePoints)],
-                vec![
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE.with_points_for_bye(3.0)),
-                ],
-            )
-            .unwrap(),
-        ),
-    )
+    sm.apply_transition(AddPhase::new(
+        phase_id,
+        PhasePlugins::new(
+            Box::new(RoundRobin),
+            vec![Box::new(MorePoints)],
+            vec![
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE.with_points_for_bye(3.0)),
+            ],
+        )
+        .unwrap(),
+    ))
     .unwrap();
 
-    apply(&mut sm, StartCompetition).unwrap();
+    sm.apply_transition(StartCompetition).unwrap();
 
     let phase = &sm.current().phases()[&phase_id];
     assert_eq!(phase.matches().len(), 3);
@@ -430,41 +419,40 @@ fn byes_are_scored_when_they_are_scheduled() {
 fn single_elimination_rejects_a_draw() {
     let mut sm = CompetitionStateMachine::default();
     let phase_id = PhaseId::new(Uuid::new_v4());
-    apply(&mut sm, AddEntrant::new(entrant())).unwrap();
-    apply(&mut sm, AddEntrant::new(entrant())).unwrap();
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id,
-            PhasePlugins::new(
-                Box::new(SingleElimination::new()),
-                vec![Box::new(LaterFirstLoss)],
-                vec![Box::new(RoundOfFirstLossCalculator)],
-            )
-            .unwrap(),
-        ),
-    )
+    sm.apply_transition(AddEntrant::new(entrant())).unwrap();
+    sm.apply_transition(AddEntrant::new(entrant())).unwrap();
+    sm.apply_transition(AddPhase::new(
+        phase_id,
+        PhasePlugins::new(
+            Box::new(SingleElimination::new()),
+            vec![Box::new(LaterFirstLoss)],
+            vec![Box::new(RoundOfFirstLossCalculator)],
+        )
+        .unwrap(),
+    ))
     .unwrap();
-    apply(&mut sm, StartCompetition).unwrap();
+    sm.apply_transition(StartCompetition).unwrap();
     let final_id = *sm.current().phases()[&phase_id]
         .matches()
         .keys()
         .exactly_one()
         .unwrap();
 
-    let draw = apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id, final_id, MatchResult::Draw),
-    );
+    let draw = sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        final_id,
+        MatchResult::Draw,
+    ));
 
     let Err(StateMachineError::Transition(_, error)) = draw else {
         panic!("a draw must not be applicable, got {draw:?}");
     };
     assert_eq!(error.to_string(), "the phase format does not allow draws");
     assert!(!sm.current().phases()[&phase_id].matches()[&final_id].is_finished());
-    apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id, final_id, MatchResult::AWins),
-    )
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        final_id,
+        MatchResult::AWins,
+    ))
     .unwrap();
 }

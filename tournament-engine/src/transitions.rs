@@ -106,9 +106,21 @@ pub enum RedoLastError {
     Rejected(#[from] StateMachineError),
 }
 
-/// Undoing a change by what it did or by when it was made rather than by the [`TransitionId`] of
-/// the log entry it was applied as, which is all [`CompetitionStateMachine`] itself takes.
+/// Applying a transition without building its log entry, and undoing a change by what it did or
+/// by when it was made rather than by the [`TransitionId`] of the log entry it was applied as,
+/// which is all [`CompetitionStateMachine`] itself takes.
 pub trait CompetitionStateMachineExt {
+    /// Applies `transition` as a new [`LogEntryKind::Apply`] entry with a fresh [`TransitionId`],
+    /// and returns that id, which a later undo can target.
+    ///
+    /// # Errors
+    /// Returns the error of [`StateMachine::apply`] if `transition` does not apply to the current
+    /// state, in which case the log stays unchanged.
+    fn apply_transition(
+        &mut self,
+        transition: impl CompetitionTransition,
+    ) -> Result<TransitionId, StateMachineError>;
+
     /// Undoes the latest change that is in effect, i.e. the latest [`LogEntryKind::Apply`] entry
     /// in effect, and returns the id of the undo entry appended for that. A
     /// [`SetCompetitionSeed`] is never undone this way, since everything random that follows
@@ -155,42 +167,24 @@ pub trait CompetitionStateMachineExt {
     /// #     entities::competition::{Entrant, EntrantId, MatchResult, PhaseId},
     /// #     plugins::{PhasePlugins, phase_format::round_robin::RoundRobin},
     /// #     transitions::{
-    /// #         CompetitionStateMachine, CompetitionStateMachineExt, CompetitionTransition,
-    /// #         add_entrant::AddEntrant, add_phase::AddPhase,
-    /// #         report_match_result::ReportMatchResult, set_competition_seed::SetCompetitionSeed,
-    /// #         start_competition::StartCompetition,
+    /// #         CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
+    /// #         add_phase::AddPhase, report_match_result::ReportMatchResult,
+    /// #         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     /// #     },
     /// # };
-    /// # use undoable_state_machine::{LogEntry, LogEntryKind, TransitionId};
     /// # use uuid::Uuid;
-    /// # fn apply(
-    /// #     machine: &mut CompetitionStateMachine,
-    /// #     transition: impl CompetitionTransition + 'static,
-    /// # ) {
-    /// #     machine
-    /// #         .apply(LogEntry::new(
-    /// #             TransitionId::new(),
-    /// #             LogEntryKind::Apply(Box::new(transition)),
-    /// #         ))
-    /// #         .unwrap();
-    /// # }
     /// # let phase_id = PhaseId::new(Uuid::from_u128(1));
     /// # let mut machine = CompetitionStateMachine::default();
-    /// # apply(&mut machine, SetCompetitionSeed::new(*b"doc-test!!!!"));
+    /// # machine.apply_transition(SetCompetitionSeed::new(*b"doc-test!!!!"))?;
     /// # for entrant in 0..4 {
-    /// #     apply(
-    /// #         &mut machine,
-    /// #         AddEntrant::new(Entrant::new(EntrantId::new(Uuid::from_u128(entrant)))),
-    /// #     );
+    /// #     let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
+    /// #     machine.apply_transition(AddEntrant::new(entrant))?;
     /// # }
-    /// # apply(
-    /// #     &mut machine,
-    /// #     AddPhase::new(
-    /// #         phase_id,
-    /// #         PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new()).unwrap(),
-    /// #     ),
-    /// # );
-    /// # apply(&mut machine, StartCompetition);
+    /// # machine.apply_transition(AddPhase::new(
+    /// #     phase_id,
+    /// #     PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new())?,
+    /// # ))?;
+    /// # machine.apply_transition(StartCompetition)?;
     /// // a round robin between four entrants, with the first and the last match reported
     /// let matches: Vec<_> = machine.current().phases()[&phase_id]
     ///     .matches()
@@ -198,18 +192,22 @@ pub trait CompetitionStateMachineExt {
     ///     .copied()
     ///     .collect();
     /// for index in [0, 5] {
-    ///     apply(
-    ///         &mut machine,
-    ///         ReportMatchResult::new(phase_id, matches[index], MatchResult::AWins),
-    ///     );
+    ///     machine.apply_transition(ReportMatchResult::new(
+    ///         phase_id,
+    ///         matches[index],
+    ///         MatchResult::AWins,
+    ///     ))?;
     /// }
     ///
     /// machine.undo_match_result(phase_id, matches[0])?;
     ///
     /// let phase = &machine.current().phases()[&phase_id];
-    /// assert_eq!(phase.matches()[&matches[0]].result(), MatchResult::NotFinished);
+    /// assert_eq!(
+    ///     phase.matches()[&matches[0]].result(),
+    ///     MatchResult::NotFinished
+    /// );
     /// assert_eq!(phase.matches()[&matches[5]].result(), MatchResult::AWins);
-    /// # Ok::<(), tournament_engine::transitions::UndoMatchResultError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn undo_match_result(
         &mut self,
@@ -219,6 +217,15 @@ pub trait CompetitionStateMachineExt {
 }
 
 impl CompetitionStateMachineExt for CompetitionStateMachine {
+    fn apply_transition(
+        &mut self,
+        transition: impl CompetitionTransition,
+    ) -> Result<TransitionId, StateMachineError> {
+        let id = TransitionId::new();
+        self.apply(LogEntry::new(id, LogEntryKind::Apply(Box::new(transition))))?;
+        Ok(id)
+    }
+
     fn undo_last(&mut self) -> Option<TransitionId> {
         let target = self
             .rev_in_effect()
@@ -309,18 +316,6 @@ mod tests {
     }
 
     #[track_caller]
-    fn apply(
-        machine: &mut CompetitionStateMachine,
-        transition: impl CompetitionTransition + 'static,
-    ) -> TransitionId {
-        let id = TransitionId::new();
-        machine
-            .apply(LogEntry::new(id, LogEntryKind::Apply(Box::new(transition))))
-            .expect("transition must be applicable");
-        id
-    }
-
-    #[track_caller]
     fn undo(machine: &mut CompetitionStateMachine, target: TransitionId) -> TransitionId {
         let id = TransitionId::new();
         machine
@@ -333,20 +328,21 @@ mod tests {
     /// them are reported, the final.
     fn knockout() -> CompetitionStateMachine {
         let mut machine = CompetitionStateMachine::default();
-        apply(&mut machine, SetCompetitionSeed::new(*b"undo-test!!!"));
+        machine
+            .apply_transition(SetCompetitionSeed::new(*b"undo-test!!!"))
+            .unwrap();
         for entrant in 0..4 {
             let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
-            apply(&mut machine, AddEntrant::new(entrant));
+            machine.apply_transition(AddEntrant::new(entrant)).unwrap();
         }
-        apply(
-            &mut machine,
-            AddPhase::new(
+        machine
+            .apply_transition(AddPhase::new(
                 phase_id(),
                 PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new())
                     .unwrap(),
-            ),
-        );
-        apply(&mut machine, StartCompetition);
+            ))
+            .unwrap();
+        machine.apply_transition(StartCompetition).unwrap();
         machine
     }
 
@@ -365,10 +361,13 @@ mod tests {
 
     #[track_caller]
     fn report(machine: &mut CompetitionStateMachine, match_id: MatchId) -> TransitionId {
-        apply(
-            machine,
-            ReportMatchResult::new(phase_id(), match_id, MatchResult::AWins),
-        )
+        machine
+            .apply_transition(ReportMatchResult::new(
+                phase_id(),
+                match_id,
+                MatchResult::AWins,
+            ))
+            .expect("the match must be reportable")
     }
 
     #[test]
@@ -419,8 +418,10 @@ mod tests {
     fn undo_last_passes_over_a_seed() {
         let mut machine = CompetitionStateMachine::default();
         let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(0)));
-        apply(&mut machine, AddEntrant::new(entrant));
-        apply(&mut machine, SetCompetitionSeed::new(*b"undo-test!!!"));
+        machine.apply_transition(AddEntrant::new(entrant)).unwrap();
+        machine
+            .apply_transition(SetCompetitionSeed::new(*b"undo-test!!!"))
+            .unwrap();
 
         machine.undo_last().expect("the entrant was added");
 

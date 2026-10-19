@@ -27,7 +27,7 @@ use tournament_engine::{
         phase_format::single_elimination::SingleElimination,
     },
     transitions::{
-        CompetitionStateMachine, CompetitionTransition, add_entrant::AddEntrant,
+        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
         add_phase::AddPhase, remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
@@ -59,20 +59,6 @@ struct Nickname(String);
 #[typetag::serde(name = "test::nickname")]
 impl TypeMapValue for Nickname {}
 
-/// Applies `transition` and returns the id of the log entry it was applied as, so that a later
-/// entry can undo it.
-#[track_caller]
-fn apply(
-    machine: &mut CompetitionStateMachine,
-    transition: impl CompetitionTransition + 'static,
-) -> TransitionId {
-    let id = TransitionId::new();
-    machine
-        .apply(LogEntry::new(id, LogEntryKind::Apply(Box::new(transition))))
-        .expect("transition must be applicable");
-    id
-}
-
 #[track_caller]
 fn undo(machine: &mut CompetitionStateMachine, target: TransitionId) -> TransitionId {
     let id = TransitionId::new();
@@ -88,19 +74,19 @@ fn undo(machine: &mut CompetitionStateMachine, target: TransitionId) -> Transiti
 fn played_competition() -> CompetitionStateMachine {
     let mut machine = CompetitionStateMachine::default();
 
-    apply(&mut machine, SetCompetitionSeed::new(SEED));
+    machine
+        .apply_transition(SetCompetitionSeed::new(SEED))
+        .unwrap();
     for entrant in 0..5 {
         let entrant = Entrant::new(entrant_id(entrant))
             .with_annotation(Nickname(format!("entrant {entrant}")));
-        apply(&mut machine, AddEntrant::new(entrant));
+        machine.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    apply(
-        &mut machine,
-        RemoveEntrant::new(Entrant::new(entrant_id(4))),
-    );
-    apply(
-        &mut machine,
-        AddPhase::new(
+    machine
+        .apply_transition(RemoveEntrant::new(Entrant::new(entrant_id(4))))
+        .unwrap();
+    machine
+        .apply_transition(AddPhase::new(
             phase_id(),
             PhasePlugins::new(
                 Box::new(SingleElimination::new()),
@@ -114,14 +100,17 @@ fn played_competition() -> CompetitionStateMachine {
                 ],
             )
             .unwrap(),
-        ),
-    );
-    apply(&mut machine, StartCompetition);
+        ))
+        .unwrap();
+    machine.apply_transition(StartCompetition).unwrap();
     for match_id in matches_of_round(&machine.current().phases()[&phase_id()], 1) {
-        apply(
-            &mut machine,
-            ReportMatchResult::new(phase_id(), match_id, MatchResult::AWins),
-        );
+        machine
+            .apply_transition(ReportMatchResult::new(
+                phase_id(),
+                match_id,
+                MatchResult::AWins,
+            ))
+            .unwrap();
     }
 
     machine
@@ -217,7 +206,9 @@ fn every_transition_is_serialized_under_its_explicitly_chosen_tag() {
 #[test]
 fn a_transition_is_serialized_with_its_payload_next_to_its_tag() {
     let mut machine = CompetitionStateMachine::default();
-    let seed_id = apply(&mut machine, SetCompetitionSeed::new(SEED));
+    let seed_id = machine
+        .apply_transition(SetCompetitionSeed::new(SEED))
+        .unwrap();
 
     let log = serialized_log(&machine);
 
@@ -283,6 +274,8 @@ fn a_log_round_trips_and_replays_into_the_same_competition() {
 /// [`AddEntrant`], the match id of a [`ReportMatchResult`] — would be written as a string and read
 /// back as raw bytes. [`CompetitionTransition`] is therefore adjacently tagged, like every plugin
 /// trait, which keeps the content out of that adapter.
+///
+/// [`CompetitionTransition`]: tournament_engine::transitions::CompetitionTransition
 #[test]
 fn a_log_round_trips_through_a_binary_format() {
     let machine = played_competition();
@@ -381,10 +374,13 @@ fn a_round_tripped_log_can_continue_the_tournament() {
     let mut machine = round_trip(&played_competition());
     let final_match = matches_of_round(&machine.current().phases()[&phase_id()], 2)[0];
 
-    apply(
-        &mut machine,
-        ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins),
-    );
+    machine
+        .apply_transition(ReportMatchResult::new(
+            phase_id(),
+            final_match,
+            MatchResult::BWins,
+        ))
+        .unwrap();
 
     let phase = &machine.current().phases()[&phase_id()];
     assert!(phase.matches().values().all(Match::is_finished));

@@ -26,15 +26,14 @@ use tournament_engine::{
         phase_format::single_elimination::{KnockoutRound, SingleElimination},
     },
     transitions::{
-        add_entrant::AddEntrant, add_phase::AddPhase, report_match_result::ReportMatchResult,
+        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
+        add_phase::AddPhase, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
     type_map::TypeMapValue,
 };
-use undoable_state_machine::{LogEntry, LogEntryKind, StateMachine, Transition, TransitionId};
+use undoable_state_machine::Transition;
 use uuid::Uuid;
-
-type CompetitionStateMachine = StateMachine<Competition, Box<dyn Transition<Competition>>>;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
 const SEED: [u8; 12] = *b"round-trip!!";
@@ -58,17 +57,10 @@ struct Nickname(String);
 #[typetag::serde(name = "test::nickname")]
 impl TypeMapValue for Nickname {}
 
-#[track_caller]
-fn apply(sm: &mut CompetitionStateMachine, transition: impl Transition<Competition> + 'static) {
-    sm.apply(LogEntry::new(
-        TransitionId::new(),
-        LogEntryKind::Apply(Box::new(transition)),
-    ))
-    .expect("transition must be applicable");
-}
-
-/// Applies `transition` to a competition that is not held by a [`StateMachine`], exactly like
-/// [`StateMachine::apply`] would.
+/// Applies `transition` to a competition that is not held by a [`CompetitionStateMachine`], exactly
+/// like [`StateMachine::apply`] would.
+///
+/// [`StateMachine::apply`]: undoable_state_machine::StateMachine::apply
 #[track_caller]
 fn apply_directly(competition: &mut Competition, transition: &impl Transition<Competition>) {
     transition
@@ -83,38 +75,36 @@ fn apply_directly(competition: &mut Competition, transition: &impl Transition<Co
 /// this crate offers, not started yet.
 fn competition_with_a_phase() -> CompetitionStateMachine {
     let mut sm = CompetitionStateMachine::default();
-    apply(&mut sm, SetCompetitionSeed::new(SEED));
+    sm.apply_transition(SetCompetitionSeed::new(SEED)).unwrap();
     for entrant in 0..4 {
         let id = EntrantId::new(Uuid::from_u128(entrant));
         let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
-        apply(&mut sm, AddEntrant::new(entrant));
+        sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id(),
-            PhasePlugins::new(
-                Box::new(SingleElimination::new()),
-                vec![
-                    Box::new(LaterFirstLoss),
-                    Box::new(MorePoints),
-                    Box::new(MoreBuchholz),
-                    Box::new(MoreSonnebornBerger),
-                    Box::new(MoreBuchholzOfBuchholz),
-                ],
-                vec![
-                    Box::new(RoundOfFirstLossCalculator),
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
-                    Box::new(BuchholzCalculator),
-                    Box::new(SONNEBORN_BERGER),
-                    Box::new(BuchholzOfBuchholzCalculator),
-                ],
-            )
-            .unwrap(),
-        ),
-    );
+    sm.apply_transition(AddPhase::new(
+        phase_id(),
+        PhasePlugins::new(
+            Box::new(SingleElimination::new()),
+            vec![
+                Box::new(LaterFirstLoss),
+                Box::new(MorePoints),
+                Box::new(MoreBuchholz),
+                Box::new(MoreSonnebornBerger),
+                Box::new(MoreBuchholzOfBuchholz),
+            ],
+            vec![
+                Box::new(RoundOfFirstLossCalculator),
+                Box::new(WinsDrawsLossesCalculator),
+                Box::new(THREE_ONE),
+                Box::new(MatchesCalculator),
+                Box::new(BuchholzCalculator),
+                Box::new(SONNEBORN_BERGER),
+                Box::new(BuchholzOfBuchholzCalculator),
+            ],
+        )
+        .unwrap(),
+    ))
+    .unwrap();
     sm
 }
 
@@ -122,7 +112,7 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
 /// first round exist.
 fn started_competition() -> CompetitionStateMachine {
     let mut sm = competition_with_a_phase();
-    apply(&mut sm, StartCompetition);
+    sm.apply_transition(StartCompetition).unwrap();
     sm
 }
 
@@ -131,10 +121,12 @@ fn started_competition() -> CompetitionStateMachine {
 fn competition_in_the_final() -> CompetitionStateMachine {
     let mut sm = started_competition();
     for match_id in matches_of_round(&sm.current().phases()[&phase_id()], 1) {
-        apply(
-            &mut sm,
-            ReportMatchResult::new(phase_id(), match_id, MatchResult::AWins),
-        );
+        sm.apply_transition(ReportMatchResult::new(
+            phase_id(),
+            match_id,
+            MatchResult::AWins,
+        ))
+        .unwrap();
     }
     sm
 }
@@ -385,26 +377,22 @@ fn a_played_competition_round_trips_through_a_binary_format() {
 #[test]
 fn a_competition_with_a_bye_round_trips() {
     let mut sm = CompetitionStateMachine::default();
-    apply(&mut sm, SetCompetitionSeed::new(SEED));
+    sm.apply_transition(SetCompetitionSeed::new(SEED)).unwrap();
     for entrant in 0..3 {
-        apply(
-            &mut sm,
-            AddEntrant::new(Entrant::new(EntrantId::new(Uuid::from_u128(entrant)))),
-        );
+        let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
+        sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    apply(
-        &mut sm,
-        AddPhase::new(
-            phase_id(),
-            PhasePlugins::new(
-                Box::new(SingleElimination::new()),
-                Vec::new(),
-                vec![Box::new(WinsDrawsLossesCalculator)],
-            )
-            .unwrap(),
-        ),
-    );
-    apply(&mut sm, StartCompetition);
+    sm.apply_transition(AddPhase::new(
+        phase_id(),
+        PhasePlugins::new(
+            Box::new(SingleElimination::new()),
+            Vec::new(),
+            vec![Box::new(WinsDrawsLossesCalculator)],
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    sm.apply_transition(StartCompetition).unwrap();
     let bye = sm.current().phases()[&phase_id()]
         .byes()
         .values()
@@ -427,7 +415,7 @@ fn a_round_tripped_competition_can_be_started() {
 
     // the phase format, the ranker and all metrics calculators are only used from here on, so
     // this is what shows that they survived the round trip as their concrete types
-    apply(&mut sm, StartCompetition);
+    sm.apply_transition(StartCompetition).unwrap();
     apply_directly(&mut competition, &StartCompetition);
 
     assert_eq!(competition.phases()[&phase_id()].matches().len(), 2);
@@ -441,10 +429,12 @@ fn a_round_tripped_competition_can_continue_the_tournament() {
     let final_match = matches_of_round(&competition.phases()[&phase_id()], 2)[0];
     let report = ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins);
 
-    apply(
-        &mut sm,
-        ReportMatchResult::new(phase_id(), final_match, MatchResult::BWins),
-    );
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id(),
+        final_match,
+        MatchResult::BWins,
+    ))
+    .unwrap();
     apply_directly(&mut competition, &report);
 
     let phase = &competition.phases()[&phase_id()];

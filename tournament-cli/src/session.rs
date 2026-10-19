@@ -40,15 +40,13 @@ use tournament_engine::{
         ranker::SliceRanker,
     },
     transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
-        RedoLastError, UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
+        CompetitionStateMachine, CompetitionStateMachineExt as _, RedoLastError,
+        UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
         remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
 };
-use undoable_state_machine::{
-    LogEntry, LogEntryKind, StateMachineError, TransitionError, TransitionId,
-};
+use undoable_state_machine::{StateMachineError, TransitionError};
 use uuid::Uuid;
 
 use crate::{
@@ -158,10 +156,7 @@ impl Session {
     pub fn new(path: Option<PathBuf>) -> Self {
         let mut machine = CompetitionStateMachine::default();
         machine
-            .apply(LogEntry::new(
-                TransitionId::new(),
-                LogEntryKind::Apply(Box::new(SetCompetitionSeed::new(rand::random()))),
-            ))
+            .apply_transition(SetCompetitionSeed::new(rand::random()))
             .expect("a new competition must accept a seed");
         Self {
             saved_log_len: machine.log().len(),
@@ -232,16 +227,6 @@ impl Session {
         Ok(Outcome::Continue(output))
     }
 
-    fn apply(&mut self, transition: impl CompetitionTransition + 'static) -> Result<(), Error> {
-        self.append(LogEntryKind::Apply(Box::new(transition)))
-    }
-
-    fn append(&mut self, kind: LogEntryKind<Box<dyn CompetitionTransition>>) -> Result<(), Error> {
-        self.machine
-            .apply(LogEntry::new(TransitionId::new(), kind))
-            .map_err(Error::from)
-    }
-
     fn entrants(&self) -> String {
         let entrants = self.competition().entrants();
         if entrants.is_empty() {
@@ -277,7 +262,7 @@ impl Session {
         for name in &names {
             let entrant = Entrant::new(EntrantId::new(Uuid::new_v4()))
                 .with_annotation(DisplayName::new(name.as_str()));
-            self.apply(AddEntrant::new(entrant))?;
+            self.machine.apply_transition(AddEntrant::new(entrant))?;
         }
         Ok(format!(
             "{} entrant(s) added, {} in total",
@@ -291,7 +276,7 @@ impl Session {
             .entrant_named(name)
             .ok_or_else(|| Error::UnknownEntrant(name.to_owned()))?
             .clone();
-        self.apply(RemoveEntrant::new(entrant))?;
+        self.machine.apply_transition(RemoveEntrant::new(entrant))?;
         Ok(format!("{name} removed"))
     }
 
@@ -310,7 +295,8 @@ impl Session {
         }
         let plugins = self.settled(draft.clone())?;
         let summary = summary(&plugins);
-        self.apply(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
+        self.machine
+            .apply_transition(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
         Ok(format!("phase added: {summary}"))
     }
 
@@ -369,7 +355,7 @@ impl Session {
     }
 
     fn start(&mut self) -> Result<String, Error> {
-        self.apply(StartCompetition)?;
+        self.machine.apply_transition(StartCompetition)?;
         Ok(format!(
             "competition started, {} match(es) scheduled",
             self.phase()?.matches().len()
@@ -476,7 +462,8 @@ impl Session {
             ReportedResult::B => MatchResult::BWins,
             ReportedResult::Draw => MatchResult::Draw,
         };
-        self.apply(ReportMatchResult::new(phase_id, match_id, result))?;
+        self.machine
+            .apply_transition(ReportMatchResult::new(phase_id, match_id, result))?;
 
         let phase = self.phase()?;
         let mut output = format!(
