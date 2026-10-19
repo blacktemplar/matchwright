@@ -15,8 +15,6 @@ use std::{
     fmt::{self, Debug, Formatter},
 };
 
-use serde_json::Map;
-
 use crate::{
     __private::Index,
     Plugin, PluginType,
@@ -146,6 +144,13 @@ impl PluginEntry {
         }))
     }
 
+    /// [`Self::declaration_for`] `config`, or the [static declaration](Self::declaration) if the
+    /// plugin cannot be built from it.
+    pub(crate) fn declaration_or_static(&self, config: &Config) -> Declaration {
+        self.declaration_for(config)
+            .unwrap_or_else(|_| self.declaration())
+    }
+
     /// The plugin built from `config`, its config at `at`, for what only a configured plugin can
     /// say: what it declares on top of its static declaration, and what it recommends.
     ///
@@ -187,6 +192,15 @@ impl PluginEntry {
             .fields()
             .iter()
             .filter_map(|field| field.kind().axis())
+            .collect()
+    }
+
+    /// The types of the facts the plugins of the [sub-axes](Self::sub_axes) could provide, see
+    /// [`AnyAxis::facts`].
+    pub(crate) fn sub_facts(&self) -> OpenFacts {
+        self.sub_axes()
+            .iter()
+            .flat_map(|axis| axis.facts().iter())
             .collect()
     }
 
@@ -287,13 +301,10 @@ impl AnyAxis {
         let entry = self
             .entry(plugin.plugin())
             .ok_or_else(|| ConfigError::UnknownPlugin { path: at.clone() })?;
-        Ok(Value::Object(Map::from_iter([
-            ("type".to_owned(), Value::String(plugin.plugin().to_owned())),
-            (
-                "value".to_owned(),
-                entry.walk(plugin.config(), at, complete)?,
-            ),
-        ])))
+        Ok(config::plugin_answer(
+            plugin.plugin().to_owned(),
+            entry.walk(plugin.config(), at, complete)?,
+        ))
     }
 
     /// The types of the facts the plugins of this axis provide, i.e. what a slot for this axis
@@ -309,28 +320,33 @@ impl AnyAxis {
 
     /// [`Self::facts`], collected anew.
     fn collect_facts(&self) -> OpenFacts {
-        let mut visited = vec![*self];
-        let mut pending = vec![*self];
-        let mut facts = Vec::new();
+        Self::reachable([*self])
+            .iter()
+            .flat_map(Self::entries)
+            .flat_map(|entry| {
+                entry
+                    .declaration()
+                    .provided()
+                    .iter()
+                    .map(ProvidedFact::type_id)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// `axes` and the [sub-axes](PluginEntry::sub_axes) of their plugins, transitively, each once.
+    pub(crate) fn reachable(axes: impl IntoIterator<Item = Self>) -> Vec<Self> {
+        let mut reachable = Vec::new();
+        let mut pending: Vec<_> = axes.into_iter().collect();
         while let Some(axis) = pending.pop() {
-            for entry in axis.entries() {
-                facts.extend(
-                    entry
-                        .declaration()
-                        .provided()
-                        .iter()
-                        .map(ProvidedFact::type_id),
-                );
-                for sub_axis in entry.sub_axes() {
-                    // axes can nest each other, so each is visited once
-                    if !visited.contains(&sub_axis) {
-                        visited.push(sub_axis);
-                        pending.push(sub_axis);
-                    }
-                }
+            // axes can nest each other, so each is visited once
+            if reachable.contains(&axis) {
+                continue;
             }
+            reachable.push(axis);
+            pending.extend(axis.entries().flat_map(|entry| entry.sub_axes()));
         }
-        facts.into_iter().collect()
+        reachable
     }
 }
 

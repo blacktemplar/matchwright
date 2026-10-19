@@ -213,7 +213,7 @@ pub enum Incompatibility {
         fact: &'static str,
         required_by: String,
     },
-    #[error("{required_by} requires {condition}, but the phase has {provided}")]
+    #[error("{required_by} requires {condition}, but the composite has {provided}")]
     ConditionNotMet {
         condition: &'static str,
         required_by: String,

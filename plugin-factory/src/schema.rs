@@ -22,7 +22,7 @@ use crate::{
     Plugin,
     catalog::{AnyAxis, Axis},
     compatibility::{self, Incompatibility},
-    config::{self, Config, ConfigError, Path, PluginConfig, Value},
+    config::{self, Config, ConfigError, Path, PluginConfig, Value, names},
 };
 
 /// Something configured by answering the fields of its [`Schema`]: a plugin, or the composite a
@@ -285,11 +285,7 @@ impl<A: Axis + ?Sized> DependencyOrderedSet<A> {
     /// and [`DependencyOrderedSetError::Cyclic`] if plugins require facts of each other in a
     /// cycle, so that no order lets them run one after another.
     pub fn new(plugins: Vec<Box<A>>) -> Result<Self, DependencyOrderedSetError> {
-        if let Some(position) = (1..plugins.len()).find(|&position| {
-            plugins[..position]
-                .iter()
-                .any(|earlier| earlier.id() == plugins[position].id())
-        }) {
+        if let Some(position) = first_repeated(&plugins, |a, b| a.id() == b.id()) {
             return Err(DependencyOrderedSetError::Duplicate { position });
         }
         let order = compatibility::order(
@@ -659,12 +655,9 @@ impl FieldKind {
                         element.walk(answer, &at.clone().index(position), complete)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let duplicate = (1..walked.len()).find(|&position| {
-                    walked[..position]
-                        .iter()
-                        .any(|earlier| same_element(element, earlier, &walked[position], complete))
-                });
-                if let Some(position) = duplicate {
+                if let Some(position) =
+                    first_repeated(&walked, |a, b| same_element(element, a, b, complete))
+                {
                     return Err(ConfigError::Duplicate {
                         path: at.clone().index(position),
                     });
@@ -691,11 +684,11 @@ impl FieldKind {
     /// What this kind of answer is called in an error message.
     fn name(&self) -> &'static str {
         match self {
-            Self::Bool => "yes or no",
-            Self::Integer => "a whole number",
-            Self::Decimal => "a number",
-            Self::Plugin(_) => "one plugin",
-            Self::List { .. } => "a list",
+            Self::Bool => names::BOOL,
+            Self::Integer => names::INTEGER,
+            Self::Decimal => names::DECIMAL,
+            Self::Plugin(_) => names::PLUGIN,
+            Self::List { .. } => names::LIST,
             Self::Optional(_) => "an optional answer",
         }
     }
@@ -740,6 +733,16 @@ fn same_answer(a: &Value, b: &Value) -> bool {
         }
         _ => a == b,
     }
+}
+
+/// The position of the first of `items` that is the same as one before it, as `same` compares
+/// them, or [`None`] if there is none.
+fn first_repeated<T>(items: &[T], same: impl Fn(&T, &T) -> bool) -> Option<usize> {
+    (1..items.len()).find(|&position| {
+        items[..position]
+            .iter()
+            .any(|earlier| same(earlier, &items[position]))
+    })
 }
 
 /// Schemas and the configs answering them, tested on an axis of their own so that they do not

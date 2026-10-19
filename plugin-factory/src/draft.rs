@@ -319,17 +319,7 @@ fn candidate(
     sources: &Sources,
     entry: &'static PluginEntry,
 ) -> Candidate {
-    let provider = |fact: TypeId| {
-        others
-            .iter()
-            .find(|placed| placed.declared.declaration.provides_type(fact))
-            .map(|placed| placed.path.clone())
-    };
-    let own_facts: OpenFacts = entry
-        .sub_axes()
-        .iter()
-        .flat_map(|axis| axis.facts().iter())
-        .collect();
+    let own_facts = entry.sub_facts();
     let declared = Declared::new(entry.label(), entry.declaration());
     // what finishing adds is settled with the candidate chosen
     let with_candidate: Vec<_> = others
@@ -387,7 +377,7 @@ fn candidate(
             }
             // the provider is the context, or the candidate itself if no other plugin is
             Incompatibility::FactProvidedTwice { .. } | Incompatibility::ConditionNotMet { .. } => {
-                provider(fact)
+                reach.provider_of(fact)
             }
             _ => None,
         };
@@ -402,7 +392,7 @@ fn candidate(
         .provided()
         .iter()
         .map(ProvidedFact::type_id)
-        .filter(|&fact| !context.provides_type(fact) && provider(fact).is_none())
+        .filter(|&fact| !context.provides_type(fact) && reach.provider_of(fact).is_none())
         .filter_map(|fact| {
             let requiring: Vec<_> = others
                 .iter()
@@ -485,16 +475,7 @@ impl Sources {
             .iter()
             .filter_map(|field| field.kind().axis())
             .collect();
-        let mut reachable = Vec::new();
-        let mut pending = top.clone();
-        while let Some(axis) = pending.pop() {
-            if reachable.contains(&axis) {
-                continue;
-            }
-            reachable.push(axis);
-            pending.extend(axis.entries().flat_map(|entry| entry.sub_axes()));
-        }
-        let providers = reachable
+        let providers = AnyAxis::reachable(top.iter().copied())
             .iter()
             .flat_map(|axis| {
                 axis.entries().map(move |entry| {
@@ -519,14 +500,7 @@ impl Sources {
 
     /// The answered fields of the composite taking one plugin that could provide `fact`.
     fn answered_to(&self, fact: TypeId) -> Vec<Path> {
-        Self::able(&self.answered, fact)
-    }
-
-    /// The paths among `fields` whose axis could provide `fact`.
-    fn able(fields: &[(Path, AnyAxis)], fact: TypeId) -> Vec<Path> {
-        fields
-            .iter()
-            .filter(|(_, axis)| axis.facts().contains(fact))
+        able(&self.answered, fact)
             .map(|(path, _)| path.clone())
             .collect()
     }
@@ -633,7 +607,7 @@ struct Reach<'a> {
     open: &'a [(Path, AnyAxis)],
     /// The answered fields of the composite taking one plugin, each with its axis.
     answered: &'a [(Path, AnyAxis)],
-    /// The plugins in the answers, to name the one keeping a provider out.
+    /// The plugins in the answers, to name the one providing a fact, e.g. to keep a provider out.
     placed: &'a [&'a Placed],
 }
 
@@ -646,11 +620,7 @@ impl Reach<'_> {
         declared: &[&Declared],
         fact: TypeId,
     ) -> Option<Result<Vec<Path>, Option<Path>>> {
-        let mut able = self
-            .open
-            .iter()
-            .filter(|(_, axis)| axis.facts().contains(fact))
-            .peekable();
+        let mut able = able(self.open, fact).peekable();
         able.peek()?;
         let mut fields = Vec::new();
         let mut blocker = None;
@@ -705,11 +675,7 @@ impl Reach<'_> {
         visited: &mut Vec<TypeId>,
     ) -> Result<(), Option<Path>> {
         let provider = Declared::new(entry.label(), entry.declaration());
-        let own: OpenFacts = entry
-            .sub_axes()
-            .iter()
-            .flat_map(|axis| axis.facts().iter())
-            .collect();
+        let own = entry.sub_facts();
         let with_provider: Vec<_> = declared.iter().copied().chain([&provider]).collect();
         for conflict in
             compatibility::conflicts(self.context, declared.iter().copied(), &provider, &own)
@@ -722,21 +688,15 @@ impl Reach<'_> {
                 return Err(None);
             }
             visited.push(fact);
-            let mut able = self
-                .open
-                .iter()
-                .filter(|(_, axis)| axis.facts().contains(fact))
-                .peekable();
-            let reached = if able.peek().is_none() {
+            let mut able_open = able(self.open, fact).peekable();
+            let reached = if able_open.peek().is_none() {
                 // only a field answered already could provide it
-                Err(self
-                    .answered
-                    .iter()
-                    .find(|(_, axis)| axis.facts().contains(fact))
+                Err(able(self.answered, fact)
+                    .next()
                     .map(|(path, _)| path.clone()))
             } else {
                 let mut reached = Err(None);
-                for (_, axis) in able {
+                for (_, axis) in able_open {
                     match self.provided_by(*axis, &with_provider, fact, visited) {
                         Ok(()) => {
                             reached = Ok(());
@@ -808,14 +768,10 @@ fn issues_in(
 
     // unless finished, a fact a field still unanswered could take a fitting provider for may still
     // arrive
-    let unanswered: Vec<_> = if finished {
+    let unanswered = if finished {
         Vec::new()
     } else {
-        tree.questions
-            .iter()
-            .filter(|question| question.answer.is_none())
-            .filter_map(|question| Some((question.path.clone(), slot(question.field.kind())?.0)))
-            .collect()
+        tree.slots(|question| question.answer.is_none())
     };
     let placed: Vec<_> = tree.plugins.iter().collect();
     let declarations = tree.declarations(None);
@@ -827,12 +783,7 @@ fn issues_in(
     };
     let mut unprovided = Vec::new();
     for (index, placed) in tree.plugins.iter().enumerate() {
-        let others = tree
-            .plugins
-            .iter()
-            .enumerate()
-            .filter(|&(other, _)| other != index)
-            .map(|(_, other)| &other.declared);
+        let others = all_but(&declarations, index).copied();
         let mut incompatible = None;
         for conflict in
             compatibility::conflicts(context, others, &placed.declared, &OpenFacts::NOTHING)
@@ -857,17 +808,13 @@ fn issues_in(
         }
     }
 
+    let slots = tree.slots(|_| true);
     for (fact, name, required_by) in unprovided {
         let added_by_finish = lists.map_or_else(Vec::new, |lists| {
             additions(context, &declarations, lists, fact)
         });
         // a field still unanswered is found here only if none of its providers fits
-        let fields: Vec<_> = tree
-            .questions
-            .iter()
-            .filter_map(|question| Some((question, slot(question.field.kind())?.0)))
-            .filter(|(_, axis)| axis.facts().contains(fact))
-            .collect();
+        let fields: Vec<_> = able(&slots, fact).collect();
         if fields.is_empty() {
             issues.push(Issue {
                 path: required_by.clone(),
@@ -880,14 +827,14 @@ fn issues_in(
             });
             continue;
         }
-        for (question, axis) in fields {
+        for (path, axis) in fields {
             let providers: Vec<_> = axis
                 .entries()
                 .filter(|entry| entry.declaration().provides_type(fact))
                 .map(PluginEntry::id)
                 .collect();
             issues.push(Issue {
-                path: question.path.clone(),
+                path: path.clone(),
                 problem: Problem::Unprovided {
                     fact: name,
                     required_by: required_by.clone(),
@@ -963,10 +910,7 @@ fn chain(
             continue;
         }
         let (name, entry) = settling(lists, fact)?;
-        let declaration = entry
-            .declaration_for(&Config::new())
-            .unwrap_or_else(|_| entry.declaration());
-        let declared = Declared::new(entry.label(), declaration);
+        let declared = Declared::new(entry.label(), entry.declaration_or_static(&Config::new()));
         pending.extend(
             declared
                 .declaration
@@ -989,11 +933,7 @@ fn chain(
     };
     for (index, declared) in all.iter().enumerate() {
         let is_added = index >= declarations.len();
-        let others = all
-            .iter()
-            .enumerate()
-            .filter(|&(other, _)| other != index)
-            .map(|(_, other)| *other);
+        let others = all_but(&all, index).copied();
         // an existing plugin's own problems are not the chain's, unless they are about what the
         // chain provides
         if compatibility::conflicts(context, others, declared, &OpenFacts::NOTHING)
@@ -1096,10 +1036,10 @@ fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) ->
         }
         // a recommendation is a whole answer, so what it declares includes the plugins answering
         // its fields
-        let declaration = entry
-            .declaration_for(recommended.config())
-            .unwrap_or_else(|_| entry.declaration());
-        let declared = Declared::new(entry.label(), declaration);
+        let declared = Declared::new(
+            entry.label(),
+            entry.declaration_or_static(recommended.config()),
+        );
         if compatibility::check_addition(
             context,
             declarations.iter().copied().chain(&added),
@@ -1575,6 +1515,16 @@ impl Tree {
         axes.iter().flat_map(|axis| axis.facts().iter()).collect()
     }
 
+    /// The fields taking plugins among those `included` includes, each with its axis, in the order
+    /// of [`Self::questions`].
+    fn slots(&self, included: impl Fn(&Question) -> bool) -> Vec<(Path, AnyAxis)> {
+        self.questions
+            .iter()
+            .filter(|question| included(question))
+            .filter_map(|question| Some((question.path.clone(), slot(question.field.kind())?.0)))
+            .collect()
+    }
+
     /// What the plugins declare, in the order of [`Self::plugins`], except the plugins at and
     /// within `excluding`.
     fn declarations(&self, excluding: Option<&Path>) -> Vec<&Declared> {
@@ -1584,6 +1534,22 @@ impl Tree {
             .map(|placed| &placed.declared)
             .collect()
     }
+}
+
+/// The fields among `fields` whose axis could provide `fact`.
+fn able(fields: &[(Path, AnyAxis)], fact: TypeId) -> impl Iterator<Item = &(Path, AnyAxis)> {
+    fields
+        .iter()
+        .filter(move |(_, axis)| axis.facts().contains(fact))
+}
+
+/// Every one of `items` but the one at `index`.
+fn all_but<T>(items: &[T], index: usize) -> impl Iterator<Item = &T> {
+    items
+        .iter()
+        .enumerate()
+        .filter(move |&(other, _)| other != index)
+        .map(|(_, item)| item)
 }
 
 /// Whether `path` is `excluding` or within it.

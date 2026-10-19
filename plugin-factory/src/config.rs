@@ -117,11 +117,17 @@ impl PluginConfig {
 impl From<PluginConfig> for Value {
     fn from(answer: PluginConfig) -> Self {
         let PluginConfig { plugin, config } = answer;
-        Self::Object(Map::from_iter([
-            ("type".to_owned(), Self::String(plugin)),
-            ("value".to_owned(), Self::Object(config.0)),
-        ]))
+        plugin_answer(plugin, config.into())
     }
+}
+
+/// The answer naming the plugin with the id `plugin` and holding `config`, as [`PluginConfig`]
+/// writes it.
+pub(crate) fn plugin_answer(plugin: String, config: Value) -> Value {
+    Value::Object(Map::from_iter([
+        ("type".to_owned(), Value::String(plugin)),
+        ("value".to_owned(), config),
+    ]))
 }
 
 /// The answers one plugin is configured with, by the name of the field each answers.
@@ -264,16 +270,26 @@ fn deserialize_at<T: DeserializeOwned>(
     })
 }
 
+/// What an error message calls an answer of each kind, both one that is given, see [`name_of`],
+/// and one a field takes, see [`FieldKind`](crate::schema::FieldKind).
+pub(crate) mod names {
+    pub(crate) const BOOL: &str = "yes or no";
+    pub(crate) const INTEGER: &str = "a whole number";
+    pub(crate) const DECIMAL: &str = "a number";
+    pub(crate) const PLUGIN: &str = "one plugin";
+    pub(crate) const LIST: &str = "a list";
+}
+
 /// What `answer` is called in an error message, as the kind of answer it is.
 pub(crate) fn name_of(answer: &Value) -> &'static str {
     match answer {
         Value::Null => "nothing",
-        Value::Bool(_) => "yes or no",
-        Value::Number(number) if number.is_i64() => "a whole number",
-        Value::Number(_) => "a number",
+        Value::Bool(_) => names::BOOL,
+        Value::Number(number) if number.is_i64() => names::INTEGER,
+        Value::Number(_) => names::DECIMAL,
         Value::String(_) => "text",
-        Value::Array(_) => "a list",
-        Value::Object(_) if PluginConfig::from_answer(answer).is_some() => "one plugin",
+        Value::Array(_) => names::LIST,
+        Value::Object(_) if PluginConfig::from_answer(answer).is_some() => names::PLUGIN,
         Value::Object(_) => "an object",
     }
 }
