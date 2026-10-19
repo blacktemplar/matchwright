@@ -1312,7 +1312,7 @@ dependencies = [
 [[package]]
 name = "undoable-state-machine"
 version = "0.1.0"
-source = "git+https://github.com/blacktemplar/undoable-state-machine#71f16267efef7ebe26b6461b8a4bb53562ee07a3"
+source = "git+https://github.com/blacktemplar/undoable-state-machine#3d2170752c88cc4720e9620b9749ac50c929b917"
 dependencies = [
  "serde",
  "uuid",

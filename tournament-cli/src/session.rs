@@ -41,7 +41,7 @@ use tournament_engine::{
     },
     transitions::{
         CompetitionStateMachine, CompetitionStateMachineExt as _, CompetitionTransition,
-        UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
+        RedoLastError, UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
         remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
     },
@@ -552,41 +552,16 @@ impl Session {
 
     /// Undoes the change that is the latest one still in effect.
     fn undo(&mut self) -> Result<String, Error> {
-        let log = self.machine.log();
-        let in_effect = in_effect(log);
-        // the first entry is the seed of the session, see [`Session`]
-        let target = log
-            .iter()
-            .zip(&in_effect)
-            .skip(1)
-            .rev()
-            .find(|(entry, in_effect)| **in_effect && is_change(entry))
-            .map(|(entry, _)| entry.id())
-            .ok_or(Error::NothingToUndo)?;
-        self.append(LogEntryKind::Undo(target))?;
+        self.machine.undo_last().ok_or(Error::NothingToUndo)?;
         Ok("undone".to_owned())
     }
 
-    /// Redoes the latest undone change by undoing its undo, as long as no other change was made
-    /// since that undo.
+    /// Redoes the latest undone change, as long as no other change was made since it was undone.
     fn redo(&mut self) -> Result<String, Error> {
-        let log = self.machine.log();
-        let in_effect = in_effect(log);
-        let after_last_change = log.iter().rposition(is_change).map_or(0, |index| index + 1);
-        let target = log
-            .iter()
-            .zip(&in_effect)
-            .skip(after_last_change)
-            .rev()
-            .find(|(entry, in_effect)| {
-                // an undo of an undo is a redo itself, which is not to be redone
-                **in_effect
-                    && matches!(entry.kind(), LogEntryKind::Undo(target)
-                        if log.iter().any(|entry| entry.id() == *target && is_change(entry)))
-            })
-            .map(|(entry, _)| entry.id())
-            .ok_or(Error::NothingToRedo)?;
-        self.append(LogEntryKind::Undo(target))?;
+        self.machine.redo_last().map_err(|error| match error {
+            RedoLastError::NothingToRedo => Error::NothingToRedo,
+            RedoLastError::Rejected(error) => error.into(),
+        })?;
         Ok("redone".to_owned())
     }
 
@@ -712,27 +687,6 @@ fn ordinal_suffix(n: u32) -> &'static str {
         (3, _) => "rd",
         _ => "th",
     }
-}
-
-fn is_change(entry: &LogEntry<Box<dyn CompetitionTransition>>) -> bool {
-    matches!(entry.kind(), LogEntryKind::Apply(_))
-}
-
-/// Whether each entry of `log` is still in effect, i.e. not undone by a later entry that is in
-/// effect itself.
-fn in_effect<T>(log: &[LogEntry<T>]) -> Vec<bool> {
-    let mut undone = HashSet::new();
-    let mut in_effect = vec![false; log.len()];
-    for (index, entry) in log.iter().enumerate().rev() {
-        if undone.contains(&entry.id()) {
-            continue;
-        }
-        in_effect[index] = true;
-        if let LogEntryKind::Undo(target) = entry.kind() {
-            undone.insert(*target);
-        }
-    }
-    in_effect
 }
 
 /// The metrics the ranking can show, each with its column header. Only those a phase calculates

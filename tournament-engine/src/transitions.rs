@@ -1,7 +1,7 @@
 //! The transitions that drive a [`Competition`] forward, and the trait that makes them
 //! persistable.
 
-use std::{any::Any, collections::HashSet, fmt::Debug};
+use std::{any::Any, fmt::Debug};
 
 use thiserror::Error;
 use undoable_state_machine::{
@@ -10,7 +10,9 @@ use undoable_state_machine::{
 
 use crate::{
     entities::competition::{Competition, MatchId, PhaseId},
-    transitions::report_match_result::ReportMatchResult,
+    transitions::{
+        report_match_result::ReportMatchResult, set_competition_seed::SetCompetitionSeed,
+    },
 };
 
 pub mod add_entrant;
@@ -93,9 +95,44 @@ pub enum UndoMatchResultError {
     Rejected(#[from] StateMachineError),
 }
 
-/// Undoing a change by what it did rather than by the [`TransitionId`] of the log entry it was
-/// applied as, which is all [`CompetitionStateMachine`] itself takes.
+/// Why the latest undone change could not be redone.
+#[derive(Debug, Error)]
+pub enum RedoLastError {
+    #[error("there is nothing to redo")]
+    NothingToRedo,
+    /// The redo was rejected by the state machine, because the redone change does not apply
+    /// together with the changes in effect. The error names the change that would no longer apply.
+    #[error(transparent)]
+    Rejected(#[from] StateMachineError),
+}
+
+/// Undoing a change by what it did or by when it was made rather than by the [`TransitionId`] of
+/// the log entry it was applied as, which is all [`CompetitionStateMachine`] itself takes.
 pub trait CompetitionStateMachineExt {
+    /// Undoes the latest change that is in effect, i.e. the latest [`LogEntryKind::Apply`] entry
+    /// in effect, and returns the id of the undo entry appended for that. A
+    /// [`SetCompetitionSeed`] is never undone this way, since everything random that follows
+    /// depends on it, so the walk back passes over it.
+    ///
+    /// Returns `None`, leaving the log unchanged, if no change other than a seed is in effect.
+    ///
+    /// [`SetCompetitionSeed`]: set_competition_seed::SetCompetitionSeed
+    fn undo_last(&mut self) -> Option<TransitionId>;
+
+    /// Redoes the latest undone change, as long as no change was made since it was undone, and
+    /// returns the id of the entry appended for that, which undoes the undo.
+    ///
+    /// Repeated calls redo what repeated [`undo_last`](Self::undo_last) calls undid, in reverse
+    /// order. An undo made by [`undo_match_result`](Self::undo_match_result) or appended directly
+    /// is redone the same way.
+    ///
+    /// # Errors
+    /// Returns [`RedoLastError::NothingToRedo`] if there is no undone change, or a change is in
+    /// effect that was made after it was undone, and [`RedoLastError::Rejected`] if the redone
+    /// change does not apply together with the changes in effect. In either case the log stays
+    /// unchanged.
+    fn redo_last(&mut self) -> Result<TransitionId, RedoLastError>;
+
     /// Undoes the result reported for the match `match_id` of the phase `phase_id` by undoing the
     /// latest log entry that is still in effect and reported it, and returns the id of the undo
     /// entry appended for that.
@@ -182,48 +219,75 @@ pub trait CompetitionStateMachineExt {
 }
 
 impl CompetitionStateMachineExt for CompetitionStateMachine {
+    fn undo_last(&mut self) -> Option<TransitionId> {
+        let target = self
+            .rev_in_effect()
+            .find(|entry| is_apply(entry) && applied::<SetCompetitionSeed>(entry).is_none())?
+            .id();
+        let id = TransitionId::new();
+        // the undone change is the latest one in effect, so the changes that stay in effect are a
+        // prefix of those that replayed into the current state, and replay again
+        self.apply(LogEntry::new(id, LogEntryKind::Undo(target)))
+            .expect("undoing the latest change in effect must replay");
+        Some(id)
+    }
+
+    fn redo_last(&mut self) -> Result<TransitionId, RedoLastError> {
+        let target = redo_target(self).ok_or(RedoLastError::NothingToRedo)?;
+        let id = TransitionId::new();
+        self.apply(LogEntry::new(id, LogEntryKind::Undo(target)))?;
+        Ok(id)
+    }
+
     fn undo_match_result(
         &mut self,
         phase_id: PhaseId,
         match_id: MatchId,
     ) -> Result<TransitionId, UndoMatchResultError> {
-        let target = last_report_in_effect(self.log(), phase_id, match_id)
-            .ok_or(UndoMatchResultError::NotReported)?;
+        let target = self
+            .rev_in_effect()
+            .find(|entry| {
+                applied::<ReportMatchResult>(entry).is_some_and(|report| {
+                    (report.phase_id(), report.match_id()) == (phase_id, match_id)
+                })
+            })
+            .ok_or(UndoMatchResultError::NotReported)?
+            .id();
         let id = TransitionId::new();
         self.apply(LogEntry::new(id, LogEntryKind::Undo(target)))?;
         Ok(id)
     }
 }
 
-/// The id of the latest log entry that is still in effect and reported a result for the match
-/// `match_id` of the phase `phase_id`.
-fn last_report_in_effect(
-    log: &[LogEntry<Box<dyn CompetitionTransition>>],
-    phase_id: PhaseId,
-    match_id: MatchId,
-) -> Option<TransitionId> {
-    // an entry is in effect unless a later entry that is in effect itself undoes it, so a backward
-    // scan has seen every undo that could cancel the entry it is looking at
-    let mut undone = HashSet::new();
-    for entry in log.iter().rev() {
-        if undone.contains(&entry.id()) {
-            continue;
-        }
-        match entry.kind() {
-            LogEntryKind::Undo(target) => {
-                undone.insert(*target);
-            }
-            LogEntryKind::Apply(transition) => {
-                let transition: &dyn Any = &**transition;
-                if let Some(report) = transition.downcast_ref::<ReportMatchResult>()
-                    && (report.phase_id(), report.match_id()) == (phase_id, match_id)
-                {
-                    return Some(entry.id());
-                }
-            }
+/// The id of the undo entry whose undo redoes the latest undone change, unless a change in effect
+/// was made after it.
+fn redo_target(machine: &CompetitionStateMachine) -> Option<TransitionId> {
+    for entry in machine.rev_in_effect() {
+        let LogEntryKind::Undo(undone) = entry.kind() else {
+            // a change made since the undo leaves nothing to redo
+            return None;
+        };
+        // an undo of an undo is a redo itself, which is not to be redone
+        if machine.entry(*undone).is_some_and(is_apply) {
+            return Some(entry.id());
         }
     }
     None
+}
+
+fn is_apply(entry: &LogEntry<Box<dyn CompetitionTransition>>) -> bool {
+    matches!(entry.kind(), LogEntryKind::Apply(_))
+}
+
+/// The transition `entry` applies, if it applies one of type `T`.
+fn applied<T: CompetitionTransition>(
+    entry: &LogEntry<Box<dyn CompetitionTransition>>,
+) -> Option<&T> {
+    let LogEntryKind::Apply(transition) = entry.kind() else {
+        return None;
+    };
+    let transition: &dyn Any = &**transition;
+    transition.downcast_ref()
 }
 
 #[cfg(test)]
@@ -305,6 +369,119 @@ mod tests {
             machine,
             ReportMatchResult::new(phase_id(), match_id, MatchResult::AWins),
         )
+    }
+
+    #[test]
+    fn undo_last_and_redo_last_walk_back_and_forth_through_the_changes() {
+        let mut machine = knockout();
+        let [first, second] = matches(&machine)[..] else {
+            panic!("a knockout between four entrants starts with two semifinals");
+        };
+        report(&mut machine, first);
+        report(&mut machine, second);
+
+        machine.undo_last().expect("the second report is in effect");
+        assert_eq!(result_of(&machine, second), MatchResult::NotFinished);
+        machine.undo_last().expect("the first report is in effect");
+        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+
+        machine
+            .redo_last()
+            .expect("the first report was undone last");
+        assert_eq!(result_of(&machine, first), MatchResult::AWins);
+        assert_eq!(result_of(&machine, second), MatchResult::NotFinished);
+        machine
+            .redo_last()
+            .expect("the second report is still undone");
+        assert_eq!(result_of(&machine, second), MatchResult::AWins);
+        assert!(matches!(
+            machine.redo_last(),
+            Err(RedoLastError::NothingToRedo)
+        ));
+    }
+
+    /// After a redo, the redone change is the latest change in effect again, so it is the one
+    /// undone next.
+    #[test]
+    fn undo_last_undoes_a_redone_change_again() {
+        let mut machine = knockout();
+        let first = matches(&machine)[0];
+        report(&mut machine, first);
+        machine.undo_last().unwrap();
+        machine.redo_last().unwrap();
+
+        machine.undo_last().expect("the redone report is in effect");
+
+        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+    }
+
+    #[test]
+    fn undo_last_passes_over_a_seed() {
+        let mut machine = CompetitionStateMachine::default();
+        let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(0)));
+        apply(&mut machine, AddEntrant::new(entrant));
+        apply(&mut machine, SetCompetitionSeed::new(*b"undo-test!!!"));
+
+        machine.undo_last().expect("the entrant was added");
+
+        assert!(machine.current().entrants().is_empty());
+        assert_eq!(machine.current().seed(), *b"undo-test!!!");
+        let log_len = machine.log().len();
+        assert_eq!(machine.undo_last(), None);
+        assert_eq!(machine.log().len(), log_len, "the log must stay unchanged");
+    }
+
+    #[test]
+    fn a_change_made_after_an_undo_leaves_nothing_to_redo() {
+        let mut machine = knockout();
+        let [first, second] = matches(&machine)[..] else {
+            panic!("a knockout between four entrants starts with two semifinals");
+        };
+        report(&mut machine, first);
+        machine.undo_last().unwrap();
+        report(&mut machine, second);
+
+        assert!(matches!(
+            machine.redo_last(),
+            Err(RedoLastError::NothingToRedo)
+        ));
+    }
+
+    /// A change made after an undo blocks redoing that undo even after the change was undone and
+    /// redone itself.
+    #[test]
+    fn a_redone_change_made_after_an_undo_still_leaves_that_undo_alone() {
+        let mut machine = knockout();
+        let [first, second] = matches(&machine)[..] else {
+            panic!("a knockout between four entrants starts with two semifinals");
+        };
+        report(&mut machine, first);
+        machine.undo_last().unwrap();
+        report(&mut machine, second);
+        machine.undo_last().unwrap();
+
+        machine
+            .redo_last()
+            .expect("the second report was undone last");
+
+        assert_eq!(result_of(&machine, second), MatchResult::AWins);
+        assert!(matches!(
+            machine.redo_last(),
+            Err(RedoLastError::NothingToRedo)
+        ));
+        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+    }
+
+    #[test]
+    fn an_undone_match_result_is_redone() {
+        let mut machine = knockout();
+        let first = matches(&machine)[0];
+        report(&mut machine, first);
+        machine.undo_match_result(phase_id(), first).unwrap();
+
+        machine.redo_last().expect("the report was undone last");
+
+        assert_eq!(result_of(&machine, first), MatchResult::AWins);
     }
 
     /// Undoing the earlier of two reports leaves the later one in effect, which is the whole point
