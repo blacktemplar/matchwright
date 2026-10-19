@@ -1,12 +1,9 @@
-use std::any::TypeId;
-
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, OldMetrics};
 use crate::{
     entities::competition::{Bye, Match, MatchId, MatchResult, PhaseData, RankingId},
-    map::Map,
     plugins::{facts::CalculatesMetric, metrics_calculator::MetricsCalculator},
     type_map::TypeMapValue,
 };
@@ -43,7 +40,7 @@ impl MetricsCalculator for MatchesCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         r#match
             .rankings()
@@ -61,7 +58,7 @@ impl MetricsCalculator for MatchesCalculator {
         &mut self,
         _: &PhaseData,
         _: &Bye,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         vec![]
     }

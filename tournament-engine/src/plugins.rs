@@ -147,11 +147,7 @@ pub(crate) type Metrics = Vec<Box<dyn MetricsCalculator>>;
 /// `plugin_factory`.
 #[cfg(test)]
 mod tests {
-    use std::{
-        any::{TypeId, type_name},
-        fmt::Debug,
-        num::NonZeroU32,
-    };
+    use std::{any::type_name, fmt::Debug, num::NonZeroU32};
 
     use plugin_factory::{
         Plugin, PluginType,
@@ -164,11 +160,10 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
-        map::Map,
         plugins::{
             facts::{CalculatesMetric, EntrantsPerRanking, MatchAnnotation},
             metrics_calculator::{
-                Metric,
+                Metric, OldMetrics,
                 buchholz::{
                     Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
                     MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
@@ -679,7 +674,7 @@ mod tests {
                     _: &PhaseData,
                     _: &Match,
                     _: MatchResult,
-                    _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+                    _: &OldMetrics,
                 ) -> Vec<(RankingId, Metric)> {
                     Vec::new()
                 }
@@ -688,7 +683,7 @@ mod tests {
                     &mut self,
                     _: &PhaseData,
                     _: &Bye,
-                    _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+                    _: &OldMetrics,
                 ) -> Vec<(RankingId, Metric)> {
                     Vec::new()
                 }

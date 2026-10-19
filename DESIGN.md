@@ -547,11 +547,11 @@ pub trait MetricsCalculator: Plugin + DynClone {
     fn update_after_match_result_changed(
         &mut self, phase_data: &PhaseData, r#match: &Match,
         old_match_result: MatchResult,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
     fn update_after_bye(
         &mut self, phase_data: &PhaseData, bye: &Bye,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
 }
 ```
@@ -562,7 +562,8 @@ pub trait MetricsCalculator: Plugin + DynClone {
 which metric type this calculator owns, so disjointness is checkable without
 running any computation. `old_metrics` lets a calculator that depends on another
 calculator's output (e.g. Buchholz on points) read the pre-update values of the
-calculators that ran before it, while `PhaseData` holds their new ones. Both are
+calculators that ran before it, typed through `OldMetrics::of::<M>()`, while
+`PhaseData` holds their new ones. Both are
 only complete if those calculators did run before it, so calculator order does
 matter; it is derived from their declared dependencies, see
 [Compatibility between plugins](#compatibility-between-plugins).

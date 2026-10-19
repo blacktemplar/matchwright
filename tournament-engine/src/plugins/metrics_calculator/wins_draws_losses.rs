@@ -1,4 +1,4 @@
-use std::{any::TypeId, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
@@ -7,10 +7,9 @@ use crate::{
     entities::competition::{
         Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
     },
-    map::Map,
     plugins::{
         facts::CalculatesMetric,
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
@@ -174,7 +173,7 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         old_match_result: MatchResult,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
@@ -206,7 +205,7 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         &mut self,
         phase_data: &PhaseData,
         bye: &Bye,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         let mut metric = *phase_data.rankings()[&bye.ranking()]
             .metric::<WinsDrawsLosses>()
@@ -498,7 +497,7 @@ mod tests {
             phase.data(),
             &phase.matches()[&match_id],
             MatchResult::AWins,
-            &Map::default(),
+            &OldMetrics::default(),
         );
     }
 }

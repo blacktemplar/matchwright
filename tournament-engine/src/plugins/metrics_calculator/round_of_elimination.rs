@@ -1,14 +1,13 @@
-use std::{any::TypeId, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team},
-    map::Map,
     plugins::{
         facts::{CalculatesMetric, MatchAnnotation},
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
         ranker::{Compare, Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
@@ -103,7 +102,7 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         old_match_result: MatchResult,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         // for now we only support setting the match result, not updating it
         assert_eq!(old_match_result, MatchResult::NotFinished);
@@ -137,7 +136,7 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
         &mut self,
         _: &PhaseData,
         _: &Bye,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         vec![]
     }

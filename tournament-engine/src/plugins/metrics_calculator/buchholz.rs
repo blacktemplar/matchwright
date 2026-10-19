@@ -1,13 +1,9 @@
-use std::{
-    any::{Any, TypeId},
-    fmt::Debug,
-    num::NonZeroU32,
-};
+use std::{fmt::Debug, num::NonZeroU32};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, OldMetrics};
 use crate::{
     entities::competition::{
         Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
@@ -99,7 +95,7 @@ impl MetricsCalculator for BuchholzCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, Buchholz>(
             phase_data,
@@ -115,7 +111,7 @@ impl MetricsCalculator for BuchholzCalculator {
         &mut self,
         phase_data: &PhaseData,
         _: &Bye,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, Buchholz>(phase_data, None, old_metrics, |_| 1.)
     }
@@ -199,7 +195,7 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Buchholz, BuchholzOfBuchholz>(
             phase_data,
@@ -215,7 +211,7 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
         &mut self,
         phase_data: &PhaseData,
         _: &Bye,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Buchholz, BuchholzOfBuchholz>(
             phase_data,
@@ -337,7 +333,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, SonnebornBerger>(
             phase_data,
@@ -353,7 +349,7 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         &mut self,
         phase_data: &PhaseData,
         _: &Bye,
-        old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, SonnebornBerger>(
             phase_data,
@@ -370,17 +366,16 @@ impl MetricsCalculator for SonnebornBergerCalculator {
 fn weighted_opponent_sum_changes<M, B>(
     phase_data: &PhaseData,
     r#match: Option<&Match>,
-    old_metrics: &Map<TypeId, Vec<(RankingId, Metric)>>,
+    old_metrics: &OldMetrics,
     weight: impl Fn(ResultOfTeam) -> f32,
 ) -> Vec<(RankingId, Metric)>
 where
-    M: 'static + AsRef<f32>,
+    M: TypeMapValue + AsRef<f32>,
     B: TypeMapValue + AsRef<f32> + From<f32>,
 {
     let mut changes: Map<_, f32> = Map::default();
-    for (r_id, old_metric) in old_metrics.get(&TypeId::of::<M>()).into_iter().flatten() {
-        let old_metric: &M = (&**old_metric as &dyn Any).downcast_ref().unwrap();
-        let ranking = &phase_data.rankings()[r_id];
+    for (r_id, old_metric) in old_metrics.of::<M>() {
+        let ranking = &phase_data.rankings()[&r_id];
         let new_metric = ranking.metric::<M>().unwrap();
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
         if m_diff != 0. {
@@ -393,7 +388,7 @@ where
                     continue;
                 }
                 let match_of_r = &phase_data.matches()[match_id];
-                let opponent_team = match_of_r.team_of(r_id).unwrap().opponent();
+                let opponent_team = match_of_r.team_of(&r_id).unwrap().opponent();
                 let opponent_weight = weight(match_of_r.result_of_team(opponent_team));
                 if opponent_weight != 0. {
                     let change = opponent_weight * m_diff;

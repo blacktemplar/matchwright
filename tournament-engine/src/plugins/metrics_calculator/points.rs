@@ -1,12 +1,11 @@
-use std::{any::TypeId, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::Metric;
+use super::{Metric, OldMetrics};
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
-    map::Map,
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
@@ -133,7 +132,7 @@ impl MetricsCalculator for PointsCalculator {
         phase_data: &PhaseData,
         r#match: &Match,
         _: MatchResult,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         r#match
             .non_losing_rankings()
@@ -145,7 +144,7 @@ impl MetricsCalculator for PointsCalculator {
         &mut self,
         phase_data: &PhaseData,
         bye: &Bye,
-        _: &Map<TypeId, Vec<(RankingId, Metric)>>,
+        _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         if self.points_for_bye == 0.0 {
             return vec![];

@@ -1,8 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    hash::Hash,
-    num::NonZeroU32,
-};
+use std::{any::Any, hash::Hash, num::NonZeroU32};
 
 use itertools::{Either, Itertools};
 use plugin_factory::compatibility::Declaration;
@@ -13,11 +9,11 @@ use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
 use crate::{
-    map::{IdAble, IdMap, Map},
+    map::{IdAble, IdMap},
     plugins::{
         PhasePlugins,
         facts::EntrantsPerRanking,
-        metrics_calculator::{Metric, MetricsCalculator},
+        metrics_calculator::{Metric, MetricsCalculator, OldMetrics},
         phase_format::{PhaseFormat, Schedule},
         ranker::HierarchicalRanker,
     },
@@ -430,10 +426,10 @@ impl Phase {
         mut updates_of: impl FnMut(
             &mut dyn MetricsCalculator,
             &PhaseData,
-            &Map<TypeId, Vec<(RankingId, Metric)>>,
+            &OldMetrics,
         ) -> Vec<(RankingId, Metric)>,
     ) {
-        let mut old_metrics: Map<TypeId, Vec<(RankingId, Metric)>> = Map::default();
+        let mut old_metrics = OldMetrics::default();
         for metrics_calculator in &mut self.metrics_calculators {
             let updates = updates_of(&mut **metrics_calculator, &self.data, &old_metrics);
             // check requirements of the update methods of MetricsCalculator
@@ -453,10 +449,7 @@ impl Phase {
                     .metrics
                     .insert_boxed(metric)
                     .unwrap();
-                old_metrics
-                    .entry((&*old_metric as &dyn Any).type_id())
-                    .or_default()
-                    .push((ranking_id, old_metric))
+                old_metrics.push(ranking_id, old_metric);
             }
         }
     }
