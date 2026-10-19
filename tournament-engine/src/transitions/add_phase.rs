@@ -1,12 +1,11 @@
 use plugin_factory::{compatibility, schema::Configurable};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
     entities::competition::{Competition, PhaseId},
     plugins::PhasePlugins,
-    transitions::CompetitionTransition,
+    transitions::{CompetitionTransition, ensure_not_started},
 };
 
 /// Adds a phase to a competition that has not started yet.
@@ -33,17 +32,9 @@ impl AddPhase {
     }
 }
 
-#[derive(Error, Debug)]
-enum AddPhaseError {
-    #[error("tournament already started")]
-    TournamentAlreadyStarted,
-}
-
 impl Transition<Competition> for AddPhase {
     fn check_applicable(&self, competition: &Competition) -> Result<(), TransitionError> {
-        if competition.is_started() {
-            return Err(Box::new(AddPhaseError::TournamentAlreadyStarted));
-        }
+        ensure_not_started(competition)?;
         compatibility::check(
             |declaration| competition.declare_phase_context(declaration),
             &self.plugins.plugins(),

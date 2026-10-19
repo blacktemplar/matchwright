@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
-use crate::{entities::competition::Competition, transitions::CompetitionTransition};
+use crate::{
+    entities::competition::Competition,
+    transitions::{CompetitionTransition, ensure_not_started},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SetCompetitionSeed {
@@ -15,17 +17,9 @@ impl SetCompetitionSeed {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum SetCompetitionSeedError {
-    #[error("competition already started")]
-    CompetitionAlreadyStarted,
-}
-
 impl Transition<Competition> for SetCompetitionSeed {
     fn check_applicable(&self, state: &Competition) -> Result<(), TransitionError> {
-        if state.is_started() {
-            return Err(Box::new(SetCompetitionSeedError::CompetitionAlreadyStarted));
-        }
+        ensure_not_started(state)?;
         Ok(())
     }
 

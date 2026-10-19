@@ -2,15 +2,18 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use undoable_state_machine::Transition;
 
-use crate::{entities::competition::Competition, transitions::CompetitionTransition};
+use crate::{
+    entities::competition::Competition,
+    transitions::{CompetitionTransition, ensure_not_started},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartCompetition;
 
+/// Why a [`StartCompetition`] does not apply, besides
+/// [`CompetitionAlreadyStarted`](crate::transitions::CompetitionAlreadyStarted).
 #[derive(Error, Debug)]
 pub enum StartCompetitionError {
-    #[error("competition already started")]
-    CompetitionAlreadyStarted,
     #[error("too few entrants")]
     TooFewEntrants,
     #[error("no phases")]
@@ -22,9 +25,7 @@ impl Transition<Competition> for StartCompetition {
         &self,
         competition: &Competition,
     ) -> Result<(), undoable_state_machine::TransitionError> {
-        if competition.is_started() {
-            return Err(Box::new(StartCompetitionError::CompetitionAlreadyStarted));
-        }
+        ensure_not_started(competition)?;
         if competition.entrants().len() < 2 {
             return Err(Box::new(StartCompetitionError::TooFewEntrants));
         }

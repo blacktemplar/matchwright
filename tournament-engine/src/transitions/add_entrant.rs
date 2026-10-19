@@ -4,7 +4,7 @@ use undoable_state_machine::Transition;
 
 use crate::{
     entities::competition::{Competition, Entrant},
-    transitions::CompetitionTransition,
+    transitions::{CompetitionTransition, ensure_not_started},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,10 +18,10 @@ impl AddEntrant {
     }
 }
 
+/// Why an [`AddEntrant`] does not apply, besides
+/// [`CompetitionAlreadyStarted`](crate::transitions::CompetitionAlreadyStarted).
 #[derive(Error, Debug)]
-enum AddEntrantError {
-    #[error("competition already started")]
-    CompetitionAlreadyStarted,
+pub enum AddEntrantError {
     #[error("entrant is already attending")]
     EntrantIsAlreadyAttending,
 }
@@ -31,9 +31,7 @@ impl Transition<Competition> for AddEntrant {
         &self,
         competition: &Competition,
     ) -> Result<(), undoable_state_machine::TransitionError> {
-        if competition.is_started() {
-            return Err(Box::new(AddEntrantError::CompetitionAlreadyStarted));
-        }
+        ensure_not_started(competition)?;
         if competition.entrants().contains_key(&self.entrant.id()) {
             return Err(Box::new(AddEntrantError::EntrantIsAlreadyAttending));
         }

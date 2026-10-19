@@ -83,6 +83,22 @@ pub trait CompetitionTransition: Transition<Competition> + Debug + Any {}
 /// is a snapshot of [`StateMachine::current`] alone, which is smaller and cheaper to load.
 pub type CompetitionStateMachine = StateMachine<Competition, Box<dyn CompetitionTransition>>;
 
+/// A transition that only applies before the competition starts was applied after it started.
+#[derive(Debug, Error)]
+#[error("competition already started")]
+pub struct CompetitionAlreadyStarted;
+
+/// Fails with [`CompetitionAlreadyStarted`] if `competition` has started.
+pub(crate) fn ensure_not_started(
+    competition: &Competition,
+) -> Result<(), CompetitionAlreadyStarted> {
+    if competition.is_started() {
+        Err(CompetitionAlreadyStarted)
+    } else {
+        Ok(())
+    }
+}
+
 /// Why the result reported for a match could not be undone.
 #[derive(Debug, Error)]
 pub enum UndoMatchResultError {
