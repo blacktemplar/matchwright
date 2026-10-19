@@ -16,11 +16,10 @@ use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
     compatibility::Declaration,
-    config::{Config, ConfigError, Path, PluginConfig, Segment, Value},
+    config::{ConfigError, Path, PluginConfig, Segment, Value},
     draft::{self, Candidate, Draft, Issue, Problem},
     schema::{Configurable, Field, FieldKind},
 };
-use serde::Deserialize;
 use thiserror::Error;
 
 /// What the option of a list of plugins that ends it is shown as.
@@ -252,7 +251,7 @@ pub fn fill<T: Configurable>(
 /// );
 /// ```
 pub fn describe(axis: AnyAxis, answer: &Value) -> Option<String> {
-    let plugin = plugin_of(answer)?;
+    let plugin = PluginConfig::from_answer(answer)?;
     let entry = axis.entry(plugin.plugin())?;
     let answers: Vec<_> = entry
         .schema()
@@ -294,39 +293,13 @@ fn describe_answer(kind: &FieldKind, answer: &Value) -> String {
     }
 }
 
-/// What a [`Problem`] reads as, on a line of its own after the path of its issue.
-pub fn describe_issue(issue: &Issue) -> String {
-    let problem = match issue.problem() {
-        Problem::Invalid(error) => error.to_string(),
-        Problem::Incompatible(incompatibility) => incompatibility.to_string(),
-        Problem::Unprovided {
-            fact,
-            required_by,
-            providers,
-            ..
-        } if providers.is_empty() => {
-            format!("{required_by} requires {fact}, which nothing provides")
-        }
-        Problem::Unprovided {
-            fact,
-            required_by,
-            providers,
-            ..
-        } => format!(
-            "{required_by} requires {fact}, which nothing provides (provided by {})",
-            providers.join(", ")
-        ),
-    };
-    format!("{}: {problem}", issue.path())
-}
-
 /// Issues, each on a line of its own, as [`Error::Issues`] shows them.
 pub struct IssueList<'a>(pub &'a [Issue]);
 
 impl Display for IssueList<'_> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         for issue in self.0 {
-            write!(formatter, "\n  {}", describe_issue(issue))?;
+            write!(formatter, "\n  {issue}")?;
         }
         Ok(())
     }
@@ -481,7 +454,7 @@ impl<T: Configurable> Asker<'_, T> {
             label: capitalized(&label),
             description: field.description(),
         };
-        let default = match answer_at(self.draft.answers(), &path) {
+        let default = match self.draft.answers().get_at(&path) {
             Some(answer) => Some(answer.clone()),
             None => draft::default_value(self.context, self.draft, &path)?,
         };
@@ -560,7 +533,7 @@ impl<T: Configurable> Asker<'_, T> {
         default: Option<Value>,
         optional: bool,
     ) -> Result<(), Error> {
-        let default_plugin = default.as_ref().and_then(plugin_of);
+        let default_plugin = default.as_ref().and_then(PluginConfig::from_answer);
         let first: Vec<_> = default_plugin.iter().map(PluginConfig::plugin).collect();
         let candidates = self.candidates(path, &first)?;
         let mut options: Vec<_> = candidates
@@ -775,31 +748,12 @@ fn ordered(mut candidates: Vec<Candidate>, first: &[&str]) -> Vec<Candidate> {
     candidates
 }
 
-/// The plugin `answer` configures, or [`None`] if it is no plugin.
-fn plugin_of(answer: &Value) -> Option<PluginConfig> {
-    PluginConfig::deserialize(answer).ok()
-}
-
 /// The plugins among `answers`.
 fn plugins(answers: &[Value]) -> Vec<PluginConfig> {
-    answers.iter().filter_map(plugin_of).collect()
-}
-
-/// The answer at `path` in `answers`, or [`None`] if it is unanswered.
-fn answer_at<'a>(answers: &'a Config, path: &Path) -> Option<&'a Value> {
-    let mut segments = path.segments().iter();
-    let Some(Segment::Field(name)) = segments.next() else {
-        return None;
-    };
-    let mut answer = answers.get(name)?;
-    for segment in segments {
-        answer = match segment {
-            // the config of a plugin is its answer's "value"
-            Segment::Field(name) => answer.get("value")?.get(name)?,
-            Segment::Index(index) => answer.get(index)?,
-        };
-    }
-    Some(answer)
+    answers
+        .iter()
+        .filter_map(PluginConfig::from_answer)
+        .collect()
 }
 
 /// The questionnaire of the plugins of a phase, which is what the CLI asks it for.
@@ -1074,7 +1028,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            answer_at(draft.answers(), &"format.rounds".parse().unwrap()),
+            draft.answers().get_at(&"format.rounds".parse().unwrap()),
             Some(&Value::from(3))
         );
         assert_eq!(

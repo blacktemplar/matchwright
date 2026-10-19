@@ -96,7 +96,20 @@ impl PluginConfig {
     }
 
     /// The plugin configured by `answer`, or [`None`] if `answer` is not a plugin.
-    pub(crate) fn from_answer(answer: &Value) -> Option<Self> {
+    ///
+    /// # Examples
+    /// ```
+    /// use plugin_factory::config::{PluginConfig, Value};
+    ///
+    /// let answer = Value::from(PluginConfig::new("points").with("points_for_win", 3));
+    ///
+    /// assert_eq!(
+    ///     PluginConfig::from_answer(&answer),
+    ///     Some(PluginConfig::new("points").with("points_for_win", 3))
+    /// );
+    /// assert_eq!(PluginConfig::from_answer(&Value::from(3)), None);
+    /// ```
+    pub fn from_answer(answer: &Value) -> Option<Self> {
         Self::deserialize(answer).ok()
     }
 }
@@ -156,6 +169,50 @@ impl Config {
     /// A field answered with nothing, i.e. with [`Value::Null`], is answered.
     pub fn get(&self, field: &str) -> Option<&Value> {
         self.0.get(field)
+    }
+
+    /// The answer at `path`, or [`None`] if it is unanswered or `path` addresses nothing in this
+    /// config, e.g. the root or a field of a plugin that is not chosen.
+    ///
+    /// # Examples
+    /// ```
+    /// use plugin_factory::config::{Config, PluginConfig, Value};
+    ///
+    /// let config = Config::new().with(
+    ///     "metrics",
+    ///     vec![Value::from(
+    ///         PluginConfig::new("points").with("points_for_win", 3),
+    ///     )],
+    /// );
+    ///
+    /// assert_eq!(
+    ///     config.get_at(&"metrics[0].points_for_win".parse().unwrap()),
+    ///     Some(&Value::from(3))
+    /// );
+    /// assert_eq!(config.get_at(&"metrics[1]".parse().unwrap()), None);
+    /// ```
+    pub fn get_at(&self, path: &Path) -> Option<&Value> {
+        let (Segment::Field(name), rest) = path.segments().split_first()? else {
+            return None;
+        };
+        rest.iter()
+            .try_fold(self.0.get(name)?, |answer, segment| match segment {
+                // the config of a plugin is its answer's "value"
+                Segment::Field(name) => answer.get("value")?.get(name),
+                Segment::Index(index) => answer.get(index),
+            })
+    }
+
+    /// [`Self::get_at`] for the path made of `segments`, mutably.
+    pub(crate) fn get_at_mut(&mut self, segments: &[Segment]) -> Option<&mut Value> {
+        let (Segment::Field(name), rest) = segments.split_first()? else {
+            return None;
+        };
+        rest.iter()
+            .try_fold(self.0.get_mut(name)?, |answer, segment| match segment {
+                Segment::Field(name) => answer.get_mut("value")?.get_mut(name),
+                Segment::Index(index) => answer.get_mut(index),
+            })
     }
 
     /// Every field this config answers with its answer, in no particular order.

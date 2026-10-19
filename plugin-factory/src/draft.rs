@@ -17,7 +17,11 @@
 //! arrive in turn, so the candidates and issues are optimistic about it; [`finish`] checks with
 //! nothing open. Whether a provider fits is judged by its static declaration.
 
-use std::{any::TypeId, fmt::Write as _, marker::PhantomData, mem};
+use std::{
+    any::TypeId,
+    fmt::{self, Display, Formatter},
+    marker::PhantomData,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -1269,6 +1273,13 @@ impl Issue {
     }
 }
 
+/// Shows the path followed by the problem, as `path: problem`.
+impl Display for Issue {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path, self.problem)
+    }
+}
+
 /// What is wrong, see [`Issue`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum Problem {
@@ -1290,6 +1301,33 @@ pub enum Problem {
         providers: Vec<&'static str>,
         added_by_finish: Vec<Addition>,
     },
+}
+
+/// Shows an [`Unprovided`](Self::Unprovided) like [`Incompatibility::FactNotProvided`], followed
+/// by the providers in parentheses if there are any.
+impl Display for Problem {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(error) => error.fmt(formatter),
+            Self::Incompatible(incompatibility) => incompatibility.fmt(formatter),
+            Self::Unprovided {
+                fact,
+                required_by,
+                providers,
+                ..
+            } => {
+                let unprovided = Incompatibility::FactNotProvided {
+                    fact,
+                    required_by: required_by.to_string(),
+                };
+                write!(formatter, "{unprovided}")?;
+                if !providers.is_empty() {
+                    write!(formatter, " (provided by {})", providers.join(", "))?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// The axis of the plugins a position of `kind` takes and whether it takes a list of them, or
@@ -1403,29 +1441,29 @@ fn edit(answers: &mut Config, path: &Path, answer: Option<Value>) {
         .segments()
         .split_last()
         .expect("a located path is not the root");
-    let mut root = Value::Object(mem::take(&mut answers.0));
-    let holder = root
-        .pointer_mut(&pointer(parent))
-        .expect("a located path is in the answers");
     match last {
         Segment::Field(name) => {
             // the answers of a plugin are its answer's "value", which checking an answer writes
             // as an object
             let config = if parent.is_empty() {
-                holder
+                &mut answers.0
             } else {
-                &mut holder["value"]
+                answers
+                    .get_at_mut(parent)
+                    .and_then(|plugin| plugin.get_mut("value"))
+                    .and_then(Value::as_object_mut)
+                    .expect("a located field is in the config of a plugin")
             };
-            let config = config
-                .as_object_mut()
-                .expect("the config of a plugin is an object");
             match answer {
                 Some(answer) => config.insert(name.clone(), answer),
                 None => config.remove(name),
             };
         }
         Segment::Index(index) => {
-            let list = holder.as_array_mut().expect("a located index is in a list");
+            let list = answers
+                .get_at_mut(parent)
+                .and_then(Value::as_array_mut)
+                .expect("a located index is in a list");
             match answer {
                 Some(answer) if *index == list.len() => list.push(answer),
                 Some(answer) => list[*index] = answer,
@@ -1435,31 +1473,6 @@ fn edit(answers: &mut Config, path: &Path, answer: Option<Value>) {
             }
         }
     }
-    let Value::Object(root) = root else {
-        unreachable!("the root stays an object");
-    };
-    answers.0 = root;
-}
-
-/// The JSON pointer to the answer at `segments` in the answers as a [`Value`].
-fn pointer(segments: &[Segment]) -> String {
-    let mut pointer = String::new();
-    for (position, segment) in segments.iter().enumerate() {
-        match segment {
-            Segment::Field(name) => {
-                // a field after the first is one of the plugin answering what comes before it
-                if position > 0 {
-                    pointer.push_str("/value");
-                }
-                let name = name.replace('~', "~0").replace('/', "~1");
-                write!(pointer, "/{name}").expect("writing to a string cannot fail");
-            }
-            Segment::Index(index) => {
-                write!(pointer, "/{index}").expect("writing to a string cannot fail");
-            }
-        }
-    }
-    pointer
 }
 
 /// One field of the tree of answers.
