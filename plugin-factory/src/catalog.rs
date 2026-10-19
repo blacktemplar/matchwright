@@ -167,6 +167,19 @@ impl PluginEntry {
         (self.schema)()
     }
 
+    /// The plugin with each field answered by the answer it offers, see
+    /// [`Field::default_value`](crate::schema::Field::default_value). A field offering no answer
+    /// is left unanswered.
+    pub fn default_config(&self) -> PluginConfig {
+        let mut config = Config::new();
+        for field in self.schema().fields() {
+            if let Some(default) = field.default_value() {
+                config.set(field.name(), default.clone());
+            }
+        }
+        PluginConfig::configured(self.id, config)
+    }
+
     /// The axes of the plugins the fields of the plugin's schema take, in schema order, an axis
     /// once per field taking it.
     pub(crate) fn sub_axes(&self) -> Vec<AnyAxis> {

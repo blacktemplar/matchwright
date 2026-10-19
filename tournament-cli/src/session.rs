@@ -14,8 +14,8 @@ use std::{
 
 use plugin_factory::{
     catalog::AnyAxis,
-    config::{ConfigError, Path as ConfigPath, PluginConfig, Value},
-    draft::{self, Draft, Issue, Problem},
+    config::{ConfigError, Path as ConfigPath, Value},
+    draft::{self, Draft, Issue},
 };
 use thiserror::Error;
 use tournament_engine::{
@@ -26,7 +26,6 @@ use tournament_engine::{
     plugins::{
         PhasePlugins,
         metrics_calculator::{
-            MetricsCalculator,
             buchholz::{Buchholz, BuchholzOfBuchholz, SonnebornBerger},
             points::Points,
             round_of_elimination::RoundOfElimination,
@@ -282,8 +281,8 @@ impl Session {
 
     /// Adds the phase `draft` configures, which is the only phase the competition is played in.
     ///
-    /// Every metric a configured one is derived from is calculated as well: one that only a single
-    /// calculator provides is added with the parameters that calculator offers.
+    /// A calculator that has nothing to be configured is added for a metric the phase needs and
+    /// nothing calculates, see [`draft::finish`]; one with fields is never added unasked.
     ///
     /// # Errors
     /// Returns an error if the competition already has a phase, does not accept one anymore
@@ -293,7 +292,7 @@ impl Session {
         if !self.competition().phases().is_empty() {
             return Err(Error::PhaseAlreadyAdded);
         }
-        let plugins = self.settled(draft.clone())?;
+        let plugins = self.settled(draft)?;
         let summary = summary(&plugins);
         self.machine
             .apply_transition(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
@@ -310,48 +309,16 @@ impl Session {
         self.add_phase(&draft)
     }
 
-    /// `draft` finished, with every metric added that one of its plugins requires and nothing
-    /// calculates, if a single calculator does: the engine settles the ones that need no
-    /// configuration, and the others are configured with the answers they offer, as if the
-    /// operator accepted those.
+    /// `draft` finished, see [`draft::finish`].
     ///
     /// # Errors
     /// Returns [`Error::Unsettled`] with every issue left once nothing more can be added.
-    fn settled(&self, mut draft: Draft<PhasePlugins>) -> Result<PhasePlugins, Error> {
-        let context = |declaration: &mut _| self.competition().declare_phase_context(declaration);
-        let metrics = ConfigPath::ROOT.field("metrics");
-        loop {
-            let issues = match draft::finish(context, &draft) {
-                Ok(plugins) => return Ok(plugins),
-                Err(issues) => issues,
-            };
-            let single_provider = issues.iter().find_map(|issue| match issue.problem() {
-                Problem::Unprovided { providers, .. }
-                    if issue.path() == &metrics && providers.len() == 1 =>
-                {
-                    Some(providers[0])
-                }
-                _ => None,
-            });
-            let Some(provider) = single_provider else {
-                return Err(Error::Unsettled(issues));
-            };
-            let entry = AnyAxis::of::<dyn MetricsCalculator>()
-                .entry(provider)
-                .expect("a provider of the metrics is a calculator");
-            let mut calculator = PluginConfig::new(provider);
-            for field in entry.schema().fields() {
-                if let Some(default) = field.default_value() {
-                    calculator = calculator.with(field.name(), default.clone());
-                }
-            }
-            let calculators = draft
-                .answers()
-                .get("metrics")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            draft.set(&metrics.clone().index(calculators), calculator)?;
-        }
+    fn settled(&self, draft: &Draft<PhasePlugins>) -> Result<PhasePlugins, Error> {
+        draft::finish(
+            |declaration| self.competition().declare_phase_context(declaration),
+            draft,
+        )
+        .map_err(Error::Unsettled)
     }
 
     fn start(&mut self) -> Result<String, Error> {
@@ -754,8 +721,10 @@ fn table(header: &[&str], rows: &[Vec<String>]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use plugin_factory::{PluginType, draft::Problem};
     use tournament_engine::plugins::{
         metrics_calculator::{
+            MetricsCalculator,
             buchholz::SonnebornBergerCalculator,
             points::{MorePoints, PointsCalculator},
             wins_draws_losses::{FewerMatchesPlayed, MoreWins, WinsDrawsLossesCalculator},
@@ -993,7 +962,7 @@ mod tests {
 
     /// Which metrics a metric is derived from is the engine's business: the Sonneborn-Berger sums
     /// the points of the opponents a ranking met, so a phase calculating it also calculates the
-    /// points and the results they were scored from, neither of which was configured.
+    /// results the points are scored from, which have nothing to be configured.
     #[test]
     fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
         let mut session = Session::new(None);
@@ -1002,7 +971,10 @@ mod tests {
             &mut session,
             RoundRobin,
             Vec::new(),
-            vec![Box::new(SonnebornBergerCalculator::new(1.0, 0.5))],
+            vec![
+                Box::new(PointsCalculator::new(1.0, 0.5)),
+                Box::new(SonnebornBergerCalculator::new(1.0, 0.5)),
+            ],
         )
         .unwrap();
         output(&mut session, "start");
@@ -1022,6 +994,33 @@ mod tests {
             ["#", "name", "W-D-L", "points", "Sonneborn-Berger"],
             "{ranking}"
         );
+    }
+
+    /// The points can be scored in many ways, so a phase ranked by them without a points
+    /// calculator is not added with one the operator was not asked about.
+    #[test]
+    fn a_calculator_that_has_to_be_configured_is_not_added_unasked() {
+        let mut session = Session::new(None);
+        output(&mut session, "add Alice Bob Carol Dave");
+
+        let result = add_phase(
+            &mut session,
+            RoundRobin,
+            vec![Box::new(MorePoints)],
+            Vec::new(),
+        );
+
+        let Err(Error::Unsettled(issues)) = result else {
+            panic!("got {result:?}");
+        };
+        assert!(
+            issues.iter().any(|issue| matches!(
+                issue.problem(),
+                Problem::Unprovided { providers, .. } if providers.contains(&PointsCalculator::ID)
+            )),
+            "got {issues:?}"
+        );
+        assert!(session.competition().phases().is_empty());
     }
 
     /// Wins, draws, losses and the matches they add up to are four criteria of a single metric, so

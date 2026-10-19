@@ -122,10 +122,11 @@ Only what fits the answers given so far is offered: a metric that needs a format
 knocking entrants out is not offered for a round robin. The ranking is asked
 for one criterion at a time, each one only breaking the ties of the ones before
 it, until `(no further one)` is chosen. A metric the ranking needs starts out
-chosen, and every metric a calculated one is derived from is calculated as well
-even when it was not picked: ranking by Sonneborn-Berger alone still calculates
-the points it sums and the results they are scored from, and the ranking shows
-them. An answer a plugin rejects, such as a negative number of rounds, is asked
+chosen, and so does every metric a chosen one is derived from: ranking by
+Sonneborn-Berger starts out calculating the points it sums and the results they
+are scored from, and the ranking shows them. A metric with nothing to configure,
+such as the results, is calculated even when it was not picked; one that has to
+be configured, such as the points, is never added unasked. An answer a plugin rejects, such as a negative number of rounds, is asked
 again right away, and a phase whose plugins do not fit together is asked for
 again, starting out at the answers given.
 

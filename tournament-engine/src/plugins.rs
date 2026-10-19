@@ -157,7 +157,6 @@ mod tests {
         Plugin, PluginType,
         catalog::AnyAxis,
         compatibility::{self, Declaration, Fact, Incompatibility},
-        config::PluginConfig,
         draft::Problem,
         register,
     };
@@ -455,12 +454,10 @@ mod tests {
     fn every_registered_calculator_provides_the_metric_it_calculates() {
         for entry in AnyAxis::of::<dyn MetricsCalculator>().entries() {
             // every calculator of this crate offers an answer to each of its fields
-            let mut config = PluginConfig::new(entry.id());
-            for field in entry.schema().fields() {
-                let default = field.default_value().expect("every field offers an answer");
-                config = config.with(field.name(), default.clone());
-            }
-            let calculator = config.build::<dyn MetricsCalculator>().unwrap();
+            let calculator = entry
+                .default_config()
+                .build::<dyn MetricsCalculator>()
+                .unwrap();
             let both: [&dyn Plugin; 2] = [&*calculator, &*calculator];
             // the type of a metric behind a `dyn` is only known by its derived `Debug` form, which
             // starts with the name of the type

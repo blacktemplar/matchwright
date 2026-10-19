@@ -313,9 +313,9 @@ filled in unasked. A field taking one plugin, such as the format, is never added
 to. Settling repeats until nothing changes, each fact tried once. A plugin
 configured explicitly always wins, since the fact it provides is never missing.
 Consumers only configure calculators that need their configuration (points per
-win, ...) or that they want calculated without ranking by them; a UI accepting
-offered defaults may add the single provider of a fact with them, as the CLI
-does.
+win, ...) or that they want calculated without ranking by them. A UI does not
+add a provider with fields behind the operator's back either; it offers it, as
+the CLI's questionnaire does by starting out with it chosen.
 
 **A fact is settled all or nothing.** What an added plugin requires and nothing
 provides is settled the same way, in turn, and the plugins found for one missing
