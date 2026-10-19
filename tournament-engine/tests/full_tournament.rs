@@ -126,10 +126,10 @@ fn full_tournament() {
     let phase = phase.data();
     assert_eq!(phase.rankings().len(), 4);
     assert!(phase.rankings().values().all(|t| t.entrants().len() == 1));
-    let ranking_id_by_initial_rank = phase.ranking_ids_ordered_by_unique_rank().to_vec();
-    let entrants_by_initial_rank = ranking_id_by_initial_rank
-        .iter()
-        .map(|id| phase.rankings()[id].entrants()[0])
+    let ranking_id_by_initial_rank = phase.standings().map(Ranking::id).collect_vec();
+    let entrants_by_initial_rank = phase
+        .standings()
+        .map(|ranking| ranking.entrants()[0])
         .collect_vec();
 
     assert_eq!(
@@ -143,21 +143,14 @@ fn full_tournament() {
         .iter()
         .counts()
     );
-    assert!(
-        phase
-            .ranking_ids_ordered_by_unique_rank()
-            .iter()
-            .enumerate()
-            .all(|(index, id)| {
-                let r = &phase.rankings()[id];
-                r.unique_rank() == NonZeroU32::new(index as u32 + 1).unwrap()
-                    && r.initial_unique_rank() == r.unique_rank()
-                    && r.rank() == NonZeroU32::new(1).unwrap()
-            })
-    );
+    assert!(phase.standings().enumerate().all(|(index, r)| {
+        r.unique_rank() == NonZeroU32::new(index as u32 + 1).unwrap()
+            && r.initial_unique_rank() == r.unique_rank()
+            && r.rank() == NonZeroU32::new(1).unwrap()
+    }));
     // every metric starts out at its default value
-    for id in &ranking_id_by_initial_rank {
-        assert_metrics(&phase.rankings()[id], None, (0, 0, 0), 0.0, &[], 0.0, 0.0);
+    for ranking in phase.standings() {
+        assert_metrics(ranking, None, (0, 0, 0), 0.0, &[], 0.0, 0.0);
     }
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);

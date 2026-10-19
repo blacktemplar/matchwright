@@ -15,7 +15,7 @@ use std::{
 use plugin_factory::{
     catalog::AnyAxis,
     config::{ConfigError, Path as ConfigPath, Value},
-    draft::{self, Draft, Issue},
+    draft::{Draft, Issue},
 };
 use thiserror::Error;
 use tournament_engine::{
@@ -37,7 +37,6 @@ use crate::{
     annotations::DisplayName,
     command::{Command, PhasePreset, ReportedResult},
     questionnaire::{self, AcceptDefaults, IssueList},
-    wizard,
 };
 
 /// What the prompt does after a command was executed.
@@ -59,7 +58,7 @@ pub enum Error {
     #[error("there is no entrant named {0:?}")]
     UnknownEntrant(String),
     /// A session never reads from the terminal, so a phase that is not taken from a preset has to
-    /// be configured before it reaches one, see [`crate::wizard::configure_phase`].
+    /// be configured before it reaches one, see [`questionnaire::fill`].
     #[error(
         "configuring a phase needs a terminal to ask at; add a preset instead, see `help add-phase`"
     )]
@@ -264,16 +263,17 @@ impl Session {
     }
 
     /// Adds the phase `draft` configures, which is the only phase the competition is played in.
+    /// `draft` is a [`Competition::phase_draft`] of this session's competition.
     ///
     /// A calculator that has nothing to be configured is added for a metric the phase needs and
-    /// nothing calculates, see [`draft::finish`]; one with fields is never added unasked.
+    /// nothing calculates, see [`Draft::finish`]; one with fields is never added unasked.
     ///
     /// # Errors
     /// Returns an error if the competition already has a phase, does not accept one anymore
     /// because it has started, or if the plugins `draft` configures do not fit together, e.g.
     /// [`Error::Unsettled`].
     pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
-        let plugins = self.settled(draft)?;
+        let plugins = draft.finish().map_err(Error::Unsettled)?;
         let summary = summary(&plugins);
         self.machine
             .apply_transition(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
@@ -283,23 +283,11 @@ impl Session {
     /// Adds the phase of `preset`: its format, with every other part answered as offered, see
     /// [`AcceptDefaults`].
     fn add_preset(&mut self, preset: PhasePreset) -> Result<String, Error> {
-        let mut draft = Draft::new();
+        let mut draft = self.competition().phase_draft();
         let format = serde_json::to_value(preset.format()).map_err(Error::Serialize)?;
         draft.set(&ConfigPath::ROOT.field("format"), format)?;
-        wizard::configure_phase(self.competition(), &mut draft, &mut AcceptDefaults)?;
+        questionnaire::fill(&mut draft, &mut AcceptDefaults)?;
         self.add_phase(&draft)
-    }
-
-    /// `draft` finished, see [`draft::finish`].
-    ///
-    /// # Errors
-    /// Returns [`Error::Unsettled`] with every issue left once nothing more can be added.
-    fn settled(&self, draft: &Draft<PhasePlugins>) -> Result<PhasePlugins, Error> {
-        draft::finish(
-            |declaration| self.competition().declare_phase_context(declaration),
-            draft,
-        )
-        .map_err(Error::Unsettled)
     }
 
     fn start(&mut self) -> Result<String, Error> {
@@ -463,17 +451,12 @@ impl Session {
             .filter_map(|calculator| calculator.column())
             .collect();
         let phase = phase.data();
-        let rankings: Vec<_> = phase
-            .ranking_ids_ordered_by_unique_rank()
-            .iter()
-            .map(|id| &phase.rankings()[id])
-            .collect();
         let header: Vec<_> = ["#", "name"]
             .into_iter()
             .chain(columns.iter().map(MetricColumn::header))
             .collect();
-        let rows: Vec<_> = rankings
-            .iter()
+        let rows: Vec<_> = phase
+            .standings()
             .map(|ranking| {
                 [
                     ranking.rank().to_string(),
@@ -554,7 +537,8 @@ impl Session {
 /// Names the format and the ranking of `plugins` in one line, the way a phase that was just added
 /// is reported, e.g. "round robin, ranked by more points, then more Sonneborn-Berger".
 fn summary(plugins: &PhasePlugins) -> String {
-    let draft = Draft::from_built(plugins).expect("a built plugin is a configuration of itself");
+    let draft =
+        Draft::from_built(|_| {}, plugins).expect("a built plugin is a configuration of itself");
     let answers = draft.answers();
     let format = answers
         .get("format")
@@ -685,7 +669,10 @@ mod tests {
         metrics: Vec<Box<dyn MetricsCalculator>>,
     ) -> Result<String, Error> {
         let plugins = PhasePlugins::new(Box::new(format), ranking, metrics).unwrap();
-        session.add_phase(&Draft::from_built(&plugins).unwrap())
+        let context =
+            |declaration: &mut _| session.competition().declare_phase_context(declaration);
+        let draft = Draft::from_built(context, &plugins).unwrap();
+        session.add_phase(&draft)
     }
 
     #[track_caller]

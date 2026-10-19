@@ -22,11 +22,6 @@ impl HierarchicalRanker {
         Self(slice_rankers)
     }
 
-    /// The slice rankers, in the order they are applied in.
-    pub fn slice_rankers(&self) -> &[Box<dyn SliceRanker>] {
-        &self.0
-    }
-
     /// The new rank of every ranking of `phase_data`.
     ///
     /// The ranks satisfy the following invariant: ordered by rank, the first ranking has rank 1 and
@@ -34,9 +29,8 @@ impl HierarchicalRanker {
     /// are therefore ties, and the rank after a tie skips the tied ranks.
     pub fn update_ranks(&mut self, phase_data: &PhaseData) -> Vec<(RankingId, NonZeroU32)> {
         let mut rankings_with_new_ranks: Vec<(&Ranking, NonZeroU32)> = phase_data
-            .ranking_ids_ordered_by_unique_rank()
-            .iter()
-            .map(|id| (&phase_data.rankings()[id], NonZeroU32::new(1).unwrap()))
+            .standings()
+            .map(|ranking| (ranking, NonZeroU32::MIN))
             .collect();
 
         let mut slices = vec![rankings_with_new_ranks.as_mut_slice()];

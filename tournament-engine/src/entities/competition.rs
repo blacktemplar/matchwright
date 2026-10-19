@@ -1,8 +1,8 @@
 use std::{any::Any, hash::Hash, num::NonZeroU32};
 
 use itertools::{Either, Itertools};
-use plugin_factory::compatibility::Declaration;
-use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
+use plugin_factory::{compatibility::Declaration, draft::Draft};
+use rand::{RngExt, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use serde::{Deserialize, Serialize};
 use uuid::{Uuid, uuid};
@@ -29,7 +29,6 @@ const NAMESPACE_BYE: Uuid = uuid!("5b0f3c1e-2d8a-4c67-9e41-7a3f6d92b8c5");
 pub struct Competition {
     entrants: IdMap<Entrant>,
     phases: IdMap<Phase>,
-    phase_transitions: Vec<PhaseTransition>,
     started: bool,
     seed: Seed,
 }
@@ -47,29 +46,19 @@ impl Seed {
         Self(bytes)
     }
 
-    pub const fn bytes(self) -> [u8; 12] {
-        self.0
-    }
-
-    /// Constructs a seeded [`SeedableRng`] by mixing this seed with `entropy`.
-    ///
-    /// Pass context-specific data (e.g. a phase index or a tuple of state fields) as `entropy`:
-    /// different values give independent random streams, the same value always gives the same one.
-    pub fn new_seeded_rng<H: Hash, R: SeedableRng>(self, entropy: H) -> R {
+    /// The random stream of this seed mixed with `entropy`: different values give independent
+    /// streams, the same value always gives the same one.
+    fn rng(self, entropy: impl Hash) -> StdRng {
         Seeder::from((self.0, entropy)).into_rng()
-    }
-
-    /// Convenience wrapper around [`new_seeded_rng`](Self::new_seeded_rng) that
-    /// returns a [`StdRng`].
-    pub fn new_seeded_std_rng<H: Hash>(self, entropy: H) -> StdRng {
-        self.new_seeded_rng(entropy)
     }
 }
 
-impl From<[u8; 12]> for Seed {
-    fn from(bytes: [u8; 12]) -> Self {
-        Self(bytes)
-    }
+/// What the random streams of a competition are told apart by, see [`Seed::rng`].
+// the discriminants are hashed, so reordering the variants changes every random stream
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum Entropy {
+    CompetitionStart,
+    PhaseFormat,
 }
 
 impl Competition {
@@ -99,7 +88,7 @@ impl Competition {
 
     pub(crate) fn add_phase(&mut self, id: PhaseId, plugins: PhasePlugins) {
         let (phase_format, ranker, metrics_calculators) = plugins.into_parts();
-        let seed = Seed(self.seed.new_seeded_std_rng(id).random());
+        let seed = Seed(self.seed.rng(id).random());
         self.phases.insert(Phase::new(
             id,
             phase_format,
@@ -110,11 +99,16 @@ impl Competition {
     }
 
     /// Declares the facts that hold for a phase added to this competition before any of its
-    /// plugins declare theirs, i.e. the context of its [`PhasePlugins`] for the functions of
-    /// [`plugin_factory::draft`] and [`plugin_factory::compatibility`].
+    /// plugins declare theirs, i.e. the context of its [`PhasePlugins`] for a [`Draft`] and for
+    /// [`plugin_factory::compatibility`].
     pub fn declare_phase_context(&self, declaration: &mut Declaration) {
         // every entrant gets a ranking of its own when the competition starts, see `Self::start`
         declaration.provide(EntrantsPerRanking::SINGLE);
+    }
+
+    /// A draft of the plugins of a phase of this competition, with nothing answered yet.
+    pub fn phase_draft(&self) -> Draft<PhasePlugins> {
+        Draft::new(|declaration| self.declare_phase_context(declaration))
     }
 
     pub fn phases(&self) -> &IdMap<Phase> {
@@ -134,13 +128,13 @@ impl Competition {
         // Note that keys() is not guaranteed to give a stable ordering. To make sure ordering is
         // stable we sort before shuffling
         ranking_entrants.sort_by_key(|e| e[0].0);
-        let mut rng = self.seed.new_seeded_std_rng(EntropyTypes::CompetitionStart);
-        ranking_entrants.shuffle(&mut rng);
-        if self.phases().len() != 1 {
-            unimplemented!("Multi-phase competition not yet supported");
-        }
+        ranking_entrants.shuffle(&mut self.seed.rng(Entropy::CompetitionStart));
         self.started = true;
-        let phase = self.phases.values_mut().next().unwrap();
+        let phase = self
+            .phases
+            .values_mut()
+            .next()
+            .expect("a started competition has its single phase");
         phase.start(ranking_entrants);
     }
 }
@@ -256,8 +250,6 @@ impl PhaseId {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Phase {
     id: PhaseId,
-    outgoing_phase_transitions: Vec<PhaseTransitionId>,
-    incoming_phase_transitions: Vec<PhaseTransitionId>,
     phase_format: Box<dyn PhaseFormat>,
     ranker: HierarchicalRanker,
     metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
@@ -287,8 +279,11 @@ impl PhaseData {
         &self.rankings
     }
 
-    pub fn ranking_ids_ordered_by_unique_rank(&self) -> &[RankingId] {
-        &self.ranking_ids_ordered_by_unique_rank
+    /// The rankings of this phase ordered by their [`Ranking::unique_rank`], i.e. best first.
+    pub fn standings(&self) -> impl ExactSizeIterator<Item = &Ranking> {
+        self.ranking_ids_ordered_by_unique_rank
+            .iter()
+            .map(|id| &self.rankings[id])
     }
 
     pub fn matches(&self) -> &IdMap<Match> {
@@ -305,15 +300,15 @@ impl PhaseData {
         self.seed
     }
 
+    /// The random stream of the [`PhaseFormat`] of this phase. Every call starts the same stream
+    /// again, so a format draws everything it needs from a single one.
+    pub fn rng(&self) -> StdRng {
+        self.seed.rng(Entropy::PhaseFormat)
+    }
+
     /// Whether any match or bye has been scheduled in this phase.
     pub fn has_schedule(&self) -> bool {
         !self.matches.is_empty() || !self.byes.is_empty()
-    }
-
-    /// The position of the match in [`PhaseData::matches`], which can be used as a stable match
-    /// number: matches are only ever appended, so an index never changes.
-    pub fn get_match_index(&self, match_id: &MatchId) -> usize {
-        self.matches.get_index_of(match_id).unwrap()
     }
 }
 
@@ -328,8 +323,6 @@ impl Phase {
     ) -> Self {
         Self {
             id,
-            outgoing_phase_transitions: vec![],
-            incoming_phase_transitions: vec![],
             data: PhaseData {
                 rankings: IdMap::new(),
                 ranking_ids_ordered_by_unique_rank: vec![],
@@ -542,28 +535,6 @@ impl Phase {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum EntropyTypes {
-    CompetitionStart,
-    PhaseFormat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PhaseTransitionId(Uuid);
-
-impl PhaseTransitionId {
-    pub fn new(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PhaseTransition {
-    id: PhaseTransitionId,
-    source_phase_ids: Vec1<PhaseId>,
-    target_phase_ids: Vec1<PhaseId>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Ranking {
     id: RankingId,
@@ -700,20 +671,8 @@ impl MatchResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RankingId(Uuid);
 
-impl RankingId {
-    pub fn nil() -> Self {
-        Self(Uuid::nil())
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MatchId(Uuid);
-
-impl MatchId {
-    pub fn new(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-}
 
 /// A match between two teams of rankings in a round of a phase.
 ///
@@ -991,8 +950,12 @@ mod tests {
     /// The played matches of the ranking with the given index in the ordering by initial unique
     /// rank.
     fn played(phase: &Phase, ranking_index: usize) -> &[MatchId] {
-        let ranking_id = phase.data().ranking_ids_ordered_by_unique_rank()[ranking_index];
-        phase.data().rankings()[&ranking_id].played_matches()
+        phase
+            .data()
+            .standings()
+            .nth(ranking_index)
+            .unwrap()
+            .played_matches()
     }
 
     #[test]

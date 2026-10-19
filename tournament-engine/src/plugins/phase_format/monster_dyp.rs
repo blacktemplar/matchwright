@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Bye, EntropyTypes, Match, PhaseData},
+    entities::competition::{Bye, Match, PhaseData},
     plugins::{
         facts::EntrantsPerRanking,
         metrics_calculator::{
@@ -79,9 +79,7 @@ impl PhaseFormat for MonsterDyp {
         let num_sitting_out = ranking_ids.len() % 4;
         let mut rounds_sat_out = vec![0_u32; ranking_ids.len()];
         let mut order = (0..ranking_ids.len()).collect_vec();
-        let mut rng = phase_data
-            .seed()
-            .new_seeded_std_rng(EntropyTypes::PhaseFormat);
+        let mut rng = phase_data.rng();
         let mut schedule = Schedule::default();
         for round in 1..=self.rounds {
             let round = NonZeroU32::new(round).unwrap();

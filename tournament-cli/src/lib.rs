@@ -2,9 +2,9 @@
 //!
 //! Everything but reading lines from the terminal lives here: a line typed at the prompt is parsed
 //! into a [`Command`](command::Command), which a [`Session`](session::Session) executes against the
-//! competition it runs. The one part that asks the operator back is [`wizard`], which configures
-//! the plugins of a phase through the [`questionnaire`] of their schemas, and which the session
-//! then adds as a phase.
+//! competition it runs. The one part that asks the operator back is the [`questionnaire`], which
+//! configures the plugins of a phase through their schemas, and which the session then adds as a
+//! phase.
 //!
 //! Everything a tournament needs in order to be *shown* to an operator is defined in
 //! [`annotations`] and reaches the engine as an annotation on an entity.
@@ -13,4 +13,3 @@ pub mod annotations;
 pub mod command;
 pub mod questionnaire;
 pub mod session;
-pub mod wizard;

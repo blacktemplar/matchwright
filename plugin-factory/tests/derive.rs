@@ -302,7 +302,7 @@ fn a_built_composite_with_state_is_drafted_without_it() {
         cap: None,
     };
 
-    let draft = Draft::from_built(&composite).unwrap();
+    let draft = Draft::from_built(|_| {}, &composite).unwrap();
 
     assert_eq!(
         Value::from(draft.answers().clone()),

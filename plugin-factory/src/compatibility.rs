@@ -5,8 +5,9 @@
 //! its type; a fact may carry a value, so that a requirement can state a condition on it. A plugin
 //! states the facts it provides and requires in a [`Declaration`], in
 //! [`PluginType::declare_static`](crate::PluginType::declare_static) and [`Plugin::declare`].
-//! [`check`] decides whether the plugins of a built composite fit together, and [`order`] in
-//! which order they can run.
+//! [`check`] decides whether the plugins of a built composite fit together, and a
+//! [`DependencyOrderedSet`](crate::schema::DependencyOrderedSet) keeps plugins in an order they can
+//! run in.
 
 use std::{
     any::{Any, TypeId},
@@ -32,7 +33,7 @@ use crate::Plugin;
 ///
 /// impl Fact for Timed {}
 /// ```
-pub trait Fact: Any + Debug + Sync {}
+pub trait Fact: Any + Debug + Send + Sync {}
 
 /// A fact a declaration provides, together with its value.
 pub(crate) struct ProvidedFact(Box<dyn Fact>);
@@ -160,7 +161,7 @@ struct DynCondition {
 }
 
 /// A condition on a fact, given the fact as [`Any`].
-type Holds = Box<dyn Fn(&dyn Any) -> bool + Sync>;
+type Holds = Box<dyn Fn(&dyn Any) -> bool + Send + Sync>;
 
 /// The types of the facts a plugin still to be chosen could provide.
 ///
@@ -254,7 +255,7 @@ pub fn check(
 /// # Errors
 /// Returns [`Incompatibility::CyclicRequirements`] if plugins require facts of each other in a
 /// cycle.
-pub fn order(plugins: &[&dyn Plugin]) -> Result<Vec<usize>, Incompatibility> {
+pub(crate) fn order(plugins: &[&dyn Plugin]) -> Result<Vec<usize>, Incompatibility> {
     order_of(&declared(plugins))
 }
 

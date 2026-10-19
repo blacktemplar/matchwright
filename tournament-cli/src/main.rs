@@ -15,14 +15,12 @@ use std::{
 
 use clap::Parser;
 use inquire::InquireError;
-use plugin_factory::draft::Draft;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use thiserror::Error;
 use tournament_cli::{
     command::{Command, ParseError},
     questionnaire::{self, Terminal},
     session::{self, Outcome, Session},
-    wizard,
 };
 
 /// Runs a tournament interactively.
@@ -115,9 +113,9 @@ fn run(mut session: Session) -> Result<(), Error> {
 /// operator cancels the configuration. A phase whose plugins do not fit together is configured
 /// again, starting out at the answers given.
 fn add_configured_phase(session: &mut Session) -> Result<Outcome, Error> {
-    let mut draft = Draft::new();
+    let mut draft = session.competition().phase_draft();
     loop {
-        match wizard::configure_phase(session.competition(), &mut draft, &mut Terminal) {
+        match questionnaire::fill(&mut draft, &mut Terminal) {
             Ok(()) => {}
             Err(questionnaire::Error::Prompt(
                 InquireError::OperationCanceled | InquireError::OperationInterrupted,

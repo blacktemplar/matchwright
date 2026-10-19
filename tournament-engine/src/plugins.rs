@@ -35,19 +35,13 @@
 //! - **A field offers an answer**, with `#[plugin(default = ..)]`, wherever one value suits most
 //!   phases, e.g. the scoring of chess for points.
 
-use plugin_factory::{
-    draft::{self, Draft, Issue},
-    schema::{Configurable, DependencyOrderedSet, DependencyOrderedSetError},
-};
+use plugin_factory::schema::{Configurable, DependencyOrderedSet, DependencyOrderedSetError};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    entities::competition::Competition,
-    plugins::{
-        metrics_calculator::MetricsCalculator,
-        phase_format::PhaseFormat,
-        ranker::{HierarchicalRanker, SliceRanker},
-    },
+use crate::plugins::{
+    metrics_calculator::MetricsCalculator,
+    phase_format::PhaseFormat,
+    ranker::{HierarchicalRanker, SliceRanker},
 };
 
 pub mod facts;
@@ -58,8 +52,8 @@ pub mod ranker;
 /// The plugins of one phase: the format its matches are scheduled by, the slice rankers it is
 /// ranked by and the calculators of its metrics.
 ///
-/// It is configured as a composite of `plugin_factory`, e.g. through a [`Draft`] of it, whose
-/// [`draft::finish`] takes [`Competition::declare_phase_context`] as the context.
+/// It is configured as a composite of `plugin_factory`, e.g. through the
+/// [`Competition::phase_draft`](crate::Competition::phase_draft) of the competition it is added to.
 ///
 /// The calculators are a [`DependencyOrderedSet`]: a phase calculates each metric once, and the
 /// set holds them in the order they run in, each after the calculators of the metrics it reads.
@@ -111,24 +105,6 @@ impl PhasePlugins {
         &self.metrics
     }
 
-    /// These plugins with every fact settled that the catalog settles in a phase of
-    /// `competition`, see [`draft::finish`]: e.g. the calculator of a metric another plugin
-    /// requires, if it is the only one and needs no configuration.
-    ///
-    /// # Errors
-    /// Returns every issue of the plugins so settled, e.g. a fact still nothing provides.
-    ///
-    /// # Panics
-    /// Panics if a plugin serializes to something other than an answer to its schema, which the
-    /// derive of a plugin rules out.
-    pub fn settle(&self, competition: &Competition) -> Result<Self, Vec<Issue>> {
-        let draft = Draft::from_built(self).expect("a built plugin is a configuration of itself");
-        draft::finish(
-            |declaration| competition.declare_phase_context(declaration),
-            &draft,
-        )
-    }
-
     /// The format, the ranker and the metrics calculators a phase is run with.
     pub(crate) fn into_parts(self) -> (Box<dyn PhaseFormat>, HierarchicalRanker, Metrics) {
         (
@@ -153,13 +129,13 @@ mod tests {
         Plugin, PluginType,
         catalog::AnyAxis,
         compatibility::{self, Declaration, Fact, Incompatibility},
-        draft::Problem,
+        draft::{Draft, Issue, Problem},
         register,
     };
 
     use super::*;
     use crate::{
-        entities::competition::{Bye, Match, PhaseData, RankingId},
+        entities::competition::{Bye, Competition, Match, PhaseData, RankingId},
         plugins::{
             facts::{CalculatesMetric, EntrantsPerRanking, MatchAnnotation},
             metrics_calculator::{
@@ -252,7 +228,10 @@ mod tests {
 
     /// `plugins` settled in a competition, as a consumer adding them would.
     fn settled(plugins: &PhasePlugins) -> Result<PhasePlugins, Vec<Issue>> {
-        plugins.settle(&Competition::default())
+        let context = |declaration: &mut Declaration| {
+            Competition::default().declare_phase_context(declaration);
+        };
+        Draft::from_built(context, plugins).unwrap().finish()
     }
 
     /// What can be checked of the labelling guidelines of the module, for every plugin registered
@@ -426,7 +405,7 @@ mod tests {
     fn a_metric_whose_calculator_has_to_be_configured_is_not_added() {
         let plugins = phase(RoundRobin, vec![Box::new(MorePoints)], Vec::new());
 
-        let issues = plugins.settle(&Competition::default()).unwrap_err();
+        let issues = settled(&plugins).unwrap_err();
 
         assert!(
             issues.iter().any(|issue| matches!(

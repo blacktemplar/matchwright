@@ -5,9 +5,9 @@
 use plugin_factory::{
     Plugin, PluginType, axis,
     catalog::AnyAxis,
-    compatibility::{Declaration, Fact, Incompatibility, check, order},
+    compatibility::{Declaration, Fact, Incompatibility, check},
     config::{Config, ConfigError, Path, PluginConfig, Value},
-    draft::{self, Draft, Issue, Problem},
+    draft::{Draft, Issue, Problem},
     register,
     schema::{Configurable, FieldKind, Schema},
 };
@@ -304,7 +304,7 @@ fn accept_defaults(draft: &mut Draft<Phase>) {
             .filter(|(_, answered)| !answered)
             .find_map(|(at, _)| {
                 let at = path(&at);
-                let default = draft::default_value(singles, draft, &at).unwrap()?;
+                let default = draft.default_value(&at).unwrap()?;
                 Some((at, default))
             });
         let Some((at, default)) = next else {
@@ -385,7 +385,8 @@ fn unprovided(issues: &[Issue]) -> Vec<(String, &'static str)> {
 
 /// The ids of the candidates at `at` that fit.
 fn fitting(draft: &Draft<Phase>, at: &str) -> Vec<&'static str> {
-    draft::candidates(singles, draft, &path(at))
+    draft
+        .candidates(&path(at))
         .unwrap()
         .iter()
         .filter(|candidate| candidate.conflicts().is_empty())
@@ -395,7 +396,7 @@ fn fitting(draft: &Draft<Phase>, at: &str) -> Vec<&'static str> {
 
 /// Asserts that the plugin `id` is a candidate at `at` that does not fit because of `conflict`.
 fn assert_conflict(draft: &Draft<Phase>, at: &str, id: &str, conflict: Incompatibility) {
-    let candidates = draft::candidates(singles, draft, &path(at)).unwrap();
+    let candidates = draft.candidates(&path(at)).unwrap();
     let candidate = candidates
         .iter()
         .find(|candidate| candidate.entry().id() == id)
@@ -494,7 +495,7 @@ fn a_built_plugin_is_checked_by_what_its_configuration_declares() {
 
 #[test]
 fn an_operator_configures_a_phase_one_answer_at_a_time() {
-    let mut draft = Draft::<Phase>::new();
+    let mut draft = Draft::<Phase>::new(singles);
     assert_eq!(
         questions(&draft),
         [
@@ -530,16 +531,13 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         ]
     );
     assert_eq!(
-        draft::default_value(singles, &draft, &path("format.third_place")),
+        draft.default_value(&path("format.third_place")),
         Ok(Some(json!(false)))
     );
     // the offered answer is only filled in by setting it
     draft.set(&path("format.third_place"), false).unwrap();
     // a knockout recommends nothing, so the schema's default is offered
-    assert_eq!(
-        draft::default_value(singles, &draft, &path("metrics")),
-        Ok(Some(json!([])))
-    );
+    assert_eq!(draft.default_value(&path("metrics")), Ok(Some(json!([]))));
 
     // metrics requiring facts the unanswered tie break could still provide are no issue yet
     draft
@@ -548,12 +546,12 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             json!([plugin::<Losses>(), plugin::<Buchholz>()]),
         )
         .unwrap();
-    assert_eq!(draft::issues(singles, &draft), []);
+    assert_eq!(draft.issues(), []);
 
     // once it is answered, the requirements are reported at every field that could meet them
     draft.set(&path("tie_break"), Value::Null).unwrap();
     assert_eq!(
-        unprovided(&draft::issues(singles, &draft)),
+        unprovided(&draft.issues()),
         [
             ("metrics".to_owned(), "points"),
             ("tie_break".to_owned(), "points"),
@@ -571,7 +569,7 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         path: path("metrics[2].for_win"),
         reason: "the points for a win cannot be negative".to_owned(),
     };
-    let issues = draft::issues(singles, &draft);
+    let issues = draft.issues();
     assert_eq!(issues[0].path(), &path("metrics[2].for_win"));
     assert_eq!(issues[0].problem(), &Problem::Invalid(rejected()));
     assert_eq!(
@@ -582,7 +580,7 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         ]
     );
     // finishing settles the matches, which a single metric provides, but not the answer
-    let issues = draft::finish(singles, &draft).unwrap_err();
+    let issues = draft.finish().unwrap_err();
     assert_eq!(
         problems(&issues),
         [(
@@ -612,7 +610,7 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
     );
 
     // the match count is left to finishing, which appends it
-    let phase = draft::finish(singles, &draft).unwrap();
+    let phase = draft.finish().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
         json!({
@@ -627,34 +625,30 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         })
     );
     assert_eq!(check(singles, &phase.plugins()), Ok(()));
-    // the buchholz runs after the metrics it requires
-    assert_eq!(order(&phase.plugins()), Ok(vec![0, 1, 3, 4, 2]));
 }
 
 #[test]
 fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
-    let mut draft = Draft::<Phase>::new();
+    let mut draft = Draft::<Phase>::new(singles);
     draft.set(&path("format"), plugin::<RoundRobin>()).unwrap();
 
     // a format with a field still unanswered recommends nothing yet
-    assert_eq!(
-        draft::default_value(singles, &draft, &path("metrics")),
-        Ok(Some(json!([])))
-    );
+    assert_eq!(draft.default_value(&path("metrics")), Ok(Some(json!([]))));
     draft.set(&path("format.rounds"), 1).unwrap();
 
     // the score does not fit next to the wins recommended before it
     assert_eq!(
-        draft::default_value(singles, &draft, &path("metrics")),
+        draft.default_value(&path("metrics")),
         Ok(Some(json!([plugin::<Wins>(), plugin::<MatchCount>()])))
     );
     assert_eq!(
-        draft::default_value(singles, &draft, &path("tie_break")),
+        draft.default_value(&path("tie_break")),
         Ok(Some(json!(plugin::<Wins>())))
     );
 
     // finishing fills in no default
-    let unanswered: Vec<_> = draft::finish(singles, &draft)
+    let unanswered: Vec<_> = draft
+        .finish()
         .unwrap_err()
         .iter()
         .map(|issue| issue.path().to_string())
@@ -664,7 +658,7 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
     // accepted in question order, the tie break no longer fits the recommended metrics once
     // they are set
     accept_defaults(&mut draft);
-    let phase = draft::finish(singles, &draft).unwrap();
+    let phase = draft.finish().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
         json!({
@@ -680,7 +674,7 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
 
 #[test]
 fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
-    let mut draft = Draft::<Phase>::new();
+    let mut draft = Draft::<Phase>::new(singles);
     draft
         .set(
             &path("format"),
@@ -690,7 +684,7 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
     draft.set(&path("metrics"), json!([wins(true)])).unwrap();
     draft.set(&path("tie_break"), Value::Null).unwrap();
 
-    let issues = draft::issues(singles, &draft);
+    let issues = draft.issues();
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].path(), &path("format"));
     assert_eq!(
@@ -705,13 +699,13 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
     draft
         .set(&path("format"), plugin::<RoundRobin>().with("rounds", 1))
         .unwrap();
-    assert_eq!(draft::issues(singles, &draft), []);
-    assert!(draft::finish(singles, &draft).is_ok());
+    assert_eq!(draft.issues(), []);
+    assert!(draft.finish().is_ok());
 }
 
 #[test]
 fn a_saved_phase_loads_as_it_was_built() {
-    let mut draft = Draft::<Phase>::new();
+    let mut draft = Draft::<Phase>::new(singles);
     draft.set(&path("format"), plugin::<RoundRobin>()).unwrap();
     draft
         .set(
@@ -730,7 +724,7 @@ fn a_saved_phase_loads_as_it_was_built() {
         ]
     );
     accept_defaults(&mut draft);
-    let phase = draft::finish(singles, &draft).unwrap();
+    let phase = draft.finish().unwrap();
 
     let saved = serde_json::to_string(&phase).unwrap();
     let loaded: Phase = serde_json::from_str(&saved).unwrap();
@@ -768,14 +762,12 @@ fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
     };
 
     // the wins have fields, so the score is the only provider of the points that is added, and
-    // the match count the only one of the matches; the consumer then orders the metrics by what
-    // they require
-    let draft = Draft::from_built(&phase).unwrap();
-    let phase = draft::finish(singles, &draft).unwrap();
+    // the match count the only one of the matches
+    let draft = Draft::from_built(singles, &phase).unwrap();
+    let phase = draft.finish().unwrap();
     assert_eq!(
         format!("{:?}", phase.metrics),
         "[Buchholz, Score, MatchCount]"
     );
     assert_eq!(check(singles, &phase.plugins()), Ok(()));
-    assert_eq!(order(&phase.plugins()), Ok(vec![0, 2, 3, 1]));
 }

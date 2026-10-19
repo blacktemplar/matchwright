@@ -197,7 +197,7 @@ impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
 ///   same [id](crate::PluginType::ID), whatever they are configured with, as [`FieldKind::List`]
 ///   counts them.
 /// - **Dependency order.** The plugins come in an order they can run in one after another: each
-///   after the plugins providing the facts it requires, see [`compatibility::order`]. Where the
+///   after the plugins providing the facts it requires, see [`compatibility`]. Where the
 ///   requirements leave the order open, they keep the order they are given in, so an order that
 ///   is already valid stays as it is, and a saved set comes back in the order it was saved in.
 ///

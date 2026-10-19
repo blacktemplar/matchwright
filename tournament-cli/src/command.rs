@@ -119,13 +119,13 @@ impl PhasePreset {
             Self::RoundRobin => Box::new(RoundRobin),
             Self::SingleElimination {
                 no_third_place_match: false,
-            } => Box::new(SingleElimination::with_third_place_match()),
+            } => Box::new(SingleElimination::new().with_third_place_match()),
             Self::SingleElimination {
                 no_third_place_match: true,
             } => Box::new(SingleElimination::new()),
             Self::DoubleElimination {
                 no_grand_final_reset: false,
-            } => Box::new(DoubleElimination::with_grand_final_reset()),
+            } => Box::new(DoubleElimination::new().with_grand_final_reset()),
             Self::DoubleElimination {
                 no_grand_final_reset: true,
             } => Box::new(DoubleElimination::new()),

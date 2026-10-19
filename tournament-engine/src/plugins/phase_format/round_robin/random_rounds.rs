@@ -5,7 +5,7 @@ use rand::seq::{IteratorRandom, SliceRandom};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{EntropyTypes, PhaseData},
+    entities::competition::PhaseData,
     plugins::{
         metrics_calculator::{
             buchholz::{
@@ -71,9 +71,7 @@ impl PhaseFormat for RandomRounds {
             return Schedule::default();
         }
         let circle = Circle::new(phase_data);
-        let mut rng = phase_data
-            .seed()
-            .new_seeded_std_rng(EntropyTypes::PhaseFormat);
+        let mut rng = phase_data.rng();
         let mut rotations = (0..circle.rotations()).sample(&mut rng, self.rounds as usize);
         rotations.shuffle(&mut rng);
         let mut schedule = Schedule::default();

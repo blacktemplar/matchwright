@@ -108,19 +108,12 @@ impl TypeMap {
 
     /// The value of type `T`, or [`None`] if the map holds none.
     pub fn get<T: 'static>(&self) -> Option<&T> {
-        self.get_any::<T>().map(|any| {
+        self.0.get(&TypeId::of::<T>()).map(|boxed| {
+            let any: &dyn Any = boxed.as_ref();
             // SAFETY: an `IdMap` stores every value under its `IdAble::id`, which for a
             // `Box<dyn TypeMapValue>` is the type id of its concrete type, so the value at key
             // `TypeId::of::<T>()` is a `T`.
             unsafe { downcast_unchecked_ref::<T>(any) }
-        })
-    }
-
-    /// Like [`get`](Self::get), but without resolving the value to `&T`.
-    pub fn get_any<T: 'static>(&self) -> Option<&dyn Any> {
-        self.0.get(&TypeId::of::<T>()).map(|b| {
-            let any: &dyn Any = b.as_ref();
-            any
         })
     }
 

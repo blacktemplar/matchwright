@@ -58,8 +58,8 @@ impl SingleElimination {
         }
     }
 
-    /// A knockout in which the two entrants knocked out in the semifinals play for third place,
-    /// scheduled in the same round as the final.
+    /// Returns this knockout with the two entrants knocked out in the semifinals playing for third
+    /// place, scheduled in the same round as the final.
     ///
     /// Both of them lost their first match in the semifinal whichever way the match for third place
     /// goes, so [`LaterFirstLoss`] ties them and the ranking needs a further criterion to tell the
@@ -67,13 +67,11 @@ impl SingleElimination {
     ///
     /// A bracket of three entrants has nobody to play the match against and so is not given it.
     ///
-    /// [`LaterFirstLoss`]: crate::plugins::metrics_calculator::round_of_first_loss::LaterFirstLoss
-    /// [`FewerLosses`]: crate::plugins::metrics_calculator::wins_draws_losses::FewerLosses
-    pub const fn with_third_place_match() -> Self {
-        Self {
-            third_place_match: true,
-            bracket: None,
-        }
+    /// [`LaterFirstLoss`]: crate::plugins::metrics_calculator::LaterFirstLoss
+    /// [`FewerLosses`]: crate::plugins::metrics_calculator::FewerLosses
+    pub const fn with_third_place_match(mut self) -> Self {
+        self.third_place_match = true;
+        self
     }
 
     fn declare_static(declaration: &mut Declaration) {
@@ -248,7 +246,7 @@ mod tests {
 
     #[test]
     fn the_match_for_third_place_is_scheduled_alongside_the_final() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 4);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 4);
 
         play_round(&mut phase, 1);
 
@@ -269,7 +267,7 @@ mod tests {
     /// bracket third and fourth, which is what a bracket the favourites lose shows.
     #[test]
     fn the_losers_of_the_semifinals_play_for_third_place() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 4);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 4);
         for match_id in phase.data().matches().values().map(Match::id).collect_vec() {
             // the lower ranked side wins both semifinals, so 1 and 2 are the ones knocked out
             phase.report_match_result(match_id, MatchResult::BWins);
@@ -288,7 +286,7 @@ mod tests {
     /// knocked out before it and there is nobody for it to play against.
     #[test]
     fn three_entrants_do_not_play_for_third_place() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 3);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 3);
 
         assert_eq!(pairings(&phase, 1), [(2, 3)]);
         play_round(&mut phase, 1);
@@ -315,7 +313,7 @@ mod tests {
     /// shares its round with the match for third place but not its stage.
     #[test]
     fn every_match_is_annotated_with_its_stage() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 6);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 6);
         assert_eq!(stages(&phase, 1), [KnockoutRound::RoundOf(8); 2]);
 
         play_round(&mut phase, 1);
@@ -405,7 +403,7 @@ mod tests {
     /// Two entrants play nothing but the final, so the option changes nothing at all.
     #[test]
     fn two_entrants_only_play_the_final() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 2);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 2);
 
         assert_eq!(pairings(&phase, 1), [(1, 2)]);
         play_round(&mut phase, 1);
@@ -417,7 +415,7 @@ mod tests {
     /// bracket are scheduled exactly as they are without the option, byes included.
     #[test]
     fn a_larger_bracket_only_gains_the_one_match() {
-        let mut phase = knockout(SingleElimination::with_third_place_match(), 6);
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 6);
 
         assert_eq!(pairings(&phase, 1), [(3, 6), (4, 5)]);
         play_round(&mut phase, 1);

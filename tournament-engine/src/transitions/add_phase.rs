@@ -24,7 +24,7 @@ impl AddPhase {
     /// Adds the phase `id` with `plugins`.
     ///
     /// Nothing is added to `plugins`: a fact they require that none of them provides is settled
-    /// beforehand, by finishing a draft of them or by [`PhasePlugins::settle`].
+    /// beforehand, by finishing a draft of them.
     pub fn new(id: PhaseId, plugins: PhasePlugins) -> Self {
         Self { id, plugins }
     }

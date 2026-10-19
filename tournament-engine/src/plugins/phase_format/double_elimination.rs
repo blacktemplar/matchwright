@@ -78,13 +78,11 @@ impl DoubleElimination {
         }
     }
 
-    /// A double elimination in which the champion of the winner bracket also needs to lose twice:
-    /// if it loses the grand final, the two play it once more.
-    pub const fn with_grand_final_reset() -> Self {
-        Self {
-            grand_final_reset: true,
-            bracket: None,
-        }
+    /// Returns this double elimination with the champion of the winner bracket also needing to
+    /// lose twice: if it loses the grand final, the two play it once more.
+    pub const fn with_grand_final_reset(mut self) -> Self {
+        self.grand_final_reset = true;
+        self
     }
 
     fn declare_static(declaration: &mut Declaration) {
@@ -408,7 +406,7 @@ mod tests {
 
     #[test]
     fn with_a_reset_the_champion_of_the_winner_bracket_needs_to_lose_twice() {
-        let mut phase = bracket(DoubleElimination::with_grand_final_reset(), 4);
+        let mut phase = bracket(DoubleElimination::new().with_grand_final_reset(), 4);
 
         play_out(&mut phase, underdog_wins_the_grand_final);
 
@@ -425,7 +423,7 @@ mod tests {
 
     #[test]
     fn a_reset_is_not_played_if_the_champion_of_the_winner_bracket_wins_the_grand_final() {
-        let mut phase = bracket(DoubleElimination::with_grand_final_reset(), 4);
+        let mut phase = bracket(DoubleElimination::new().with_grand_final_reset(), 4);
 
         play_out(&mut phase, favourite);
 
@@ -439,7 +437,7 @@ mod tests {
         for (format, eliminates) in [
             (DoubleElimination::new(), Eliminates::Loser),
             (
-                DoubleElimination::with_grand_final_reset(),
+                DoubleElimination::new().with_grand_final_reset(),
                 Eliminates::Only(Team::B),
             ),
         ] {
@@ -559,7 +557,7 @@ mod tests {
         };
         for (reset, num_players) in [false, true].into_iter().cartesian_product(2..=20) {
             let format = if reset {
-                DoubleElimination::with_grand_final_reset()
+                DoubleElimination::new().with_grand_final_reset()
             } else {
                 DoubleElimination::new()
             };

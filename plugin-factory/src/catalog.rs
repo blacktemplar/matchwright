@@ -8,7 +8,7 @@
 //!
 //! A program reads the catalog to offer the plugins of an axis to choose from, and to settle a
 //! fact a composite requires but none of its plugins provides, see
-//! [`draft::finish`](crate::draft::finish).
+//! [`Draft::finish`](crate::draft::Draft::finish).
 
 use std::{
     any::{self, TypeId},

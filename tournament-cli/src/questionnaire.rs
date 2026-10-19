@@ -6,7 +6,7 @@
 //! composite; what it offers comes from the catalog and from the draft.
 //!
 //! Every question starts out at the answer the field already has in the draft, or else at the
-//! answer the draft offers for it, see [`draft::default_value`], so accepting every question
+//! answer the draft offers for it, see [`Draft::default_value`], so accepting every question
 //! answers the composite as its plugins recommend. [`Terminal`] asks at the terminal, and
 //! [`AcceptDefaults`] accepts every offered answer without asking anything.
 
@@ -18,9 +18,8 @@ use std::{
 use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
-    compatibility::Declaration,
     config::{ConfigError, Path, PluginConfig, Segment, Value},
-    draft::{self, Candidate, Draft, Issue, Problem},
+    draft::{Candidate, Draft, Issue, Problem},
     schema::{Configurable, Field, FieldKind},
 };
 use thiserror::Error;
@@ -171,14 +170,14 @@ pub enum Error {
 }
 
 /// Asks for every field of `draft` that is not to be answered by the operator differently, through
-/// `prompter`, in a composite with `context`, and answers it in the draft.
+/// `prompter`, and answers it in the draft.
 ///
 /// The fields are asked in schema order, each followed by the fields of the plugin it is answered
 /// with, if any. A question starts out at the field's answer in `draft`, so that filling a draft
-/// once more only asks for changes, or else at the answer [`draft::default_value`] offers.
+/// once more only asks for changes, or else at the answer [`Draft::default_value`] offers.
 ///
 /// A field taking plugins offers those that fit next to the answers given before it, see
-/// [`draft::candidates`]. A field taking an unordered list of plugins starts out with the plugins
+/// [`Draft::candidates`]. A field taking an unordered list of plugins starts out with the plugins
 /// it offers and those it is the only source of something another plugin requires, see
 /// [`Candidate::is_sole_supplier`]. The plugins a question starts out at come first, in the order
 /// they are offered in, so that what the plugins chosen before recommend leads; the others follow
@@ -188,28 +187,24 @@ pub enum Error {
 /// are answered, and its fields are asked again. Once every field is answered, plugins that do not
 /// fit next to the others are handed to it as well, and the fields of the composite they are in
 /// are asked again. A fact nothing provides is not checked, since finishing the draft may settle
-/// it, see [`draft::finish`].
+/// it, see [`Draft::finish`].
 ///
 /// # Errors
 /// Returns what the prompter returns, and [`Error::NoCandidate`] if no plugin fits a field taking
 /// one. The draft keeps the answers given so far.
 pub fn fill<T: Configurable>(
     draft: &mut Draft<T>,
-    context: &dyn Fn(&mut Declaration),
     prompter: &mut dyn Prompter,
 ) -> Result<(), Error> {
     let schema = T::schema();
     let mut asked: Vec<&Field> = schema.fields().iter().collect();
     loop {
-        let mut asker = Asker {
-            draft,
-            context,
-            prompter,
-        };
+        let mut asker = Asker { draft, prompter };
         for field in asked {
             asker.field(field, &Path::ROOT, None)?;
         }
-        let issues: Vec<_> = draft::issues(context, draft)
+        let issues: Vec<_> = draft
+            .issues()
             .into_iter()
             .filter(|issue| !matches!(issue.problem(), Problem::Unprovided { .. }))
             .collect();
@@ -435,7 +430,6 @@ impl Prompter for AcceptDefaults {
 /// Asks the fields of one draft, see [`fill`].
 struct Asker<'a, T> {
     draft: &'a mut Draft<T>,
-    context: &'a dyn Fn(&mut Declaration),
     prompter: &'a mut dyn Prompter,
 }
 
@@ -454,7 +448,7 @@ impl<T: Configurable> Asker<'_, T> {
         };
         let default = match self.draft.answers().get_at(&path) {
             Some(answer) => Some(answer.clone()),
-            None => draft::default_value(self.context, self.draft, &path)?,
+            None => self.draft.default_value(&path)?,
         };
         self.answer(field.kind(), &path, &question, default)
     }
@@ -512,10 +506,12 @@ impl<T: Configurable> Asker<'_, T> {
         Ok(())
     }
 
-    /// The plugins that fit at `path`, see [`draft::candidates`], those of `first` first, see
+    /// The plugins that fit at `path`, see [`Draft::candidates`], those of `first` first, see
     /// [`ordered`].
     fn candidates(&self, path: &Path, first: &[&str]) -> Result<Vec<Candidate>, Error> {
-        let candidates = draft::candidates(self.context, self.draft, path)?
+        let candidates = self
+            .draft
+            .candidates(path)?
             .into_iter()
             .filter(|candidate| candidate.conflicts().is_empty())
             .collect();
@@ -701,7 +697,9 @@ impl<T: Configurable> Asker<'_, T> {
             }
             // checked right away, since a plugin that cannot be built recommends nothing for the
             // questions after it
-            let rejected: Vec<_> = draft::issues(self.context, self.draft)
+            let rejected: Vec<_> = self
+                .draft
+                .issues()
                 .into_iter()
                 .filter(|issue| {
                     matches!(issue.problem(), Problem::Invalid(_))
@@ -858,17 +856,9 @@ mod tests {
         }
     }
 
-    /// `draft` filled through `prompter` for a phase of a new competition.
-    fn fill_phase(
-        draft: &mut Draft<PhasePlugins>,
-        prompter: &mut dyn Prompter,
-    ) -> Result<(), Error> {
-        let competition = Competition::default();
-        fill(
-            draft,
-            &|declaration| competition.declare_phase_context(declaration),
-            prompter,
-        )
+    /// An empty draft of a phase of a new competition.
+    fn phase_draft() -> Draft<PhasePlugins> {
+        Competition::default().phase_draft()
     }
 
     /// The ids of the plugins answering the list `field` of `draft`, without their namespace.
@@ -887,9 +877,9 @@ mod tests {
     #[test]
     fn accepting_every_question_configures_what_the_format_recommends() {
         let mut script = Script::new([Step::Pick("round robin")]);
-        let mut draft = Draft::new();
+        let mut draft = phase_draft();
 
-        fill_phase(&mut draft, &mut script).unwrap();
+        fill(&mut draft, &mut script).unwrap();
 
         assert_eq!(
             script.asked,
@@ -915,14 +905,7 @@ mod tests {
             ids(&draft, "metrics"),
             ["wins_draws_losses", "points", "sonneborn_berger"]
         );
-        let competition = Competition::default();
-        assert!(
-            draft::finish(
-                |declaration| competition.declare_phase_context(declaration),
-                &draft
-            )
-            .is_ok()
-        );
+        assert!(draft.finish().is_ok());
     }
 
     /// The plugins a question starts out at lead, in the order the plugins chosen before
@@ -931,7 +914,7 @@ mod tests {
     fn the_plugins_recommended_come_first_and_the_others_by_label() {
         let mut script = Script::new([Step::Pick("round robin")]);
 
-        fill_phase(&mut Draft::new(), &mut script).unwrap();
+        fill(&mut phase_draft(), &mut script).unwrap();
 
         assert_eq!(
             script.options[0],
@@ -981,9 +964,9 @@ mod tests {
             Step::Pick("more Buchholz"),
             Step::Pick(NO_FURTHER_ONE),
         ]);
-        let mut draft = Draft::new();
+        let mut draft = phase_draft();
 
-        fill_phase(&mut draft, &mut script).unwrap();
+        fill(&mut draft, &mut script).unwrap();
 
         assert_eq!(ids(&draft, "ranking"), ["more_buchholz"]);
         assert_eq!(
@@ -1006,9 +989,9 @@ mod tests {
             Step::Integer(-1),
             Step::Integer(3),
         ]);
-        let mut draft = Draft::new();
+        let mut draft = phase_draft();
 
-        fill_phase(&mut draft, &mut script).unwrap();
+        fill(&mut draft, &mut script).unwrap();
 
         assert_eq!(script.retries, 1);
         assert_eq!(
@@ -1039,8 +1022,8 @@ mod tests {
     /// as it is.
     #[test]
     fn a_filled_draft_is_kept_by_accepting_every_question() {
-        let mut draft = Draft::new();
-        fill_phase(
+        let mut draft = phase_draft();
+        fill(
             &mut draft,
             &mut Script::new([
                 Step::Pick("Monster DYP"),
@@ -1051,7 +1034,7 @@ mod tests {
         .unwrap();
         let answers = draft.answers().clone();
 
-        fill_phase(&mut draft, &mut AcceptDefaults).unwrap();
+        fill(&mut draft, &mut AcceptDefaults).unwrap();
 
         assert_eq!(draft.answers(), &answers);
         assert_eq!(ids(&draft, "ranking")[0], "more_wins");
@@ -1059,7 +1042,7 @@ mod tests {
 
     #[test]
     fn accepting_every_question_needs_each_to_offer_an_answer() {
-        let result = fill_phase(&mut Draft::new(), &mut AcceptDefaults);
+        let result = fill(&mut phase_draft(), &mut AcceptDefaults);
 
         assert!(
             matches!(&result, Err(Error::NoDefault { question }) if question == "Format"),

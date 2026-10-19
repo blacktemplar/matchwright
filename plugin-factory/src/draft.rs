@@ -6,21 +6,23 @@
 //! [answers](Draft::answers), see [`Draft`], and changes the tree through [`Draft::set`] and
 //! [`Draft::unset`] alone, so that every answer in it fits the schema.
 //!
-//! The functions of this module answer what a UI asks about a draft: the
-//! [default](default_value) of a field, the [candidates] for a position taking plugins and the
-//! [issues] of the answers so far. [`finish`] builds the composite. Each takes the composite's
-//! context, i.e. what is true of it before any plugin is chosen, as a closure declaring it as a
-//! plugin declares, see [`compatibility::check`].
+//! A draft also answers what a UI asks about it: the [default](Draft::default_value) of a field,
+//! the [candidates](Draft::candidates) for a position taking plugins and the
+//! [issues](Draft::issues) of the answers so far. [`Draft::finish`] builds the composite. All of
+//! them take the composite's context into account, i.e. what is true of it before any plugin is
+//! chosen, which the draft is created with as a closure declaring it as a plugin declares, see
+//! [`compatibility::check`].
 //!
 //! While a field taking plugins is unanswered, a fact a plugin of its axis provides may still
 //! arrive, as long as such a plugin would fit next to the answers given and what it requires could
-//! arrive in turn, so the candidates and issues are optimistic about it; [`finish`] checks with
-//! nothing open. Whether a provider fits is judged by its static declaration.
+//! arrive in turn, so the candidates and issues are optimistic about it; [`Draft::finish`] checks
+//! with nothing open. Whether a provider fits is judged by its static declaration.
 
 use std::{
     any::TypeId,
     fmt::{self, Display, Formatter},
     marker::PhantomData,
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -110,7 +112,7 @@ use crate::{
 /// }
 ///
 /// # fn main() {
-/// let mut draft = Draft::<Phase>::new();
+/// let mut draft = Draft::<Phase>::new(|_| {});
 /// draft
 ///     .set(
 ///         &"seedings".parse().unwrap(),
@@ -131,26 +133,33 @@ use crate::{
 /// ```
 pub struct Draft<T> {
     answers: Config,
+    /// What is true of the composite before any plugin is chosen.
+    context: Arc<Declaration>,
     composite: PhantomData<fn() -> T>,
 }
 
 impl<T: Configurable> Draft<T> {
-    /// A draft with nothing answered.
-    pub fn new() -> Self {
+    /// A draft with nothing answered, of a composite whose `context` declares what is true of it
+    /// before any plugin is chosen, as a plugin declares; `|_| {}` declares nothing.
+    pub fn new(context: impl FnOnce(&mut Declaration)) -> Self {
         Self {
             answers: Config::new(),
+            context: Arc::new(Declaration::of(context)),
             composite: PhantomData,
         }
     }
 
-    /// A draft with every field answered as in `composite`, e.g. one that was loaded; the answers
-    /// are what `composite` serializes to. So [`finish`] of it settles and checks a composite
-    /// built elsewhere.
+    /// Like [`Self::new`], with every field answered as in `composite`, e.g. one that was loaded;
+    /// the answers are what `composite` serializes to. So [`Self::finish`] of it settles and checks
+    /// a composite built elsewhere.
     ///
     /// # Errors
     /// Returns [`ConfigError::Rejected`] at the root if `composite` does not serialize to a
     /// config, and what [`Self::set`] returns for an answer that is not one of the schema.
-    pub fn from_built(composite: &T) -> Result<Self, ConfigError>
+    pub fn from_built(
+        context: impl FnOnce(&mut Declaration),
+        composite: &T,
+    ) -> Result<Self, ConfigError>
     where
         T: Serialize,
     {
@@ -162,7 +171,7 @@ impl<T: Configurable> Draft<T> {
             })?;
         Ok(Self {
             answers: T::schema().walk(&answers, &Path::ROOT, false)?,
-            composite: PhantomData,
+            ..Self::new(context)
         })
     }
 
@@ -175,7 +184,7 @@ impl<T: Configurable> Draft<T> {
     /// position just past its end, which appends `answer` to the list.
     ///
     /// The answer may leave fields of the plugins in it unanswered. What a plugin rejects is not
-    /// checked here but reported as an [issue](issues).
+    /// checked here but reported as an [issue](Self::issues).
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers or the
@@ -202,11 +211,130 @@ impl<T: Configurable> Draft<T> {
         edit(&mut self.answers, path, None);
         Ok(())
     }
-}
 
-impl<T: Configurable> Default for Draft<T> {
-    fn default() -> Self {
-        Self::new()
+    /// The answer the field at `path` offers, or [`None`] if it offers none or `path` addresses a
+    /// position in a list rather than a field. It is never filled in: a UI offering it sets it as
+    /// the answer, see [`Self::set`].
+    ///
+    /// A field taking plugins offers what the plugins answering the other fields of its config
+    /// recommend, see [`Plugin::recommends`], as far as it is of its axis and fits as a
+    /// [candidate](Self::candidates) would: a field taking one plugin the first such
+    /// recommendation, a field taking a list all of them that fit together, in the order they are
+    /// recommended in. A field no recommendation fits offers the default of its schema.
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers.
+    pub fn default_value(&self, path: &Path) -> Result<Option<Value>, ConfigError> {
+        let schema = T::schema();
+        let Some(field) = locate(&schema, &self.answers, path)?.field else {
+            return Ok(None);
+        };
+        Ok(default_in(
+            &self.context,
+            &Tree::of(&schema, &self.answers),
+            &field,
+            path,
+        ))
+    }
+
+    /// The plugins that could answer the position at `path`, in the order of their ids, each with
+    /// how it fits; empty if the position takes no plugins.
+    ///
+    /// A candidate takes the place of what answers the position, so it is checked against the
+    /// answers without it, and only for what it declares itself: an incompatibility among the other
+    /// answers is not its conflict. For a field taking a list the candidate is one of the plugins
+    /// answering it, so the rest of the list is left out as well. For a position in a list, a
+    /// plugin answering another position of that list is no candidate.
+    ///
+    /// A fact the candidate requires and nothing provides is no [conflict](Candidate::conflicts) if
+    /// it could still arrive: if a field could still take a plugin providing it that fits — a field
+    /// still unanswered, a list of the composite, or the list the candidate is put into — or if one
+    /// of the candidate's own plugin fields could provide it, or a plugin of an axis no field of
+    /// the composite takes. A provider fits if it fits next to the answers and the candidate, and
+    /// every fact it requires that nothing provides could arrive in the same way. Otherwise it is a
+    /// conflict if such a field exists but none of its providers fits, or if an answered field of
+    /// the composite taking one plugin could provide it; a fact no field could provide at all is
+    /// left to [`Self::issues`] and [`Self::finish`], which report it once the candidate is chosen.
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path may
+    /// address the position just past the end of a list.
+    pub fn candidates(&self, path: &Path) -> Result<Vec<Candidate>, ConfigError> {
+        let schema = T::schema();
+        let position = locate(&schema, &self.answers, path)?;
+        let Some((axis, list)) = slot(&position.kind) else {
+            return Ok(Vec::new());
+        };
+        let tree = Tree::of(&schema, &self.answers);
+        let sources = Sources::of(&schema, &tree, path, list.then_some(axis));
+        let others: Vec<_> = tree
+            .plugins
+            .iter()
+            .filter(|placed| !is_within(&placed.path, Some(path)))
+            .collect();
+        let taken: Vec<_> = match path.segments().last() {
+            Some(Segment::Index(_)) => {
+                let list = path.parent();
+                others
+                    .iter()
+                    .filter(|placed| placed.path.parent() == list)
+                    .map(|placed| placed.id)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        Ok(axis
+            .entries()
+            .filter(|entry| !taken.contains(&entry.id()))
+            .map(|entry| candidate(&self.context, &others, &sources, entry))
+            .collect())
+    }
+
+    /// Everything currently wrong with the answers, each at the path where it is fixed, in no
+    /// particular order: an answer a plugin rejects, a plugin that does not fit next to the
+    /// others, and a fact a plugin requires that nothing provides and no unanswered field could
+    /// take a fitting provider for, as [`Self::candidates`] judges a provider.
+    ///
+    /// An unanswered field is no issue, but still to be answered. A plugin with an unanswered field
+    /// counts with its static declaration only and recommends nothing.
+    pub fn issues(&self) -> Vec<Issue> {
+        issues_in(&self.context, &Tree::of(&T::schema(), &self.answers), false)
+    }
+
+    /// The composite built from the answers, with every fact settled that the catalog settles.
+    ///
+    /// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
+    /// neither the plugins nor the context provide is settled if exactly one plugin without fields
+    /// provides it among the axes of the fields of the composite taking a list of plugins, and its
+    /// axis is taken by one such field only: the plugin is appended to that field. What it requires
+    /// that nothing provides is settled in turn, and the plugins so found are appended only all
+    /// together and only if none of them raises an issue: a conflict, a fact missing, or a
+    /// condition an existing plugin requires of what they provide. A field taking one plugin, and a
+    /// field of a plugin, is never added to. This repeats until nothing changes.
+    ///
+    /// Leaves the draft as it is, so that a failed composite can be fixed and finished again.
+    ///
+    /// # Errors
+    /// Returns the [issues](Self::issues) of the answers so settled, with nothing open any more: an
+    /// unanswered field is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and a
+    /// fact nothing provides is [`Problem::Unprovided`].
+    pub fn finish(&self) -> Result<T, Vec<Issue>> {
+        let schema = T::schema();
+        let invalid = |error: ConfigError| {
+            vec![Issue {
+                path: error.path().clone(),
+                problem: Problem::Invalid(error),
+            }]
+        };
+        let mut answers = self.answers.clone();
+        let mut tried = Vec::new();
+        while settle(&self.context, &schema, &mut answers, &mut tried) {}
+        let issues = issues_in(&self.context, &Tree::of(&schema, &answers), true);
+        if !issues.is_empty() {
+            return Err(issues);
+        }
+        let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
+        config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
     }
 }
 
@@ -215,100 +343,14 @@ impl<T> Clone for Draft<T> {
     fn clone(&self) -> Self {
         Self {
             answers: self.answers.clone(),
+            context: Arc::clone(&self.context),
             composite: PhantomData,
         }
     }
 }
 
-/// The answer the field at `path` of `draft` offers in a composite with `context`, or [`None`] if
-/// it offers none or `path` addresses a position in a list rather than a field. It is never filled
-/// in: a UI offering it sets it as the answer, see [`Draft::set`].
-///
-/// A field taking plugins offers what the plugins answering the other fields of its config
-/// recommend, see [`Plugin::recommends`], as far as it is of its axis and fits as a
-/// [candidate](candidates) would: a field taking one plugin the first such recommendation, a field
-/// taking a list all of them that fit together, in the order they are recommended in. A field no
-/// recommendation fits offers the default of its schema.
-///
-/// # Errors
-/// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers.
-pub fn default_value<T: Configurable>(
-    context: impl FnOnce(&mut Declaration),
-    draft: &Draft<T>,
-    path: &Path,
-) -> Result<Option<Value>, ConfigError> {
-    let schema = T::schema();
-    let Some(field) = locate(&schema, &draft.answers, path)?.field else {
-        return Ok(None);
-    };
-    Ok(default_in(
-        &Declaration::of(context),
-        &Tree::of(&schema, &draft.answers),
-        &field,
-        path,
-    ))
-}
-
-/// The plugins that could answer the position at `path` of `draft` in a composite with `context`,
-/// in the order of their ids, each with how it fits; empty if the position takes no plugins.
-///
-/// A candidate takes the place of what answers the position, so it is checked against the answers
-/// without it, and only for what it declares itself: an incompatibility among the other answers is
-/// not its conflict. For a field taking a list the candidate is one of the plugins answering it,
-/// so the rest of the list is left out as well. For a position in a list, a plugin answering
-/// another position of that list is no candidate.
-///
-/// A fact the candidate requires and nothing provides is no [conflict](Candidate::conflicts) if it
-/// could still arrive: if a field could still take a plugin providing it that fits — a field still
-/// unanswered, a list of the composite, or the list the candidate is put into — or if one of the
-/// candidate's own plugin fields could provide it, or a plugin of an axis no field of the composite
-/// takes. A provider fits if it fits next to the answers and the candidate, and every fact it
-/// requires that nothing provides could arrive in the same way. Otherwise it is a conflict if such
-/// a field exists but none of its providers fits, or if an answered field of the composite taking
-/// one plugin could provide it; a fact no field could provide at all is left to [`issues`] and
-/// [`finish`], which report it once the candidate is chosen.
-///
-/// # Errors
-/// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path may
-/// address the position just past the end of a list.
-pub fn candidates<T: Configurable>(
-    context: impl FnOnce(&mut Declaration),
-    draft: &Draft<T>,
-    path: &Path,
-) -> Result<Vec<Candidate>, ConfigError> {
-    let schema = T::schema();
-    let position = locate(&schema, &draft.answers, path)?;
-    let Some((axis, list)) = slot(&position.kind) else {
-        return Ok(Vec::new());
-    };
-    let context = Declaration::of(context);
-    let tree = Tree::of(&schema, &draft.answers);
-    let sources = Sources::of(&schema, &tree, path, list.then_some(axis));
-    let others: Vec<_> = tree
-        .plugins
-        .iter()
-        .filter(|placed| !is_within(&placed.path, Some(path)))
-        .collect();
-    let taken: Vec<_> = match path.segments().last() {
-        Some(Segment::Index(_)) => {
-            let list = path.parent();
-            others
-                .iter()
-                .filter(|placed| placed.path.parent() == list)
-                .map(|placed| placed.id)
-                .collect()
-        }
-        _ => Vec::new(),
-    };
-    Ok(axis
-        .entries()
-        .filter(|entry| !taken.contains(&entry.id()))
-        .map(|entry| candidate(&context, &others, &sources, entry))
-        .collect())
-}
-
-/// The plugin `entry` as a [candidate](candidates) next to the plugins `others` in a composite
-/// with `context`, with the facts of the composite found in `sources`.
+/// The plugin `entry` as a [candidate](Draft::candidates) next to the plugins `others` in a
+/// composite with `context`, with the facts of the composite found in `sources`.
 fn candidate(
     context: &Declaration,
     others: &[&Placed],
@@ -383,7 +425,7 @@ fn candidate(
     }
 }
 
-/// Where the facts a [candidate](candidates) requires could come from.
+/// Where the facts a [candidate](Draft::candidates) requires could come from.
 struct Sources {
     /// The fields a plugin could still be added to, each with its axis: the fields still
     /// unanswered, the lists of the composite and the list the candidate is put into.
@@ -469,65 +511,6 @@ impl Sources {
     }
 }
 
-/// Everything currently wrong with the answers of `draft` in a composite with `context`, each at
-/// the path where it is fixed, in no particular order: an answer a plugin rejects, a plugin that
-/// does not fit next to the others, and a fact a plugin requires that nothing provides and no
-/// unanswered field could take a fitting provider for, as [`candidates`] judges a provider.
-///
-/// An unanswered field is no issue, but still to be answered. A plugin with an unanswered field
-/// counts with its static declaration only and recommends nothing.
-pub fn issues<T: Configurable>(
-    context: impl FnOnce(&mut Declaration),
-    draft: &Draft<T>,
-) -> Vec<Issue> {
-    issues_in(
-        &Declaration::of(context),
-        &Tree::of(&T::schema(), &draft.answers),
-        false,
-    )
-}
-
-/// The composite `draft` is a draft of, in a composite with `context`, built from its answers
-/// with every fact settled that the catalog settles.
-///
-/// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
-/// neither the plugins nor the context provide is settled if exactly one plugin without fields
-/// provides it among the axes of the fields of the composite taking a list of plugins, and its
-/// axis is taken by one such field only: the plugin is appended to that field. What it requires
-/// that nothing provides is settled in turn, and the plugins so found are appended only all
-/// together and only if none of them raises an issue: a conflict, a fact missing, or a condition
-/// an existing plugin requires of what they provide. A field taking one plugin, and a field of a
-/// plugin, is never added to. This repeats until nothing changes.
-///
-/// Leaves `draft` as it is, so that a failed composite can be fixed and finished again.
-///
-/// # Errors
-/// Returns the [issues] of the answers so settled, with nothing open any more: an unanswered field
-/// is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and a fact nothing provides
-/// is [`Problem::Unprovided`].
-pub fn finish<T: Configurable>(
-    context: impl FnOnce(&mut Declaration),
-    draft: &Draft<T>,
-) -> Result<T, Vec<Issue>> {
-    let context = Declaration::of(context);
-    let schema = T::schema();
-    let invalid = |error: ConfigError| {
-        vec![Issue {
-            path: error.path().clone(),
-            problem: Problem::Invalid(error),
-        }]
-    };
-    let mut answers = draft.answers.clone();
-    let mut tried = Vec::new();
-    while settle(&context, &schema, &mut answers, &mut tried) {}
-    let issues = issues_in(&context, &Tree::of(&schema, &answers), true);
-    if !issues.is_empty() {
-        return Err(issues);
-    }
-    let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
-    config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
-}
-
 /// Whether a fact nothing provides yet could still arrive: only if a plugin providing it could
 /// still be added to a field, i.e. fits next to the plugins there are, and what it requires in turn
 /// could arrive as well.
@@ -592,8 +575,8 @@ impl Reach<'_> {
     }
 }
 
-/// [`issues`] of the answers `tree` holds in a composite with `context`. Once `finished`, nothing
-/// is open any more: an unanswered field is an issue and provides nothing.
+/// [`Draft::issues`] of the answers `tree` holds in a composite with `context`. Once `finished`,
+/// nothing is open any more: an unanswered field is an issue and provides nothing.
 fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
     let mut issues = Vec::new();
     if finished {
@@ -700,8 +683,8 @@ fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
 }
 
 /// Settles the first fact the plugins in `answers`, the answers to `schema`, require that neither
-/// they nor `context` provide and that is not in `tried`, see [`finish`]. Each fact looked at is
-/// added to `tried`, so that it is tried once.
+/// they nor `context` provide and that is not in `tried`, see [`Draft::finish`]. Each fact looked
+/// at is added to `tried`, so that it is tried once.
 ///
 /// Returns whether plugins were added.
 fn settle(
@@ -734,9 +717,9 @@ fn settle(
     false
 }
 
-/// The plugins [`finish`] adds to `lists` so that `fact` is provided in a composite with `context`
-/// and plugins with `declarations`, each with the name of the list it is appended to, in the
-/// order they are added in; [`None`] if it adds nothing.
+/// The plugins [`Draft::finish`] adds to `lists` so that `fact` is provided in a composite with
+/// `context` and plugins with `declarations`, each with the name of the list it is appended to, in
+/// the order they are added in; [`None`] if it adds nothing.
 ///
 /// The fact is settled by its [`settling`] plugin, and so is every fact that plugin requires that
 /// nothing provides, in turn. The plugins are added only all together, and only if none of them
@@ -815,8 +798,8 @@ fn top_lists(schema: &Schema) -> Vec<(&'static str, AnyAxis)> {
         .collect()
 }
 
-/// The plugin [`finish`] settles `fact` with, and the name of the list among `lists` it is added
-/// to: the only plugin without fields providing it among the axes of `lists`, or [`None`] if
+/// The plugin [`Draft::finish`] settles `fact` with, and the name of the list among `lists` it is
+/// added to: the only plugin without fields providing it among the axes of `lists`, or [`None`] if
 /// there is none or more than one.
 fn settling(
     lists: &[(&'static str, AnyAxis)],
@@ -836,8 +819,8 @@ fn settling(
     providers.next().is_none().then_some(settled)
 }
 
-/// [`default_value`] of `field`, the field at `path` in the answers `tree` holds, in a composite
-/// with `context`.
+/// [`Draft::default_value`] of `field`, the field at `path` in the answers `tree` holds, in a
+/// composite with `context`.
 fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) -> Option<Value> {
     let Some((axis, list)) = slot(field.kind()) else {
         return field.default_value().cloned();
@@ -898,7 +881,8 @@ fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) ->
     }
 }
 
-/// A plugin that could answer a position taking plugins, with how it fits, see [`candidates`].
+/// A plugin that could answer a position taking plugins, with how it fits, see
+/// [`Draft::candidates`].
 #[derive(Debug)]
 pub struct Candidate {
     entry: &'static PluginEntry,
@@ -927,7 +911,7 @@ impl Candidate {
 }
 
 /// Something currently wrong with the answers of a [`Draft`], at the path where it is fixed, see
-/// [`issues`].
+/// [`Draft::issues`].
 #[derive(Debug, PartialEq, Eq)]
 pub struct Issue {
     path: Path,
@@ -1580,7 +1564,7 @@ mod tests {
 
     /// A draft of a phase of single players.
     fn draft() -> Draft<Phase> {
-        Draft::new()
+        Draft::new(singles)
     }
 
     /// The path written as `text`, e.g. `metrics[1].for_win`.
@@ -1604,7 +1588,8 @@ mod tests {
 
     /// The candidates at `at` in a phase of single players, by id, each with why it does not fit.
     fn candidates(draft: &Draft<Phase>, at: &str) -> Vec<(&'static str, Vec<Incompatibility>)> {
-        super::candidates(singles, draft, &path(at))
+        draft
+            .candidates(&path(at))
             .unwrap()
             .into_iter()
             .map(|candidate| (candidate.entry().id(), candidate.conflicts))
@@ -1613,7 +1598,8 @@ mod tests {
 
     /// The plugin `id` as a candidate at `at` in a phase of single players.
     fn candidate_at(draft: &Draft<Phase>, at: &str, id: &str) -> Candidate {
-        super::candidates(singles, draft, &path(at))
+        draft
+            .candidates(&path(at))
             .unwrap()
             .into_iter()
             .find(|candidate| candidate.entry().id() == id)
@@ -1929,7 +1915,7 @@ mod tests {
         };
 
         assert_eq!(
-            issues(singles, &draft),
+            draft.issues(),
             [Issue {
                 path: path("metrics[0].for_win"),
                 problem: Problem::Invalid(rejected),
@@ -1953,7 +1939,7 @@ mod tests {
         };
 
         assert_eq!(
-            issues(singles, &draft),
+            draft.issues(),
             [
                 Issue {
                     path: path("metrics[0]"),
@@ -1986,14 +1972,14 @@ mod tests {
         };
 
         assert_eq!(
-            issues(singles, &losing),
+            losing.issues(),
             [Issue {
                 path: path("format"),
                 problem: unprovided("eliminations", &["knockout"]),
             }]
         );
         assert_eq!(
-            issues(singles, &counting),
+            counting.issues(),
             [
                 Issue {
                     path: path("metrics"),
@@ -2011,7 +1997,7 @@ mod tests {
     fn a_fact_an_unanswered_field_could_provide_is_no_issue() {
         let draft = answered(&[("metrics", json!([plugin::<Losses>()]))]);
 
-        assert_eq!(issues(singles, &draft), []);
+        assert_eq!(draft.issues(), []);
     }
 
     #[test]
@@ -2019,14 +2005,11 @@ mod tests {
         let draft = answered(&[("format", plugin::<Knockout>().into())]);
 
         assert_eq!(
-            default_value(singles, &draft, &path("format.third_place")),
+            draft.default_value(&path("format.third_place")),
             Ok(Some(json!(false)))
         );
-        assert_eq!(
-            default_value(singles, &draft, &path("metrics")),
-            Ok(Some(json!([])))
-        );
-        assert_eq!(default_value(singles, &draft, &path("format")), Ok(None));
+        assert_eq!(draft.default_value(&path("metrics")), Ok(Some(json!([]))));
+        assert_eq!(draft.default_value(&path("format")), Ok(None));
     }
 
     #[test]
@@ -2034,7 +2017,7 @@ mod tests {
         let draft = answered(&[("format", plugin::<RoundRobin>().into())]);
 
         assert_eq!(
-            default_value(singles, &draft, &path("metrics")),
+            draft.default_value(&path("metrics")),
             Ok(Some(json!([plugin::<MatchCount>(), plugin::<Wins>()])))
         );
     }
@@ -2044,7 +2027,7 @@ mod tests {
         let draft = answered(&[("format", plugin::<Monster>().into())]);
 
         assert_eq!(
-            default_value(singles, &draft, &path("metrics")),
+            draft.default_value(&path("metrics")),
             Ok(Some(json!([plugin::<Buchholz>(), plugin::<MatchCount>()])))
         );
     }
@@ -2054,14 +2037,14 @@ mod tests {
         let mut draft = answered(&[("format", plugin::<RoundRobin>().into())]);
 
         assert_eq!(
-            default_value(singles, &draft, &path("tie_break")),
+            draft.default_value(&path("tie_break")),
             Ok(Some(plugin::<MatchCount>().into()))
         );
         draft
             .set(&path("metrics"), json!([plugin::<MatchCount>()]))
             .unwrap();
         assert_eq!(
-            default_value(singles, &draft, &path("tie_break")),
+            draft.default_value(&path("tie_break")),
             Ok(Some(plugin::<Wins>().into()))
         );
     }
@@ -2073,12 +2056,11 @@ mod tests {
             .questions
             .into_iter()
             .find(|question| {
-                question.answer.is_none()
-                    && default_value(singles, draft, &question.path) != Ok(None)
+                question.answer.is_none() && draft.default_value(&question.path) != Ok(None)
             })
             .map(|question| question.path)
         {
-            let default = default_value(singles, draft, &at).unwrap().unwrap();
+            let default = draft.default_value(&at).unwrap().unwrap();
             draft.set(&at, default).unwrap();
         }
     }
@@ -2092,12 +2074,12 @@ mod tests {
         };
 
         assert_eq!(
-            finish(singles, &draft).err(),
+            draft.finish().err(),
             Some(vec![unanswered("metrics"), unanswered("tie_break")])
         );
         accept_defaults(&mut draft);
         assert_eq!(
-            finish(singles, &draft).map(|phase| format!("{phase:?}")),
+            draft.finish().map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -2117,7 +2099,7 @@ mod tests {
         };
 
         assert_eq!(
-            finish(singles, &draft()).err(),
+            draft().finish().err(),
             Some(vec![
                 unanswered("format"),
                 unanswered("metrics"),
@@ -2132,7 +2114,7 @@ mod tests {
         #[derive(Debug, Deserialize, Configurable)]
         struct Nothing;
 
-        assert!(finish(|_| {}, &Draft::<Nothing>::new()).is_ok());
+        assert!(Draft::<Nothing>::new(|_| {}).finish().is_ok());
     }
 
     #[test]
@@ -2144,7 +2126,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            finish(singles, &draft).err(),
+            draft.finish().err(),
             Some(vec![Issue {
                 path: path("metrics[0].for_win"),
                 problem: Problem::Invalid(ConfigError::Rejected {
@@ -2163,9 +2145,9 @@ mod tests {
         ]);
 
         // the unanswered format could still provide the eliminations
-        assert_eq!(issues(singles, &draft), []);
+        assert_eq!(draft.issues(), []);
         assert_eq!(
-            finish(singles, &draft).err(),
+            draft.finish().err(),
             Some(vec![
                 Issue {
                     path: path("format"),
@@ -2198,7 +2180,7 @@ mod tests {
 
         // wins has a field, so score is the only plugin providing the points that is added
         assert_eq!(
-            finish(singles, &settled).map(|phase| format!("{:?}", phase.metrics)),
+            settled.finish().map(|phase| format!("{:?}", phase.metrics)),
             Ok("[Buchholz, Score, MatchCount]".to_owned())
         );
         // finishing leaves the answers as they were
@@ -2215,7 +2197,7 @@ mod tests {
             metrics: vec![Box::new(Buchholz), Box::new(Score)],
             tie_break: None,
         };
-        let draft = Draft::from_built(&phase).unwrap();
+        let draft = Draft::from_built(singles, &phase).unwrap();
 
         assert_eq!(
             draft.answers().get("format"),
@@ -2226,7 +2208,7 @@ mod tests {
             Some(&json!([plugin::<Buchholz>(), plugin::<Score>()]))
         );
         assert_eq!(
-            finish(singles, &draft).map(|phase| format!("{phase:?}")),
+            draft.finish().map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -2334,7 +2316,7 @@ mod tests {
 
         /// A draft with an empty ranking and the format `format`, if any.
         fn ranked(format: Option<PluginConfig>) -> Draft<Ranked> {
-            let mut draft = Draft::new();
+            let mut draft = Draft::new(|_| {});
             draft.set(&path("ranking"), json!([])).unwrap();
             if let Some(format) = format {
                 draft.set(&path("format"), format).unwrap();
@@ -2344,8 +2326,7 @@ mod tests {
 
         /// The criterion as the candidate for the first position of the ranking of `draft`.
         fn criterion(draft: &Draft<Ranked>) -> Candidate {
-            let mut candidates =
-                crate::draft::candidates(|_| {}, draft, &path("ranking[0]")).unwrap();
+            let mut candidates = draft.candidates(&path("ranking[0]")).unwrap();
             assert_eq!(candidates.len(), 1);
             candidates.remove(0)
         }
@@ -2385,7 +2366,8 @@ mod tests {
                 draft
                     .set(&path("ranking"), json!([plugin::<LaterElimination>()]))
                     .unwrap();
-                issues(|_| {}, &draft)
+                draft
+                    .issues()
                     .into_iter()
                     .filter(|issue| matches!(issue.problem(), Problem::Unprovided { .. }))
                     .map(|issue| issue.path().clone())
@@ -2805,7 +2787,7 @@ mod tests {
                 .fold(plugin::<Requiring>(), |requiring, field| {
                     requiring.with(field.name(), requires.contains(&field.name()))
                 });
-            let mut draft = Draft::<C>::new();
+            let mut draft = Draft::<C>::new(context);
             draft.set(&path("requirements"), requiring).unwrap();
             for field in C::schema().fields() {
                 if matches!(field.kind(), FieldKind::List { .. }) {
@@ -2815,7 +2797,7 @@ mod tests {
             for (at, answer) in answers {
                 draft.set(&path(at), answer.clone()).unwrap();
             }
-            match finish(context, &draft) {
+            match draft.finish() {
                 Ok(built) => {
                     let built = serde_json::to_value(built).unwrap();
                     Ok(built

@@ -126,8 +126,7 @@ borrows a plugin field mutably and `data` immutably, two disjoint fields of the
 same `Phase`, so no plugin has to be moved out for the call. The consequence is
 that a plugin no longer sees the other plugins of its phase; what it needs from
 them reaches it through `PhaseData` (metrics on rankings, annotations on matches).
-`Phase` forwards the read accessors to its `PhaseData`, so consumers are
-unaffected. `data` serializes as a nested field rather than with
+Consumers read the same `PhaseData` through `Phase::data`. `data` serializes as a nested field rather than with
 `#[serde(flatten)]`, because flattening goes through serde's self-describing map
 path, which postcard cannot deserialize.
 
@@ -294,7 +293,7 @@ order: `DependencyOrderedSet::new` and deserializing a set both sort it, and fai
 on a cycle. Both also reject a
 plugin given twice, whatever it is configured with, so a phase cannot calculate
 a metric with two configurations of one calculator. Deserializing is
-how `draft::finish` builds a composite, and how a saved `AddPhase` comes back,
+how `Draft::finish` builds a composite, and how a saved `AddPhase` comes back,
 so neither a finished draft, nor a loaded log, nor `PhasePlugins::new` needs a
 step of its own. The sort keeps an order that is already valid as it is, so a
 saved set replays in the order it was saved in, and one in an order its
@@ -303,7 +302,7 @@ than run wrong. The slice rankers stay a `Vec`, since their order is the
 ranking.
 
 **Missing providers come from the catalog.** For a required fact nothing
-provides, `draft::finish` looks among the axes of the composite's lists of
+provides, `Draft::finish` looks among the axes of the composite's lists of
 plugins for the registered plugins that provide it and have no fields, and adds
 the one it finds if there is exactly one — the win-draw-loss record has exactly
 one calculator, so nobody is ever asked about it. Several candidates are an ambiguity it must
@@ -335,7 +334,7 @@ supplying something the others require (`Candidate::is_sole_supplier`).
 
 **Settling happens before the transition, validation in it.** Settling is the
 consumer's step: it finishes a `Draft<PhasePlugins>` with the competition's
-phase context, or calls `PhasePlugins::settle` on plugins it built itself. The
+phase context, for plugins it built itself through `Draft::from_built`. The
 transition holds the complete, sorted list, so neither the log nor a snapshot
 depends on how calculators were picked — which it must not, because the catalog
 depends on which crates are linked in — and changing a registration or the way
@@ -472,7 +471,7 @@ impl MetricsCalculator for PointsCalculator { /* … */ }
 next to its trait, and a plugin is built as a plugin of its axis, so a consumer
 gets a `Box<dyn MetricsCalculator>`, never something to downcast.
 
-**What may be added is the composite's shape**: `draft::finish` only appends to
+**What may be added is the composite's shape**: `Draft::finish` only appends to
 the fields of `PhasePlugins` taking a list of plugins, so it never adds a
 second phase format.
 

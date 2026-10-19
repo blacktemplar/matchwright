@@ -220,13 +220,9 @@ fn assert_same_competition(left: &Competition, right: &Competition) {
         assert_eq!(phase.id(), other.id());
         let (phase, other) = (phase.data(), other.data());
         assert_eq!(phase.seed(), other.seed());
-        assert_eq!(
-            phase.ranking_ids_ordered_by_unique_rank(),
-            other.ranking_ids_ordered_by_unique_rank()
-        );
-        for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
-            let ranking = &phase.rankings()[ranking_id];
-            let other_ranking = &other.rankings()[ranking_id];
+        assert_eq!(phase.standings().len(), other.standings().len());
+        for (ranking, other_ranking) in phase.standings().zip(other.standings()) {
+            assert_eq!(ranking.id(), other_ranking.id());
             assert_eq!(ranking.entrants(), other_ranking.entrants());
             assert_eq!(ranking.rank(), other_ranking.rank());
             assert_eq!(ranking.unique_rank(), other_ranking.unique_rank());
@@ -295,11 +291,8 @@ fn a_started_competition_round_trips() {
     assert_eq!(phase.matches().len(), 2);
     // the metrics of a started competition are all at their default value, so this only shows
     // that they exist at all
-    for ranking_id in phase.ranking_ids_ordered_by_unique_rank() {
-        assert_eq!(
-            phase.rankings()[ranking_id].metric::<Points>(),
-            Some(&Points(0.0))
-        );
+    for ranking in phase.standings() {
+        assert_eq!(ranking.metric::<Points>(), Some(&Points(0.0)));
     }
     assert_same_competition(sm.current(), &competition);
 }
