@@ -7,19 +7,32 @@ use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
+    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
     map::Map,
     type_map::{TypeMapValue, downcast_unchecked_ref},
 };
 
 pub mod buchholz;
-pub mod matches;
 pub mod points;
 pub mod round_of_elimination;
 pub mod round_of_first_loss;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod wins_draws_losses;
+
+pub use buchholz::{
+    Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator, MoreBuchholz,
+    MoreBuchholzOfBuchholz, MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
+};
+pub use points::{MorePoints, Points, PointsCalculator};
+pub use round_of_elimination::{
+    Eliminates, LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,
+};
+pub use round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator};
+pub use wins_draws_losses::{
+    FewerLosses, FewerMatchesPlayed, MoreDraws, MoreWins, WinsDrawsLosses,
+    WinsDrawsLossesCalculator,
+};
 
 pub type MetricId = TypeId;
 
@@ -71,19 +84,18 @@ pub trait MetricsCalculator: Plugin + DynClone {
     /// calculator calculates.
     fn default_metric_value(&self) -> Metric;
 
-    /// The new values of all rankings whose metric the reported result of `match` changed, where
-    /// `old_match_result` is the result the match had before.
+    /// The new values of all rankings whose metric the result just reported for `match` changed.
+    /// A match is reported once, so `match` was not finished before.
     ///
     /// `old_metrics` holds the values replaced by the calculators that already ran, so that a
     /// calculator deriving its metric from another one can see what changed there.
     ///
     /// All returned metrics must have the same concrete type as
     /// [`Self::default_metric_value`].
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        old_match_result: MatchResult,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
 
@@ -92,8 +104,7 @@ pub trait MetricsCalculator: Plugin + DynClone {
     /// A bye is not a match: it has no opponent and no result, and it never changes once
     /// scheduled. Whether it counts for this metric at all is up to the calculator.
     ///
-    /// `old_metrics` and the returned metrics are as for
-    /// [`Self::update_after_match_result_changed`].
+    /// `old_metrics` and the returned metrics are as for [`Self::update_after_match_result`].
     fn update_after_bye(
         &mut self,
         phase_data: &PhaseData,

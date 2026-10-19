@@ -1252,7 +1252,6 @@ dependencies = [
  "thiserror",
  "tournament-engine",
  "typetag",
- "undoable-state-machine",
  "uuid",
 ]
 

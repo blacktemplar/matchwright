@@ -1,27 +1,23 @@
 //! The data this CLI attaches to the entities of [`tournament_engine`].
 //!
 //! Every type here implements [`TypeMapValue`], which makes it storable in the
-//! [`TypeMap`](tournament_engine::type_map::TypeMap) of an entity and gives it an explicit
-//! `typetag` name. That name is a persistence contract: renaming or moving the type must not
-//! change it.
+//! [`TypeMap`](tournament_engine::TypeMap) of an entity and gives it an explicit `typetag` name.
+//! That name is a persistence contract: renaming or moving the type must not change it.
 
 use std::fmt::{self, Display};
 
 use serde::{Deserialize, Serialize};
-use tournament_engine::type_map::TypeMapValue;
+use tournament_engine::TypeMapValue;
 
 /// The name an entrant is shown and addressed by.
 ///
-/// Stored as an annotation of an [`Entrant`](tournament_engine::entities::competition::Entrant),
-/// which means it is given once, by the [`AddEntrant`] that adds that entrant.
-///
-/// [`AddEntrant`]: tournament_engine::transitions::add_entrant::AddEntrant
+/// Stored as an annotation of an [`Entrant`](tournament_engine::Entrant), which means it is given
+/// once, by the [`AddEntrant`](tournament_engine::AddEntrant) that adds that entrant.
 ///
 /// # Examples
 /// ```
 /// use tournament_cli::annotations::DisplayName;
-/// use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
-/// use uuid::Uuid;
+/// use tournament_engine::{Annotated, Entrant, EntrantId, uuid::Uuid};
 ///
 /// let entrant =
 ///     Entrant::new(EntrantId::new(Uuid::nil())).with_annotation(DisplayName::new("Alice"));
@@ -62,8 +58,7 @@ impl From<DisplayName> for String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
-    use uuid::Uuid;
+    use tournament_engine::{Annotated, Entrant, EntrantId, uuid::Uuid};
 
     use super::*;
 

@@ -258,19 +258,15 @@ pub fn default_value<T: Configurable>(
 /// so the rest of the list is left out as well. For a position in a list, a plugin answering
 /// another position of that list is no candidate.
 ///
-/// A fact the candidate requires and nothing provides is
-/// - [missing](Candidate::missing) if a field could still take a plugin providing it that fits: a
-///   field still unanswered, a list of the composite, or the list the candidate is put into. A
-///   provider fits if it fits next to the answers and the candidate, and every fact it requires
-///   that nothing provides could arrive in the same way;
-/// - not reported at all if one of the candidate's own plugin fields could provide it, or a plugin
-///   of an axis no field of the composite takes; [`issues`] and [`finish`] report it once the
-///   candidate is chosen;
-/// - otherwise, if such a field could take a provider but none fits, a
-///   [conflict](Candidate::conflicts) with the answered field whose plugin keeps the providers
-///   out, or with nothing if no plugin does;
-/// - otherwise a conflict with each answered field of the composite taking one plugin that could
-///   provide it, or not reported if there is none.
+/// A fact the candidate requires and nothing provides is no [conflict](Candidate::conflicts) if it
+/// could still arrive: if a field could still take a plugin providing it that fits — a field still
+/// unanswered, a list of the composite, or the list the candidate is put into — or if one of the
+/// candidate's own plugin fields could provide it, or a plugin of an axis no field of the composite
+/// takes. A provider fits if it fits next to the answers and the candidate, and every fact it
+/// requires that nothing provides could arrive in the same way. Otherwise it is a conflict if such
+/// a field exists but none of its providers fits, or if an answered field of the composite taking
+/// one plugin could provide it; a fact no field could provide at all is left to [`issues`] and
+/// [`finish`], which report it once the candidate is chosen.
 ///
 /// # Errors
 /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path may
@@ -321,7 +317,6 @@ fn candidate(
 ) -> Candidate {
     let own_facts = entry.sub_facts();
     let declared = Declared::new(entry.label(), entry.declaration());
-    // what finishing adds is settled with the candidate chosen
     let with_candidate: Vec<_> = others
         .iter()
         .map(|placed| &placed.declared)
@@ -330,96 +325,61 @@ fn candidate(
     let reach = Reach {
         context,
         open: &sources.open,
-        answered: &sources.answered,
-        placed: others,
     };
-    let mut conflicts = Vec::new();
-    let mut missing = Vec::new();
-    for conflict in compatibility::conflicts(
+    let conflicts = compatibility::conflicts(
         context,
         others.iter().map(|placed| &placed.declared),
         &declared,
         &OpenFacts::NOTHING,
-    ) {
+    )
+    .into_iter()
+    .filter(|conflict| {
         let fact = conflict.fact;
-        let with = match conflict.incompatibility {
-            Incompatibility::FactNotProvided { fact: name, .. } => {
-                let blocker = match reach.fields(&with_candidate, fact) {
-                    Some(Ok(fields)) => {
-                        missing.push(Missing {
-                            fact: name,
-                            fields,
-                            added_by_finish: sources.additions(context, &with_candidate, fact),
-                        });
-                        continue;
-                    }
-                    Some(Err(blocker)) => Some(blocker),
-                    None => None,
-                };
-                if own_facts.contains(fact) || sources.provided_nested(fact) {
-                    continue;
-                }
-                // a field could take a provider, but none of them fits
-                if let Some(blocker) = blocker {
-                    conflicts.push(Conflict {
-                        incompatibility: conflict.incompatibility,
-                        with: blocker,
-                    });
-                    continue;
-                }
-                for field in sources.answered_to(fact) {
-                    conflicts.push(Conflict {
-                        incompatibility: conflict.incompatibility.clone(),
-                        with: Some(field),
-                    });
-                }
-                continue;
-            }
-            // the provider is the context, or the candidate itself if no other plugin is
-            Incompatibility::FactProvidedTwice { .. } | Incompatibility::ConditionNotMet { .. } => {
-                reach.provider_of(fact)
-            }
-            _ => None,
+        let Incompatibility::FactNotProvided { .. } = conflict.incompatibility else {
+            return true;
         };
-        conflicts.push(Conflict {
-            incompatibility: conflict.incompatibility,
-            with,
-        });
-    }
+        match reach.arrives(&with_candidate, fact) {
+            Some(true) => false,
+            _ if own_facts.contains(fact) || sources.provided_nested(fact) => false,
+            // a field could take a provider, but none of them fits
+            Some(false) => true,
+            None => able(&sources.answered, fact).next().is_some(),
+        }
+    })
+    .map(|conflict| conflict.incompatibility)
+    .collect();
 
-    let supplies = declared
+    let provided_already = |fact| {
+        context.provides_type(fact)
+            || others
+                .iter()
+                .any(|placed| placed.declared.declaration.provides_type(fact))
+    };
+    let required = |fact| {
+        others.iter().any(|placed| {
+            placed
+                .declared
+                .declaration
+                .required()
+                .iter()
+                .any(|requirement| requirement.type_id() == fact)
+        })
+    };
+    let sole_supplier = declared
         .declaration
         .provided()
         .iter()
         .map(ProvidedFact::type_id)
-        .filter(|&fact| !context.provides_type(fact) && reach.provider_of(fact).is_none())
-        .filter_map(|fact| {
-            let requiring: Vec<_> = others
-                .iter()
-                .filter_map(|placed| {
-                    let requirement = placed
-                        .declared
-                        .declaration
-                        .required()
-                        .iter()
-                        .find(|requirement| requirement.type_id() == fact)?;
-                    Some((requirement.name(), placed.path.clone()))
-                })
-                .collect();
-            let (name, _) = requiring.first()?;
-            Some(Supply {
-                fact: name,
-                required_by: requiring.iter().map(|(_, path)| path.clone()).collect(),
-                other_providers: sources.providers_of(fact, entry.id()),
-            })
-        })
-        .collect();
+        .any(|fact| {
+            !provided_already(fact)
+                && required(fact)
+                && !sources.provided_by_another(fact, entry.id())
+        });
 
     Candidate {
         entry,
         conflicts,
-        missing,
-        supplies,
+        sole_supplier,
     }
 }
 
@@ -430,12 +390,10 @@ struct Sources {
     open: Vec<(Path, AnyAxis)>,
     /// The answered fields of the composite taking one plugin, each with its axis.
     answered: Vec<(Path, AnyAxis)>,
-    /// The lists of the composite, as [`settle`] adds to them.
-    lists: Vec<(&'static str, AnyAxis)>,
     /// The axes the fields of the composite take.
     top: Vec<AnyAxis>,
-    /// Every plugin of an axis reachable from the composite, by axis, each with the types of the
-    /// facts it provides itself.
+    /// Every plugin of an axis reachable from the composite, with its axis and id and the types of
+    /// the facts it provides itself.
     providers: Vec<(AnyAxis, &'static str, Vec<TypeId>)>,
 }
 
@@ -469,7 +427,6 @@ impl Sources {
             }
         }
 
-        let lists = top_lists(schema);
         let top: Vec<_> = schema
             .fields()
             .iter()
@@ -492,17 +449,9 @@ impl Sources {
         Self {
             open,
             answered,
-            lists,
             top,
             providers,
         }
-    }
-
-    /// The answered fields of the composite taking one plugin that could provide `fact`.
-    fn answered_to(&self, fact: TypeId) -> Vec<Path> {
-        able(&self.answered, fact)
-            .map(|(path, _)| path.clone())
-            .collect()
     }
 
     /// Whether a plugin of an axis no field of the composite takes provides `fact`.
@@ -512,26 +461,11 @@ impl Sources {
             .any(|(axis, _, provided)| !self.top.contains(axis) && provided.contains(&fact))
     }
 
-    /// The ids of the plugins providing `fact` but the one with the id `except`, each once.
-    fn providers_of(&self, fact: TypeId, except: &str) -> Vec<&'static str> {
-        let mut ids = Vec::new();
-        for &(_, id, ref provided) in &self.providers {
-            if id != except && provided.contains(&fact) && !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
-        ids
-    }
-
-    /// What [`finish`] adds for `fact` in a composite with `context` and plugins with
-    /// `declarations`, see [`chain`].
-    fn additions(
-        &self,
-        context: &Declaration,
-        declarations: &[&Declared],
-        fact: TypeId,
-    ) -> Vec<Addition> {
-        additions(context, declarations, &self.lists, fact)
+    /// Whether a plugin other than the one with the id `except` provides `fact`.
+    fn provided_by_another(&self, fact: TypeId, except: &str) -> bool {
+        self.providers
+            .iter()
+            .any(|(_, id, provided)| *id != except && provided.contains(&fact))
     }
 }
 
@@ -546,11 +480,10 @@ pub fn issues<T: Configurable>(
     context: impl FnOnce(&mut Declaration),
     draft: &Draft<T>,
 ) -> Vec<Issue> {
-    let schema = T::schema();
     issues_in(
         &Declaration::of(context),
-        &Tree::of(&schema, &draft.answers),
-        Some(&top_lists(&schema)),
+        &Tree::of(&T::schema(), &draft.answers),
+        false,
     )
 }
 
@@ -587,7 +520,7 @@ pub fn finish<T: Configurable>(
     let mut answers = draft.answers.clone();
     let mut tried = Vec::new();
     while settle(&context, &schema, &mut answers, &mut tried) {}
-    let issues = issues_in(&context, &Tree::of(&schema, &answers), None);
+    let issues = issues_in(&context, &Tree::of(&schema, &answers), true);
     if !issues.is_empty() {
         return Err(issues);
     }
@@ -605,136 +538,63 @@ struct Reach<'a> {
     context: &'a Declaration,
     /// The fields a plugin could still be added to, each with its axis.
     open: &'a [(Path, AnyAxis)],
-    /// The answered fields of the composite taking one plugin, each with its axis.
-    answered: &'a [(Path, AnyAxis)],
-    /// The plugins in the answers, to name the one providing a fact, e.g. to keep a provider out.
-    placed: &'a [&'a Placed],
 }
 
 impl Reach<'_> {
-    /// The fields `fact` could still arrive in next to plugins with `declared`: [`None`] if no
-    /// field could take a plugin providing it at all, otherwise those fields whose providers fit,
-    /// or, if none fits, the field whose plugin keeps them out, if a plugin does.
-    fn fields(
-        &self,
-        declared: &[&Declared],
-        fact: TypeId,
-    ) -> Option<Result<Vec<Path>, Option<Path>>> {
+    /// Whether `fact` could still arrive next to plugins with `declared`: [`None`] if no field
+    /// could take a plugin providing it at all, otherwise whether a provider fits one of them.
+    fn arrives(&self, declared: &[&Declared], fact: TypeId) -> Option<bool> {
         let mut able = able(self.open, fact).peekable();
         able.peek()?;
-        let mut fields = Vec::new();
-        let mut blocker = None;
-        for (path, axis) in able {
-            match self.provided_by(*axis, declared, fact, &mut vec![fact]) {
-                Ok(()) => fields.push(path.clone()),
-                Err(blocked) => blocker = blocker.or(blocked),
-            }
-        }
-        Some(if fields.is_empty() {
-            Err(blocker)
-        } else {
-            Ok(fields)
-        })
+        Some(able.any(|(_, axis)| self.provided_by(*axis, declared, fact, &mut vec![fact])))
     }
 
     /// Whether a plugin of `axis` providing `fact` fits next to plugins with `declared`, see
-    /// [`Self::fits`]; otherwise the field whose plugin keeps them out, if a plugin does. `visited`
-    /// holds the facts looked for already, so that requirements in a cycle end.
+    /// [`Self::fits`]. `visited` holds the facts looked for already, so that requirements in a
+    /// cycle end.
     fn provided_by(
         &self,
         axis: AnyAxis,
         declared: &[&Declared],
         fact: TypeId,
         visited: &mut Vec<TypeId>,
-    ) -> Result<(), Option<Path>> {
+    ) -> bool {
         let mut providers = axis
             .entries()
             .filter(|entry| entry.declaration().provides_type(fact))
             .peekable();
         // provided only by a plugin a plugin of the axis holds
-        if providers.peek().is_none() {
-            return Ok(());
-        }
-        let mut blocker = None;
-        for entry in providers {
-            match self.fits(entry, declared, visited) {
-                Ok(()) => return Ok(()),
-                Err(blocked) => blocker = blocker.or(blocked),
-            }
-        }
-        Err(blocker)
+        providers.peek().is_none() || providers.any(|entry| self.fits(entry, declared, visited))
     }
 
     /// Whether the plugin `entry` fits next to plugins with `declared`, with every fact it
-    /// requires that nothing provides yet able to arrive in turn; otherwise the field whose plugin
-    /// keeps it out, if a plugin does.
-    fn fits(
-        &self,
-        entry: &PluginEntry,
-        declared: &[&Declared],
-        visited: &mut Vec<TypeId>,
-    ) -> Result<(), Option<Path>> {
+    /// requires that nothing provides yet able to arrive in turn.
+    fn fits(&self, entry: &PluginEntry, declared: &[&Declared], visited: &mut Vec<TypeId>) -> bool {
         let provider = Declared::new(entry.label(), entry.declaration());
         let own = entry.sub_facts();
         let with_provider: Vec<_> = declared.iter().copied().chain([&provider]).collect();
-        for conflict in
-            compatibility::conflicts(self.context, declared.iter().copied(), &provider, &own)
-        {
-            let fact = conflict.fact;
-            let Incompatibility::FactNotProvided { .. } = conflict.incompatibility else {
-                return Err(self.provider_of(fact));
-            };
-            if visited.contains(&fact) {
-                return Err(None);
-            }
-            visited.push(fact);
-            let mut able_open = able(self.open, fact).peekable();
-            let reached = if able_open.peek().is_none() {
-                // only a field answered already could provide it
-                Err(able(self.answered, fact)
-                    .next()
-                    .map(|(path, _)| path.clone()))
-            } else {
-                let mut reached = Err(None);
-                for (_, axis) in able_open {
-                    match self.provided_by(*axis, &with_provider, fact, visited) {
-                        Ok(()) => {
-                            reached = Ok(());
-                            break;
-                        }
-                        Err(blocked) => {
-                            if let Err(blocker) = &mut reached {
-                                *blocker = blocker.take().or(blocked);
-                            }
-                        }
-                    }
+        compatibility::conflicts(self.context, declared.iter().copied(), &provider, &own)
+            .into_iter()
+            .all(|conflict| {
+                let fact = conflict.fact;
+                let Incompatibility::FactNotProvided { .. } = conflict.incompatibility else {
+                    return false;
+                };
+                if visited.contains(&fact) {
+                    return false;
                 }
+                visited.push(fact);
+                let reached = able(self.open, fact)
+                    .any(|(_, axis)| self.provided_by(*axis, &with_provider, fact, visited));
+                visited.pop();
                 reached
-            };
-            visited.pop();
-            reached?;
-        }
-        Ok(())
-    }
-
-    /// The path of the plugin in the answers that provides `fact`, if one does.
-    fn provider_of(&self, fact: TypeId) -> Option<Path> {
-        self.placed
-            .iter()
-            .find(|placed| placed.declared.declaration.provides_type(fact))
-            .map(|placed| placed.path.clone())
+            })
     }
 }
 
-/// [`issues`] of the answers `tree` holds in a composite with `context`, with `lists` the lists of
-/// the composite [`finish`] adds to. Without them it is finished: nothing is open or added any
-/// more, and an unanswered field is an issue and provides nothing.
-fn issues_in(
-    context: &Declaration,
-    tree: &Tree,
-    lists: Option<&[(&'static str, AnyAxis)]>,
-) -> Vec<Issue> {
-    let finished = lists.is_none();
+/// [`issues`] of the answers `tree` holds in a composite with `context`. Once `finished`, nothing
+/// is open any more: an unanswered field is an issue and provides nothing.
+fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
     let mut issues = Vec::new();
     if finished {
         for question in tree
@@ -773,13 +633,10 @@ fn issues_in(
     } else {
         tree.slots(|question| question.answer.is_none())
     };
-    let placed: Vec<_> = tree.plugins.iter().collect();
     let declarations = tree.declarations(None);
     let reach = Reach {
         context,
         open: &unanswered,
-        answered: &[],
-        placed: &placed,
     };
     let mut unprovided = Vec::new();
     for (index, placed) in tree.plugins.iter().enumerate() {
@@ -790,7 +647,7 @@ fn issues_in(
         {
             match conflict.incompatibility {
                 Incompatibility::FactNotProvided { .. }
-                    if matches!(reach.fields(&declarations, conflict.fact), Some(Ok(_))) => {}
+                    if reach.arrives(&declarations, conflict.fact) == Some(true) => {}
                 // reported below, at the fields that could provide it
                 Incompatibility::FactNotProvided { fact, .. } => {
                     unprovided.push((conflict.fact, fact, placed.path.clone()));
@@ -810,9 +667,6 @@ fn issues_in(
 
     let slots = tree.slots(|_| true);
     for (fact, name, required_by) in unprovided {
-        let added_by_finish = lists.map_or_else(Vec::new, |lists| {
-            additions(context, &declarations, lists, fact)
-        });
         // a field still unanswered is found here only if none of its providers fits
         let fields: Vec<_> = able(&slots, fact).collect();
         if fields.is_empty() {
@@ -822,7 +676,6 @@ fn issues_in(
                     fact: name,
                     required_by,
                     providers: Vec::new(),
-                    added_by_finish,
                 },
             });
             continue;
@@ -839,7 +692,6 @@ fn issues_in(
                     fact: name,
                     required_by: required_by.clone(),
                     providers,
-                    added_by_finish: added_by_finish.clone(),
                 },
             });
         }
@@ -984,23 +836,6 @@ fn settling(
     providers.next().is_none().then_some(settled)
 }
 
-/// What [`finish`] adds for `fact`, see [`chain`]; empty if it adds nothing.
-fn additions(
-    context: &Declaration,
-    declarations: &[&Declared],
-    lists: &[(&'static str, AnyAxis)],
-    fact: TypeId,
-) -> Vec<Addition> {
-    chain(context, declarations, lists, fact)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, entry)| Addition {
-            list: Path::ROOT.field(name),
-            plugin: entry.id(),
-        })
-        .collect()
-}
-
 /// [`default_value`] of `field`, the field at `path` in the answers `tree` holds, in a composite
 /// with `context`.
 fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) -> Option<Value> {
@@ -1064,15 +899,11 @@ fn default_in(context: &Declaration, tree: &Tree, field: &Field, path: &Path) ->
 }
 
 /// A plugin that could answer a position taking plugins, with how it fits, see [`candidates`].
-///
-/// It fits if it has no [conflicts](Self::conflicts), and fits as it is if nothing is
-/// [missing](Self::missing) either.
 #[derive(Debug)]
 pub struct Candidate {
     entry: &'static PluginEntry,
-    conflicts: Vec<Conflict>,
-    missing: Vec<Missing>,
-    supplies: Vec<Supply>,
+    conflicts: Vec<Incompatibility>,
+    sole_supplier: bool,
 }
 
 impl Candidate {
@@ -1081,115 +912,17 @@ impl Candidate {
         self.entry
     }
 
-    /// Why the plugin does not fit, if it does not: the first fact it provides that is provided
+    /// Why the plugin does not fit, empty if it fits: the first fact it provides that is provided
     /// already, then every requirement no plugin still to be added can meet, in the order it
     /// requires them in.
-    pub fn conflicts(&self) -> &[Conflict] {
+    pub fn conflicts(&self) -> &[Incompatibility] {
         &self.conflicts
     }
 
-    /// What the plugin requires that is still to be added, in the order it requires it in.
-    pub fn missing(&self) -> &[Missing] {
-        &self.missing
-    }
-
-    /// What the plugin provides that the other plugins require and nothing provides yet.
-    pub fn supplies(&self) -> &[Supply] {
-        &self.supplies
-    }
-}
-
-/// Why a [`Candidate`] does not fit.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Conflict {
-    incompatibility: Incompatibility,
-    with: Option<Path>,
-}
-
-impl Conflict {
-    /// What does not fit.
-    pub fn incompatibility(&self) -> &Incompatibility {
-        &self.incompatibility
-    }
-
-    /// The field or position in a list whose plugin has to change for the candidate to fit, or
-    /// [`None`] if no change makes it fit: the fact is the context's or the candidate's own.
-    pub fn with(&self) -> Option<&Path> {
-        self.with.as_ref()
-    }
-}
-
-/// A fact a [`Candidate`] requires that nothing provides yet, but a plugin still to be added
-/// could.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Missing {
-    fact: &'static str,
-    fields: Vec<Path>,
-    added_by_finish: Vec<Addition>,
-}
-
-impl Missing {
-    /// What the fact is called.
-    pub fn fact(&self) -> &'static str {
-        self.fact
-    }
-
-    /// The fields a plugin providing the fact could be added to: fields still unanswered and
-    /// lists, in the order of the tree.
-    pub fn fields(&self) -> &[Path] {
-        &self.fields
-    }
-
-    /// What [`finish`] adds, in this order, for the fact if it is still missing then: a plugin
-    /// providing it and the plugins providing what that one requires in turn. Empty if it adds
-    /// nothing and a plugin has to be chosen.
-    pub fn added_by_finish(&self) -> &[Addition] {
-        &self.added_by_finish
-    }
-}
-
-/// A plugin [`finish`] adds to provide a fact nothing provides.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Addition {
-    list: Path,
-    plugin: &'static str,
-}
-
-impl Addition {
-    /// The list of the composite the plugin is appended to.
-    pub fn list(&self) -> &Path {
-        &self.list
-    }
-
-    /// The id of the plugin.
-    pub fn plugin(&self) -> &'static str {
-        self.plugin
-    }
-}
-
-/// A fact a [`Candidate`] provides that other plugins require and nothing provides yet.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Supply {
-    fact: &'static str,
-    required_by: Vec<Path>,
-    other_providers: Vec<&'static str>,
-}
-
-impl Supply {
-    /// What the fact is called by the first plugin requiring it.
-    pub fn fact(&self) -> &'static str {
-        self.fact
-    }
-
-    /// The plugins requiring the fact, in the order of the tree.
-    pub fn required_by(&self) -> &[Path] {
-        &self.required_by
-    }
-
-    /// The ids of the other plugins providing the fact among the axes reachable from the
-    /// composite, each once; empty if the candidate is the only one.
-    pub fn other_providers(&self) -> &[&'static str] {
-        &self.other_providers
+    /// Whether the plugin provides a fact that the other plugins require and nothing provides
+    /// yet, and no other plugin among the axes reachable from the composite provides it.
+    pub fn is_sole_supplier(&self) -> bool {
+        self.sole_supplier
     }
 }
 
@@ -1230,16 +963,10 @@ pub enum Problem {
     /// The plugin at `required_by` requires `fact`, which nothing provides and no unanswered field
     /// could take a fitting provider for. The issue is at each field whose axis could provide it,
     /// with the ids of the plugins of that axis that do, or at `required_by` if there is none.
-    ///
-    /// `added_by_finish` is what [`finish`] adds for the fact, in this order, so that the issue
-    /// fixes itself without raising another: a plugin providing it and the plugins providing what
-    /// that one requires in turn. Empty if it adds nothing, and always in the issues `finish`
-    /// returns.
     Unprovided {
         fact: &'static str,
         required_by: Path,
         providers: Vec<&'static str>,
-        added_by_finish: Vec<Addition>,
     },
 }
 
@@ -1254,7 +981,6 @@ impl Display for Problem {
                 fact,
                 required_by,
                 providers,
-                ..
             } => {
                 let unprovided = Incompatibility::FactNotProvided {
                     fact,
@@ -1877,7 +1603,7 @@ mod tests {
     }
 
     /// The candidates at `at` in a phase of single players, by id, each with why it does not fit.
-    fn candidates(draft: &Draft<Phase>, at: &str) -> Vec<(&'static str, Vec<Conflict>)> {
+    fn candidates(draft: &Draft<Phase>, at: &str) -> Vec<(&'static str, Vec<Incompatibility>)> {
         super::candidates(singles, draft, &path(at))
             .unwrap()
             .into_iter()
@@ -1895,33 +1621,8 @@ mod tests {
     }
 
     /// Why the plugin `id` does not fit at `at`.
-    fn conflicts_of(draft: &Draft<Phase>, at: &str, id: &str) -> Vec<Conflict> {
+    fn conflicts_of(draft: &Draft<Phase>, at: &str, id: &str) -> Vec<Incompatibility> {
         candidate_at(draft, at, id).conflicts
-    }
-
-    /// A conflict with the plugin at `with`, or with no plugin.
-    fn conflict(incompatibility: Incompatibility, with: Option<&str>) -> Conflict {
-        Conflict {
-            incompatibility,
-            with: with.map(path),
-        }
-    }
-
-    /// The plugin `plugin` appended to the list `list` by `finish`.
-    fn addition(list: &str, plugin: &'static str) -> Addition {
-        Addition {
-            list: path(list),
-            plugin,
-        }
-    }
-
-    /// The fact `fact` missing, to be added to `fields`, by `finish` as `added` if it adds it.
-    fn missing(fact: &'static str, fields: &[&str], added: &[Addition]) -> Missing {
-        Missing {
-            fact,
-            fields: fields.iter().copied().map(path).collect(),
-            added_by_finish: added.to_vec(),
-        }
     }
 
     /// The paths of the fields in the tree of the answers of `draft`, each with whether it is
@@ -2071,13 +1772,10 @@ mod tests {
             [
                 (
                     "doubles",
-                    vec![conflict(
-                        Incompatibility::FactProvidedByContext {
-                            fact: format!("{:?}", EntrantsPerRanking(2)),
-                            provider: "doubles".to_owned(),
-                        },
-                        None
-                    )]
+                    vec![Incompatibility::FactProvidedByContext {
+                        fact: format!("{:?}", EntrantsPerRanking(2)),
+                        provider: "doubles".to_owned(),
+                    }]
                 ),
                 ("knockout", vec![]),
                 ("monster", vec![]),
@@ -2098,14 +1796,11 @@ mod tests {
         assert_eq!(conflicts_of(&draft, "metrics", "score"), []);
         assert_eq!(
             conflicts_of(&draft, "metrics[1]", "score"),
-            [conflict(
-                Incompatibility::FactProvidedTwice {
-                    fact: format!("{Points:?}"),
-                    first: "wins (metrics[0])".to_owned(),
-                    second: "score".to_owned(),
-                },
-                Some("metrics[0]")
-            )]
+            [Incompatibility::FactProvidedTwice {
+                fact: format!("{Points:?}"),
+                first: "wins (metrics[0])".to_owned(),
+                second: "score".to_owned(),
+            }]
         );
     }
 
@@ -2149,102 +1844,52 @@ mod tests {
     }
 
     #[test]
-    fn a_candidate_requiring_what_an_unanswered_field_could_provide_misses_it() {
+    fn a_candidate_requiring_what_an_unanswered_field_could_provide_fits() {
         let draft = answered(&[("tie_break", Value::Null)]);
-        let losses = candidate_at(&draft, "metrics", "losses");
 
-        assert_eq!(losses.conflicts, []);
-        assert_eq!(losses.missing, [missing("eliminations", &["format"], &[])]);
+        assert_eq!(conflicts_of(&draft, "metrics", "losses"), []);
     }
 
     #[test]
-    fn a_candidate_requiring_what_only_an_answered_single_field_could_provide_conflicts_with_it() {
+    fn a_candidate_requiring_what_only_an_answered_single_field_could_provide_conflicts() {
         let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("tie_break", Value::Null),
         ]);
-        let losses = candidate_at(&draft, "metrics", "losses");
 
         assert_eq!(
-            losses.conflicts,
-            [conflict(
-                Incompatibility::FactNotProvided {
-                    fact: "eliminations",
-                    required_by: "losses".to_owned(),
-                },
-                Some("format")
-            )]
+            conflicts_of(&draft, "metrics", "losses"),
+            [Incompatibility::FactNotProvided {
+                fact: "eliminations",
+                required_by: "losses".to_owned(),
+            }]
         );
-        assert_eq!(losses.missing, []);
     }
 
     #[test]
-    fn a_candidate_requiring_what_a_list_could_provide_misses_it() {
+    fn a_candidate_requiring_what_a_list_could_provide_fits() {
         let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>()])),
             ("tie_break", Value::Null),
         ]);
-        let expected = [missing(
-            "matches",
-            &["metrics"],
-            &[addition("metrics", "match_count")],
-        )];
 
         // in the list, and anywhere else
         for at in ["metrics[1]", "tie_break"] {
-            let buchholz = candidate_at(&draft, at, "buchholz");
-            assert_eq!(buchholz.conflicts, []);
-            assert_eq!(buchholz.missing, expected);
+            assert_eq!(conflicts_of(&draft, at, "buchholz"), []);
         }
     }
 
     #[test]
-    fn a_missing_fact_finish_cannot_settle_is_to_be_chosen() {
-        let draft = answered(&[
-            ("format", plugin::<RoundRobin>().into()),
-            ("tie_break", Value::Null),
-        ]);
-
-        // only score provides points without being asked anything, wins has a field
-        assert_eq!(
-            candidate_at(&draft, "metrics", "buchholz").missing,
-            [
-                missing("points", &["metrics"], &[addition("metrics", "score")]),
-                missing(
-                    "matches",
-                    &["metrics"],
-                    &[addition("metrics", "match_count")]
-                ),
-            ]
-        );
-        assert_eq!(
-            candidate_at(&answered(&[]), "metrics", "losses").missing,
-            [missing("eliminations", &["format"], &[])]
-        );
-    }
-
-    #[test]
-    fn a_candidate_supplies_what_the_others_require_and_nothing_provides() {
+    fn a_candidate_is_the_sole_supplier_of_what_only_it_provides_to_the_others() {
         let draft = answered(&[("metrics", json!([plugin::<Buchholz>(), plugin::<Losses>()]))]);
 
-        assert_eq!(
-            candidate_at(&draft, "format", "knockout").supplies,
-            [Supply {
-                fact: "eliminations",
-                required_by: vec![path("metrics[1]")],
-                other_providers: vec![],
-            }]
-        );
-        assert_eq!(
-            candidate_at(&draft, "tie_break", "score").supplies,
-            [Supply {
-                fact: "points",
-                required_by: vec![path("metrics[0]")],
-                other_providers: vec!["wins"],
-            }]
-        );
-        assert_eq!(candidate_at(&draft, "format", "round_robin").supplies, []);
+        // nothing but the knockout provides the eliminations the losses require
+        assert!(candidate_at(&draft, "format", "knockout").is_sole_supplier());
+        // the wins provide the points the Buchholz requires as well
+        assert!(!candidate_at(&draft, "tie_break", "score").is_sole_supplier());
+        // the round robin provides nothing anyone requires
+        assert!(!candidate_at(&draft, "format", "round_robin").is_sole_supplier());
     }
 
     #[test]
@@ -2267,14 +1912,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             conflicts_of(&draft, "metrics[0].parts[1]", "score"),
-            [conflict(
-                Incompatibility::FactProvidedTwice {
-                    fact: format!("{Points:?}"),
-                    first: "wins (metrics[0].parts[0])".to_owned(),
-                    second: "score".to_owned(),
-                },
-                Some("metrics[0].parts[0]")
-            )]
+            [Incompatibility::FactProvidedTwice {
+                fact: format!("{Points:?}"),
+                first: "wins (metrics[0].parts[0])".to_owned(),
+                second: "score".to_owned(),
+            }]
         );
     }
 
@@ -2337,20 +1979,17 @@ mod tests {
             ("metrics", json!([plugin::<Buchholz>(), plugin::<Wins>()])),
             ("tie_break", Value::Null),
         ]);
-        let unprovided = |fact, providers: &[&'static str], added_by_finish| Problem::Unprovided {
+        let unprovided = |fact, providers: &[&'static str]| Problem::Unprovided {
             fact,
             required_by: path("metrics[0]"),
             providers: providers.to_vec(),
-            added_by_finish,
         };
-        // finishing appends the match count, which provides the matches without being asked
-        let counted = vec![addition("metrics", "match_count")];
 
         assert_eq!(
             issues(singles, &losing),
             [Issue {
                 path: path("format"),
-                problem: unprovided("eliminations", &["knockout"], vec![]),
+                problem: unprovided("eliminations", &["knockout"]),
             }]
         );
         assert_eq!(
@@ -2358,11 +1997,11 @@ mod tests {
             [
                 Issue {
                     path: path("metrics"),
-                    problem: unprovided("matches", &["match_count"], counted.clone()),
+                    problem: unprovided("matches", &["match_count"]),
                 },
                 Issue {
                     path: path("tie_break"),
-                    problem: unprovided("matches", &["match_count"], counted),
+                    problem: unprovided("matches", &["match_count"]),
                 },
             ]
         );
@@ -2540,7 +2179,6 @@ mod tests {
                         fact: "eliminations",
                         required_by: path("metrics[0]"),
                         providers: vec!["knockout"],
-                        added_by_finish: vec![],
                     },
                 },
             ])
@@ -2713,39 +2351,23 @@ mod tests {
         }
 
         #[test]
-        fn a_requirement_whose_only_provider_does_not_fit_is_a_conflict_with_what_keeps_it_out() {
+        fn a_requirement_whose_only_provider_does_not_fit_is_a_conflict() {
             let candidate = criterion(&ranked(Some(plugin::<Everyone>())));
 
-            assert!(candidate.missing().is_empty());
             assert_eq!(
-                candidate
-                    .conflicts()
-                    .iter()
-                    .map(|conflict| (conflict.incompatibility().clone(), conflict.with().cloned()))
-                    .collect::<Vec<_>>(),
-                [(
-                    Incompatibility::FactNotProvided {
-                        fact: "the elimination rounds",
-                        required_by: "later elimination".to_owned(),
-                    },
-                    Some(path("format"))
-                )]
+                candidate.conflicts(),
+                [Incompatibility::FactNotProvided {
+                    fact: "the elimination rounds",
+                    required_by: "later elimination".to_owned(),
+                }]
             );
         }
 
         #[test]
-        fn a_requirement_whose_provider_fits_is_missing() {
+        fn a_requirement_whose_provider_fits_is_no_conflict() {
             let candidate = criterion(&ranked(Some(plugin::<EliminatingSchedule>())));
 
             assert!(candidate.conflicts().is_empty());
-            assert_eq!(
-                candidate
-                    .missing()
-                    .iter()
-                    .map(|missing| missing.fields().to_vec())
-                    .collect::<Vec<_>>(),
-                [vec![path("metrics")]]
-            );
         }
 
         /// What the provider requires may still arrive itself, as long as a field could take it.
@@ -2754,7 +2376,6 @@ mod tests {
             let candidate = criterion(&ranked(None));
 
             assert!(candidate.conflicts().is_empty());
-            assert_eq!(candidate.missing().len(), 1);
         }
 
         #[test]
@@ -3247,38 +2868,6 @@ mod tests {
             assert_eq!(
                 finished::<Resolved>(given, &["clash"], &[]),
                 Err(vec![("supplies".to_owned(), "the clash fact")])
-            );
-        }
-
-        #[test]
-        fn an_issue_names_the_whole_chain_finishing_adds_for_it() {
-            // a plugin with an unanswered field declares nothing it is configured to
-            let requiring = Requiring::schema()
-                .fields()
-                .iter()
-                .fold(plugin::<Requiring>(), |requiring, field| {
-                    requiring.with(field.name(), field.name() == "downstream")
-                });
-            let mut draft = Draft::<Resolved>::new();
-            draft.set(&path("requirements"), requiring).unwrap();
-            draft.set(&path("supplies"), json!([])).unwrap();
-            draft.set(&path("extras"), json!([])).unwrap();
-            let added: Vec<_> = issues(|_| {}, &draft)
-                .into_iter()
-                .map(|issue| match issue.problem {
-                    Problem::Unprovided {
-                        added_by_finish, ..
-                    } => added_by_finish,
-                    problem => panic!("{problem:?} is not about a fact nothing provides"),
-                })
-                .collect();
-
-            assert_eq!(
-                added,
-                [vec![
-                    addition("supplies", "chaining"),
-                    addition("supplies", "settling"),
-                ]]
             );
         }
 

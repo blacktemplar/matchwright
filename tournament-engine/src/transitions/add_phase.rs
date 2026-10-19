@@ -1,5 +1,6 @@
 use plugin_factory::{compatibility, schema::Configurable};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use undoable_state_machine::{Transition, TransitionError};
 
 use crate::{
@@ -8,10 +9,11 @@ use crate::{
     transitions::{CompetitionTransition, ensure_not_started},
 };
 
-/// Adds a phase to a competition that has not started yet.
+/// Adds the phase to a competition that has not started yet. A competition has a single phase.
 ///
-/// Applying it fails if the plugins of the phase do not fit together in the competition, see
-/// [`compatibility::check`] with [`Competition::declare_phase_context`] as the context.
+/// Applying it fails if the competition has a phase already, or if the plugins of the phase do not
+/// fit together in the competition, see [`compatibility::check`] with
+/// [`Competition::declare_phase_context`] as the context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddPhase {
     id: PhaseId,
@@ -32,9 +34,21 @@ impl AddPhase {
     }
 }
 
+/// Why an [`AddPhase`] does not apply, besides
+/// [`CompetitionAlreadyStarted`](crate::transitions::CompetitionAlreadyStarted) and an
+/// [`Incompatibility`](compatibility::Incompatibility) of its plugins.
+#[derive(Error, Debug)]
+pub enum AddPhaseError {
+    #[error("the competition already has a phase, and only one is supported")]
+    PhaseAlreadyAdded,
+}
+
 impl Transition<Competition> for AddPhase {
     fn check_applicable(&self, competition: &Competition) -> Result<(), TransitionError> {
         ensure_not_started(competition)?;
+        if !competition.phases().is_empty() {
+            return Err(Box::new(AddPhaseError::PhaseAlreadyAdded));
+        }
         compatibility::check(
             |declaration| competition.declare_phase_context(declaration),
             &self.plugins.plugins(),

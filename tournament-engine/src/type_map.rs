@@ -91,9 +91,7 @@ impl TypeMap {
     ///
     /// # Examples
     /// ```
-    /// # use tournament_engine::{
-    /// #     plugins::metrics_calculator::points::Points, type_map::TypeMap,
-    /// # };
+    /// # use tournament_engine::{TypeMap, plugins::metrics_calculator::Points};
     /// let map = TypeMap::new().with(Points(1.0)).with(Points(2.0));
     ///
     /// assert_eq!(map.get::<Points>(), Some(&Points(2.0)));

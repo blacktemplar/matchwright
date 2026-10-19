@@ -45,7 +45,7 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 
 ### Engine data flow
 
-`Competition` → `Phase` (holding its `PhaseFormat`, ranker, metrics calculators, `matches`, `byes`, `rankings`) → `Match` / `Bye` / `Ranking`. On `StartCompetition` and after every reported result the phase format schedules a `Schedule` of matches and byes (`create_new_matches(&PhaseData)`); a bye is final when scheduled, so each calculator's `update_after_bye` runs right away, followed by a re-rank. On `ReportMatchResult` each `MetricsCalculator` updates metrics incrementally (`update_after_match_result_changed`, which gets the *old* metrics of all calculators so order doesn't matter), then the ranker re-sorts. This is the hot path, so `rank_by` looks up each ranking's metric once per sort instead of per comparison.
+`Competition` → `Phase` (holding its `PhaseFormat`, ranker, metrics calculators, `matches`, `byes`, `rankings`) → `Match` / `Bye` / `Ranking`. On `StartCompetition` and after every reported result the phase format schedules a `Schedule` of matches and byes (`create_new_matches(&PhaseData)`); a bye is final when scheduled, so each calculator's `update_after_bye` runs right away, followed by a re-rank. On `ReportMatchResult` the match is appended to `Ranking::played_matches` of its rankings, each `MetricsCalculator` updates metrics incrementally (`update_after_match_result`, which gets the *old* metrics of the calculators that ran before it), then the ranker re-sorts. This is the hot path, so `rank_by` looks up each ranking's metric once per sort instead of per comparison.
 
 ### CLI
 

@@ -12,7 +12,7 @@
 use std::{env, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use tournament_engine::entities::competition::Competition;
+use tournament_engine::Competition;
 
 use crate::tournament::DEFAULT_ENTRANTS;
 

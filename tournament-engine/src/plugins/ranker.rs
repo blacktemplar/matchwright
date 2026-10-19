@@ -91,9 +91,9 @@ dyn_clone::clone_trait_object!(SliceRanker);
 /// use plugin_factory::{Plugin, register};
 /// use serde::{Deserialize, Serialize};
 /// use tournament_engine::{
-///     entities::competition::{PhaseData, Ranking},
+///     PhaseData, Ranking,
 ///     plugins::{
-///         metrics_calculator::points::Points,
+///         metrics_calculator::Points,
 ///         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
 ///     },
 /// };

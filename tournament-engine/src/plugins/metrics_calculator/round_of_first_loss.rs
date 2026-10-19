@@ -7,7 +7,7 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
+    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
@@ -78,18 +78,14 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
         Box::new(RoundOfFirstLoss::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        old_match_result: MatchResult,
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
-        // for now we only support setting the match result, not updating it
-        assert_eq!(old_match_result, MatchResult::NotFinished);
-
-        assert!(r#match.is_finished());
-        let Some(loser) = r#match.result().loser() else {
+        let result = r#match.result().expect("a reported match is finished");
+        let Some(loser) = result.loser() else {
             return vec![]; // nothing to update
         };
         r#match
@@ -127,7 +123,7 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::Phase,
+        entities::competition::{MatchResult, Phase},
         plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 

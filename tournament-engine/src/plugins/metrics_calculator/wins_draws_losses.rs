@@ -7,9 +7,7 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{
-        Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
-    },
+    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId, ResultOfTeam, Team},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
@@ -35,8 +33,7 @@ impl WinsDrawsLosses {
     /// How many matches the ranking played, i.e. how many of its matches got a result reported,
     /// byes not included.
     ///
-    /// The same count as the length of [`Matches`](super::matches::Matches), without needing that
-    /// metric to be calculated.
+    /// The same count as the length of [`Ranking::played_matches`].
     pub const fn matches_played(&self) -> u32 {
         self.wins + self.draws + self.losses
     }
@@ -177,21 +174,17 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
         Box::new(WinsDrawsLosses::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        old_match_result: MatchResult,
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
-        // for now we only support setting the match result, not updating it
-        assert_eq!(old_match_result, MatchResult::NotFinished);
-
-        assert!(r#match.is_finished());
+        let result = r#match.result().expect("a reported match is finished");
         [Team::A, Team::B]
             .into_iter()
             .flat_map(|team| {
-                let result = r#match.result_of_team(team);
+                let result = result.for_team(team);
                 r#match.rankings_of(team).iter().map(move |r_id| {
                     let mut metric = *phase_data.rankings()[r_id]
                         .metric::<WinsDrawsLosses>()
@@ -200,9 +193,6 @@ impl MetricsCalculator for WinsDrawsLossesCalculator {
                         ResultOfTeam::Win => metric.wins += 1,
                         ResultOfTeam::Draw => metric.draws += 1,
                         ResultOfTeam::Loss => metric.losses += 1,
-                        ResultOfTeam::NotFinished => {
-                            unreachable!("We expect the match to be finished above")
-                        }
                     }
                     (*r_id, Box::new(metric) as Metric)
                 })
@@ -233,7 +223,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::Phase,
+        entities::competition::{MatchResult, Phase},
         plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 
@@ -496,21 +486,6 @@ mod tests {
                 wins_draws_losses(0, 1, 2)
             ),
             Comparison::Equal
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "assertion `left == right` failed")]
-    fn updating_an_already_reported_result_is_unsupported() {
-        let mut phase = phase_with(2, vec![(1, vec![0], vec![1])]);
-        let match_id = match_id(&phase, 1, &[0], &[1]);
-        phase.report_match_result(match_id, MatchResult::AWins);
-
-        WinsDrawsLossesCalculator.update_after_match_result_changed(
-            phase.data(),
-            &phase.data().matches()[&match_id],
-            MatchResult::AWins,
-            &OldMetrics::default(),
         );
     }
 }

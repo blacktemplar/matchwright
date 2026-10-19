@@ -12,30 +12,20 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tournament_engine::{
-    entities::competition::{
-        Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
-        Seed,
-    },
+    AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
+    CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
+    PhasePlugins, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    TypeMapValue,
     plugins::{
-        PhasePlugins,
         metrics_calculator::{
-            buchholz::BuchholzCalculator,
-            matches::MatchesCalculator,
-            points::{MorePoints, Points, PointsCalculator},
-            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLossCalculator},
-            wins_draws_losses::WinsDrawsLossesCalculator,
+            BuchholzCalculator, LaterFirstLoss, MorePoints, Points, PointsCalculator,
+            RoundOfFirstLossCalculator, WinsDrawsLossesCalculator,
         },
-        phase_format::single_elimination::SingleElimination,
+        phase_format::SingleElimination,
     },
-    transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
-        add_phase::AddPhase, remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
-        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    },
-    type_map::TypeMapValue,
+    undoable_state_machine::{LogEntry, LogEntryKind, TransitionId},
+    uuid::Uuid,
 };
-use undoable_state_machine::{LogEntry, LogEntryKind, TransitionId};
-use uuid::Uuid;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
 const SEED: Seed = Seed::new(*b"log-trip!!!!");
@@ -96,7 +86,6 @@ fn played_competition() -> CompetitionStateMachine {
                     Box::new(RoundOfFirstLossCalculator),
                     Box::new(WinsDrawsLossesCalculator),
                     Box::new(THREE_ONE),
-                    Box::new(MatchesCalculator),
                     Box::new(BuchholzCalculator),
                 ],
             )
@@ -426,7 +415,6 @@ fn every_plugin_is_serialized_under_its_id() {
             "tournament_engine::round_of_first_loss",
             "tournament_engine::wins_draws_losses",
             "tournament_engine::points",
-            "tournament_engine::matches",
             "tournament_engine::buchholz",
         ]
     );

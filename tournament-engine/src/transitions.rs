@@ -8,12 +8,7 @@ use undoable_state_machine::{
     LogEntry, LogEntryKind, StateMachine, StateMachineError, Transition, TransitionId,
 };
 
-use crate::{
-    entities::competition::{Competition, MatchId, PhaseId},
-    transitions::{
-        report_match_result::ReportMatchResult, set_competition_seed::SetCompetitionSeed,
-    },
-};
+use crate::entities::competition::{Competition, MatchId, PhaseId};
 
 pub mod add_entrant;
 pub mod add_phase;
@@ -21,6 +16,13 @@ pub mod remove_entrant;
 pub mod report_match_result;
 pub mod set_competition_seed;
 pub mod start_competition;
+
+pub use add_entrant::{AddEntrant, AddEntrantError};
+pub use add_phase::{AddPhase, AddPhaseError};
+pub use remove_entrant::{RemoveEntrant, RemoveEntrantError};
+pub use report_match_result::{ReportMatchResult, ReportMatchResultError};
+pub use set_competition_seed::SetCompetitionSeed;
+pub use start_competition::{StartCompetition, StartCompetitionError};
 
 /// A [`Transition`] of a [`Competition`] that can be written to and read back from a transition
 /// log, which is what gives `Box<dyn CompetitionTransition>` a [`Serialize`] and a [`Deserialize`]
@@ -40,9 +42,7 @@ pub mod start_competition;
 /// # Examples
 /// ```
 /// use serde::{Deserialize, Serialize};
-/// use tournament_engine::{
-///     entities::competition::Competition, transitions::CompetitionTransition,
-/// };
+/// use tournament_engine::{Competition, CompetitionTransition};
 /// use undoable_state_machine::{Transition, TransitionError};
 ///
 /// #[derive(Debug, Serialize, Deserialize)]
@@ -143,8 +143,6 @@ pub trait CompetitionStateMachineExt {
     /// depends on it, so the walk back passes over it.
     ///
     /// Returns `None`, leaving the log unchanged, if no change other than a seed is in effect.
-    ///
-    /// [`SetCompetitionSeed`]: set_competition_seed::SetCompetitionSeed
     fn undo_last(&mut self) -> Option<TransitionId>;
 
     /// Redoes the latest undone change, as long as no change was made since it was undone, and
@@ -180,15 +178,10 @@ pub trait CompetitionStateMachineExt {
     /// # Examples
     /// ```
     /// # use tournament_engine::{
-    /// #     entities::competition::{Entrant, EntrantId, MatchResult, PhaseId, Seed},
-    /// #     plugins::{PhasePlugins, phase_format::round_robin::RoundRobin},
-    /// #     transitions::{
-    /// #         CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
-    /// #         add_phase::AddPhase, report_match_result::ReportMatchResult,
-    /// #         set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    /// #     },
+    /// #     AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt, Entrant,
+    /// #     EntrantId, MatchResult, PhaseId, PhasePlugins, ReportMatchResult, Seed,
+    /// #     SetCompetitionSeed, StartCompetition, plugins::phase_format::RoundRobin, uuid::Uuid,
     /// # };
-    /// # use uuid::Uuid;
     /// # let phase_id = PhaseId::new(Uuid::from_u128(1));
     /// # let mut machine = CompetitionStateMachine::default();
     /// # machine.apply_transition(SetCompetitionSeed::new(Seed::new(*b"doc-test!!!!")))?;
@@ -219,11 +212,8 @@ pub trait CompetitionStateMachineExt {
     /// machine.undo_match_result(phase_id, matches[0])?;
     ///
     /// let phase = machine.current().phases()[&phase_id].data();
-    /// assert_eq!(
-    ///     phase.matches()[&matches[0]].result(),
-    ///     MatchResult::NotFinished
-    /// );
-    /// assert_eq!(phase.matches()[&matches[5]].result(), MatchResult::AWins);
+    /// assert_eq!(phase.matches()[&matches[0]].result(), None);
+    /// assert_eq!(phase.matches()[&matches[5]].result(), Some(MatchResult::AWins));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn undo_match_result(
@@ -320,12 +310,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{Entrant, EntrantId, MatchResult, Seed},
-        plugins::{PhasePlugins, phase_format::single_elimination::SingleElimination},
-        transitions::{
-            add_entrant::AddEntrant, add_phase::AddPhase, set_competition_seed::SetCompetitionSeed,
-            start_competition::StartCompetition,
-        },
+        Entrant, EntrantId, MatchResult, PhasePlugins, Seed,
+        plugins::phase_format::SingleElimination,
     };
 
     fn phase_id() -> PhaseId {
@@ -373,7 +359,7 @@ mod tests {
             .collect()
     }
 
-    fn result_of(machine: &CompetitionStateMachine, match_id: MatchId) -> MatchResult {
+    fn result_of(machine: &CompetitionStateMachine, match_id: MatchId) -> Option<MatchResult> {
         machine.current().phases()[&phase_id()].data().matches()[&match_id].result()
     }
 
@@ -389,6 +375,21 @@ mod tests {
     }
 
     #[test]
+    fn a_competition_takes_a_single_phase() {
+        let mut machine = CompetitionStateMachine::default();
+        let plugins =
+            PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new()).unwrap();
+        machine
+            .apply_transition(AddPhase::new(phase_id(), plugins.clone()))
+            .unwrap();
+
+        let second = AddPhase::new(PhaseId::new(Uuid::from_u128(2)), plugins);
+
+        assert!(machine.apply_transition(second).is_err());
+        assert_eq!(machine.current().phases().len(), 1);
+    }
+
+    #[test]
     fn undo_last_and_redo_last_walk_back_and_forth_through_the_changes() {
         let mut machine = knockout();
         let [first, second] = matches(&machine)[..] else {
@@ -398,19 +399,19 @@ mod tests {
         report(&mut machine, second);
 
         machine.undo_last().expect("the second report is in effect");
-        assert_eq!(result_of(&machine, second), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, second), None);
         machine.undo_last().expect("the first report is in effect");
-        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, first), None);
 
         machine
             .redo_last()
             .expect("the first report was undone last");
-        assert_eq!(result_of(&machine, first), MatchResult::AWins);
-        assert_eq!(result_of(&machine, second), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, first), Some(MatchResult::AWins));
+        assert_eq!(result_of(&machine, second), None);
         machine
             .redo_last()
             .expect("the second report is still undone");
-        assert_eq!(result_of(&machine, second), MatchResult::AWins);
+        assert_eq!(result_of(&machine, second), Some(MatchResult::AWins));
         assert!(matches!(
             machine.redo_last(),
             Err(RedoLastError::NothingToRedo)
@@ -429,7 +430,7 @@ mod tests {
 
         machine.undo_last().expect("the redone report is in effect");
 
-        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, first), None);
     }
 
     #[test]
@@ -483,12 +484,12 @@ mod tests {
             .redo_last()
             .expect("the second report was undone last");
 
-        assert_eq!(result_of(&machine, second), MatchResult::AWins);
+        assert_eq!(result_of(&machine, second), Some(MatchResult::AWins));
         assert!(matches!(
             machine.redo_last(),
             Err(RedoLastError::NothingToRedo)
         ));
-        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, first), None);
     }
 
     #[test]
@@ -500,7 +501,7 @@ mod tests {
 
         machine.redo_last().expect("the report was undone last");
 
-        assert_eq!(result_of(&machine, first), MatchResult::AWins);
+        assert_eq!(result_of(&machine, first), Some(MatchResult::AWins));
     }
 
     /// Undoing the earlier of two reports leaves the later one in effect, which is the whole point
@@ -518,8 +519,8 @@ mod tests {
             .undo_match_result(phase_id(), first)
             .expect("the report of the first semifinal must be undoable");
 
-        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
-        assert_eq!(result_of(&machine, second), MatchResult::AWins);
+        assert_eq!(result_of(&machine, first), None);
+        assert_eq!(result_of(&machine, second), Some(MatchResult::AWins));
         assert_eq!(
             matches(&machine).len(),
             2,
@@ -568,11 +569,11 @@ mod tests {
         let reported_again = report(&mut machine, first);
         undo(&mut machine, reported_again);
         undo(&mut machine, undone);
-        assert_eq!(result_of(&machine, first), MatchResult::AWins);
+        assert_eq!(result_of(&machine, first), Some(MatchResult::AWins));
 
         let id = machine.undo_match_result(phase_id(), first).unwrap();
 
-        assert_eq!(result_of(&machine, first), MatchResult::NotFinished);
+        assert_eq!(result_of(&machine, first), None);
         assert!(matches!(
             machine.log().last().expect("the undo entry").kind(),
             LogEntryKind::Undo(target) if *target == reported,
@@ -598,8 +599,8 @@ mod tests {
             .expect_err("the final depends on the semifinal, so undoing it must be rejected");
 
         assert!(matches!(error, UndoMatchResultError::Rejected(_)));
-        assert_eq!(result_of(&machine, semifinals[0]), MatchResult::AWins);
-        assert_eq!(result_of(&machine, r#final), MatchResult::AWins);
+        assert_eq!(result_of(&machine, semifinals[0]), Some(MatchResult::AWins));
+        assert_eq!(result_of(&machine, r#final), Some(MatchResult::AWins));
         assert_eq!(machine.log().len(), log_len, "the log must stay unchanged");
     }
 }

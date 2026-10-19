@@ -159,7 +159,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId},
+        entities::competition::{Bye, Match, PhaseData, RankingId},
         plugins::{
             facts::{CalculatesMetric, EntrantsPerRanking, MatchAnnotation},
             metrics_calculator::{
@@ -168,7 +168,6 @@ mod tests {
                     Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
                     MoreSonnebornBerger, SonnebornBerger, SonnebornBergerCalculator,
                 },
-                matches::{Matches, MatchesCalculator},
                 points::{MorePoints, Points, PointsCalculator},
                 round_of_elimination::{
                     Eliminates, LaterElimination, RoundOfEliminationCalculator,
@@ -325,7 +324,6 @@ mod tests {
                 Box::new(FULL_HALF),
                 Box::new(BuchholzCalculator),
                 Box::new(ONE_HALF),
-                Box::new(MatchesCalculator),
                 Box::new(WinsDrawsLossesCalculator),
             ],
         );
@@ -333,7 +331,6 @@ mod tests {
         assert_eq!(
             metrics(&plugins),
             metrics![
-                Matches,
                 WinsDrawsLosses,
                 Points,
                 // the Sonneborn-Berger keeps its place before the Buchholz, as neither reads the
@@ -402,7 +399,7 @@ mod tests {
         // the added calculators are put into running order as well
         assert_eq!(
             metrics(&settled),
-            metrics![WinsDrawsLosses, Points, Matches, SonnebornBerger]
+            metrics![WinsDrawsLosses, Points, SonnebornBerger]
         );
         assert_eq!(check(&settled), Ok(()));
     }
@@ -483,7 +480,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(ONE_HALF),
-                Box::new(MatchesCalculator),
                 Box::new(FULL_HALF),
             ],
         );
@@ -493,22 +489,17 @@ mod tests {
 
     #[test]
     fn a_metric_a_calculator_reads_has_to_be_calculated_as_well() {
-        // the Sonneborn-Berger sums the points of the opponents a ranking met, which it reads from
-        // the matches of that ranking
+        // the Sonneborn-Berger sums the points of the opponents a ranking met
         let plugins = phase(
             RoundRobin,
             Vec::new(),
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(ONE_HALF),
-                Box::new(FULL_HALF),
-            ],
+            vec![Box::new(WinsDrawsLossesCalculator), Box::new(FULL_HALF)],
         );
 
         assert_eq!(
             check(&plugins),
             Err(Incompatibility::FactNotProvided {
-                fact: "the matches",
+                fact: "the points",
                 required_by: format!("{FULL_HALF:?}"),
             })
         );
@@ -669,11 +660,10 @@ mod tests {
                     Box::new($metric)
                 }
 
-                fn update_after_match_result_changed(
+                fn update_after_match_result(
                     &mut self,
                     _: &PhaseData,
                     _: &Match,
-                    _: MatchResult,
                     _: &OldMetrics,
                 ) -> Vec<(RankingId, Metric)> {
                     Vec::new()

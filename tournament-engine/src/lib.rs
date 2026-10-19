@@ -3,3 +3,16 @@ pub mod map;
 pub mod plugins;
 pub mod transitions;
 pub mod type_map;
+
+pub use entities::competition::{
+    Annotated, Bye, ByeId, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
+    PhaseData, PhaseId, Ranking, RankingId, ResultOfTeam, Seed, Team,
+};
+pub use plugins::PhasePlugins;
+pub use transitions::{
+    AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt,
+    CompetitionTransition, RemoveEntrant, ReportMatchResult, SetCompetitionSeed, StartCompetition,
+};
+pub use type_map::{TypeMap, TypeMapValue};
+// the crates the API of this one is written in, so that a user does not have to depend on them
+pub use {plugin_factory, undoable_state_machine, uuid};

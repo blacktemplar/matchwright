@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Metric, MetricColumn, OldMetrics};
 use crate::{
-    entities::competition::{Bye, Match, MatchResult, PhaseData, Ranking, RankingId},
+    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
@@ -129,11 +129,10 @@ impl MetricsCalculator for PointsCalculator {
         Box::new(Points::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        _: MatchResult,
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         r#match
@@ -163,7 +162,7 @@ impl MetricsCalculator for PointsCalculator {
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::Phase,
+        entities::competition::{MatchResult, Phase},
         plugins::metrics_calculator::{
             test_utils::{self, MatchSpec, match_id},
             wins_draws_losses::WinsDrawsLossesCalculator,

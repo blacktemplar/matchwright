@@ -100,20 +100,16 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
         Box::new(RoundOfElimination::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        old_match_result: MatchResult,
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
-        // for now we only support setting the match result, not updating it
-        assert_eq!(old_match_result, MatchResult::NotFinished);
-
         let Some(eliminates) = r#match.annotation::<Eliminates>() else {
             return vec![];
         };
-        let Some(loser) = r#match.result().loser() else {
+        let Some(loser) = r#match.result().and_then(MatchResult::loser) else {
             return vec![];
         };
         if matches!(eliminates, Eliminates::Only(team) if *team != loser) {

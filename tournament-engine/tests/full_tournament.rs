@@ -3,30 +3,20 @@ use std::num::NonZeroU32;
 use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
-    entities::competition::{
-        Competition, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, Ranking, Seed,
-    },
+    AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt,
+    Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, PhasePlugins, Ranking, RemoveEntrant,
+    ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
     plugins::{
-        PhasePlugins,
         metrics_calculator::{
-            buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
-            },
-            matches::{Matches, MatchesCalculator},
-            points::{MorePoints, Points, PointsCalculator},
-            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
-            wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
+            Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
+            LaterFirstLoss, MorePoints, Points, PointsCalculator, RoundOfFirstLoss,
+            RoundOfFirstLossCalculator, WinsDrawsLosses, WinsDrawsLossesCalculator,
         },
-        phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
+        phase_format::{RoundRobin, SingleElimination},
     },
-    transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
-        add_phase::AddPhase, remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
-        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    },
+    undoable_state_machine::StateMachineError,
+    uuid::Uuid,
 };
-use undoable_state_machine::StateMachineError;
-use uuid::Uuid;
 use vec1::vec1;
 
 fn entrant() -> Entrant {
@@ -70,10 +60,7 @@ fn assert_metrics(
         })
     );
     assert_eq!(ranking.metric::<Points>(), Some(&Points(points)));
-    assert_eq!(
-        ranking.metric::<Matches>(),
-        Some(&Matches(matches.to_vec()))
-    );
+    assert_eq!(ranking.played_matches(), matches);
     assert_eq!(ranking.metric::<Buchholz>(), Some(&Buchholz(buchholz)));
     assert_eq!(
         ranking.metric::<BuchholzOfBuchholz>(),
@@ -116,7 +103,6 @@ fn full_tournament() {
                 Box::new(RoundOfFirstLossCalculator),
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
                 Box::new(BuchholzOfBuchholzCalculator),
             ],
@@ -194,11 +180,11 @@ fn full_tournament() {
     assert_eq!(match_0_vs_3.team_a(), &[ranking_id_by_initial_rank[0]]);
     assert_eq!(match_0_vs_3.team_b(), &[ranking_id_by_initial_rank[3]]);
     assert_eq!(match_0_vs_3.round(), NonZeroU32::new(1).unwrap(),);
-    assert_eq!(match_0_vs_3.result(), MatchResult::NotFinished);
+    assert_eq!(match_0_vs_3.result(), None);
     assert_eq!(match_1_vs_2.team_a(), &[ranking_id_by_initial_rank[1]]);
     assert_eq!(match_1_vs_2.team_b(), &[ranking_id_by_initial_rank[2]]);
     assert_eq!(match_1_vs_2.round(), NonZeroU32::new(1).unwrap(),);
-    assert_eq!(match_1_vs_2.result(), MatchResult::NotFinished);
+    assert_eq!(match_1_vs_2.result(), None);
 
     // now continue the tournament
     // rankings[3] wins against rankings[0]
@@ -221,8 +207,8 @@ fn full_tournament() {
     let matches = phase.matches();
     let match_0_vs_3 = &matches[&match_0_vs_3_id];
     let match_1_vs_2 = &matches[&match_1_vs_2_id];
-    assert_eq!(match_0_vs_3.result(), MatchResult::BWins);
-    assert_eq!(match_1_vs_2.result(), MatchResult::AWins);
+    assert_eq!(match_0_vs_3.result(), Some(MatchResult::BWins));
+    assert_eq!(match_1_vs_2.result(), Some(MatchResult::AWins));
     // assert ranking data
     let rankings = phase.rankings();
     let ranking_0 = &rankings[&ranking_id_by_initial_rank[0]];
@@ -296,7 +282,7 @@ fn full_tournament() {
     assert_eq!(match_3_vs_1.team_a(), &[ranking_id_by_initial_rank[3]]);
     assert_eq!(match_3_vs_1.team_b(), &[ranking_id_by_initial_rank[1]]);
     assert_eq!(match_3_vs_1.round(), NonZeroU32::new(2).unwrap(),);
-    assert_eq!(match_3_vs_1.result(), MatchResult::NotFinished);
+    assert_eq!(match_3_vs_1.result(), None);
 
     // finish the tournament
     sm.apply_transition(ReportMatchResult::new(
@@ -312,9 +298,9 @@ fn full_tournament() {
     let match_0_vs_3 = &matches[&match_0_vs_3_id];
     let match_1_vs_2 = &matches[&match_1_vs_2_id];
     let match_3_vs_1 = &matches[&match_3_vs_1_id];
-    assert_eq!(match_0_vs_3.result(), MatchResult::BWins);
-    assert_eq!(match_1_vs_2.result(), MatchResult::AWins);
-    assert_eq!(match_3_vs_1.result(), MatchResult::AWins);
+    assert_eq!(match_0_vs_3.result(), Some(MatchResult::BWins));
+    assert_eq!(match_1_vs_2.result(), Some(MatchResult::AWins));
+    assert_eq!(match_3_vs_1.result(), Some(MatchResult::AWins));
 
     // assert ranking data
     let rankings = phase.rankings();

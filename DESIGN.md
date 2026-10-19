@@ -95,7 +95,7 @@ than the phase:
 fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;      // PhaseFormat
 fn update_ranks(&mut self, phase_data: &PhaseData,
                 slice: &mut [(&Ranking, NonZeroU32)]);                     // SliceRanker
-fn update_after_match_result_changed(&mut self, phase_data: &PhaseData, /* ... */)
+fn update_after_match_result(&mut self, phase_data: &PhaseData, /* ... */)
     -> Vec<(RankingId, Metric)>;                                           // MetricsCalculator
 ```
 
@@ -169,7 +169,7 @@ implementations. The dependencies that already exist or are foreseeable run
 between every pair of axes and in both directions:
 
 - a calculator reads another calculator's metric (Points on wins/draws/losses,
-  Buchholz on Points and Matches);
+  Buchholz on Points);
 - a calculator reads match annotations only some formats write (round of
   elimination on `Eliminates`);
 - a criterion sorts by a metric some calculator must produce;
@@ -305,8 +305,8 @@ ranking.
 **Missing providers come from the catalog.** For a required fact nothing
 provides, `draft::finish` looks among the axes of the composite's lists of
 plugins for the registered plugins that provide it and have no fields, and adds
-the one it finds if there is exactly one — `Matches` has exactly one calculator,
-so nobody is ever asked about it. Several candidates are an ambiguity it must
+the one it finds if there is exactly one — the win-draw-loss record has exactly
+one calculator, so nobody is ever asked about it. Several candidates are an ambiguity it must
 not settle, so it adds nothing and the fact stays unprovided, as it does for a
 fact only a plugin with fields provides: a default a plugin offers is never
 filled in unasked. A field taking one plugin, such as the format, is never added
@@ -325,13 +325,13 @@ require or on what they provide to a plugin already there — or a cycle.
 Otherwise nothing is added and the original fact stays unprovided, an issue at
 the place the operator configured. So an automatic addition never leaves behind
 a problem with a plugin nobody chose, e.g. a calculator that cannot read a
-third-party match format. It also makes "this is settled automatically" a
-promise: a UI can mark or hide an unprovided fact that settling will fix, and
-show the plugins it will add, because adding them cannot make a new issue
-appear. Checking a chain needs the phase's context, since a requirement the
-context meets is no issue. Problems among the configured plugins themselves do
-not block an addition. A UI reads the additions ahead of finishing as
-`added_by_finish` of `draft::issues` and `draft::candidates`.
+third-party match format. Checking a chain needs the phase's context, since a requirement the context
+meets is no issue. Problems among the configured plugins themselves do not
+block an addition. The additions are not reported ahead of finishing: no
+consumer showed them, and computing them for every candidate and issue made
+`draft` the most complex part of `plugin-factory`. A candidate only reports
+whether it fits (`Candidate::conflicts`) and whether it is the only plugin
+supplying something the others require (`Candidate::is_sole_supplier`).
 
 **Settling happens before the transition, validation in it.** Settling is the
 consumer's step: it finishes a `Draft<PhasePlugins>` with the competition's
@@ -544,9 +544,8 @@ ranking from scratch:
 #[axis]
 pub trait MetricsCalculator: Plugin + DynClone {
     fn default_metric_value(&self) -> Metric;
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self, phase_data: &PhaseData, r#match: &Match,
-        old_match_result: MatchResult,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
     fn update_after_bye(
@@ -567,6 +566,14 @@ calculators that ran before it, typed through `OldMetrics::of::<M>()`, while
 only complete if those calculators did run before it, so calculator order does
 matter; it is derived from their declared dependencies, see
 [Compatibility between plugins](#compatibility-between-plugins).
+
+**The matches a ranking played are core data, not a metric.**
+`Ranking::played_matches` lists them in report order, appended in place before
+the calculators run. It used to be a `Matches` metric of its own calculator,
+which every opponent-based metric (Buchholz, Sonneborn-Berger) had to require,
+and which cloned the whole list on every reported result. A calculator does not
+need `MatchResult` either: a match is reported once, so a reported match was
+always unfinished before, and the update takes no previous result.
 
 **Ranking comparison stays typed.** The `HierarchicalRanker` applies a list of
 `SliceRanker`s, each resolving ties left by the previous. `rank_by`, which every
@@ -848,12 +855,12 @@ opponent and are a match result.
 
 - **One enum `Match | Bye` in and out**, i.e. formats emit it and calculators
   receive it in place of the match. Calculators would need a `Bye` arm in
-  `update_after_match_result_changed` that can never run, since nobody reports a
+  `update_after_match_result` that can never run, since nobody reports a
   result for a bye, and one collection of both would mix byes into the match
   numbers. Rejected; the format's side of it survives as `Schedule`.
 - **A bye as a degenerate match** (no opponent, or a preset result). Every
   calculator would see byes through the existing path and silently get them
-  wrong: Buchholz looking up an opponent, `Matches` counting it as played. Every
+  wrong: Buchholz looking up an opponent, the played matches counting it. Every
   consumer of `Match` would have to handle a match without opponent. Rejected.
 - **A phantom "bye" ranking** paired like any other and auto-reported as beaten.
   Breaks the contract that a format only pairs rankings of its phase, and the

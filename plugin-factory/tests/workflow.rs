@@ -369,30 +369,15 @@ fn problems(issues: &[Issue]) -> Vec<(String, &Problem)> {
         .collect()
 }
 
-/// An issue about a fact nothing provides as its path, the fact, and the list and plugin of each
-/// addition finishing makes for it.
-type Unprovided = (String, &'static str, Vec<(String, &'static str)>);
-
-/// The issues about a fact nothing provides, see [`Unprovided`].
+/// The issues about a fact nothing provides, each as its path and the fact.
 ///
 /// # Panics
 /// Panics if an issue is about something else.
-fn unprovided(issues: &[Issue]) -> Vec<Unprovided> {
+fn unprovided(issues: &[Issue]) -> Vec<(String, &'static str)> {
     issues
         .iter()
         .map(|issue| match issue.problem() {
-            Problem::Unprovided {
-                fact,
-                added_by_finish,
-                ..
-            } => (
-                issue.path().to_string(),
-                *fact,
-                added_by_finish
-                    .iter()
-                    .map(|addition| (addition.list().to_string(), addition.plugin()))
-                    .collect(),
-            ),
+            Problem::Unprovided { fact, .. } => (issue.path().to_string(), *fact),
             problem => panic!("{problem:?} is not about a fact nothing provides"),
         })
         .collect()
@@ -415,12 +400,7 @@ fn assert_conflict(draft: &Draft<Phase>, at: &str, id: &str, conflict: Incompati
         .iter()
         .find(|candidate| candidate.entry().id() == id)
         .expect("the plugin is a candidate");
-    let conflicts: Vec<_> = candidate
-        .conflicts()
-        .iter()
-        .map(|conflict| conflict.incompatibility())
-        .collect();
-    assert_eq!(conflicts, [&conflict]);
+    assert_eq!(candidate.conflicts(), [conflict]);
 }
 
 /// The ids of the plugins of `axis`, which come sorted.
@@ -572,16 +552,13 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
 
     // once it is answered, the requirements are reported at every field that could meet them
     draft.set(&path("tie_break"), Value::Null).unwrap();
-    // both are added by finishing, so a UI may leave them out
-    let scored = vec![("metrics".to_owned(), "full::score")];
-    let counted = vec![("metrics".to_owned(), "full::match_count")];
     assert_eq!(
         unprovided(&draft::issues(singles, &draft)),
         [
-            ("metrics".to_owned(), "points", scored.clone()),
-            ("tie_break".to_owned(), "points", scored),
-            ("metrics".to_owned(), "the matches", counted.clone()),
-            ("tie_break".to_owned(), "the matches", counted.clone()),
+            ("metrics".to_owned(), "points"),
+            ("tie_break".to_owned(), "points"),
+            ("metrics".to_owned(), "the matches"),
+            ("tie_break".to_owned(), "the matches"),
         ]
     );
 
@@ -600,8 +577,8 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
     assert_eq!(
         unprovided(&issues[1..]),
         [
-            ("metrics".to_owned(), "the matches", counted.clone()),
-            ("tie_break".to_owned(), "the matches", counted),
+            ("metrics".to_owned(), "the matches"),
+            ("tie_break".to_owned(), "the matches"),
         ]
     );
     // finishing settles the matches, which a single metric provides, but not the answer
@@ -722,7 +699,6 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
             fact: "byes",
             required_by: path("metrics[0]"),
             providers: vec!["full::round_robin"],
-            added_by_finish: vec![],
         }
     );
 

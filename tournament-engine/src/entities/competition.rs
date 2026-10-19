@@ -208,9 +208,7 @@ impl Annotated for Entrant {
 /// # Examples
 /// ```
 /// # use serde::{Deserialize, Serialize};
-/// # use tournament_engine::entities::competition::{Annotated, Entrant, EntrantId};
-/// # use tournament_engine::type_map::TypeMapValue;
-/// # use uuid::Uuid;
+/// # use tournament_engine::{Annotated, Entrant, EntrantId, TypeMapValue, uuid::Uuid};
 /// #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// struct DatabaseId(u64);
 ///
@@ -452,14 +450,16 @@ impl Phase {
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
         let r#match = self.data.matches.get_mut(&match_id).unwrap();
-        let old_result = r#match.result();
-        assert!(old_result == MatchResult::NotFinished);
+        assert!(!r#match.is_finished());
         r#match.set_result(match_result);
+        for ranking_id in self.data.matches[&match_id].rankings() {
+            let ranking = self.data.rankings.get_mut(ranking_id).unwrap();
+            ranking.played_matches.push(match_id);
+        }
         self.update_metrics(|metrics_calculator, data, old_metrics| {
-            metrics_calculator.update_after_match_result_changed(
+            metrics_calculator.update_after_match_result(
                 data,
                 &data.matches[&match_id],
-                old_result,
                 old_metrics,
             )
         });
@@ -571,6 +571,7 @@ pub struct Ranking {
     initial_unique_rank: NonZeroU32,
     unique_rank: NonZeroU32,
     rank: NonZeroU32,
+    played_matches: Vec<MatchId>,
     metrics: TypeMap,
 }
 
@@ -613,6 +614,7 @@ impl Ranking {
             initial_unique_rank: unique_rank,
             unique_rank,
             rank: NonZeroU32::new(1).unwrap(),
+            played_matches: Vec::new(),
             metrics: TypeMap::new(),
         }
     }
@@ -639,6 +641,13 @@ impl Ranking {
         self.initial_unique_rank
     }
 
+    /// The matches of this ranking that have a result, in the order the results were reported in.
+    ///
+    /// A match is in here already while the metrics calculators update after its result.
+    pub fn played_matches(&self) -> &[MatchId] {
+        &self.played_matches
+    }
+
     pub fn metric<T: 'static>(&self) -> Option<&T> {
         self.metrics.get::<T>()
     }
@@ -655,27 +664,36 @@ impl Ranking {
     }
 }
 
+/// The result of a finished match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatchResult {
     AWins,
     BWins,
     Draw,
-    NotFinished,
 }
 
 impl MatchResult {
-    /// The team that won, or `None` for a draw or a match that is not finished.
+    /// The team that won, or `None` for a draw.
     pub fn winner(self) -> Option<Team> {
         match self {
             MatchResult::AWins => Some(Team::A),
             MatchResult::BWins => Some(Team::B),
-            MatchResult::Draw | MatchResult::NotFinished => None,
+            MatchResult::Draw => None,
         }
     }
 
-    /// The team that lost, or `None` for a draw or a match that is not finished.
+    /// The team that lost, or `None` for a draw.
     pub fn loser(self) -> Option<Team> {
         self.winner().map(Team::opponent)
+    }
+
+    /// What this result is for `team`.
+    pub fn for_team(self, team: Team) -> ResultOfTeam {
+        match self.winner() {
+            Some(winner) if winner == team => ResultOfTeam::Win,
+            Some(_) => ResultOfTeam::Loss,
+            None => ResultOfTeam::Draw,
+        }
     }
 }
 
@@ -709,7 +727,7 @@ pub struct Match {
     team_a: Vec1<RankingId>,
     team_b: Vec1<RankingId>,
     round: NonZeroU32,
-    result: MatchResult,
+    result: Option<MatchResult>,
     annotations: TypeMap,
 }
 
@@ -736,12 +754,11 @@ impl Team {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultOfTeam {
     Win,
     Draw,
     Loss,
-    NotFinished,
 }
 
 impl Match {
@@ -757,7 +774,7 @@ impl Match {
             team_a,
             team_b,
             round,
-            result: MatchResult::NotFinished,
+            result: None,
             annotations: TypeMap::new(),
         }
     }
@@ -791,13 +808,9 @@ impl Match {
         }
     }
 
-    pub fn result_of_team(&self, team: Team) -> ResultOfTeam {
-        match (team, self.result) {
-            (Team::A, MatchResult::AWins) | (Team::B, MatchResult::BWins) => ResultOfTeam::Win,
-            (_, MatchResult::Draw) => ResultOfTeam::Draw,
-            (Team::A, MatchResult::BWins) | (Team::B, MatchResult::AWins) => ResultOfTeam::Loss,
-            (_, MatchResult::NotFinished) => ResultOfTeam::NotFinished,
-        }
+    /// What the result of this match is for `team`, or `None` if it is not finished.
+    pub fn result_of_team(&self, team: Team) -> Option<ResultOfTeam> {
+        self.result.map(|result| result.for_team(team))
     }
 
     pub fn rankings(&self) -> impl Iterator<Item = &RankingId> {
@@ -806,7 +819,7 @@ impl Match {
 
     pub fn non_losing_rankings(&self) -> impl Iterator<Item = &RankingId> {
         // technically no team is losing yet if result is not finished
-        match self.result.winner() {
+        match self.result.and_then(MatchResult::winner) {
             Some(winner) => Either::Left(self.rankings_of(winner).iter()),
             None => Either::Right(self.rankings()),
         }
@@ -818,16 +831,17 @@ impl Match {
         self.round
     }
 
-    pub fn result(&self) -> MatchResult {
+    /// The result of this match, or `None` if it is not finished.
+    pub fn result(&self) -> Option<MatchResult> {
         self.result
     }
 
     pub fn is_finished(&self) -> bool {
-        !matches!(self.result, MatchResult::NotFinished)
+        self.result.is_some()
     }
 
     pub(crate) fn set_result(&mut self, result: MatchResult) {
-        self.result = result;
+        self.result = Some(result);
     }
 }
 
@@ -966,5 +980,63 @@ impl PhaseBuilder {
         phase.data.rankings = self.rankings.into_iter().collect();
         phase.initialize_metrics();
         phase
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::metrics_calculator::test_utils::{self, match_id};
+
+    /// The played matches of the ranking with the given index in the ordering by initial unique
+    /// rank.
+    fn played(phase: &Phase, ranking_index: usize) -> &[MatchId] {
+        let ranking_id = phase.data().ranking_ids_ordered_by_unique_rank()[ranking_index];
+        phase.data().rankings()[&ranking_id].played_matches()
+    }
+
+    #[test]
+    fn every_ranking_of_both_teams_plays_a_reported_match() {
+        let matches = vec![(1, vec![0, 1], vec![2, 3]), (1, vec![4], vec![5])];
+        let mut phase = test_utils::phase_with(6, matches, vec![]);
+        let match_id = match_id(&phase, 1, &[0, 1], &[2, 3]);
+
+        phase.report_match_result(match_id, MatchResult::BWins);
+
+        for ranking_index in 0..4 {
+            assert_eq!(played(&phase, ranking_index), [match_id]);
+        }
+        // the rankings of the other, still unreported match have played nothing
+        assert!(played(&phase, 4).is_empty());
+        assert!(played(&phase, 5).is_empty());
+    }
+
+    #[test]
+    fn played_matches_are_in_the_order_they_were_reported_in() {
+        let matches = vec![
+            (1, vec![0], vec![1]),
+            (1, vec![2], vec![3]),
+            (2, vec![0], vec![2]),
+            (2, vec![1], vec![3]),
+            (3, vec![1], vec![2]),
+        ];
+        let mut phase = test_utils::phase_with(4, matches.clone(), vec![]);
+        let match_ids: Vec<_> = matches
+            .iter()
+            .map(|(round, team_a, team_b)| match_id(&phase, *round, team_a, team_b))
+            .collect();
+        let [m_0_1, m_2_3, m_0_2, m_1_3, m_1_2] = match_ids[..] else {
+            unreachable!("five matches are scheduled")
+        };
+
+        // reported in the reverse order of the schedule
+        for match_id in match_ids.iter().rev() {
+            phase.report_match_result(*match_id, MatchResult::AWins);
+        }
+
+        assert_eq!(played(&phase, 0), [m_0_2, m_0_1]);
+        assert_eq!(played(&phase, 1), [m_1_2, m_1_3, m_0_1]);
+        assert_eq!(played(&phase, 2), [m_1_2, m_0_2, m_2_3]);
+        assert_eq!(played(&phase, 3), [m_1_3, m_2_3]);
     }
 }

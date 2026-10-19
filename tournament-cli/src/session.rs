@@ -19,28 +19,19 @@ use plugin_factory::{
 };
 use thiserror::Error;
 use tournament_engine::{
-    entities::competition::{
-        Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData,
-        PhaseId, RankingId, Seed,
-    },
+    AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
+    CompetitionStateMachineExt as _, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
+    PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed,
+    SetCompetitionSeed, StartCompetition,
     plugins::{
-        PhasePlugins,
         metrics_calculator::MetricColumn,
-        phase_format::{
-            PhaseFormat, double_elimination::DoubleEliminationRound,
-            single_elimination::KnockoutRound,
-        },
+        phase_format::{DoubleEliminationRound, KnockoutRound, PhaseFormat},
         ranker::SliceRanker,
     },
-    transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt as _, RedoLastError,
-        UndoMatchResultError, add_entrant::AddEntrant, add_phase::AddPhase,
-        remove_entrant::RemoveEntrant, report_match_result::ReportMatchResult,
-        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    },
+    transitions::{RedoLastError, UndoMatchResultError},
+    undoable_state_machine::{StateMachineError, TransitionError},
+    uuid::Uuid,
 };
-use undoable_state_machine::{StateMachineError, TransitionError};
-use uuid::Uuid;
 
 use crate::{
     annotations::DisplayName,
@@ -67,8 +58,6 @@ pub enum Error {
     DuplicateName(String),
     #[error("there is no entrant named {0:?}")]
     UnknownEntrant(String),
-    #[error("the competition already has a phase, and only one is supported")]
-    PhaseAlreadyAdded,
     /// A session never reads from the terminal, so a phase that is not taken from a preset has to
     /// be configured before it reaches one, see [`crate::wizard::configure_phase`].
     #[error(
@@ -284,9 +273,6 @@ impl Session {
     /// because it has started, or if the plugins `draft` configures do not fit together, e.g.
     /// [`Error::Unsettled`].
     pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
-        if !self.competition().phases().is_empty() {
-            return Err(Error::PhaseAlreadyAdded);
-        }
         let plugins = self.settled(draft)?;
         let summary = summary(&plugins);
         self.machine
@@ -557,10 +543,10 @@ impl Session {
         let a = self.team_name(phase, r#match.team_a());
         let b = self.team_name(phase, r#match.team_b());
         match r#match.result() {
-            MatchResult::AWins => format!("{a} beat {b}"),
-            MatchResult::BWins => format!("{b} beat {a}"),
-            MatchResult::Draw => "draw".to_owned(),
-            MatchResult::NotFinished => "open".to_owned(),
+            Some(MatchResult::AWins) => format!("{a} beat {b}"),
+            Some(MatchResult::BWins) => format!("{b} beat {a}"),
+            Some(MatchResult::Draw) => "draw".to_owned(),
+            None => "open".to_owned(),
         }
     }
 }
@@ -680,12 +666,10 @@ mod tests {
     use plugin_factory::{PluginType, draft::Problem};
     use tournament_engine::plugins::{
         metrics_calculator::{
-            MetricsCalculator,
-            buchholz::SonnebornBergerCalculator,
-            points::{MorePoints, PointsCalculator},
-            wins_draws_losses::{FewerMatchesPlayed, MoreWins, WinsDrawsLossesCalculator},
+            FewerMatchesPlayed, MetricsCalculator, MorePoints, MoreWins, PointsCalculator,
+            SonnebornBergerCalculator, WinsDrawsLossesCalculator,
         },
-        phase_format::{round_robin::RoundRobin, single_elimination::SingleElimination},
+        phase_format::{RoundRobin, SingleElimination},
     };
 
     use super::*;
@@ -791,7 +775,10 @@ mod tests {
 
         let result = execute(&mut session, "add-phase single-elimination");
 
-        assert!(matches!(result, Err(Error::PhaseAlreadyAdded)));
+        assert!(
+            matches!(&result, Err(Error::Rejected(error)) if error.to_string().contains("already has a phase")),
+            "got {result:?}"
+        );
     }
 
     /// Every preset is its format with the plugins the format recommends, which the engine checks

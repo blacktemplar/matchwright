@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{
-        Annotated, Bye, Match, MatchId, MatchResult, PhaseData, RankingId, Team,
-    },
+    entities::competition::{Annotated, Bye, Match, MatchId, PhaseData, RankingId, Team},
     plugins::phase_format::Schedule,
     type_map::TypeMap,
 };
@@ -176,26 +174,21 @@ impl Bracket {
             };
             let winner = match (a, b) {
                 (Seat::Ranking(a), Seat::Ranking(b)) => {
-                    let result = pairing
-                        .r#match
-                        .map(|match_id| phase_data.matches()[&match_id].result());
-                    match result {
-                        None => {
-                            let r#match = Match::new(vec1![a], vec1![b], pairing.round)
-                                .with_annotations(mem::take(&mut pairing.annotations));
-                            pairing.r#match = Some(r#match.id());
-                            new_matches.push((id, r#match));
-                            self.in_play.push(id);
-                            continue;
-                        }
-                        Some(MatchResult::NotFinished) => {
-                            self.in_play.push(id);
-                            continue;
-                        }
-                        Some(result) => result
-                            .winner()
-                            .expect("draws are rejected since knockouts do not allow them"),
-                    }
+                    let Some(match_id) = pairing.r#match else {
+                        let r#match = Match::new(vec1![a], vec1![b], pairing.round)
+                            .with_annotations(mem::take(&mut pairing.annotations));
+                        pairing.r#match = Some(r#match.id());
+                        new_matches.push((id, r#match));
+                        self.in_play.push(id);
+                        continue;
+                    };
+                    let Some(result) = phase_data.matches()[&match_id].result() else {
+                        self.in_play.push(id);
+                        continue;
+                    };
+                    result
+                        .winner()
+                        .expect("draws are rejected since knockouts do not allow them")
                 }
                 (Seat::Ranking(a), Seat::Bye) => {
                     let bye = Bye::new(a, pairing.round)

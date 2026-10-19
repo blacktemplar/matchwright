@@ -8,7 +8,7 @@
 //! which is what changes the competition.
 
 use plugin_factory::draft::Draft;
-use tournament_engine::{entities::competition::Competition, plugins::PhasePlugins};
+use tournament_engine::{Competition, PhasePlugins};
 
 use crate::questionnaire::{self, Error, Prompter};
 

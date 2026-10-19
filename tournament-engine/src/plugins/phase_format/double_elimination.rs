@@ -113,8 +113,7 @@ impl DoubleElimination {
 ///
 /// # Examples
 /// ```
-/// # use tournament_engine::entities::competition::{Annotated, Match};
-/// # use tournament_engine::plugins::phase_format::double_elimination::DoubleEliminationRound;
+/// # use tournament_engine::{Annotated, Match, plugins::phase_format::DoubleEliminationRound};
 /// fn stage_name(r#match: &Match) -> String {
 ///     match r#match.annotation::<DoubleEliminationRound>() {
 ///         Some(DoubleEliminationRound::Winners { round, rounds }) if round == rounds => {

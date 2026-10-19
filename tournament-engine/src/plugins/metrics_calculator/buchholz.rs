@@ -14,7 +14,7 @@ use crate::{
     map::Map,
     plugins::{
         facts::CalculatesMetric,
-        metrics_calculator::{MetricsCalculator, matches::Matches, points::Points},
+        metrics_calculator::{MetricsCalculator, points::Points},
         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
     },
     type_map::TypeMapValue,
@@ -81,8 +81,7 @@ impl BuchholzCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(CalculatesMetric::<Buchholz>::new())
-            .require::<CalculatesMetric<Points>>("the points")
-            .require::<CalculatesMetric<Matches>>("the matches");
+            .require::<CalculatesMetric<Points>>("the points");
     }
 }
 
@@ -92,11 +91,10 @@ impl MetricsCalculator for BuchholzCalculator {
         Box::new(Buchholz::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        _: MatchResult,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, Buchholz>(
@@ -184,8 +182,7 @@ impl BuchholzOfBuchholzCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(CalculatesMetric::<BuchholzOfBuchholz>::new())
-            .require::<CalculatesMetric<Buchholz>>("the Buchholz")
-            .require::<CalculatesMetric<Matches>>("the matches");
+            .require::<CalculatesMetric<Buchholz>>("the Buchholz");
     }
 }
 
@@ -195,11 +192,10 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
         Box::new(BuchholzOfBuchholz::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        _: MatchResult,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Buchholz, BuchholzOfBuchholz>(
@@ -319,15 +315,14 @@ impl SonnebornBergerCalculator {
     fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(CalculatesMetric::<SonnebornBerger>::new())
-            .require::<CalculatesMetric<Points>>("the points")
-            .require::<CalculatesMetric<Matches>>("the matches");
+            .require::<CalculatesMetric<Points>>("the points");
     }
 
     fn weight(&self, result: ResultOfTeam) -> f32 {
         match result {
             ResultOfTeam::Win => self.weight_for_win,
             ResultOfTeam::Draw => self.weight_for_draw,
-            ResultOfTeam::Loss | ResultOfTeam::NotFinished => 0.,
+            ResultOfTeam::Loss => 0.,
         }
     }
 }
@@ -338,11 +333,10 @@ impl MetricsCalculator for SonnebornBergerCalculator {
         Box::new(SonnebornBerger::default())
     }
 
-    fn update_after_match_result_changed(
+    fn update_after_match_result(
         &mut self,
         phase_data: &PhaseData,
         r#match: &Match,
-        _: MatchResult,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
         weighted_opponent_sum_changes::<Points, SonnebornBerger>(
@@ -374,9 +368,14 @@ impl MetricsCalculator for SonnebornBergerCalculator {
     }
 }
 
+/// The result of `match`, a match a ranking played.
+fn played(r#match: &Match) -> MatchResult {
+    r#match.result().expect("a played match is finished")
+}
+
 /// The updates of the metric `B`, which sums the metric `M` of all opponents of a ranking, each
 /// multiplied by the `weight` of the result the ranking achieved against that opponent, after the
-/// result of `match` changed, or, without a match, after a bye was scheduled.
+/// result of `match` was reported, or, without a match, after a bye was scheduled.
 fn weighted_opponent_sum_changes<M, B>(
     phase_data: &PhaseData,
     r#match: Option<&Match>,
@@ -394,8 +393,7 @@ where
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
         if m_diff != 0. {
             // `B` of all opponents of this ranking change, according to their result against it
-            let matches = ranking.metric::<Matches>().unwrap();
-            for match_id in &matches.0 {
+            for match_id in ranking.played_matches() {
                 if r#match.is_some_and(|r#match| match_id == &r#match.id()) {
                     // we don't consider the newly reported match here as we will account for it
                     // later separately
@@ -403,7 +401,7 @@ where
                 }
                 let match_of_r = &phase_data.matches()[match_id];
                 let opponent_team = match_of_r.team_of(&r_id).unwrap().opponent();
-                let opponent_weight = weight(match_of_r.result_of_team(opponent_team));
+                let opponent_weight = weight(played(match_of_r).for_team(opponent_team));
                 if opponent_weight != 0. {
                     let change = opponent_weight * m_diff;
                     for opponent in match_of_r.rankings_of(opponent_team) {
@@ -418,7 +416,7 @@ where
         .into_iter()
         .flat_map(|r#match| [(r#match, Team::A), (r#match, Team::B)])
     {
-        let team_weight = weight(r#match.result_of_team(team));
+        let team_weight = weight(played(r#match).for_team(team));
         if team_weight == 0. {
             continue;
         }
@@ -448,7 +446,6 @@ mod tests {
     use crate::{
         entities::competition::Phase,
         plugins::metrics_calculator::{
-            matches::MatchesCalculator,
             points::PointsCalculator,
             test_utils::{self, MatchSpec, SCENARIO, match_id, play_scenario, scenario_matches},
             wins_draws_losses::WinsDrawsLossesCalculator,
@@ -467,8 +464,8 @@ mod tests {
     /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
     /// scoring finished matches with [`THREE_ONE`].
     ///
-    /// [`BuchholzCalculator`] derives its metric from [`Points`] and [`Matches`], so the phase has
-    /// to update both of them first, and [`Points`] in turn derives from
+    /// [`BuchholzCalculator`] derives its metric from [`Points`], so the phase has to update them
+    /// first, and [`Points`] in turn derives from
     /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses). Those are the only metrics
     /// it declares, so the phase calculates nothing else.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
@@ -478,7 +475,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
             ],
         )
@@ -493,7 +489,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
                 Box::new(BuchholzOfBuchholzCalculator),
             ],
@@ -512,8 +507,8 @@ mod tests {
     /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
     /// scoring finished matches with `points` and weighting them with `calculator`.
     ///
-    /// [`SonnebornBergerCalculator`] derives its metric from [`Points`] and [`Matches`], so the
-    /// phase has to update both of them first, and [`Points`] in turn derives from
+    /// [`SonnebornBergerCalculator`] derives its metric from [`Points`], so the phase has to update
+    /// them first, and [`Points`] in turn derives from
     /// [`WinsDrawsLosses`](super::wins_draws_losses::WinsDrawsLosses).
     fn phase_with_points(
         num_players: u32,
@@ -527,7 +522,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(points),
-                Box::new(MatchesCalculator),
                 Box::new(calculator),
             ],
         )
@@ -677,7 +671,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE.with_points_for_bye(3.0)),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
             ],
         );
@@ -704,7 +697,7 @@ mod tests {
         let mut phase = test_utils::phase_with(
             2,
             vec![(1, vec![0], vec![1])],
-            vec![Box::new(MatchesCalculator), Box::new(BuchholzCalculator)],
+            vec![Box::new(BuchholzCalculator)],
         );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
@@ -859,10 +852,7 @@ mod tests {
         let mut phase = test_utils::phase_with(
             2,
             vec![(1, vec![0], vec![1])],
-            vec![
-                Box::new(MatchesCalculator),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
+            vec![Box::new(BuchholzOfBuchholzCalculator)],
         );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
@@ -1169,7 +1159,6 @@ mod tests {
             vec![
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE.with_points_for_bye(3.0)),
-                Box::new(MatchesCalculator),
                 Box::new(FULL_HALF),
             ],
         );
@@ -1193,11 +1182,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_sonneborn_berger_without_the_points_metric_panics() {
-        let mut phase = test_utils::phase_with(
-            2,
-            vec![(1, vec![0], vec![1])],
-            vec![Box::new(MatchesCalculator), Box::new(FULL_HALF)],
-        );
+        let mut phase =
+            test_utils::phase_with(2, vec![(1, vec![0], vec![1])], vec![Box::new(FULL_HALF)]);
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
         phase.report_match_result(match_id, MatchResult::AWins);

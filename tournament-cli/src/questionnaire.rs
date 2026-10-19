@@ -180,8 +180,8 @@ pub enum Error {
 /// A field taking plugins offers those that fit next to the answers given before it, see
 /// [`draft::candidates`]. A field taking an unordered list of plugins starts out with the plugins
 /// it offers and those it is the only source of something another plugin requires, see
-/// [`Candidate::supplies`]. The plugins a question starts out at come first, in the order they are
-/// offered in, so that what the plugins chosen before recommend leads; the others follow
+/// [`Candidate::is_sole_supplier`]. The plugins a question starts out at come first, in the order
+/// they are offered in, so that what the plugins chosen before recommend leads; the others follow
 /// alphabetically by label.
 ///
 /// Answers a plugin rejects are handed to [`Prompter::retry`] as soon as the fields of the plugin
@@ -242,9 +242,7 @@ pub fn fill<T: Configurable>(
 /// ```
 /// use plugin_factory::{catalog::AnyAxis, config::PluginConfig};
 /// use tournament_cli::questionnaire;
-/// use tournament_engine::plugins::phase_format::{
-///     PhaseFormat, round_robin::random_rounds::RandomRounds,
-/// };
+/// use tournament_engine::plugins::phase_format::{PhaseFormat, RandomRounds};
 ///
 /// let answer = PluginConfig::of::<RandomRounds>().with("rounds", 5).into();
 ///
@@ -575,12 +573,7 @@ impl<T: Configurable> Asker<'_, T> {
         let mut first: Vec<_> = defaults.iter().map(PluginConfig::plugin).collect();
         for candidate in self.candidates(&at, &[])? {
             let id = candidate.entry().id();
-            if !first.contains(&id)
-                && candidate
-                    .supplies()
-                    .iter()
-                    .any(|supply| supply.other_providers().is_empty())
-            {
+            if !first.contains(&id) && candidate.is_sole_supplier() {
                 first.push(id);
             }
         }
@@ -761,7 +754,7 @@ fn plugins(answers: &[Value]) -> Vec<PluginConfig> {
 mod tests {
     use std::{collections::VecDeque, fmt::Debug};
 
-    use tournament_engine::{entities::competition::Competition, plugins::PhasePlugins};
+    use tournament_engine::{Competition, PhasePlugins};
 
     use super::*;
 

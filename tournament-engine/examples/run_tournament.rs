@@ -20,7 +20,7 @@ use std::{
     time::Instant,
 };
 
-use tournament_engine::entities::competition::Competition;
+use tournament_engine::Competition;
 
 #[path = "../benches/common/tournament.rs"]
 mod tournament;

@@ -67,3 +67,8 @@ pub mod double_elimination;
 pub mod monster_dyp;
 pub mod round_robin;
 pub mod single_elimination;
+
+pub use double_elimination::{DoubleElimination, DoubleEliminationRound};
+pub use monster_dyp::MonsterDyp;
+pub use round_robin::{RoundRobin, random_rounds::RandomRounds};
+pub use single_elimination::{KnockoutRound, SingleElimination};

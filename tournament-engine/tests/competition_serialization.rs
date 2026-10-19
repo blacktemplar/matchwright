@@ -6,34 +6,22 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tournament_engine::{
-    entities::competition::{
-        Annotated, Competition, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseData,
-        PhaseId, Ranking, Seed,
-    },
+    AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
+    CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseData,
+    PhaseId, PhasePlugins, Ranking, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    TypeMapValue,
     plugins::{
-        PhasePlugins,
         metrics_calculator::{
-            buchholz::{
-                Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
-                MoreBuchholz, MoreBuchholzOfBuchholz, MoreSonnebornBerger, SonnebornBerger,
-                SonnebornBergerCalculator,
-            },
-            matches::{Matches, MatchesCalculator},
-            points::{MorePoints, Points, PointsCalculator},
-            round_of_first_loss::{LaterFirstLoss, RoundOfFirstLoss, RoundOfFirstLossCalculator},
-            wins_draws_losses::{WinsDrawsLosses, WinsDrawsLossesCalculator},
+            Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
+            LaterFirstLoss, MoreBuchholz, MoreBuchholzOfBuchholz, MorePoints, MoreSonnebornBerger,
+            Points, PointsCalculator, RoundOfFirstLoss, RoundOfFirstLossCalculator,
+            SonnebornBerger, SonnebornBergerCalculator, WinsDrawsLosses, WinsDrawsLossesCalculator,
         },
-        phase_format::single_elimination::{KnockoutRound, SingleElimination},
+        phase_format::{KnockoutRound, SingleElimination},
     },
-    transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
-        add_phase::AddPhase, report_match_result::ReportMatchResult,
-        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    },
-    type_map::TypeMapValue,
+    undoable_state_machine::Transition,
+    uuid::Uuid,
 };
-use undoable_state_machine::Transition;
-use uuid::Uuid;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
 const SEED: Seed = Seed::new(*b"round-trip!!");
@@ -96,7 +84,6 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
                 Box::new(RoundOfFirstLossCalculator),
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
                 Box::new(SONNEBORN_BERGER),
                 Box::new(BuchholzOfBuchholzCalculator),
@@ -183,7 +170,7 @@ fn assert_same_metrics(left: &Ranking, right: &Ranking) {
         right.metric::<WinsDrawsLosses>()
     );
     assert_eq!(left.metric::<Points>(), right.metric::<Points>());
-    assert_eq!(left.metric::<Matches>(), right.metric::<Matches>());
+    assert_eq!(left.played_matches(), right.played_matches());
     assert_eq!(left.metric::<Buchholz>(), right.metric::<Buchholz>());
     assert_eq!(
         left.metric::<SonnebornBerger>(),
@@ -348,21 +335,19 @@ fn a_partially_played_competition_round_trips() {
 /// one, which is what everything inside the plugin trait objects is easy to get wrong: `typetag`
 /// serializes the content of an internally tagged trait object through an adapter that reports
 /// itself as human readable no matter what the real format says, so an id below that content — like
-/// the [`MatchId`]s of a [`Matches`] metric — would be written as a string and read back as raw
-/// bytes. All plugin traits are therefore adjacently tagged, which keeps the content out of that
-/// adapter.
+/// the [`MatchId`]s in the bracket the knockout format keeps — would be written as a string and
+/// read back as raw bytes. All plugin traits are therefore adjacently tagged, which keeps the
+/// content out of that adapter.
 #[test]
 fn a_played_competition_round_trips_through_a_binary_format() {
     let sm = competition_in_the_final();
-    // the match ids that a plain round trip would silently write in the wrong representation
+    // the bracket holds the ids of the matches, which a plain round trip would silently write in
+    // the wrong representation
     assert!(
-        sm.current().phases()[&phase_id()]
+        !sm.current().phases()[&phase_id()]
             .data()
-            .rankings()
-            .values()
-            .any(|ranking| ranking
-                .metric::<Matches>()
-                .is_some_and(|matches| !matches.0.is_empty()))
+            .matches()
+            .is_empty()
     );
 
     let competition = binary_round_trip(sm.current());

@@ -102,8 +102,7 @@ impl SingleElimination {
 ///
 /// # Examples
 /// ```
-/// # use tournament_engine::entities::competition::{Annotated, Match};
-/// # use tournament_engine::plugins::phase_format::single_elimination::KnockoutRound;
+/// # use tournament_engine::{Annotated, Match, plugins::phase_format::KnockoutRound};
 /// fn stage_name(r#match: &Match) -> String {
 ///     match r#match.annotation::<KnockoutRound>() {
 ///         Some(KnockoutRound::RoundOf(2)) => "final".to_owned(),
@@ -133,7 +132,7 @@ impl KnockoutRound {
     ///
     /// # Examples
     /// ```
-    /// # use tournament_engine::plugins::phase_format::single_elimination::KnockoutRound;
+    /// # use tournament_engine::plugins::phase_format::KnockoutRound;
     /// assert_eq!(KnockoutRound::RoundOf(16).fraction_of_final(), Some(8));
     /// assert_eq!(KnockoutRound::ThirdPlace.fraction_of_final(), None);
     /// ```

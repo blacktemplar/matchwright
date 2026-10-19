@@ -9,28 +9,12 @@ use std::sync::LazyLock;
 use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
-    entities::competition::{Entrant, EntrantId, MatchId, MatchResult, PhaseId, Seed},
-    plugins::{
-        PhasePlugins,
-        metrics_calculator::{
-            buchholz::{
-                BuchholzCalculator, BuchholzOfBuchholzCalculator, MoreBuchholz,
-                MoreBuchholzOfBuchholz, MoreSonnebornBerger, SonnebornBergerCalculator,
-            },
-            matches::MatchesCalculator,
-            points::{MorePoints, PointsCalculator},
-            round_of_first_loss::RoundOfFirstLossCalculator,
-            wins_draws_losses::WinsDrawsLossesCalculator,
-        },
-        phase_format::round_robin::random_rounds::RandomRounds,
-    },
-    transitions::{
-        CompetitionStateMachine, CompetitionStateMachineExt, add_entrant::AddEntrant,
-        add_phase::AddPhase, report_match_result::ReportMatchResult,
-        set_competition_seed::SetCompetitionSeed, start_competition::StartCompetition,
-    },
+    AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt, Entrant, EntrantId,
+    MatchId, MatchResult, PhaseId, PhasePlugins, ReportMatchResult, Seed, SetCompetitionSeed,
+    StartCompetition,
+    plugins::{metrics_calculator::*, phase_format::RandomRounds},
+    uuid::Uuid,
 };
-use uuid::Uuid;
 
 /// The number of entrants used if nothing else is configured.
 pub const DEFAULT_ENTRANTS: usize = 1000;
@@ -110,7 +94,6 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
                 Box::new(RoundOfFirstLossCalculator),
                 Box::new(WinsDrawsLossesCalculator),
                 Box::new(THREE_ONE),
-                Box::new(MatchesCalculator),
                 Box::new(BuchholzCalculator),
                 Box::new(SONNEBORN_BERGER),
                 Box::new(BuchholzOfBuchholzCalculator),
