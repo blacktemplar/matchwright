@@ -82,13 +82,13 @@ impl<V: IdAble> IdMap<V>
 where
     V::Id: Eq + Hash,
 {
-    /// Inserts `value` under its own id.
+    /// Inserts `value` under its own id, returning the value it replaced, if any.
     ///
     /// A value that replaces one already stored under the same id keeps that entry's position, so
     /// replacing never reorders the map.
     #[inline]
-    pub fn insert(&mut self, value: V) {
-        self.0.insert(value.id(), value);
+    pub fn insert(&mut self, value: V) -> Option<V> {
+        self.0.insert(value.id(), value)
     }
 
     /// Returns a mutable reference to the value stored for `id`, or [`None`] if there is none.
@@ -161,6 +161,17 @@ where
         D: Deserializer<'de>,
     {
         deserializer.deserialize_seq(IdMapVisitor(PhantomData::<V>))
+    }
+}
+
+// Implemented manually because deriving would miss V::Id: Clone
+impl<V: IdAble + Clone> Clone for IdMap<V>
+where
+    V::Id: Clone,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 

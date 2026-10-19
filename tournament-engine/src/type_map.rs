@@ -4,13 +4,9 @@ use std::{
 };
 
 use dyn_clone::DynClone;
-use serde::{
-    Deserialize, Serialize,
-    de::{SeqAccess, Visitor},
-    ser::SerializeSeq,
-};
+use serde::{Deserialize, Serialize};
 
-use crate::map::{Map, map_with_capacity};
+use crate::map::{IdAble, IdMap};
 
 /// A value that can be stored in a [`TypeMap`], keyed by its own concrete type.
 ///
@@ -67,51 +63,18 @@ unsafe fn downcast_unchecked_mut<T: 'static>(value: &mut dyn Any) -> &mut T {
 /// the consumer annotations of an [`Entrant`](crate::entities::competition::Entrant).
 ///
 /// Serializes as a plain sequence of its values, in insertion order.
-#[derive(Debug, Default, Clone)]
-pub struct TypeMap(Map<TypeId, Box<dyn TypeMapValue>>);
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TypeMap(IdMap<Box<dyn TypeMapValue>>);
 
-impl Serialize for TypeMap {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-        for v in self.0.values() {
-            seq.serialize_element(v)?;
-        }
-        seq.end()
-    }
-}
+/// Keys a value by its concrete type, which is what lets [`TypeMap`] downcast without checking.
+impl IdAble for Box<dyn TypeMapValue> {
+    type Id = TypeId;
 
-struct TypeMapVisitor;
-
-impl<'de> Visitor<'de> for TypeMapVisitor {
-    type Value = TypeMap;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("a sequence of typetagged Box<dyn TypeMapValue>")
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut map = TypeMap(map_with_capacity(seq.size_hint().unwrap_or(0)));
-
-        while let Some(value) = seq.next_element::<Box<dyn TypeMapValue>>()? {
-            map.insert_boxed(value);
-        }
-
-        Ok(map)
-    }
-}
-
-impl<'de> Deserialize<'de> for TypeMap {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_seq(TypeMapVisitor)
+    #[inline]
+    fn id(&self) -> TypeId {
+        // `**self` rather than `self`: the type id of the boxed value, not of the box
+        (**self).type_id()
     }
 }
 
@@ -125,20 +88,20 @@ impl TypeMap {
     /// A replaced value keeps the position of the one it replaces, so replacing never reorders the
     /// map.
     pub fn insert<T: TypeMapValue>(&mut self, value: T) {
-        self.0.insert(TypeId::of::<T>(), Box::new(value));
+        self.0.insert(Box::new(value));
     }
 
     /// Like [`insert`](Self::insert) for an already boxed value, returning the value it replaced.
     pub fn insert_boxed(&mut self, value: Box<dyn TypeMapValue>) -> Option<Box<dyn TypeMapValue>> {
-        let type_id = (*value).type_id();
-        self.0.insert(type_id, value)
+        self.0.insert(value)
     }
 
     /// The value of type `T`, or [`None`] if the map holds none.
     pub fn get<T: 'static>(&self) -> Option<&T> {
         self.get_any::<T>().map(|any| {
-            // SAFETY: We ensure in [`Self::insert`] that at key `TypeId::of::<T>()` an object
-            // of type `T` is stored.
+            // SAFETY: an `IdMap` stores every value under its `IdAble::id`, which for a
+            // `Box<dyn TypeMapValue>` is the type id of its concrete type, so the value at key
+            // `TypeId::of::<T>()` is a `T`.
             unsafe { downcast_unchecked_ref::<T>(any) }
         })
     }
@@ -155,8 +118,7 @@ impl TypeMap {
     pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
         self.0.get_mut(&TypeId::of::<T>()).map(|boxed| {
             let any: &mut dyn Any = boxed.as_mut();
-            // SAFETY: We ensure in [`Self::insert`] that at key `TypeId::of::<T>()` an object
-            // of type `T` is stored.
+            // SAFETY: as in `get`.
             unsafe { downcast_unchecked_mut::<T>(any) }
         })
     }

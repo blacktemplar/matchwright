@@ -529,9 +529,9 @@ used to serialize a metric: disjointness and requirement checks run fresh
 in-process on live plugin values, never on serialized data, which is exactly
 where `TypeId` is stable and free.
 
-**`Ranking` stores its metrics in a `TypeMap`** — a `Map<TypeId, Box<dyn
-TypeMapValue>>` that serializes as a plain sequence, since each value carries its
-own `typetag` tag. `Ranking::metric::<T>()` resolves to `Option<&T>` via
+**`Ranking` stores its metrics in a `TypeMap`** — an `IdMap<Box<dyn
+TypeMapValue>>` whose id is the concrete type's `TypeId`, so it serializes as a
+plain sequence, since each value carries its own `typetag` tag. `Ranking::metric::<T>()` resolves to `Option<&T>` via
 `TypeMap::get`, which uses `downcast_unchecked_ref` because the key already
 proves the concrete type. Keyed by type rather than a `Vec` scan, so a ranker
 that reads several metrics per comparison pays a hash lookup, not a linear
