@@ -7,13 +7,11 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{
-        Annotated, Bye, Match, MatchResult, PhaseData, Ranking, RankingId, Team,
-    },
+    entities::competition::{Annotated, Bye, Match, MatchResult, PhaseData, RankingId, Team},
     plugins::{
         facts::{CalculatesMetric, MatchAnnotation},
         metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -70,12 +68,7 @@ impl RankingCriterion for LaterElimination {
     }
 }
 
-#[register]
-impl SliceRanker for LaterElimination {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(LaterElimination);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(

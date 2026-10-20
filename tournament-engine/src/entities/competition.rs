@@ -350,7 +350,8 @@ impl Phase {
         &self.metrics_calculators
     }
 
-    pub(crate) fn phase_format(&self) -> &dyn PhaseFormat {
+    /// The format the matches of this phase are scheduled by.
+    pub fn format(&self) -> &dyn PhaseFormat {
         &*self.phase_format
     }
 

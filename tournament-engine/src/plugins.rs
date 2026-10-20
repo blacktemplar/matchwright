@@ -73,22 +73,60 @@ pub struct PhasePlugins {
 }
 
 impl PhasePlugins {
-    /// The plugins of a phase played in `format`, ranked by `ranking`, best first, and calculating
-    /// the metrics of `metrics`, put into the order they run in, see [`DependencyOrderedSet`].
+    /// The plugins of a phase played in `format`, not ranked by anything and calculating no
+    /// metrics yet.
+    ///
+    /// # Examples
+    /// ```
+    /// use tournament_engine::{
+    ///     PhasePlugins,
+    ///     plugins::{
+    ///         metrics_calculator::{MorePoints, PointsCalculator, WinsDrawsLossesCalculator},
+    ///         phase_format::RoundRobin,
+    ///     },
+    /// };
+    ///
+    /// let plugins = PhasePlugins::new(RoundRobin)
+    ///     .rank_by(MorePoints)
+    ///     .calculate(PointsCalculator::new(1.0, 0.5))?
+    ///     .calculate(WinsDrawsLossesCalculator)?;
+    ///
+    /// // the points are scored from the wins, draws and losses, so those are calculated first
+    /// assert_eq!(
+    ///     format!("{:?}", plugins.metrics()),
+    ///     "DependencyOrderedSet([WinsDrawsLossesCalculator, PointsCalculator { points_for_win: \
+    ///      1.0, points_for_draw: 0.5, points_for_bye: 0.0 }])"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn new(format: impl PhaseFormat) -> Self {
+        Self {
+            format: Box::new(format),
+            ranking: Vec::new(),
+            metrics: DependencyOrderedSet::default(),
+        }
+    }
+
+    /// Returns these plugins ranked by `criterion` after the slice rankers they are ranked by
+    /// already, i.e. `criterion` breaks the ties those leave.
+    pub fn rank_by(mut self, criterion: impl SliceRanker) -> Self {
+        self.ranking.push(Box::new(criterion));
+        self
+    }
+
+    /// Returns these plugins calculating the metric of `calculator` as well, put into the order
+    /// the calculators run in, see [`DependencyOrderedSet`].
     ///
     /// # Errors
-    /// Returns an error if `metrics` holds a calculator twice, or calculators that require facts
-    /// of each other in a cycle, see [`DependencyOrderedSet::new`].
-    pub fn new(
-        format: Box<dyn PhaseFormat>,
-        ranking: Vec<Box<dyn SliceRanker>>,
-        metrics: Vec<Box<dyn MetricsCalculator>>,
+    /// Returns an error if a calculator of the same plugin is there already, or if `calculator`
+    /// and the others require facts of each other in a cycle, see
+    /// [`DependencyOrderedSet::insert`].
+    pub fn calculate(
+        mut self,
+        calculator: impl MetricsCalculator,
     ) -> Result<Self, DependencyOrderedSetError> {
-        Ok(Self {
-            format,
-            ranking,
-            metrics: DependencyOrderedSet::new(metrics)?,
-        })
+        self.metrics.insert(Box::new(calculator))?;
+        Ok(self)
     }
 
     pub fn format(&self) -> &dyn PhaseFormat {
@@ -172,11 +210,15 @@ mod tests {
     /// The plugins of a phase played in `format`, ranked by `ranking` and calculating the metrics
     /// of `metrics`.
     fn phase(
-        format: impl PhaseFormat + 'static,
+        format: impl PhaseFormat,
         ranking: Vec<Box<dyn SliceRanker>>,
         metrics: Vec<Box<dyn MetricsCalculator>>,
     ) -> PhasePlugins {
-        PhasePlugins::new(Box::new(format), ranking, metrics).unwrap()
+        PhasePlugins {
+            format: Box::new(format),
+            ranking,
+            metrics: DependencyOrderedSet::new(metrics).unwrap(),
+        }
     }
 
     /// Whether `plugins` fit together in a competition, i.e. what `AddPhase` checks.
@@ -325,15 +367,10 @@ mod tests {
     /// its points two ways.
     #[test]
     fn a_phase_takes_a_calculator_once() {
-        let built = PhasePlugins::new(
-            Box::new(RoundRobin),
-            Vec::new(),
-            vec![
-                Box::new(ONE_HALF),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(PointsCalculator::new(3.0, 1.0)),
-            ],
-        );
+        let built = PhasePlugins::new(RoundRobin)
+            .calculate(ONE_HALF)
+            .and_then(|plugins| plugins.calculate(WinsDrawsLossesCalculator))
+            .and_then(|plugins| plugins.calculate(PointsCalculator::new(3.0, 1.0)));
 
         assert_eq!(
             built.err(),
@@ -665,11 +702,9 @@ mod tests {
 
     #[test]
     fn calculators_requiring_each_other_cannot_be_ordered() {
-        let built = PhasePlugins::new(
-            Box::new(RoundRobin),
-            Vec::new(),
-            vec![Box::new(CircularCalculator), Box::new(Cycling)],
-        );
+        let built = PhasePlugins::new(RoundRobin)
+            .calculate(CircularCalculator)
+            .and_then(|plugins| plugins.calculate(Cycling));
         let saved = serde_json::json!({
             "format": {"type": RoundRobin::ID, "value": null},
             "ranking": [],

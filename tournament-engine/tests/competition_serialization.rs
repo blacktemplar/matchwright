@@ -69,29 +69,26 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
         let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
         sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    sm.apply_transition(AddPhase::new(
-        phase_id(),
-        PhasePlugins::new(
-            Box::new(SingleElimination::new()),
-            vec![
-                Box::new(LaterFirstLoss),
-                Box::new(MorePoints),
-                Box::new(MoreBuchholz),
-                Box::new(MoreSonnebornBerger),
-                Box::new(MoreBuchholzOfBuchholz),
-            ],
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(BuchholzCalculator),
-                Box::new(SONNEBORN_BERGER),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = PhasePlugins::new(SingleElimination::new())
+        .rank_by(LaterFirstLoss)
+        .rank_by(MorePoints)
+        .rank_by(MoreBuchholz)
+        .rank_by(MoreSonnebornBerger)
+        .rank_by(MoreBuchholzOfBuchholz)
+        .calculate(RoundOfFirstLossCalculator)
+        .unwrap()
+        .calculate(WinsDrawsLossesCalculator)
+        .unwrap()
+        .calculate(THREE_ONE)
+        .unwrap()
+        .calculate(BuchholzCalculator)
+        .unwrap()
+        .calculate(SONNEBORN_BERGER)
+        .unwrap()
+        .calculate(BuchholzOfBuchholzCalculator)
+        .unwrap();
+    sm.apply_transition(AddPhase::new(phase_id(), plugins))
+        .unwrap();
     sm
 }
 
@@ -358,16 +355,11 @@ fn a_competition_with_a_bye_round_trips() {
         let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
         sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    sm.apply_transition(AddPhase::new(
-        phase_id(),
-        PhasePlugins::new(
-            Box::new(SingleElimination::new()),
-            Vec::new(),
-            vec![Box::new(WinsDrawsLossesCalculator)],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = PhasePlugins::new(SingleElimination::new())
+        .calculate(WinsDrawsLossesCalculator)
+        .unwrap();
+    sm.apply_transition(AddPhase::new(phase_id(), plugins))
+        .unwrap();
     sm.apply_transition(StartCompetition).unwrap();
     let bye = sm.current().phases()[&phase_id()]
         .data()

@@ -1,8 +1,10 @@
+use std::fmt::{self, Display, Formatter};
+
 use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::PhaseData,
+    entities::competition::{Annotated, Match, PhaseData},
     plugins::{
         facts::MatchAnnotation,
         metrics_calculator::{
@@ -142,6 +144,31 @@ impl KnockoutRound {
     }
 }
 
+/// Shows the round by its fraction of the final, e.g. `Final`, `Quarterfinals`, `16th-finals`,
+/// or `Third place`.
+impl Display for KnockoutRound {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.fraction_of_final() {
+            None => f.write_str("Third place"),
+            Some(1) => f.write_str("Final"),
+            Some(2) => f.write_str("Semifinals"),
+            Some(4) => f.write_str("Quarterfinals"),
+            Some(fraction) => write!(f, "{fraction}{}-finals", ordinal_suffix(fraction)),
+        }
+    }
+}
+
+/// The English ordinal suffix of `n`, e.g. "nd" for 32.
+fn ordinal_suffix(n: u32) -> &'static str {
+    match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    }
+}
+
 #[register]
 impl PhaseFormat for SingleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
@@ -154,6 +181,12 @@ impl PhaseFormat for SingleElimination {
     /// Every match has to produce a winner that advances to the next round.
     fn allows_draws(&self) -> bool {
         false
+    }
+
+    fn stage(&self, r#match: &Match) -> Option<String> {
+        r#match
+            .annotation::<KnockoutRound>()
+            .map(ToString::to_string)
     }
 }
 
@@ -183,9 +216,40 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::entities::competition::{
-        Annotated, Match, MatchResult, Phase, PhaseBuilder, RankingId,
-    };
+    use crate::entities::competition::{MatchResult, Phase, PhaseBuilder, RankingId};
+
+    #[test]
+    fn knockout_rounds_are_named_by_their_fraction_of_the_final() {
+        let names = [2, 4, 8, 16, 32, 64, 128, 1024]
+            .map(|entrants| KnockoutRound::RoundOf(entrants).to_string());
+
+        assert_eq!(
+            names,
+            [
+                "Final",
+                "Semifinals",
+                "Quarterfinals",
+                "8th-finals",
+                "16th-finals",
+                "32nd-finals",
+                "64th-finals",
+                "512th-finals"
+            ]
+        );
+        assert_eq!(KnockoutRound::ThirdPlace.to_string(), "Third place");
+    }
+
+    #[test]
+    fn ordinal_suffixes_follow_english_rules() {
+        let suffixes = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 111, 112, 1001].map(ordinal_suffix);
+
+        assert_eq!(
+            suffixes,
+            [
+                "st", "nd", "rd", "th", "th", "th", "th", "st", "nd", "rd", "th", "th", "st"
+            ]
+        );
+    }
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {

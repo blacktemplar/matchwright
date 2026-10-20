@@ -7,11 +7,11 @@ use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
+    entities::competition::{Bye, Match, PhaseData, RankingId},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -50,12 +50,7 @@ impl RankingCriterion for LaterFirstLoss {
     }
 }
 
-#[register]
-impl SliceRanker for LaterFirstLoss {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(LaterFirstLoss);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(

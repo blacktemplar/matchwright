@@ -435,8 +435,9 @@ additive, and since settling is not part of the log it can change freely.
 ## The plugin catalog
 
 *Implemented by `plugin-factory`. The CLI configures phases through a generic
-questionnaire driven by the schemas and a `Draft`; its presets are a format
-with every other question answered as offered, i.e. as the format recommends.*
+questionnaire driven by the schemas and a `Draft`; `add-phase <FORMAT>` looks
+the format up in the catalog and answers every other question as offered, i.e.
+as the format recommends.*
 
 Every consumer that configures a phase has to know every plugin: the CLI holds a
 table of labels, descriptions and default parameters, and a plugin of another

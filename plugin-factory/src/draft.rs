@@ -95,10 +95,10 @@ use crate::{
 ///         (FieldKind::Optional(inner), _) if !answer.is_null() => {
 ///             plugin_fields(inner, answer, at, lines);
 ///         }
-///         (FieldKind::List { element, .. }, Value::Array(answers)) => {
+///         (FieldKind::List { axis, .. }, Value::Array(answers)) => {
 ///             for (index, answer) in answers.iter().enumerate() {
 ///                 let path = at.clone().index(index);
-///                 plugin_fields(element, answer, &path, lines);
+///                 plugin_fields(&FieldKind::Plugin(*axis), answer, &path, lines);
 ///             }
 ///         }
 ///         (FieldKind::Plugin(axis), _) => {
@@ -985,10 +985,7 @@ impl Display for Problem {
 fn slot(kind: &FieldKind) -> Option<(AnyAxis, bool)> {
     match unwrapped(kind) {
         FieldKind::Plugin(axis) => Some((*axis, false)),
-        FieldKind::List { element, .. } => match unwrapped(element) {
-            FieldKind::Plugin(axis) => Some((*axis, true)),
-            _ => None,
-        },
+        FieldKind::List { axis, .. } => Some((*axis, true)),
         _ => None,
     }
 }
@@ -1030,7 +1027,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
     for segment in segments {
         position = match segment {
             Segment::Index(index) => {
-                let (FieldKind::List { element, .. }, Some(Value::Array(answers))) =
+                let (FieldKind::List { axis, .. }, Some(Value::Array(answers))) =
                     (unwrapped(&position.kind), &position.answer)
                 else {
                     return Err(unknown());
@@ -1040,7 +1037,7 @@ fn locate(schema: &Schema, answers: &Config, path: &Path) -> Result<Position, Co
                 }
                 Position {
                     field: None,
-                    kind: (**element).clone(),
+                    kind: FieldKind::Plugin(*axis),
                     answer: answers.get(*index).cloned(),
                 }
             }
@@ -1189,9 +1186,10 @@ impl Tree {
     fn add_answer(&mut self, kind: &FieldKind, answer: &Value, path: Path, parent: &Path) {
         match (kind, answer) {
             (FieldKind::Optional(inner), _) => self.add_answer(inner, answer, path, parent),
-            (FieldKind::List { element, .. }, Value::Array(answers)) => {
+            (FieldKind::List { axis, .. }, Value::Array(answers)) => {
+                let element = FieldKind::Plugin(*axis);
                 for (index, answer) in answers.iter().enumerate() {
-                    self.add_answer(element, answer, path.clone().index(index), parent);
+                    self.add_answer(&element, answer, path.clone().index(index), parent);
                 }
             }
             (FieldKind::Plugin(axis), _) => {

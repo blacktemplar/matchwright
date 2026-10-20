@@ -80,28 +80,21 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
         sm.apply_transition(AddEntrant::new(Entrant::new(id)))
             .unwrap();
     }
-    sm.apply_transition(AddPhase::new(
-        phase_id(),
-        PhasePlugins::new(
-            Box::new(RandomRounds::new(ROUNDS)),
-            vec![
-                Box::new(MorePoints),
-                Box::new(MoreBuchholz),
-                Box::new(MoreSonnebornBerger),
-                Box::new(MoreBuchholzOfBuchholz),
-            ],
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(BuchholzCalculator),
-                Box::new(SONNEBORN_BERGER),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = || {
+        PhasePlugins::new(RandomRounds::new(ROUNDS))
+            .rank_by(MorePoints)
+            .rank_by(MoreBuchholz)
+            .rank_by(MoreSonnebornBerger)
+            .rank_by(MoreBuchholzOfBuchholz)
+            .calculate(RoundOfFirstLossCalculator)?
+            .calculate(WinsDrawsLossesCalculator)?
+            .calculate(THREE_ONE)?
+            .calculate(BuchholzCalculator)?
+            .calculate(SONNEBORN_BERGER)?
+            .calculate(BuchholzOfBuchholzCalculator)
+    };
+    sm.apply_transition(AddPhase::new(phase_id(), plugins().unwrap()))
+        .unwrap();
     // this creates the rankings, initializes all metrics and schedules the matches of all rounds
     sm.apply_transition(StartCompetition).unwrap();
     // every single result updates all metrics and reranks the whole phase

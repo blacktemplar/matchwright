@@ -1,10 +1,13 @@
-use std::num::NonZeroU32;
+use std::{
+    fmt::{self, Display, Formatter},
+    num::NonZeroU32,
+};
 
 use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{PhaseData, Team},
+    entities::competition::{Annotated, Match, PhaseData, Team},
     plugins::{
         facts::MatchAnnotation,
         metrics_calculator::{
@@ -141,6 +144,23 @@ pub enum DoubleEliminationRound {
 #[typetag::serde(name = "tournament_engine::double_elimination_round")]
 impl TypeMapValue for DoubleEliminationRound {}
 
+/// Shows the round by its bracket, e.g. `Winners round 2`, `Losers final` or `Grand final`.
+impl Display for DoubleEliminationRound {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let (bracket, round, rounds) = match *self {
+            Self::Winners { round, rounds } => ("Winners", round, rounds),
+            Self::Losers { round, rounds } => ("Losers", round, rounds),
+            Self::GrandFinal => return f.write_str("Grand final"),
+            Self::GrandFinalReset => return f.write_str("Grand final reset"),
+        };
+        if round == rounds {
+            write!(f, "{bracket} final")
+        } else {
+            write!(f, "{bracket} round {round}")
+        }
+    }
+}
+
 #[register]
 impl PhaseFormat for DoubleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
@@ -153,6 +173,12 @@ impl PhaseFormat for DoubleElimination {
     /// Every match has to produce a winner that advances.
     fn allows_draws(&self) -> bool {
         false
+    }
+
+    fn stage(&self, r#match: &Match) -> Option<String> {
+        r#match
+            .annotation::<DoubleEliminationRound>()
+            .map(ToString::to_string)
     }
 }
 
@@ -242,9 +268,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{
-            Annotated, Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId,
-        },
+        entities::competition::{MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
         plugins::{
             metrics_calculator::{
                 round_of_elimination::{
@@ -255,6 +279,43 @@ mod tests {
             ranker::HierarchicalRanker,
         },
     };
+
+    #[test]
+    fn double_elimination_rounds_are_named_by_their_bracket() {
+        let names = [
+            Winners {
+                round: 1,
+                rounds: 3,
+            },
+            Winners {
+                round: 3,
+                rounds: 3,
+            },
+            Losers {
+                round: 2,
+                rounds: 4,
+            },
+            Losers {
+                round: 4,
+                rounds: 4,
+            },
+            GrandFinal,
+            GrandFinalReset,
+        ]
+        .map(|round| round.to_string());
+
+        assert_eq!(
+            names,
+            [
+                "Winners round 1",
+                "Winners final",
+                "Losers round 2",
+                "Losers final",
+                "Grand final",
+                "Grand final reset"
+            ]
+        );
+    }
 
     /// A double elimination between `num_players` entrants with its first matches scheduled,
     /// ranked by the round of elimination and then by the losses.

@@ -41,6 +41,13 @@ pub trait PhaseFormat: Plugin + DynClone {
     fn allows_draws(&self) -> bool {
         true
     }
+
+    /// The name of the stage of the phase `match` belongs to, e.g. "Semifinals", or `None` if
+    /// this format names no stages. Read from the annotations the format wrote on `match`.
+    fn stage(&self, r#match: &Match) -> Option<String> {
+        let _ = r#match;
+        None
+    }
 }
 
 dyn_clone::clone_trait_object!(PhaseFormat);

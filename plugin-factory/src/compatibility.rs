@@ -734,6 +734,23 @@ mod tests {
     }
 
     #[test]
+    fn a_plugin_inserted_into_a_set_runs_after_what_it_requires() {
+        let mut parts = Parts::default();
+        parts.insert(Box::new(Deriving)).unwrap();
+        parts.insert(Box::new(Leaf)).unwrap();
+
+        assert_eq!(
+            format!("{:?}", parts.iter().collect::<Vec<_>>()),
+            "[Leaf, Deriving]"
+        );
+        assert_eq!(
+            parts.insert(Box::new(Leaf)).err(),
+            Some(DependencyOrderedSetError::Duplicate { position: 2 })
+        );
+        assert_eq!(parts.len(), 2, "a rejected plugin leaves the set as it was");
+    }
+
+    #[test]
     fn plugins_are_ordered_by_any_fact_they_require() {
         let declarations = [
             declared("requiring", |declaration| {

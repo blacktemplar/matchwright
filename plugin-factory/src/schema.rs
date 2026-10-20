@@ -6,10 +6,7 @@
 //! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
 //! program reads the questions of a plugin before it is chosen and never names one.
 
-use std::{
-    collections::BTreeSet,
-    fmt::{self, Debug, Formatter},
-};
+use std::fmt::{self, Debug, Formatter};
 
 pub use plugin_factory_derive::Configurable;
 use serde::{
@@ -90,8 +87,8 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 /// takes.
 ///
 /// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
-/// a plugin axis, `Option`, `Vec` and `BTreeSet` of any of them, and
-/// [`DependencyOrderedSet`]`<dyn Trait>`. A `Vec` takes an ordered list, a `BTreeSet` and a
+/// a plugin axis, `Option` of any of them, and `Vec<Box<dyn Trait>>` and
+/// [`DependencyOrderedSet`]`<dyn Trait>` for lists of plugins: a `Vec` takes an ordered list, a
 /// `DependencyOrderedSet` an unordered one. A type that deserializes from one of these answers,
 /// such as a newtype checking its value, implements it to be a field.
 pub trait FieldType {
@@ -148,21 +145,9 @@ impl<T: FieldType> FieldType for Option<T> {
     }
 }
 
-impl<T: FieldType> FieldType for Vec<T> {
+impl<A: Axis + ?Sized> FieldType for Vec<Box<A>> {
     fn kind() -> FieldKind {
-        FieldKind::list(T::kind())
-    }
-
-    fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
-        for answer in self {
-            answer.plugins(plugins);
-        }
-    }
-}
-
-impl<A: Axis + ?Sized> FieldType for DependencyOrderedSet<A> {
-    fn kind() -> FieldKind {
-        FieldKind::set(FieldKind::plugin::<A>())
+        FieldKind::list::<A>()
     }
 
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
@@ -172,15 +157,14 @@ impl<A: Axis + ?Sized> FieldType for DependencyOrderedSet<A> {
     }
 }
 
-// `HashSet` is left out on purpose: it serializes in an order that differs from run to run.
-impl<T: FieldType + Ord> FieldType for BTreeSet<T> {
+impl<A: Axis + ?Sized> FieldType for DependencyOrderedSet<A> {
     fn kind() -> FieldKind {
-        FieldKind::set(T::kind())
+        FieldKind::set::<A>()
     }
 
     fn plugins<'a>(&'a self, plugins: &mut Vec<&'a dyn Plugin>) {
-        for answer in self {
-            answer.plugins(plugins);
+        for plugin in self {
+            plugin.plugins(plugins);
         }
     }
 }
@@ -285,17 +269,44 @@ impl<A: Axis + ?Sized> DependencyOrderedSet<A> {
     /// and [`DependencyOrderedSetError::Cyclic`] if plugins require facts of each other in a
     /// cycle, so that no order lets them run one after another.
     pub fn new(plugins: Vec<Box<A>>) -> Result<Self, DependencyOrderedSetError> {
-        if let Some(position) = first_repeated(&plugins, |a, b| a.id() == b.id()) {
+        let order = Self::order(&plugins)?;
+        Ok(Self::arranged(plugins, order))
+    }
+
+    /// Adds `plugin`, putting the set into dependency order again.
+    ///
+    /// # Errors
+    /// Returns what [`Self::new`] returns for the plugins of the set followed by `plugin`, and
+    /// leaves the set unchanged then.
+    pub fn insert(&mut self, plugin: Box<A>) -> Result<(), DependencyOrderedSetError> {
+        let mut plugins = std::mem::take(&mut self.0);
+        plugins.push(plugin);
+        match Self::order(&plugins) {
+            Ok(order) => {
+                *self = Self::arranged(plugins, order);
+                Ok(())
+            }
+            Err(error) => {
+                plugins.pop();
+                self.0 = plugins;
+                Err(error)
+            }
+        }
+    }
+
+    /// The order `plugins` run in, as indices into it, see [`Self::new`].
+    fn order(plugins: &[Box<A>]) -> Result<Vec<usize>, DependencyOrderedSetError> {
+        if let Some(position) = first_repeated(plugins, |a, b| a.id() == b.id()) {
             return Err(DependencyOrderedSetError::Duplicate { position });
         }
-        let order = compatibility::order(
-            &plugins
-                .iter()
-                .map(|plugin| plugin.as_plugin())
-                .collect::<Vec<_>>(),
-        )?;
+        let plugins: Vec<_> = plugins.iter().map(|plugin| plugin.as_plugin()).collect();
+        Ok(compatibility::order(&plugins)?)
+    }
+
+    /// The set of `plugins` arranged in `order`, which holds every index into them once.
+    fn arranged(plugins: Vec<Box<A>>, order: Vec<usize>) -> Self {
         let mut plugins: Vec<_> = plugins.into_iter().map(Some).collect();
-        Ok(Self(
+        Self(
             order
                 .into_iter()
                 .map(|index| {
@@ -304,7 +315,7 @@ impl<A: Axis + ?Sized> DependencyOrderedSet<A> {
                         .expect("an order holds every index once")
                 })
                 .collect(),
-        ))
+        )
     }
 
     /// The plugins, in dependency order.
@@ -461,8 +472,7 @@ impl Schema {
     /// Returns [`ConfigError::UnknownField`] if a config answers a field its schema neither has
     /// nor leaves out, [`ConfigError::WrongKind`] if an answer is not one its field takes,
     /// [`ConfigError::UnknownPlugin`] if a plugin answering a field is not registered for its
-    /// axis, [`ConfigError::Duplicate`] if a list gives an answer twice, as
-    /// [`FieldKind::List`] counts answers as the same, and, if `complete`,
+    /// axis, [`ConfigError::Duplicate`] if a list gives a plugin twice, and, if `complete`,
     /// [`ConfigError::Unanswered`] if a field is unanswered, each with its path from the root.
     pub(crate) fn walk(
         &self,
@@ -575,18 +585,13 @@ pub enum FieldKind {
     Decimal,
     /// One plugin of the axis, answered by a [`PluginConfig`] naming a plugin registered for it.
     Plugin(AnyAxis),
-    /// Any number of distinct answers of the kind `element`, answered by a [`Value::Array`].
+    /// Any number of distinct plugins of the axis, answered by a [`Value::Array`] of
+    /// [`PluginConfig`]s.
     ///
-    /// Giving the same answer twice is rejected with [`ConfigError::Duplicate`]. Two plugins count
-    /// as the same if they are the same plugin, whatever they are configured with, even in a
-    /// config that is still incomplete. Other answers count as the same only in a complete
-    /// config, numbers if they are equal in value, e.g. `1` and `1.0`. Unless `ordered`, the list
-    /// is a set: the order of its answers means nothing, and a [`DependencyOrderedSet`] of plugins
-    /// puts them into the order they run in when it is built.
-    List {
-        element: Box<FieldKind>,
-        ordered: bool,
-    },
+    /// A plugin given twice is rejected with [`ConfigError::Duplicate`], whatever it is configured
+    /// with. Unless `ordered`, the list is a set: the order of its plugins means nothing, and a
+    /// [`DependencyOrderedSet`] puts them into the order they run in when it is built.
+    List { axis: AnyAxis, ordered: bool },
     /// An answer of the kind or nothing, answered by an answer of the kind or by [`Value::Null`].
     ///
     /// Being answered with nothing is being answered. An optional answer of an optional answer is
@@ -600,18 +605,18 @@ impl FieldKind {
         Self::Plugin(AnyAxis::of::<A>())
     }
 
-    /// Any number of distinct answers of the kind `element`, in an order that matters.
-    pub fn list(element: Self) -> Self {
+    /// Any number of distinct plugins of the axis `A`, in an order that matters.
+    pub const fn list<A: Axis + ?Sized>() -> Self {
         Self::List {
-            element: Box::new(element),
+            axis: AnyAxis::of::<A>(),
             ordered: true,
         }
     }
 
-    /// Any number of distinct answers of the kind `element`, in an order that does not matter.
-    pub fn set(element: Self) -> Self {
+    /// Any number of distinct plugins of the axis `A`, in an order that does not matter.
+    pub const fn set<A: Axis + ?Sized>() -> Self {
         Self::List {
-            element: Box::new(element),
+            axis: AnyAxis::of::<A>(),
             ordered: false,
         }
     }
@@ -621,12 +626,11 @@ impl FieldKind {
         Self::Optional(Box::new(answer))
     }
 
-    /// The axis of the plugins this kind of answer is made of, through lists and optional
-    /// answers, or [`None`] if it takes no plugin.
+    /// The axis of the plugins this kind of answer is made of, or [`None`] if it takes no plugin.
     pub fn axis(&self) -> Option<AnyAxis> {
         match self {
-            Self::Plugin(axis) => Some(*axis),
-            Self::List { element: inner, .. } | Self::Optional(inner) => inner.axis(),
+            Self::Plugin(axis) | Self::List { axis, .. } => Some(*axis),
+            Self::Optional(inner) => inner.axis(),
             Self::Bool | Self::Integer | Self::Decimal => None,
         }
     }
@@ -647,7 +651,8 @@ impl FieldKind {
             (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
             (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
             (Self::Optional(inner), _) => inner.walk(answer, at, complete),
-            (Self::List { element, .. }, Value::Array(answers)) => {
+            (Self::List { axis, .. }, Value::Array(answers)) => {
+                let element = Self::Plugin(*axis);
                 let walked = answers
                     .iter()
                     .enumerate()
@@ -655,8 +660,9 @@ impl FieldKind {
                         element.walk(answer, &at.clone().index(position), complete)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                // a plugin is the same plugin whatever it is configured with
                 if let Some(position) =
-                    first_repeated(&walked, |a, b| same_element(element, a, b, complete))
+                    first_repeated(&walked, |a, b| a.get("type") == b.get("type"))
                 {
                     return Err(ConfigError::Duplicate {
                         path: at.clone().index(position),
@@ -691,47 +697,6 @@ impl FieldKind {
             Self::List { .. } => names::LIST,
             Self::Optional(_) => "an optional answer",
         }
-    }
-}
-
-/// Whether `a` and `b`, walked answers of the kind `element` in one list, count as the same
-/// answer: two plugins if they are the same plugin, whatever they are configured with, and,
-/// only if `complete`, anything else as [`same_answer`] compares it.
-fn same_element(element: &FieldKind, a: &Value, b: &Value, complete: bool) -> bool {
-    match (plugin_id(element, a), plugin_id(element, b)) {
-        (Some(a), Some(b)) => a == b,
-        // an incomplete answer, e.g. a list in the list, may still become different from an
-        // equal one, while a plugin stays the plugin it is
-        _ => complete && same_answer(a, b),
-    }
-}
-
-/// The id of the plugin `answer`, a walked answer of `kind`, is, or [`None`] if it is none.
-fn plugin_id<'a>(kind: &FieldKind, answer: &'a Value) -> Option<&'a Value> {
-    match kind {
-        FieldKind::Plugin(_) => answer.get("type"),
-        FieldKind::Optional(inner) => plugin_id(inner, answer),
-        _ => None,
-    }
-}
-
-/// Whether `a` and `b` are the same answer, with numbers compared by value so that `1` is the
-/// same as `1.0`. The answers in a list are compared in order.
-fn same_answer(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        // two whole numbers are compared exactly, as an `f64` cannot hold every `i64`
-        (Value::Number(a), Value::Number(b)) => {
-            a == b || ((a.is_f64() || b.is_f64()) && a.as_f64() == b.as_f64())
-        }
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_answer(a, b))
-        }
-        (Value::Object(a), Value::Object(b)) => {
-            a.len() == b.len()
-                && a.iter()
-                    .all(|(name, a)| b.get(name).is_some_and(|b| same_answer(a, b)))
-        }
-        _ => a == b,
     }
 }
 
@@ -832,8 +797,7 @@ mod tests {
         }
     }
 
-    /// A plugin with a field without a default, so that it has to be configured, and one taking a
-    /// list of numbers.
+    /// A plugin with a field without a default, so that it has to be configured.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "threshold",
@@ -843,15 +807,12 @@ mod tests {
     struct Threshold {
         #[plugin(label = "Matches at least")]
         least: i64,
-        #[plugin(label = "Weight per round", default)]
-        weights: Vec<f64>,
     }
 
     #[register]
     impl Configured for Threshold {
         fn summary(&self) -> String {
-            let Self { least, weights } = self;
-            format!("threshold({least}, {weights:?})")
+            format!("threshold({})", self.least)
         }
     }
 
@@ -873,12 +834,10 @@ mod tests {
         fallback: Option<Box<dyn Configured>>,
     }
 
-    /// A plugin with fields taking unordered lists: of whole numbers and of plugins.
+    /// A plugin with a field taking an unordered list of plugins.
     #[derive(Debug, Serialize, Deserialize, Plugin)]
-    #[plugin(id = "pool", label = "pool", description = "a plugin taking sets")]
+    #[plugin(id = "pool", label = "pool", description = "a plugin taking a set")]
     struct Pool {
-        #[plugin(label = "Rounds")]
-        rounds: BTreeSet<i64>,
         #[plugin(label = "Members")]
         members: DependencyOrderedSet<dyn Configured>,
     }
@@ -887,13 +846,13 @@ mod tests {
     impl Configured for Pool {
         fn summary(&self) -> String {
             let members: Vec<_> = self.members.iter().map(|member| member.summary()).collect();
-            format!("pool({:?}, [{}])", self.rounds, members.join(", "))
+            format!("pool([{}])", members.join(", "))
         }
     }
 
-    /// The config of [`Pool`] answering every field with distinct answers.
+    /// The config of [`Pool`] answering its field with distinct plugins.
     fn pool() -> Config {
-        Config::new().with("rounds", vec![3, 1]).with(
+        Config::new().with(
             "members",
             vec![
                 PluginConfig::of::<Matches>(),
@@ -961,7 +920,7 @@ mod tests {
         assert_eq!(schema.field_named("by").map(Field::kind), Some(&kind));
         assert_eq!(
             schema.field_named("tie_breakers").map(Field::kind),
-            Some(&FieldKind::list(kind.clone()))
+            Some(&FieldKind::list::<dyn Configured>())
         );
         assert_eq!(
             schema.field_named("fallback").map(Field::kind),
@@ -982,16 +941,14 @@ mod tests {
     #[test]
     fn a_field_typed_as_a_set_takes_an_unordered_list() {
         let schema = Pool::schema();
-        let kind = |name| schema.field_named(name).map(Field::kind);
 
-        assert_eq!(kind("rounds"), Some(&FieldKind::set(FieldKind::Integer)));
         assert_eq!(
-            kind("members"),
-            Some(&FieldKind::set(FieldKind::plugin::<dyn Configured>()))
+            schema.field_named("members").map(Field::kind),
+            Some(&FieldKind::set::<dyn Configured>())
         );
         assert_ne!(
-            FieldKind::set(FieldKind::Integer),
-            FieldKind::list(FieldKind::Integer)
+            FieldKind::set::<dyn Configured>(),
+            FieldKind::list::<dyn Configured>()
         );
         assert_eq!(
             entry_of::<Pool>().sub_axes(),
@@ -1003,7 +960,7 @@ mod tests {
     fn a_set_of_distinct_answers_is_built() {
         assert_eq!(
             built::<Pool>(pool()).as_deref(),
-            Ok("pool({1, 3}, [matches, points(1, 3, true, 0.5)])")
+            Ok("pool([matches, points(1, 3, true, 0.5)])")
         );
     }
 
@@ -1014,10 +971,6 @@ mod tests {
             _ => None,
         };
 
-        assert_eq!(
-            duplicate(pool().with("rounds", vec![1, 2, 1])).as_deref(),
-            Some("rounds[2]")
-        );
         // a plugin is the same plugin whatever it is configured with
         assert_eq!(
             duplicate(pool().with(
@@ -1051,36 +1004,20 @@ mod tests {
     }
 
     #[test]
-    fn another_answer_repeated_in_a_list_is_no_error_unless_the_config_is_to_be_complete() {
-        let config = Config::new()
-            .with("least", 2)
-            .with("weights", vec![1.0, 1.0]);
-
-        assert!(
-            Threshold::schema()
-                .walk(&config, &Path::ROOT, false)
-                .is_ok()
+    fn a_plugin_repeated_in_an_ordered_list_is_an_error_too() {
+        let config = ranker().with(
+            "tie_breakers",
+            vec![
+                PluginConfig::of::<Matches>(),
+                PluginConfig::configured(Points::ID, points()),
+                PluginConfig::of::<Matches>(),
+            ],
         );
+
         assert_eq!(
-            Threshold::schema().walk(&config, &Path::ROOT, true),
+            built::<Ranker>(config),
             Err(ConfigError::Duplicate {
-                path: Path::of("weights").index(1),
-            })
-        );
-    }
-
-    #[test]
-    fn an_answer_repeated_in_an_ordered_list_is_an_error_too() {
-        let config = Config::new().with("least", 2);
-
-        assert_eq!(
-            built::<Threshold>(config.clone().with("weights", vec![2.0, 1.0])).as_deref(),
-            Ok("threshold(2, [2.0, 1.0])")
-        );
-        assert_eq!(
-            built::<Threshold>(config.with("weights", json!([1, 2.0, 1.0]))),
-            Err(ConfigError::Duplicate {
-                path: Path::of("weights").index(2),
+                path: Path::of("tie_breakers").index(2),
             })
         );
     }
@@ -1129,27 +1066,14 @@ mod tests {
     #[test]
     fn a_field_without_a_default_has_to_be_answered() {
         assert_eq!(
-            built::<Threshold>(Config::new().with("weights", json!([]))),
+            built::<Threshold>(Config::new()),
             Err(ConfigError::Unanswered {
                 path: Path::of("least"),
             })
         );
         assert_eq!(
-            built::<Threshold>(Config::new().with("least", 2).with("weights", json!([])))
-                .as_deref(),
-            Ok("threshold(2, [])")
-        );
-    }
-
-    #[test]
-    fn a_field_taking_a_list_is_answered_by_any_number_of_answers() {
-        let config = Config::new()
-            .with("least", 2)
-            .with("weights", vec![1.0, 0.5]);
-
-        assert_eq!(
-            built::<Threshold>(config).as_deref(),
-            Ok("threshold(2, [1.0, 0.5])")
+            built::<Threshold>(Config::new().with("least", 2)).as_deref(),
+            Ok("threshold(2)")
         );
     }
 
@@ -1185,15 +1109,13 @@ mod tests {
 
     #[test]
     fn an_answer_of_another_kind_in_a_list_is_reported_by_its_position() {
-        let config = Config::new()
-            .with("least", 2)
-            .with("weights", json!([1.0, true]));
+        let config = ranker().with("tie_breakers", json!([PluginConfig::of::<Matches>(), true]));
 
         assert_eq!(
-            built::<Threshold>(config),
+            built::<Ranker>(config),
             Err(ConfigError::WrongKind {
-                path: Path::of("weights").index(1),
-                expected: "a number",
+                path: Path::of("tie_breakers").index(1),
+                expected: "one plugin",
                 found: "yes or no",
             })
         );
@@ -1221,16 +1143,14 @@ mod tests {
                 "tie_breakers",
                 vec![
                     PluginConfig::of::<Matches>(),
-                    PluginConfig::of::<Threshold>()
-                        .with("least", 4)
-                        .with("weights", json!([])),
+                    PluginConfig::of::<Threshold>().with("least", 4),
                 ],
             )
             .with("fallback", PluginConfig::of::<Matches>());
 
         assert_eq!(
             built::<Ranker>(config).as_deref(),
-            Ok("ranker(points(2, 3, true, 0.5), [matches, threshold(4, [])], matches)")
+            Ok("ranker(points(2, 3, true, 0.5), [matches, threshold(4)], matches)")
         );
     }
 
@@ -1288,7 +1208,7 @@ mod tests {
             "tie_breakers",
             vec![
                 PluginConfig::of::<Matches>(),
-                PluginConfig::of::<Threshold>().with("weights", json!([])),
+                PluginConfig::of::<Threshold>(),
             ],
         );
 
@@ -1368,19 +1288,16 @@ mod tests {
         assert_eq!(
             walked(
                 entry_of::<Threshold>(),
-                Config::new().with("least", 2).with("weights", json!([])),
+                Config::new().with("least", 2),
                 true
             ),
-            Ok(json!({"least": 2, "weights": []}))
+            Ok(json!({"least": 2}))
         );
     }
 
     #[test]
     fn an_unanswered_field_is_no_error_unless_the_config_is_to_be_complete() {
-        let config = ranker().with(
-            "tie_breakers",
-            vec![PluginConfig::of::<Threshold>().with("weights", vec![1.0])],
-        );
+        let config = ranker().with("tie_breakers", vec![PluginConfig::of::<Threshold>()]);
 
         assert_eq!(
             Ranker::schema()
@@ -1388,7 +1305,7 @@ mod tests {
                 .map(Value::from),
             Ok(json!({
                 "by": {"type": "matches", "value": {}},
-                "tie_breakers": [{"type": "threshold", "value": {"weights": [1.0]}}],
+                "tie_breakers": [{"type": "threshold", "value": {}}],
                 "fallback": null
             }))
         );

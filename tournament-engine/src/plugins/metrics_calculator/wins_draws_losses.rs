@@ -1,17 +1,14 @@
-use std::{
-    fmt::{self, Display, Formatter},
-    num::NonZeroU32,
-};
+use std::fmt::{self, Display, Formatter};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId, ResultOfTeam, Team},
+    entities::competition::{Bye, Match, PhaseData, RankingId, ResultOfTeam, Team},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -33,7 +30,7 @@ impl WinsDrawsLosses {
     /// How many matches the ranking played, i.e. how many of its matches got a result reported,
     /// byes not included.
     ///
-    /// The same count as the length of [`Ranking::played_matches`].
+    /// The same count as the length of [`Ranking::played_matches`](crate::Ranking::played_matches).
     pub const fn matches_played(&self) -> u32 {
         self.wins + self.draws + self.losses
     }
@@ -66,12 +63,7 @@ impl RankingCriterion for MoreWins {
     }
 }
 
-#[register]
-impl SliceRanker for MoreWins {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MoreWins);
 
 /// Ranks by the draws of [`WinsDrawsLosses`], where more draws are better.
 ///
@@ -92,12 +84,7 @@ impl RankingCriterion for MoreDraws {
     }
 }
 
-#[register]
-impl SliceRanker for MoreDraws {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MoreDraws);
 
 /// Ranks by the losses of [`WinsDrawsLosses`], where fewer losses are better.
 #[derive(Debug, Clone, Serialize, Deserialize, Plugin)]
@@ -116,12 +103,7 @@ impl RankingCriterion for FewerLosses {
     }
 }
 
-#[register]
-impl SliceRanker for FewerLosses {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(FewerLosses);
 
 /// Ranks by the matches a ranking played, see [`WinsDrawsLosses::matches_played`], where having
 /// played fewer of them is better.
@@ -146,12 +128,7 @@ impl RankingCriterion for FewerMatchesPlayed {
     }
 }
 
-#[register]
-impl SliceRanker for FewerMatchesPlayed {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(FewerMatchesPlayed);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(

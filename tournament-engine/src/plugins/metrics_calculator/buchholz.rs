@@ -1,21 +1,16 @@
-use std::{
-    fmt::{self, Debug, Display, Formatter},
-    num::NonZeroU32,
-};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use super::{Metric, MetricColumn, OldMetrics};
 use crate::{
-    entities::competition::{
-        Bye, Match, MatchResult, PhaseData, Ranking, RankingId, ResultOfTeam, Team,
-    },
+    entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, ResultOfTeam, Team},
     map::Map,
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, points::Points},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -61,12 +56,7 @@ impl RankingCriterion for MoreBuchholz {
     }
 }
 
-#[register]
-impl SliceRanker for MoreBuchholz {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MoreBuchholz);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(
@@ -162,12 +152,7 @@ impl RankingCriterion for MoreBuchholzOfBuchholz {
     }
 }
 
-#[register]
-impl SliceRanker for MoreBuchholzOfBuchholz {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MoreBuchholzOfBuchholz);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
 #[plugin(
@@ -270,12 +255,7 @@ impl RankingCriterion for MoreSonnebornBerger {
     }
 }
 
-#[register]
-impl SliceRanker for MoreSonnebornBerger {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MoreSonnebornBerger);
 
 /// Offered with the classical weights: the points of a beaten opponent count fully, those of an
 /// opponent that was played to a draw count half.

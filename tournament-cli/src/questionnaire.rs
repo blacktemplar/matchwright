@@ -275,10 +275,10 @@ fn describe_answer(kind: &FieldKind, answer: &Value) -> String {
         (_, Value::Bool(true)) => "yes".to_owned(),
         (_, Value::Bool(false)) => "no".to_owned(),
         (FieldKind::Optional(inner), _) => describe_answer(inner, answer),
-        (FieldKind::List { element, .. }, Value::Array(answers)) => {
+        (FieldKind::List { axis, .. }, Value::Array(answers)) => {
             let answers: Vec<_> = answers
                 .iter()
-                .map(|answer| describe_answer(element, answer))
+                .map(|answer| describe(*axis, answer).unwrap_or_else(|| answer.to_string()))
                 .collect();
             format!("[{}]", answers.join(", "))
         }
@@ -286,6 +286,41 @@ fn describe_answer(kind: &FieldKind, answer: &Value) -> String {
             describe(*axis, answer).unwrap_or_else(|| answer.to_string())
         }
         _ => answer.to_string(),
+    }
+}
+
+/// The answer of `kind` that `text` writes, as an operator types it: `yes` or `no` (or `true` or
+/// `false`) for yes or no, a number for a number, and `none` for nothing where a field takes it;
+/// [`None`] if `text` writes none, and for a kind of answer that is not typed, such as a plugin.
+///
+/// # Examples
+/// ```
+/// use plugin_factory::{config::Value, schema::FieldKind};
+/// use tournament_cli::questionnaire::parse_answer;
+///
+/// assert_eq!(
+///     parse_answer(&FieldKind::Bool, "no"),
+///     Some(Value::from(false))
+/// );
+/// assert_eq!(parse_answer(&FieldKind::Integer, "7"), Some(Value::from(7)));
+/// assert_eq!(parse_answer(&FieldKind::Integer, "seven"), None);
+/// ```
+pub fn parse_answer(kind: &FieldKind, text: &str) -> Option<Value> {
+    match kind {
+        FieldKind::Bool => match text.to_lowercase().as_str() {
+            "yes" | "true" => Some(Value::from(true)),
+            "no" | "false" => Some(Value::from(false)),
+            _ => None,
+        },
+        FieldKind::Integer => text.parse::<i64>().ok().map(Value::from),
+        FieldKind::Decimal => text
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+            .map(Value::from),
+        FieldKind::Optional(_) if text.eq_ignore_ascii_case("none") => Some(Value::Null),
+        FieldKind::Optional(inner) => parse_answer(inner, text),
+        FieldKind::Plugin(_) | FieldKind::List { .. } => None,
     }
 }
 
@@ -489,16 +524,16 @@ impl<T: Configurable> Asker<'_, T> {
                     Value::Null
                 }
             },
-            FieldKind::List { element, ordered } => {
+            FieldKind::List { ordered, .. } => {
                 let defaults = match default {
                     Some(Value::Array(defaults)) => defaults,
                     _ => Vec::new(),
                 };
                 self.draft.set(path, Value::Array(Vec::new()))?;
-                return match (&**element, ordered) {
-                    (FieldKind::Plugin(_), false) => self.plugin_set(path, question, &defaults),
-                    (FieldKind::Plugin(_), true) => self.plugin_list(path, question, &defaults),
-                    _ => self.list(element, path, question, &defaults),
+                return if *ordered {
+                    self.plugin_list(path, question, &defaults)
+                } else {
+                    self.plugin_set(path, question, &defaults)
                 };
             }
         };
@@ -645,35 +680,6 @@ impl<T: Configurable> Asker<'_, T> {
                 .iter()
                 .find(|default| default.plugin() == candidate.entry().id());
             self.put(candidate.entry(), &at, default)?;
-        }
-        Ok(())
-    }
-
-    /// Asks `question` for the answers of `element` of the list at `path` one after another, until
-    /// the operator adds no further one, each starting out at the answer of `defaults` at its
-    /// position.
-    fn list(
-        &mut self,
-        element: &FieldKind,
-        path: &Path,
-        question: &Question,
-        defaults: &[Value],
-    ) -> Result<(), Error> {
-        for position in 0.. {
-            let more = self.prompter.confirm(
-                &question.relabelled(format!(
-                    "{}: add answer #{}?",
-                    question.label(),
-                    position + 1
-                )),
-                Some(position < defaults.len()),
-            )?;
-            if !more {
-                break;
-            }
-            let numbered = question.relabelled(format!("{} #{}", question.label(), position + 1));
-            let default = defaults.get(position).cloned();
-            self.answer(element, &path.clone().index(position), &numbered, default)?;
         }
         Ok(())
     }

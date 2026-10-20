@@ -1,18 +1,15 @@
-use std::{
-    fmt::{self, Display, Formatter},
-    num::NonZeroU32,
-};
+use std::fmt::{self, Display, Formatter};
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use super::{Metric, MetricColumn, OldMetrics};
 use crate::{
-    entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
+    entities::competition::{Bye, Match, PhaseData, RankingId},
     plugins::{
         facts::CalculatesMetric,
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
-        ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+        ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
 };
@@ -52,12 +49,7 @@ impl RankingCriterion for MorePoints {
     }
 }
 
-#[register]
-impl SliceRanker for MorePoints {
-    fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-        rank_by(self, slice);
-    }
-}
+crate::register_criterion!(MorePoints);
 
 /// Calculates the [`Points`] of a ranking from its [`WinsDrawsLosses`], which therefore have to
 /// be calculated before.

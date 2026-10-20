@@ -62,7 +62,7 @@ impl Transition<Competition> for ReportMatchResult {
         if r#match.is_finished() {
             return Err(Box::new(ReportMatchResultError::MatchAlreadyFinished));
         }
-        if self.match_result == MatchResult::Draw && !phase.phase_format().allows_draws() {
+        if self.match_result == MatchResult::Draw && !phase.format().allows_draws() {
             return Err(Box::new(ReportMatchResultError::DrawNotAllowed));
         }
         Ok(())

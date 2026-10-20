@@ -79,7 +79,6 @@ fn full_tournament() {
     let mut sm = CompetitionStateMachine::default();
     let seed = Seed::new(rng().random());
     let phase_id = PhaseId::new(Uuid::new_v4());
-    let phase_format = Box::new(SingleElimination::new());
 
     sm.apply_transition(SetCompetitionSeed::new(seed)).unwrap();
     sm.apply_transition(AddEntrant::new(entrant_a.clone()))
@@ -94,22 +93,20 @@ fn full_tournament() {
         .unwrap();
     sm.apply_transition(RemoveEntrant::new(entrant_c.id()))
         .unwrap();
-    sm.apply_transition(AddPhase::new(
-        phase_id,
-        PhasePlugins::new(
-            phase_format,
-            vec![Box::new(LaterFirstLoss)],
-            vec![
-                Box::new(RoundOfFirstLossCalculator),
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(BuchholzCalculator),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = PhasePlugins::new(SingleElimination::new())
+        .rank_by(LaterFirstLoss)
+        .calculate(RoundOfFirstLossCalculator)
+        .unwrap()
+        .calculate(WinsDrawsLossesCalculator)
+        .unwrap()
+        .calculate(THREE_ONE)
+        .unwrap()
+        .calculate(BuchholzCalculator)
+        .unwrap()
+        .calculate(BuchholzOfBuchholzCalculator)
+        .unwrap();
+    sm.apply_transition(AddPhase::new(phase_id, plugins))
+        .unwrap();
     sm.apply_transition(StartCompetition).unwrap();
 
     // asserts for the state after the competition start
@@ -366,19 +363,14 @@ fn byes_are_scored_when_they_are_scheduled() {
     for _ in 0..3 {
         sm.apply_transition(AddEntrant::new(entrant())).unwrap();
     }
-    sm.apply_transition(AddPhase::new(
-        phase_id,
-        PhasePlugins::new(
-            Box::new(RoundRobin),
-            vec![Box::new(MorePoints)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE.with_points_for_bye(3.0)),
-            ],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = PhasePlugins::new(RoundRobin)
+        .rank_by(MorePoints)
+        .calculate(WinsDrawsLossesCalculator)
+        .unwrap()
+        .calculate(THREE_ONE.with_points_for_bye(3.0))
+        .unwrap();
+    sm.apply_transition(AddPhase::new(phase_id, plugins))
+        .unwrap();
 
     sm.apply_transition(StartCompetition).unwrap();
 
@@ -401,16 +393,12 @@ fn single_elimination_rejects_a_draw() {
     let phase_id = PhaseId::new(Uuid::new_v4());
     sm.apply_transition(AddEntrant::new(entrant())).unwrap();
     sm.apply_transition(AddEntrant::new(entrant())).unwrap();
-    sm.apply_transition(AddPhase::new(
-        phase_id,
-        PhasePlugins::new(
-            Box::new(SingleElimination::new()),
-            vec![Box::new(LaterFirstLoss)],
-            vec![Box::new(RoundOfFirstLossCalculator)],
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+    let plugins = PhasePlugins::new(SingleElimination::new())
+        .rank_by(LaterFirstLoss)
+        .calculate(RoundOfFirstLossCalculator)
+        .unwrap();
+    sm.apply_transition(AddPhase::new(phase_id, plugins))
+        .unwrap();
     sm.apply_transition(StartCompetition).unwrap();
     let final_id = *sm.current().phases()[&phase_id]
         .data()

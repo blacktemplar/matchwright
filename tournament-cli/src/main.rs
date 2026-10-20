@@ -97,7 +97,7 @@ fn run(mut session: Session) -> Result<(), Error> {
         // a session never asks the operator anything, so a phase that is to be configured is
         // configured here and reaches the session as the configuration it produced
         let outcome = match command {
-            Command::AddPhase { preset: None } => add_configured_phase(&mut session),
+            Command::AddPhase { format: None, .. } => add_configured_phase(&mut session),
             command => session.execute(command).map_err(Error::Session),
         };
         match outcome {

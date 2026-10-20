@@ -75,21 +75,20 @@ dyn_clone::clone_trait_object!(SliceRanker);
 /// A [`SliceRanker`] sorting by a single metric.
 ///
 /// A criterion requires its [`Metric`](Self::Metric) by declaring [`requires_metric`] as its static
-/// declaration, so its [`SliceRanker`] impl only has to call [`rank_by`]. A criterion should say in
-/// its name which way round it sorts, e.g. "more points".
+/// declaration, and registers as a [`SliceRanker`] ranking by [`rank_by`] with
+/// [`register_criterion!`](crate::register_criterion). A criterion should say in its name which
+/// way round it sorts, e.g. "more points".
 ///
 /// # Examples
 /// ```
-/// use std::num::NonZeroU32;
-///
-/// use plugin_factory::{Plugin, register};
+/// use plugin_factory::Plugin;
 /// use serde::{Deserialize, Serialize};
 /// use tournament_engine::{
-///     PhaseData, Ranking,
 ///     plugins::{
 ///         metrics_calculator::Points,
-///         ranker::{Comparison, RankingCriterion, SliceRanker, rank_by, requires_metric},
+///         ranker::{Comparison, RankingCriterion, requires_metric},
 ///     },
+///     register_criterion,
 /// };
 ///
 /// /// Ranks by the points, where fewer points are better.
@@ -109,12 +108,7 @@ dyn_clone::clone_trait_object!(SliceRanker);
 ///     }
 /// }
 ///
-/// #[register]
-/// impl SliceRanker for FewerPoints {
-///     fn update_ranks(&mut self, _: &PhaseData, slice: &mut [(&Ranking, NonZeroU32)]) {
-///         rank_by(self, slice);
-///     }
-/// }
+/// register_criterion!(FewerPoints);
 /// ```
 pub trait RankingCriterion: Debug + Clone {
     /// The metric this criterion sorts by.
@@ -122,6 +116,25 @@ pub trait RankingCriterion: Debug + Clone {
 
     /// How a ranking whose metric is `first` compares to one whose metric is `second`.
     fn compare(&self, first: &Self::Metric, second: &Self::Metric) -> Comparison;
+}
+
+/// Registers the [`RankingCriterion`] `$criterion` as a [`SliceRanker`] that ranks with
+/// [`rank_by`], as [`plugin_factory::register`] registers a plugin; the crate calling it has to
+/// depend on `plugin_factory` and `typetag`. See [`RankingCriterion`] for an example.
+#[macro_export]
+macro_rules! register_criterion {
+    ($criterion:ty) => {
+        #[::plugin_factory::register]
+        impl $crate::plugins::ranker::SliceRanker for $criterion {
+            fn update_ranks(
+                &mut self,
+                _: &$crate::PhaseData,
+                slice: &mut [(&$crate::Ranking, ::std::num::NonZeroU32)],
+            ) {
+                $crate::plugins::ranker::rank_by(self, slice);
+            }
+        }
+    };
 }
 
 /// Declares that the criterion `C` requires the [`CalculatesMetric`] of its metric, which is what

@@ -359,7 +359,7 @@ fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
     assert_eq!(field_of::<Ranker>("by").kind(), &plugin);
     assert_eq!(
         field_of::<Ranker>("tie_breakers").kind(),
-        &FieldKind::list(plugin.clone())
+        &FieldKind::list::<dyn Derived>()
     );
     assert_eq!(
         field_of::<Ranker>("fallback").kind(),
@@ -516,7 +516,7 @@ fn a_composite_reads_its_schema_from_its_fields_as_a_plugin_does() {
         Some("what the composite is built around")
     );
     assert_eq!(field("main").default_value(), None);
-    assert_eq!(field("others").kind(), &FieldKind::list(plugin));
+    assert_eq!(field("others").kind(), &FieldKind::list::<dyn Derived>());
     assert_eq!(field("others").default_value(), Some(&json!([])));
     assert_eq!(
         field("limit").kind(),

@@ -5,11 +5,8 @@ use std::{
     path::PathBuf,
 };
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 use thiserror::Error;
-use tournament_engine::plugins::phase_format::{
-    DoubleElimination, MonsterDyp, PhaseFormat, RandomRounds, RoundRobin, SingleElimination,
-};
 
 /// A single command typed at the prompt.
 ///
@@ -29,11 +26,16 @@ pub enum Command {
     /// Remove an entrant from the competition
     #[command(visible_alias = "remove")]
     RemoveEntrant { name: String },
-    /// Add the phase the competition is played in, configuring it at the prompt unless a preset
+    /// Add the phase the competition is played in, configuring it at the prompt unless a format
     /// is given
     AddPhase {
-        #[command(subcommand)]
-        preset: Option<PhasePreset>,
+        /// The format, by its label with hyphens for spaces (e.g. `round-robin`) or by its id;
+        /// everything else is what the format recommends
+        format: Option<String>,
+        /// Answers to the fields of the format, e.g. `rounds=7`; a field not answered here is
+        /// answered as it offers
+        #[arg(requires = "format", value_name = "FIELD=VALUE")]
+        answers: Vec<String>,
     },
     /// Start the competition, which schedules the first matches
     Start,
@@ -75,64 +77,6 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-}
-
-/// A phase format together with the metrics and the ranking it comes with, which is what
-/// `add-phase` adds without asking anything.
-///
-/// A preset is the format it names, with every other part of the phase answered as the format
-/// recommends, see [`AcceptDefaults`](crate::questionnaire::AcceptDefaults).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
-pub enum PhasePreset {
-    /// Everyone plays everyone; ranked by points (1 for a win or a bye, 0.5 for a draw), then
-    /// Sonneborn-Berger
-    RoundRobin,
-    /// The loser of a match is out, draws are not allowed; the semifinal losers play for third
-    /// place and are ranked by the round of the first loss, then the losses
-    SingleElimination {
-        /// End the bracket with the final, leaving the two semifinal losers third equal
-        #[arg(long)]
-        no_third_place_match: bool,
-    },
-    /// An entrant is out after its second loss, draws are not allowed; the champions of the
-    /// winner and the loser bracket meet in the grand final, which is played once more if the
-    /// champion of the winner bracket loses it; ranked by the round of elimination, then the losses
-    DoubleElimination {
-        /// Make the grand final a single match, so that losing it knocks out even the champion of
-        /// the winner bracket
-        #[arg(long)]
-        no_grand_final_reset: bool,
-    },
-    /// A number of randomly chosen rounds of a round robin; ranked by points (1 for a win or a bye,
-    /// 0.5 for a draw), then Buchholz, Sonneborn-Berger and Buchholz of Buchholz
-    RandomRounds { rounds: NonZeroU32 },
-    /// Every round, the entrants are drawn into random teams of two, each playing another such
-    /// team, and the ones left over sit the round out in turns; ranked by points (1 for a win or
-    /// for sitting out, 0.5 for a draw)
-    MonsterDyp { rounds: NonZeroU32 },
-}
-
-impl PhasePreset {
-    /// The format the phase is played in, which is what the preset configures the phase for.
-    pub fn format(self) -> Box<dyn PhaseFormat> {
-        match self {
-            Self::RoundRobin => Box::new(RoundRobin),
-            Self::SingleElimination {
-                no_third_place_match: false,
-            } => Box::new(SingleElimination::new().with_third_place_match()),
-            Self::SingleElimination {
-                no_third_place_match: true,
-            } => Box::new(SingleElimination::new()),
-            Self::DoubleElimination {
-                no_grand_final_reset: false,
-            } => Box::new(DoubleElimination::new().with_grand_final_reset()),
-            Self::DoubleElimination {
-                no_grand_final_reset: true,
-            } => Box::new(DoubleElimination::new()),
-            Self::RandomRounds { rounds } => Box::new(RandomRounds::new(rounds.get())),
-            Self::MonsterDyp { rounds } => Box::new(MonsterDyp::new(rounds.get())),
-        }
-    }
 }
 
 /// The result of a match, as reported by an operator.
@@ -223,69 +167,27 @@ mod tests {
     }
 
     #[test]
-    fn a_phase_preset_takes_its_own_arguments() {
+    fn a_format_takes_answers_to_its_fields() {
         assert_eq!(
-            parse("add-phase random-rounds 5"),
+            parse("add-phase random-rounds rounds=5"),
             Command::AddPhase {
-                preset: Some(PhasePreset::RandomRounds {
-                    rounds: NonZeroU32::new(5).unwrap()
-                })
+                format: Some("random-rounds".to_owned()),
+                answers: vec!["rounds=5".to_owned()],
             }
         );
     }
 
-    /// A knockout plays for third place unless the preset is told not to, which is the one thing
-    /// about it that can be turned off without configuring the whole phase at the prompt.
+    /// A phase is configured at the prompt rather than given by its format, which is what the
+    /// absent format stands for.
     #[test]
-    fn a_knockout_plays_for_third_place_unless_it_is_turned_off() {
+    fn add_phase_takes_no_format_at_all() {
         assert_eq!(
-            parse("add-phase single-elimination"),
+            parse("add-phase"),
             Command::AddPhase {
-                preset: Some(PhasePreset::SingleElimination {
-                    no_third_place_match: false
-                })
+                format: None,
+                answers: Vec::new(),
             }
         );
-        assert_eq!(
-            parse("add-phase single-elimination --no-third-place-match"),
-            Command::AddPhase {
-                preset: Some(PhasePreset::SingleElimination {
-                    no_third_place_match: true
-                })
-            }
-        );
-    }
-
-    #[test]
-    fn a_double_elimination_resets_the_grand_final_unless_it_is_turned_off() {
-        assert_eq!(
-            parse("add-phase double-elimination"),
-            Command::AddPhase {
-                preset: Some(PhasePreset::DoubleElimination {
-                    no_grand_final_reset: false
-                })
-            }
-        );
-        assert_eq!(
-            parse("add-phase double-elimination --no-grand-final-reset"),
-            Command::AddPhase {
-                preset: Some(PhasePreset::DoubleElimination {
-                    no_grand_final_reset: true
-                })
-            }
-        );
-    }
-
-    /// A phase is configured at the prompt rather than taken from a preset, which is what the
-    /// absent preset stands for.
-    #[test]
-    fn add_phase_takes_no_preset_at_all() {
-        assert_eq!(parse("add-phase"), Command::AddPhase { preset: None });
-    }
-
-    #[test]
-    fn a_phase_cannot_be_played_in_no_round() {
-        assert!(Command::parse_line("add-phase random-rounds 0").is_err());
     }
 
     #[test]

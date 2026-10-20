@@ -191,7 +191,7 @@ pub trait CompetitionStateMachineExt {
     /// # }
     /// # machine.apply_transition(AddPhase::new(
     /// #     phase_id,
-    /// #     PhasePlugins::new(Box::new(RoundRobin), Vec::new(), Vec::new())?,
+    /// #     PhasePlugins::new(RoundRobin),
     /// # ))?;
     /// # machine.apply_transition(StartCompetition)?;
     /// // a round robin between four entrants, with the first and the last match reported
@@ -341,8 +341,7 @@ mod tests {
         machine
             .apply_transition(AddPhase::new(
                 phase_id(),
-                PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new())
-                    .unwrap(),
+                PhasePlugins::new(SingleElimination::new()),
             ))
             .unwrap();
         machine.apply_transition(StartCompetition).unwrap();
@@ -377,8 +376,7 @@ mod tests {
     #[test]
     fn a_competition_takes_a_single_phase() {
         let mut machine = CompetitionStateMachine::default();
-        let plugins =
-            PhasePlugins::new(Box::new(SingleElimination::new()), Vec::new(), Vec::new()).unwrap();
+        let plugins = PhasePlugins::new(SingleElimination::new());
         machine
             .apply_transition(AddPhase::new(phase_id(), plugins.clone()))
             .unwrap();

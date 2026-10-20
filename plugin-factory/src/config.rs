@@ -2,8 +2,8 @@
 //! [`Schema`](crate::schema::Schema) collects.
 //!
 //! A [`Config`] holds one JSON [`Value`] per field of a schema, keyed by the name of the field. An
-//! answer is a scalar, a plugin, see [`PluginConfig`], a list of answers of one kind or an answer
-//! that may be nothing, so that a config is a tree as deep as the plugins and lists are nested. A
+//! answer is a scalar, a plugin, see [`PluginConfig`], a list of plugins or an answer that may be
+//! nothing, so that a config is a tree as deep as the plugins are nested. A
 //! plugin is built from its config by deserializing it, so it reads its answers through its own
 //! `Deserialize` impl; everything that can go wrong while configuring is a [`ConfigError`] and
 //! carries the [`Path`] of the field it is about.

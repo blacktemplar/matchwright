@@ -76,21 +76,19 @@ fn played_competition() -> CompetitionStateMachine {
     machine
         .apply_transition(RemoveEntrant::new(entrant_id(4)))
         .unwrap();
+    let plugins = PhasePlugins::new(SingleElimination::new())
+        .rank_by(LaterFirstLoss)
+        .rank_by(MorePoints)
+        .calculate(RoundOfFirstLossCalculator)
+        .unwrap()
+        .calculate(WinsDrawsLossesCalculator)
+        .unwrap()
+        .calculate(THREE_ONE)
+        .unwrap()
+        .calculate(BuchholzCalculator)
+        .unwrap();
     machine
-        .apply_transition(AddPhase::new(
-            phase_id(),
-            PhasePlugins::new(
-                Box::new(SingleElimination::new()),
-                vec![Box::new(LaterFirstLoss), Box::new(MorePoints)],
-                vec![
-                    Box::new(RoundOfFirstLossCalculator),
-                    Box::new(WinsDrawsLossesCalculator),
-                    Box::new(THREE_ONE),
-                    Box::new(BuchholzCalculator),
-                ],
-            )
-            .unwrap(),
-        ))
+        .apply_transition(AddPhase::new(phase_id(), plugins))
         .unwrap();
     machine.apply_transition(StartCompetition).unwrap();
     for match_id in matches_of_round(&machine.current().phases()[&phase_id()], 1) {

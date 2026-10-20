@@ -13,8 +13,8 @@ use std::{
 };
 
 use plugin_factory::{
-    catalog::AnyAxis,
-    config::{ConfigError, Path as ConfigPath, Value},
+    catalog::{AnyAxis, PluginEntry},
+    config::{ConfigError, Path as ConfigPath, PluginConfig, Value},
     draft::{Draft, Issue},
 };
 use thiserror::Error;
@@ -23,11 +23,7 @@ use tournament_engine::{
     CompetitionStateMachineExt as _, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
     PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed,
     SetCompetitionSeed, StartCompetition,
-    plugins::{
-        metrics_calculator::MetricColumn,
-        phase_format::{DoubleEliminationRound, KnockoutRound, PhaseFormat},
-        ranker::SliceRanker,
-    },
+    plugins::{metrics_calculator::MetricColumn, phase_format::PhaseFormat, ranker::SliceRanker},
     transitions::{RedoLastError, UndoMatchResultError},
     undoable_state_machine::{StateMachineError, TransitionError},
     uuid::Uuid,
@@ -35,7 +31,7 @@ use tournament_engine::{
 
 use crate::{
     annotations::DisplayName,
-    command::{Command, PhasePreset, ReportedResult},
+    command::{Command, ReportedResult},
     questionnaire::{self, AcceptDefaults, IssueList},
 };
 
@@ -57,12 +53,25 @@ pub enum Error {
     DuplicateName(String),
     #[error("there is no entrant named {0:?}")]
     UnknownEntrant(String),
-    /// A session never reads from the terminal, so a phase that is not taken from a preset has to
+    /// A session never reads from the terminal, so a phase that is not given by its format has to
     /// be configured before it reaches one, see [`questionnaire::fill`].
-    #[error(
-        "configuring a phase needs a terminal to ask at; add a preset instead, see `help add-phase`"
-    )]
+    #[error("configuring a phase needs a terminal to ask at; name a format, see `help add-phase`")]
     NotConfigured,
+    /// No registered phase format goes by this name.
+    #[error(
+        "there is no format {0:?}; the formats are: {formats}",
+        formats = format_names().join(", ")
+    )]
+    UnknownFormat(String),
+    /// An answer to a field of a format is not written as `FIELD=VALUE`.
+    #[error("{0:?} is no answer; write it as FIELD=VALUE")]
+    NotAnAnswer(String),
+    /// The format has no field of this name.
+    #[error("{format} has no field {field:?}")]
+    UnknownField { format: &'static str, field: String },
+    /// The value given for a field is not one it takes.
+    #[error("{value:?} does not answer {field:?}")]
+    InvalidAnswer { field: String, value: String },
     #[error("the competition has not started yet")]
     NotStarted,
     #[error("there is no match number {0}")]
@@ -85,10 +94,10 @@ pub enum Error {
     /// after the start.
     #[error("{0}")]
     Rejected(TransitionError),
-    /// A preset does not answer everything about its phase, see
+    /// A phase given by its format leaves something unanswered that offers no answer, see
     /// [`AcceptDefaults`].
-    #[error("the preset cannot be added: {0}")]
-    Preset(#[from] questionnaire::Error),
+    #[error("the phase cannot be added: {0}")]
+    Unanswered(#[from] questionnaire::Error),
     /// The plugins of a phase do not fit together, or miss something nothing could be added for.
     #[error("the phase cannot be played this way:{}", IssueList(.0))]
     Unsettled(Vec<Issue>),
@@ -189,7 +198,9 @@ impl Session {
             Command::Entrants => self.entrants(),
             Command::AddEntrant { names } => self.add_entrants(names)?,
             Command::RemoveEntrant { name } => self.remove_entrant(&name)?,
-            Command::AddPhase { preset } => self.add_preset(preset.ok_or(Error::NotConfigured)?)?,
+            Command::AddPhase { format, answers } => {
+                self.add_phase_in(&format.ok_or(Error::NotConfigured)?, &answers)?
+            }
             Command::Start => self.start()?,
             Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
@@ -280,12 +291,36 @@ impl Session {
         Ok(format!("phase added: {summary}"))
     }
 
-    /// Adds the phase of `preset`: its format, with every other part answered as offered, see
+    /// Adds the phase played in the format named `format`, with its fields answered by `answers`,
+    /// each written as `FIELD=VALUE`, and every other part answered as offered, see
     /// [`AcceptDefaults`].
-    fn add_preset(&mut self, preset: PhasePreset) -> Result<String, Error> {
+    fn add_phase_in(&mut self, format: &str, answers: &[String]) -> Result<String, Error> {
+        let entry = AnyAxis::of::<dyn PhaseFormat>()
+            .entries()
+            .find(|entry| entry.id() == format || format_name(entry).eq_ignore_ascii_case(format))
+            .ok_or_else(|| Error::UnknownFormat(format.to_owned()))?;
+        let schema = entry.schema();
+        let mut config = PluginConfig::new(entry.id());
+        for answer in answers {
+            let (field, value) = answer
+                .split_once('=')
+                .ok_or_else(|| Error::NotAnAnswer(answer.clone()))?;
+            let kind = schema
+                .field_named(field)
+                .ok_or_else(|| Error::UnknownField {
+                    format: entry.label(),
+                    field: field.to_owned(),
+                })?
+                .kind();
+            let value =
+                questionnaire::parse_answer(kind, value).ok_or_else(|| Error::InvalidAnswer {
+                    field: field.to_owned(),
+                    value: value.to_owned(),
+                })?;
+            config = config.with(field, value);
+        }
         let mut draft = self.competition().phase_draft();
-        let format = serde_json::to_value(preset.format()).map_err(Error::Serialize)?;
-        draft.set(&ConfigPath::ROOT.field("format"), format)?;
+        draft.set(&ConfigPath::ROOT.field("format"), config)?;
         questionnaire::fill(&mut draft, &mut AcceptDefaults)?;
         self.add_phase(&draft)
     }
@@ -314,6 +349,8 @@ impl Session {
     /// Lists the matches, numbered the way [`Self::report`] addresses them and independently of
     /// the filters applied, followed by the byes unless only open matches are asked for.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
+        let format = self.phase()?.format();
+        let stage_of = |r#match| format.stage(r#match);
         let phase = self.phase()?.data();
         // only a format that names its stages gets a column for them
         let has_stages = phase
@@ -534,6 +571,20 @@ impl Session {
     }
 }
 
+/// The name `add-phase` takes the format of `entry` by: its label with hyphens for spaces, e.g.
+/// `round-robin`.
+fn format_name(entry: &PluginEntry) -> String {
+    entry.label().replace(' ', "-").to_lowercase()
+}
+
+/// The names of all formats, see [`format_name`].
+fn format_names() -> Vec<String> {
+    AnyAxis::of::<dyn PhaseFormat>()
+        .entries()
+        .map(format_name)
+        .collect()
+}
+
 /// Names the format and the ranking of `plugins` in one line, the way a phase that was just added
 /// is reported, e.g. "round robin, ranked by more points, then more Sonneborn-Berger".
 fn summary(plugins: &PhasePlugins) -> String {
@@ -563,56 +614,6 @@ fn name_of(entrant: &Entrant) -> &str {
     entrant
         .annotation::<DisplayName>()
         .map_or("<unnamed>", DisplayName::as_str)
-}
-
-/// The name of the stage `r#match` belongs to, if its format names one.
-fn stage_of(r#match: &Match) -> Option<String> {
-    if let Some(stage) = r#match.annotation::<KnockoutRound>() {
-        return Some(knockout_round_name(*stage));
-    }
-    r#match
-        .annotation::<DoubleEliminationRound>()
-        .copied()
-        .map(double_elimination_round_name)
-}
-
-fn double_elimination_round_name(stage: DoubleEliminationRound) -> String {
-    let bracket_round = |bracket, round, rounds| {
-        if round == rounds {
-            format!("{bracket} final")
-        } else {
-            format!("{bracket} round {round}")
-        }
-    };
-    match stage {
-        DoubleEliminationRound::Winners { round, rounds } => {
-            bracket_round("Winners", round, rounds)
-        }
-        DoubleEliminationRound::Losers { round, rounds } => bracket_round("Losers", round, rounds),
-        DoubleEliminationRound::GrandFinal => "Grand final".to_owned(),
-        DoubleEliminationRound::GrandFinalReset => "Grand final reset".to_owned(),
-    }
-}
-
-fn knockout_round_name(stage: KnockoutRound) -> String {
-    match stage.fraction_of_final() {
-        None => "Third place".to_owned(),
-        Some(1) => "Final".to_owned(),
-        Some(2) => "Semifinals".to_owned(),
-        Some(4) => "Quarterfinals".to_owned(),
-        Some(fraction) => format!("{fraction}{}-finals", ordinal_suffix(fraction)),
-    }
-}
-
-/// The English ordinal suffix of `n`, e.g. "nd" for 32.
-fn ordinal_suffix(n: u32) -> &'static str {
-    match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    }
 }
 
 /// Lays `header` and `rows` out as left-aligned columns, with the header underlined.
@@ -650,8 +651,8 @@ mod tests {
     use plugin_factory::{PluginType, draft::Problem};
     use tournament_engine::plugins::{
         metrics_calculator::{
-            FewerMatchesPlayed, MetricsCalculator, MorePoints, MoreWins, PointsCalculator,
-            SonnebornBergerCalculator, WinsDrawsLossesCalculator,
+            FewerMatchesPlayed, MorePoints, MoreWins, PointsCalculator, SonnebornBergerCalculator,
+            WinsDrawsLossesCalculator,
         },
         phase_format::{RoundRobin, SingleElimination},
     };
@@ -661,17 +662,11 @@ mod tests {
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
 
-    /// Adds the phase played in `format`, ranked by `ranking` and calculating `metrics`.
-    fn add_phase(
-        session: &mut Session,
-        format: impl PhaseFormat + 'static,
-        ranking: Vec<Box<dyn SliceRanker>>,
-        metrics: Vec<Box<dyn MetricsCalculator>>,
-    ) -> Result<String, Error> {
-        let plugins = PhasePlugins::new(Box::new(format), ranking, metrics).unwrap();
+    /// Adds the phase played with `plugins`, settled as a configured phase is.
+    fn add_phase(session: &mut Session, plugins: &PhasePlugins) -> Result<String, Error> {
         let context =
             |declaration: &mut _| session.competition().declare_phase_context(declaration);
-        let draft = Draft::from_built(context, &plugins).unwrap();
+        let draft = Draft::from_built(context, plugins).unwrap();
         session.add_phase(&draft)
     }
 
@@ -762,10 +757,10 @@ mod tests {
 
         let result = execute(&mut session, "add-phase single-elimination");
 
-        assert!(
-            matches!(&result, Err(Error::Rejected(error)) if error.to_string().contains("already has a phase")),
-            "got {result:?}"
-        );
+        let Err(Error::Rejected(error)) = &result else {
+            panic!("got {result:?}");
+        };
+        assert!(error.to_string().contains("already has a phase"), "{error}");
     }
 
     /// Every preset is its format with the plugins the format recommends, which the engine checks
@@ -783,7 +778,7 @@ mod tests {
                  then fewer losses",
             ),
             (
-                "single-elimination --no-third-place-match",
+                "single-elimination third_place_match=no",
                 "single elimination (match for third place: no), ranked by later first loss",
             ),
             (
@@ -792,12 +787,16 @@ mod tests {
                  fewer losses",
             ),
             (
-                "random-rounds 3",
+                "random-rounds rounds=3",
                 "random rounds (rounds: 3), ranked by more points, then more Buchholz, then more \
                  Sonneborn-Berger, then more Buchholz of Buchholz",
             ),
             (
-                "monster-dyp 4",
+                "monster-dyp",
+                "Monster DYP (rounds: 5), ranked by more points",
+            ),
+            (
+                "tournament_engine::monster_dyp rounds=4",
                 "Monster DYP (rounds: 4), ranked by more points",
             ),
         ];
@@ -834,8 +833,31 @@ mod tests {
         );
     }
 
+    /// A format or an answer the session cannot make sense of adds no phase, and says why.
+    #[test]
+    fn an_unknown_format_or_answer_is_rejected() {
+        let mut session = Session::new(None);
+
+        for (line, message) in [
+            ("add-phase swiss", "there is no format \"swiss\""),
+            ("add-phase random-rounds rounds", "\"rounds\" is no answer"),
+            (
+                "add-phase random-rounds turns=3",
+                "random rounds has no field \"turns\"",
+            ),
+            (
+                "add-phase random-rounds rounds=many",
+                "\"many\" does not answer \"rounds\"",
+            ),
+        ] {
+            let error = execute(&mut session, line).unwrap_err().to_string();
+            assert!(error.starts_with(message), "{line}: {error}");
+        }
+        assert!(session.competition().phases().is_empty());
+    }
+
     /// A session executes commands and never asks the operator anything, so the phase of an
-    /// `add-phase` without a preset has to be configured before the command reaches it.
+    /// `add-phase` without a format has to be configured before the command reaches it.
     #[test]
     fn a_phase_to_be_configured_cannot_be_added_by_the_session_itself() {
         let mut session = Session::new(None);
@@ -853,16 +875,13 @@ mod tests {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
 
-        let added = add_phase(
-            &mut session,
-            RoundRobin,
-            vec![Box::new(MorePoints)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(PointsCalculator::new(1.0, 0.5)),
-            ],
-        )
-        .unwrap();
+        let plugins = PhasePlugins::new(RoundRobin)
+            .rank_by(MorePoints)
+            .calculate(WinsDrawsLossesCalculator)
+            .unwrap()
+            .calculate(PointsCalculator::new(1.0, 0.5))
+            .unwrap();
+        let added = add_phase(&mut session, &plugins).unwrap();
 
         assert_eq!(added, "phase added: round robin, ranked by more points");
         output(&mut session, "start");
@@ -897,16 +916,12 @@ mod tests {
     fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        add_phase(
-            &mut session,
-            RoundRobin,
-            Vec::new(),
-            vec![
-                Box::new(PointsCalculator::new(1.0, 0.5)),
-                Box::new(SonnebornBergerCalculator::new(1.0, 0.5)),
-            ],
-        )
-        .unwrap();
+        let plugins = PhasePlugins::new(RoundRobin)
+            .calculate(PointsCalculator::new(1.0, 0.5))
+            .unwrap()
+            .calculate(SonnebornBergerCalculator::new(1.0, 0.5))
+            .unwrap();
+        add_phase(&mut session, &plugins).unwrap();
         output(&mut session, "start");
         for number in 1..=6 {
             output(&mut session, &format!("report {number} a"));
@@ -935,9 +950,7 @@ mod tests {
 
         let result = add_phase(
             &mut session,
-            RoundRobin,
-            vec![Box::new(MorePoints)],
-            Vec::new(),
+            &PhasePlugins::new(RoundRobin).rank_by(MorePoints),
         );
 
         let Err(Error::Unsettled(issues)) = result else {
@@ -961,9 +974,7 @@ mod tests {
         output(&mut session, "add Alice Bob Carol Dave");
         let added = add_phase(
             &mut session,
-            RoundRobin,
-            vec![Box::new(MoreWins)],
-            Vec::new(),
+            &PhasePlugins::new(RoundRobin).rank_by(MoreWins),
         )
         .unwrap();
 
@@ -1010,15 +1021,10 @@ mod tests {
     fn ranking_by_the_matches_played_puts_the_entrants_that_played_fewest_first() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        add_phase(
-            &mut session,
-            // a match for third place would have every entrant play two matches, which is exactly
-            // the tie this criterion is shown by breaking
-            SingleElimination::new(),
-            vec![Box::new(FewerMatchesPlayed)],
-            Vec::new(),
-        )
-        .unwrap();
+        // a match for third place would have every entrant play two matches, which is exactly the
+        // tie this criterion is shown by breaking
+        let plugins = PhasePlugins::new(SingleElimination::new()).rank_by(FewerMatchesPlayed);
+        add_phase(&mut session, &plugins).unwrap();
         output(&mut session, "start");
 
         output(&mut session, "report 1 a");
@@ -1049,13 +1055,10 @@ mod tests {
     fn a_phase_configured_without_a_ranking_leaves_every_entrant_tied() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let added = add_phase(
-            &mut session,
-            RoundRobin,
-            Vec::new(),
-            vec![Box::new(WinsDrawsLossesCalculator)],
-        )
-        .unwrap();
+        let plugins = PhasePlugins::new(RoundRobin)
+            .calculate(WinsDrawsLossesCalculator)
+            .unwrap();
+        let added = add_phase(&mut session, &plugins).unwrap();
         assert_eq!(added, "phase added: round robin, not ranked by anything");
         output(&mut session, "start");
 
@@ -1235,43 +1238,6 @@ mod tests {
         assert_eq!(rows[1][2..], ["round", "4", "2-0-2"], "{ranking}");
     }
 
-    #[test]
-    fn double_elimination_rounds_are_named_by_their_bracket() {
-        let names = [
-            DoubleEliminationRound::Winners {
-                round: 1,
-                rounds: 3,
-            },
-            DoubleEliminationRound::Winners {
-                round: 3,
-                rounds: 3,
-            },
-            DoubleEliminationRound::Losers {
-                round: 2,
-                rounds: 4,
-            },
-            DoubleEliminationRound::Losers {
-                round: 4,
-                rounds: 4,
-            },
-            DoubleEliminationRound::GrandFinal,
-            DoubleEliminationRound::GrandFinalReset,
-        ]
-        .map(double_elimination_round_name);
-
-        assert_eq!(
-            names,
-            [
-                "Winners round 1",
-                "Winners final",
-                "Losers round 2",
-                "Losers final",
-                "Grand final",
-                "Grand final reset"
-            ]
-        );
-    }
-
     /// A round robin of three has one entrant sit out every round, which is listed after the
     /// matches but not among the open ones.
     #[test]
@@ -1312,39 +1278,6 @@ mod tests {
                 .split_whitespace()
                 .collect::<Vec<_>>(),
             ["#", "round", "A", "vs", "B", "result"]
-        );
-    }
-
-    #[test]
-    fn knockout_rounds_are_named_by_their_fraction_of_the_final() {
-        let names: Vec<_> = [2, 4, 8, 16, 32, 64, 128, 1024]
-            .map(|entrants| knockout_round_name(KnockoutRound::RoundOf(entrants)))
-            .into();
-
-        assert_eq!(
-            names,
-            [
-                "Final",
-                "Semifinals",
-                "Quarterfinals",
-                "8th-finals",
-                "16th-finals",
-                "32nd-finals",
-                "64th-finals",
-                "512th-finals"
-            ]
-        );
-    }
-
-    #[test]
-    fn ordinal_suffixes_follow_english_rules() {
-        let suffixes = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 111, 112, 1001].map(ordinal_suffix);
-
-        assert_eq!(
-            suffixes,
-            [
-                "st", "nd", "rd", "th", "th", "th", "th", "st", "nd", "rd", "th", "th", "st"
-            ]
         );
     }
 
@@ -1448,7 +1381,7 @@ mod tests {
     /// entrants knocked out in the semifinals tied for the third rank.
     #[test]
     fn a_knockout_without_a_match_for_third_place_ends_with_the_final() {
-        let mut session = started("single-elimination --no-third-place-match");
+        let mut session = started("single-elimination third_place_match=no");
 
         output(&mut session, "report 1 a");
         let semifinal = output(&mut session, "report 2 b");
