@@ -128,7 +128,7 @@ fn add_configured_phase(session: &mut Session) -> Result<Outcome, Error> {
             Err(error) => return Err(Error::Configure(error)),
         }
         match session.add_phase(&draft) {
-            Err(error @ session::Error::Unsettled(_)) => {
+            Err(error @ session::Error::InvalidPhase(_)) => {
                 eprintln!("error: {error}\nplease answer again");
             }
             added => return added.map(Outcome::Continue).map_err(Error::Session),

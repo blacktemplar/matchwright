@@ -23,8 +23,9 @@ pub struct AddPhase {
 impl AddPhase {
     /// Adds the phase `id` with `plugins`.
     ///
-    /// Nothing is added to `plugins`: a fact they require that none of them provides is settled
-    /// beforehand, by finishing a draft of them.
+    /// Nothing is added to `plugins`: the plugins implied by a fact they require that none of them
+    /// provides are added beforehand, to the draft they are built from, see
+    /// [`Draft::add_implied`](plugin_factory::draft::Draft::add_implied).
     pub fn new(id: PhaseId, plugins: PhasePlugins) -> Self {
         Self { id, plugins }
     }

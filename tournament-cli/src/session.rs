@@ -14,7 +14,7 @@ use std::{
 
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
-    config::{ConfigError, Path as ConfigPath, PluginConfig, Value},
+    config::{Config, ConfigError, Path as ConfigPath, PluginConfig, Value},
     draft::{Draft, Issue},
 };
 use thiserror::Error;
@@ -98,9 +98,10 @@ pub enum Error {
     /// [`AcceptDefaults`].
     #[error("the phase cannot be added: {0}")]
     Unanswered(#[from] questionnaire::Error),
-    /// The plugins of a phase do not fit together, or miss something nothing could be added for.
+    /// No phase can be built from its draft: its plugins do not fit together, or miss something no
+    /// implied plugin provides.
     #[error("the phase cannot be played this way:{}", IssueList(.0))]
-    Unsettled(Vec<Issue>),
+    InvalidPhase(Vec<Issue>),
     /// A plugin added to a phase does not fit its configuration.
     #[error(transparent)]
     Configuration(#[from] ConfigError),
@@ -277,18 +278,21 @@ impl Session {
     /// `draft` is a [`Competition::phase_draft`] of this session's competition.
     ///
     /// A calculator that has nothing to be configured is added for a metric the phase needs and
-    /// nothing calculates, see [`Draft::finish`]; one with fields is never added unasked.
+    /// nothing calculates, see [`Draft::add_implied`]; one with fields is never added unasked.
+    /// `draft` itself is left as it is, so that it can be fixed and added again.
     ///
     /// # Errors
     /// Returns an error if the competition already has a phase, does not accept one anymore
     /// because it has started, or if the plugins `draft` configures do not fit together, e.g.
-    /// [`Error::Unsettled`].
+    /// [`Error::InvalidPhase`].
     pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
-        let plugins = draft.finish().map_err(Error::Unsettled)?;
-        let summary = summary(&plugins);
+        let mut draft = draft.clone();
+        draft.add_implied();
+        let summary = summary(draft.answers());
+        let plugins = draft.build().map_err(Error::InvalidPhase)?;
         self.machine
             .apply_transition(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
-        Ok(format!("phase added: {summary}"))
+        Ok(format!("phase added: {}", summary))
     }
 
     /// Adds the phase played in the format named `format`, with its fields answered by `answers`,
@@ -585,12 +589,10 @@ fn format_names() -> Vec<String> {
         .collect()
 }
 
-/// Names the format and the ranking of `plugins` in one line, the way a phase that was just added
-/// is reported, e.g. "round robin, ranked by more points, then more Sonneborn-Berger".
-fn summary(plugins: &PhasePlugins) -> String {
-    let draft =
-        Draft::from_built(|_| {}, plugins).expect("a built plugin is a configuration of itself");
-    let answers = draft.answers();
+/// Names the format and the ranking `answers`, the answers of a phase draft, configure in
+/// one line, the way a phase that was just added is reported, e.g. "round robin, ranked by more
+/// points, then more Sonneborn-Berger".
+fn summary(answers: &Config) -> String {
     let format = answers
         .get("format")
         .and_then(|format| questionnaire::describe(AnyAxis::of::<dyn PhaseFormat>(), format))
@@ -662,10 +664,34 @@ mod tests {
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
 
-    /// Adds the phase played with `plugins`, settled as a configured phase is.
-    fn add_phase(session: &mut Session, plugins: &PhasePlugins) -> Result<String, Error> {
-        let draft = session.competition().phase_draft_of(plugins);
-        session.add_phase(&draft)
+    /// A draft of a phase of the competition of `session` played in `format`, ranked by `ranking`
+    /// and calculating the metrics of `metrics`.
+    fn draft(
+        session: &Session,
+        format: PluginConfig,
+        ranking: Vec<PluginConfig>,
+        metrics: Vec<PluginConfig>,
+    ) -> Draft<PhasePlugins> {
+        session
+            .competition()
+            .phase_draft()
+            .with("format", format)
+            .and_then(|draft| draft.with("ranking", ranking))
+            .and_then(|draft| draft.with("metrics", metrics))
+            .unwrap()
+    }
+
+    /// The plugin `P` with nothing answered.
+    fn plugin<P: PluginType>() -> PluginConfig {
+        PluginConfig::of::<P>()
+    }
+
+    /// The scoring system of chess: a win is worth a point, a draw half of one, a bye nothing.
+    fn chess_points() -> PluginConfig {
+        plugin::<PointsCalculator>()
+            .with("points_for_win", 1.0)
+            .with("points_for_draw", 0.5)
+            .with("points_for_bye", 0.0)
     }
 
     #[track_caller]
@@ -873,13 +899,13 @@ mod tests {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
 
-        let plugins = PhasePlugins::new(RoundRobin)
-            .rank_by(MorePoints)
-            .calculate(WinsDrawsLossesCalculator)
-            .unwrap()
-            .calculate(PointsCalculator::new(1.0, 0.5))
-            .unwrap();
-        let added = add_phase(&mut session, &plugins).unwrap();
+        let draft = draft(
+            &session,
+            plugin::<RoundRobin>(),
+            vec![plugin::<MorePoints>()],
+            vec![plugin::<WinsDrawsLossesCalculator>(), chess_points()],
+        );
+        let added = session.add_phase(&draft).unwrap();
 
         assert_eq!(added, "phase added: round robin, ranked by more points");
         output(&mut session, "start");
@@ -914,12 +940,16 @@ mod tests {
     fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let plugins = PhasePlugins::new(RoundRobin)
-            .calculate(PointsCalculator::new(1.0, 0.5))
-            .unwrap()
-            .calculate(SonnebornBergerCalculator::new(1.0, 0.5))
-            .unwrap();
-        add_phase(&mut session, &plugins).unwrap();
+        let sonneborn_berger = plugin::<SonnebornBergerCalculator>()
+            .with("weight_for_win", 1.0)
+            .with("weight_for_draw", 0.5);
+        let draft = draft(
+            &session,
+            plugin::<RoundRobin>(),
+            Vec::new(),
+            vec![chess_points(), sonneborn_berger],
+        );
+        session.add_phase(&draft).unwrap();
         output(&mut session, "start");
         for number in 1..=6 {
             output(&mut session, &format!("report {number} a"));
@@ -946,12 +976,16 @@ mod tests {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
 
-        let result = add_phase(
-            &mut session,
-            &PhasePlugins::new(RoundRobin).rank_by(MorePoints),
+        let draft = draft(
+            &session,
+            plugin::<RoundRobin>(),
+            vec![plugin::<MorePoints>()],
+            Vec::new(),
         );
 
-        let Err(Error::Unsettled(issues)) = result else {
+        let result = session.add_phase(&draft);
+
+        let Err(Error::InvalidPhase(issues)) = result else {
             panic!("got {result:?}");
         };
         assert!(
@@ -970,11 +1004,13 @@ mod tests {
     fn a_phase_can_be_ranked_by_wins_alone() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let added = add_phase(
-            &mut session,
-            &PhasePlugins::new(RoundRobin).rank_by(MoreWins),
-        )
-        .unwrap();
+        let draft = draft(
+            &session,
+            plugin::<RoundRobin>(),
+            vec![plugin::<MoreWins>()],
+            Vec::new(),
+        );
+        let added = session.add_phase(&draft).unwrap();
 
         assert_eq!(added, "phase added: round robin, ranked by more wins");
         output(&mut session, "start");
@@ -1021,8 +1057,13 @@ mod tests {
         output(&mut session, "add Alice Bob Carol Dave");
         // a match for third place would have every entrant play two matches, which is exactly the
         // tie this criterion is shown by breaking
-        let plugins = PhasePlugins::new(SingleElimination::new()).rank_by(FewerMatchesPlayed);
-        add_phase(&mut session, &plugins).unwrap();
+        let draft = draft(
+            &session,
+            plugin::<SingleElimination>().with("third_place_match", false),
+            vec![plugin::<FewerMatchesPlayed>()],
+            Vec::new(),
+        );
+        session.add_phase(&draft).unwrap();
         output(&mut session, "start");
 
         output(&mut session, "report 1 a");
@@ -1053,10 +1094,13 @@ mod tests {
     fn a_phase_configured_without_a_ranking_leaves_every_entrant_tied() {
         let mut session = Session::new(None);
         output(&mut session, "add Alice Bob Carol Dave");
-        let plugins = PhasePlugins::new(RoundRobin)
-            .calculate(WinsDrawsLossesCalculator)
-            .unwrap();
-        let added = add_phase(&mut session, &plugins).unwrap();
+        let draft = draft(
+            &session,
+            plugin::<RoundRobin>(),
+            Vec::new(),
+            vec![plugin::<WinsDrawsLossesCalculator>()],
+        );
+        let added = session.add_phase(&draft).unwrap();
         assert_eq!(added, "phase added: round robin, not ranked by anything");
         output(&mut session, "start");
 

@@ -579,8 +579,11 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
             ("tie_break".to_owned(), "the matches"),
         ]
     );
-    // finishing settles the matches, which a single metric provides, but not the answer
-    let issues = draft.finish().unwrap_err();
+    // the match count, the single metric providing the matches, is implied, but that does not fix
+    // the answer
+    let mut implied = draft.clone();
+    implied.add_implied();
+    let issues = implied.build().unwrap_err();
     assert_eq!(
         problems(&issues),
         [(
@@ -609,8 +612,9 @@ fn an_operator_configures_a_phase_one_answer_at_a_time() {
         },
     );
 
-    // the match count is left to finishing, which appends it
-    let phase = draft.finish().unwrap();
+    // the match count is left to be added as implied
+    draft.add_implied();
+    let phase = draft.build().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
         json!({
@@ -646,9 +650,9 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
         Ok(Some(json!(plugin::<Wins>())))
     );
 
-    // finishing fills in no default
+    // building fills in no default
     let unanswered: Vec<_> = draft
-        .finish()
+        .build()
         .unwrap_err()
         .iter()
         .map(|issue| issue.path().to_string())
@@ -658,7 +662,7 @@ fn a_phase_left_to_its_defaults_takes_what_its_format_recommends() {
     // accepted in question order, the tie break no longer fits the recommended metrics once
     // they are set
     accept_defaults(&mut draft);
-    let phase = draft.finish().unwrap();
+    let phase = draft.build().unwrap();
     assert_eq!(
         serde_json::to_value(&phase).unwrap(),
         json!({
@@ -700,7 +704,7 @@ fn a_requirement_of_a_configuration_is_reported_where_it_can_be_met() {
         .set(&path("format"), plugin::<RoundRobin>().with("rounds", 1))
         .unwrap();
     assert_eq!(draft.issues(), []);
-    assert!(draft.finish().is_ok());
+    assert!(draft.build().is_ok());
 }
 
 #[test]
@@ -724,7 +728,7 @@ fn a_saved_phase_loads_as_it_was_built() {
         ]
     );
     accept_defaults(&mut draft);
-    let phase = draft.finish().unwrap();
+    let phase = draft.build().unwrap();
 
     let saved = serde_json::to_string(&phase).unwrap();
     let loaded: Phase = serde_json::from_str(&saved).unwrap();
@@ -750,24 +754,21 @@ fn a_saved_phase_loads_as_it_was_built() {
 }
 
 #[test]
-fn what_a_built_phase_lacks_is_added_if_a_single_plugin_provides_it() {
-    let metric = |plugin: PluginConfig| plugin.build::<dyn Metric>().unwrap();
-    let phase = Phase {
-        format: plugin::<Knockout>()
-            .with("third_place", false)
-            .build::<dyn Format>()
-            .unwrap(),
-        metrics: vec![metric(plugin::<Buchholz>())],
-        tie_break: None,
-    };
+fn what_a_phase_answered_in_code_lacks_is_added_if_a_single_plugin_provides_it()
+-> Result<(), ConfigError> {
+    let mut draft = Draft::<Phase>::new(singles)
+        .with("format", plugin::<Knockout>().with("third_place", false))?
+        .with("metrics", vec![plugin::<Buchholz>()])?
+        .with("tie_break", Value::Null)?;
 
     // the wins have fields, so the score is the only provider of the points that is added, and
     // the match count the only one of the matches
-    let draft = Draft::from_built(singles, &phase).unwrap();
-    let phase = draft.finish().unwrap();
+    draft.add_implied();
+    let phase = draft.build().unwrap();
     assert_eq!(
         format!("{:?}", phase.metrics),
         "[Buchholz, Score, MatchCount]"
     );
     assert_eq!(check(singles, &phase.plugins()), Ok(()));
+    Ok(())
 }

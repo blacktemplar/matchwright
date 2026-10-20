@@ -106,19 +106,10 @@ impl Competition {
         declaration.provide(EntrantsPerRanking::SINGLE);
     }
 
-    /// A draft of the plugins of a phase of this competition, with nothing answered yet.
+    /// A draft of the plugins of a phase of this competition, with nothing answered yet. Building
+    /// [`PhasePlugins`] from it is the way to make them, see their example.
     pub fn phase_draft(&self) -> Draft<PhasePlugins> {
         Draft::new(|declaration| self.declare_phase_context(declaration))
-    }
-
-    /// Like [`Self::phase_draft`], with every field answered as in `plugins`, see
-    /// [`Draft::from_built`]. Finishing it settles `plugins` for this competition.
-    pub fn phase_draft_of(&self, plugins: &PhasePlugins) -> Draft<PhasePlugins> {
-        Draft::from_built(
-            |declaration| self.declare_phase_context(declaration),
-            plugins,
-        )
-        .expect("built plugins are a configuration of themselves")
     }
 
     pub fn phases(&self) -> &IdMap<Phase> {

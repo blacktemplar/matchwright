@@ -186,8 +186,8 @@ pub enum Error {
 /// Answers a plugin rejects are handed to [`Prompter::retry`] as soon as the fields of the plugin
 /// are answered, and its fields are asked again. Once every field is answered, plugins that do not
 /// fit next to the others are handed to it as well, and the fields of the composite they are in
-/// are asked again. A fact nothing provides is not checked, since finishing the draft may settle
-/// it, see [`Draft::finish`].
+/// are asked again. A fact nothing provides is not checked, since a plugin it implies may still be
+/// added, see [`Draft::add_implied`].
 ///
 /// # Errors
 /// Returns what the prompter returns, and [`Error::NoCandidate`] if no plugin fits a field taking
@@ -911,7 +911,7 @@ mod tests {
             ids(&draft, "metrics"),
             ["wins_draws_losses", "points", "sonneborn_berger"]
         );
-        assert!(draft.finish().is_ok());
+        assert!(draft.build().is_ok());
     }
 
     /// The plugins a question starts out at lead, in the order the plugins chosen before

@@ -8,14 +8,16 @@
 //!
 //! A draft also answers what a UI asks about it: the [default](Draft::default_value) of a field,
 //! the [candidates](Draft::candidates) for a position taking plugins and the
-//! [issues](Draft::issues) of the answers so far. [`Draft::finish`] builds the composite. All of
+//! [issues](Draft::issues) of the answers so far. [`Draft::add_implied`] adds the plugins the
+//! answers imply, and [`Draft::build`] builds the composite from the answers as they are.
+//! All of
 //! them take the composite's context into account, i.e. what is true of it before any plugin is
 //! chosen, which the draft is created with as a closure declaring it as a plugin declares, see
 //! [`compatibility::check`].
 //!
 //! While a field taking plugins is unanswered, a fact a plugin of its axis provides may still
 //! arrive, as long as such a plugin would fit next to the answers given and what it requires could
-//! arrive in turn, so the candidates and issues are optimistic about it; [`Draft::finish`] checks
+//! arrive in turn, so the candidates and issues are optimistic about it; [`Draft::build`] checks
 //! with nothing open. Whether a provider fits is judged by its static declaration.
 
 use std::{
@@ -24,8 +26,6 @@ use std::{
     marker::PhantomData,
     sync::Arc,
 };
-
-use serde::{Deserialize, Serialize};
 
 use crate::{
     Plugin,
@@ -149,30 +149,110 @@ impl<T: Configurable> Draft<T> {
         }
     }
 
-    /// Like [`Self::new`], with every field answered as in `composite`, e.g. one that was loaded;
-    /// the answers are what `composite` serializes to. So [`Self::finish`] of it settles and checks
-    /// a composite built elsewhere.
+    /// Returns this draft with the field `field` of the composite answered by `answer`, see
+    /// [`Self::set`]; the fields of a plugin are answered in its [`PluginConfig`].
+    ///
+    /// # Examples
+    /// ```
+    /// use plugin_factory::{
+    ///     Plugin, axis, config::PluginConfig, draft::Draft, register, schema::Configurable,
+    /// };
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[axis]
+    /// pub trait Seeding: Plugin {}
+    ///
+    /// #[derive(Debug, Serialize, Deserialize, Plugin)]
+    /// #[plugin(id = "my_crate::random", label = "random")]
+    /// struct Random {
+    ///     #[plugin(label = "Keep the top seeds")]
+    ///     keep_top: u32,
+    /// }
+    ///
+    /// #[register]
+    /// impl Seeding for Random {}
+    ///
+    /// #[derive(Debug, Deserialize, Configurable)]
+    /// struct Phase {
+    ///     #[plugin(label = "Seedings")]
+    ///     seedings: Vec<Box<dyn Seeding>>,
+    /// }
+    ///
+    /// let phase = Draft::<Phase>::new(|_| {})
+    ///     .with(
+    ///         "seedings",
+    ///         vec![PluginConfig::of::<Random>().with("keep_top", 2)],
+    ///     )?
+    ///     .build()
+    ///     .expect("every field is answered");
+    ///
+    /// assert_eq!(
+    ///     format!("{phase:?}"),
+    ///     "Phase { seedings: [Random { keep_top: 2 }] }"
+    /// );
+    /// # Ok::<(), plugin_factory::config::ConfigError>(())
+    /// ```
     ///
     /// # Errors
-    /// Returns [`ConfigError::Rejected`] at the root if `composite` does not serialize to a
-    /// config, and what [`Self::set`] returns for an answer that is not one of the schema.
-    pub fn from_built(
-        context: impl FnOnce(&mut Declaration),
-        composite: &T,
-    ) -> Result<Self, ConfigError>
-    where
-        T: Serialize,
-    {
-        let answers = serde_json::to_value(composite)
-            .and_then(Config::deserialize)
-            .map_err(|error| ConfigError::Rejected {
-                path: Path::ROOT,
-                reason: error.to_string(),
-            })?;
-        Ok(Self {
-            answers: T::schema().walk(&answers, &Path::ROOT, false)?,
-            ..Self::new(context)
-        })
+    /// Returns what [`Self::set`] returns.
+    pub fn with(mut self, field: &str, answer: impl Into<Value>) -> Result<Self, ConfigError> {
+        self.set(&Path::ROOT.field(field), answer)?;
+        Ok(self)
+    }
+
+    /// Returns this draft with every unanswered field answered by what it offers, see
+    /// [`Self::default_value`]. The fields are answered in schema order, each followed by the
+    /// fields of the plugins answering it, so that a field offers what the answers before it
+    /// recommend. A field offering nothing stays unanswered.
+    ///
+    /// # Errors
+    /// Returns what [`Self::set`] returns for an offered answer, which only a plugin recommending
+    /// an answer its schema does not take causes.
+    pub fn with_defaults(mut self) -> Result<Self, ConfigError> {
+        self.answer_defaults(&T::schema(), &Path::ROOT)?;
+        Ok(self)
+    }
+
+    /// Answers every unanswered field of `schema`, the schema of the config at `at`, by what it
+    /// offers, see [`Self::with_defaults`].
+    fn answer_defaults(&mut self, schema: &Schema, at: &Path) -> Result<(), ConfigError> {
+        for field in schema.fields() {
+            let path = at.clone().field(field.name());
+            if self.answers.get_at(&path).is_none()
+                && let Some(default) = self.default_value(&path)?
+            {
+                self.set(&path, default)?;
+            }
+            self.answer_plugin_defaults(field.kind(), &path)?;
+        }
+        Ok(())
+    }
+
+    /// Answers the unanswered fields of the plugins answering the position of `kind` at `at`, see
+    /// [`Self::with_defaults`].
+    fn answer_plugin_defaults(&mut self, kind: &FieldKind, at: &Path) -> Result<(), ConfigError> {
+        let Some(answer) = self.answers.get_at(at).cloned() else {
+            return Ok(());
+        };
+        match (unwrapped(kind), answer) {
+            (FieldKind::List { axis, .. }, Value::Array(answers)) => {
+                for position in 0..answers.len() {
+                    let at = at.clone().index(position);
+                    self.answer_plugin_defaults(&FieldKind::Plugin(*axis), &at)?;
+                }
+            }
+            (FieldKind::Plugin(axis), answer) => {
+                // an answer is checked when it is set, so it names a plugin of the axis unless it
+                // is nothing
+                if let Some(entry) = PluginConfig::from_answer(&answer)
+                    .and_then(|plugin| axis.entry(plugin.plugin()))
+                {
+                    self.answer_defaults(&entry.schema(), at)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// The answers given so far, as the config of the composite.
@@ -254,7 +334,7 @@ impl<T: Configurable> Draft<T> {
     /// every fact it requires that nothing provides could arrive in the same way. Otherwise it is a
     /// conflict if such a field exists but none of its providers fits, or if an answered field of
     /// the composite taking one plugin could provide it; a fact no field could provide at all is
-    /// left to [`Self::issues`] and [`Self::finish`], which report it once the candidate is chosen.
+    /// left to [`Self::issues`] and [`Self::build`], which report it once the candidate is chosen.
     ///
     /// # Errors
     /// Returns [`ConfigError::UnknownField`] if `path` addresses nothing in the answers. A path may
@@ -301,24 +381,35 @@ impl<T: Configurable> Draft<T> {
         issues_in(&self.context, &Tree::of(&T::schema(), &self.answers), false)
     }
 
-    /// The composite built from the answers, with every fact settled that the catalog settles.
+    /// Appends to the answers every plugin they imply: for a fact a plugin requires and neither
+    /// the plugins nor the context provide, the one plugin without fields that provides it, so
+    /// that there is neither a plugin to choose nor anything to configure.
     ///
-    /// Every field has to be answered; defaults are not filled in. A fact a plugin requires and
-    /// neither the plugins nor the context provide is settled if exactly one plugin without fields
-    /// provides it among the axes of the fields of the composite taking a list of plugins, and its
-    /// axis is taken by one such field only: the plugin is appended to that field. What it requires
-    /// that nothing provides is settled in turn, and the plugins so found are appended only all
-    /// together and only if none of them raises an issue: a conflict, a fact missing, or a
-    /// condition an existing plugin requires of what they provide. A field taking one plugin, and a
-    /// field of a plugin, is never added to. This repeats until nothing changes.
+    /// A plugin is implied by a fact if it is the only plugin without fields providing the fact
+    /// among the axes of the fields of the composite taking a list of plugins, and its axis is
+    /// taken by one such field only: the plugin is appended to that field, answering it if it is
+    /// unanswered. What it requires that nothing provides implies plugins in turn, and the plugins
+    /// so found are appended only all together and only if none of them raises an issue: a
+    /// conflict, a fact missing, or a condition an existing plugin requires of what they provide.
+    /// A field taking one plugin, and a field of a plugin, is never added to. This repeats until
+    /// nothing changes, so adding the implied plugins once more adds nothing.
     ///
-    /// Leaves the draft as it is, so that a failed composite can be fixed and finished again.
+    /// A plugin so appended stays an answer like any other, even if the plugin requiring its fact
+    /// is taken back later; for a draft that may still change, add them to a clone of it.
+    pub fn add_implied(&mut self) {
+        add_implied(&self.context, &T::schema(), &mut self.answers);
+    }
+
+    /// The composite built from the answers as they are.
+    ///
+    /// Every field has to be answered; defaults are not filled in, and no plugin is added: a fact
+    /// an implied plugin would provide is missing unless [`Self::add_implied`] added it before.
     ///
     /// # Errors
-    /// Returns the [issues](Self::issues) of the answers so settled, with nothing open any more: an
+    /// Returns the [issues](Self::issues) of the answers, with nothing open any more: an
     /// unanswered field is a [`Problem::Invalid`] issue with [`ConfigError::Unanswered`], and a
     /// fact nothing provides is [`Problem::Unprovided`].
-    pub fn finish(&self) -> Result<T, Vec<Issue>> {
+    pub fn build(&self) -> Result<T, Vec<Issue>> {
         let schema = T::schema();
         let invalid = |error: ConfigError| {
             vec![Issue {
@@ -326,14 +417,13 @@ impl<T: Configurable> Draft<T> {
                 problem: Problem::Invalid(error),
             }]
         };
-        let mut answers = self.answers.clone();
-        let mut tried = Vec::new();
-        while settle(&self.context, &schema, &mut answers, &mut tried) {}
-        let issues = issues_in(&self.context, &Tree::of(&schema, &answers), true);
+        let issues = issues_in(&self.context, &Tree::of(&schema, &self.answers), true);
         if !issues.is_empty() {
             return Err(issues);
         }
-        let walked = schema.walk(&answers, &Path::ROOT, true).map_err(invalid)?;
+        let walked = schema
+            .walk(&self.answers, &Path::ROOT, true)
+            .map_err(invalid)?;
         config::deserialize(&config::complete::<T>(walked), &Path::ROOT).map_err(invalid)
     }
 }
@@ -575,11 +665,11 @@ impl Reach<'_> {
     }
 }
 
-/// [`Draft::issues`] of the answers `tree` holds in a composite with `context`. Once `finished`,
+/// [`Draft::issues`] of the answers `tree` holds in a composite with `context`. If `complete`,
 /// nothing is open any more: an unanswered field is an issue and provides nothing.
-fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
+fn issues_in(context: &Declaration, tree: &Tree, complete: bool) -> Vec<Issue> {
     let mut issues = Vec::new();
-    if finished {
+    if complete {
         for question in tree
             .questions
             .iter()
@@ -609,9 +699,9 @@ fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
         }
     }
 
-    // unless finished, a fact a field still unanswered could take a fitting provider for may still
+    // unless complete, a fact a field still unanswered could take a fitting provider for may still
     // arrive
-    let unanswered = if finished {
+    let unanswered = if complete {
         Vec::new()
     } else {
         tree.slots(|question| question.answer.is_none())
@@ -682,28 +772,14 @@ fn issues_in(context: &Declaration, tree: &Tree, finished: bool) -> Vec<Issue> {
     issues
 }
 
-/// Settles the first fact the plugins in `answers`, the answers to `schema`, require that neither
-/// they nor `context` provide and that is not in `tried`, see [`Draft::finish`]. Each fact looked
-/// at is added to `tried`, so that it is tried once.
-///
-/// Returns whether plugins were added.
-fn settle(
-    context: &Declaration,
-    schema: &Schema,
-    answers: &mut Config,
-    tried: &mut Vec<TypeId>,
-) -> bool {
-    let lists = top_lists(schema);
-    let tree = Tree::of(schema, answers);
-    let declarations = tree.declarations(None);
-    for fact in compatibility::unprovided(&declarations) {
-        if context.provides_type(fact) || tried.contains(&fact) {
-            continue;
-        }
-        tried.push(fact);
-        let Some(chain) = chain(context, &declarations, &lists, fact) else {
-            continue;
-        };
+/// Appends to `answers`, the answers to `schema` of a composite with `context`, every plugin they
+/// imply, see [`Draft::add_implied`].
+fn add_implied(context: &Declaration, schema: &Schema, answers: &mut Config) {
+    // an addition may provide what the chain of a fact tried before it lacked, so every fact is
+    // tried again after each addition, which makes adding the implied plugins once more add
+    // nothing. This ends, since every plugin added provides a fact nothing provided, so it is not
+    // in its list yet, and the catalog is finite.
+    while let Some(chain) = first_chain(context, schema, answers) {
         for (name, entry) in chain {
             let mut list = match answers.get(name) {
                 Some(Value::Array(list)) => list.clone(),
@@ -712,16 +788,29 @@ fn settle(
             list.push(PluginConfig::new(entry.id()).into());
             answers.set(name, list);
         }
-        return true;
     }
-    false
 }
 
-/// The plugins [`Draft::finish`] adds to `lists` so that `fact` is provided in a composite with
-/// `context` and plugins with `declarations`, each with the name of the list it is appended to, in
-/// the order they are added in; [`None`] if it adds nothing.
+/// The [`chain`] of the first fact the plugins in `answers`, the answers to `schema`, require that
+/// neither they nor `context` provide and that implies plugins; [`None`] if there is none.
+fn first_chain(
+    context: &Declaration,
+    schema: &Schema,
+    answers: &Config,
+) -> Option<Vec<(&'static str, &'static PluginEntry)>> {
+    let lists = top_lists(schema);
+    let tree = Tree::of(schema, answers);
+    let declarations = tree.declarations(None);
+    compatibility::unprovided(&declarations)
+        .filter(|&fact| !context.provides_type(fact))
+        .find_map(|fact| chain(context, &declarations, &lists, fact))
+}
+
+/// The plugins [`Draft::add_implied`] adds to `lists` so that `fact` is provided in a composite
+/// with `context` and plugins with `declarations`, each with the name of the list it is appended
+/// to, in the order they are added in; [`None`] if it adds nothing.
 ///
-/// The fact is settled by its [`settling`] plugin, and so is every fact that plugin requires that
+/// The fact is provided by its [`implied`] plugin, and so is every fact that plugin requires that
 /// nothing provides, in turn. The plugins are added only all together, and only if none of them
 /// conflicts with the others or the context, none of them misses a fact, and none of them breaks
 /// a condition an existing plugin requires of what it provides.
@@ -733,7 +822,7 @@ fn chain(
 ) -> Option<Vec<(&'static str, &'static PluginEntry)>> {
     let mut added: Vec<(&'static str, &'static PluginEntry, Declared)> = Vec::new();
     let mut pending = vec![fact];
-    // every plugin added provides the fact it is added for, so each fact is settled at most once
+    // every plugin added provides the fact it is added for, so each fact is looked up at most once
     while let Some(fact) = pending.pop() {
         let provided = context.provides_type(fact)
             || declarations
@@ -744,7 +833,7 @@ fn chain(
         if provided {
             continue;
         }
-        let (name, entry) = settling(lists, fact)?;
+        let (name, entry) = implied(lists, fact)?;
         let declared = Declared::new(entry.label(), entry.declaration_or_static(&Config::new()));
         pending.extend(
             declared
@@ -798,14 +887,14 @@ fn top_lists(schema: &Schema) -> Vec<(&'static str, AnyAxis)> {
         .collect()
 }
 
-/// The plugin [`Draft::finish`] settles `fact` with, and the name of the list among `lists` it is
-/// added to: the only plugin without fields providing it among the axes of `lists`, or [`None`] if
-/// there is none or more than one.
-fn settling(
+/// The plugin `fact` implies, and the name of the list among `lists` it is added to: the only
+/// plugin without fields providing it among the axes of `lists`, or [`None`] if there is none or
+/// more than one.
+fn implied(
     lists: &[(&'static str, AnyAxis)],
     fact: TypeId,
 ) -> Option<(&'static str, &'static PluginEntry)> {
-    // an axis taken by two fields offers each provider twice, so it is never settled
+    // an axis taken by two fields offers each provider twice, so it never implies a plugin
     let mut providers = lists.iter().flat_map(|(name, axis)| {
         // only a plugin without fields is complete without being asked anything
         axis.entries()
@@ -815,8 +904,8 @@ fn settling(
             })
             .map(move |entry| (*name, entry))
     });
-    let settled = providers.next()?;
-    providers.next().is_none().then_some(settled)
+    let only = providers.next()?;
+    providers.next().is_none().then_some(only)
 }
 
 /// [`Draft::default_value`] of `field`, the field at `path` in the answers `tree` holds, in a
@@ -2064,7 +2153,7 @@ mod tests {
     }
 
     #[test]
-    fn finishing_fills_in_no_default() {
+    fn building_fills_in_no_default() {
         let mut draft = answered(&[("format", plugin::<RoundRobin>().into())]);
         let unanswered = |at: &str| Issue {
             path: path(at),
@@ -2072,12 +2161,12 @@ mod tests {
         };
 
         assert_eq!(
-            draft.finish().err(),
+            draft.build().err(),
             Some(vec![unanswered("metrics"), unanswered("tie_break")])
         );
         accept_defaults(&mut draft);
         assert_eq!(
-            draft.finish().map(|phase| format!("{phase:?}")),
+            draft.build().map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -2090,14 +2179,14 @@ mod tests {
     }
 
     #[test]
-    fn finishing_with_an_unanswered_field_fails() {
+    fn building_with_an_unanswered_field_fails() {
         let unanswered = |at: &str| Issue {
             path: path(at),
             problem: Problem::Invalid(ConfigError::Unanswered { path: path(at) }),
         };
 
         assert_eq!(
-            draft().finish().err(),
+            draft().build().err(),
             Some(vec![
                 unanswered("format"),
                 unanswered("metrics"),
@@ -2107,16 +2196,16 @@ mod tests {
     }
 
     #[test]
-    fn a_composite_that_is_a_unit_struct_finishes() {
+    fn a_composite_that_is_a_unit_struct_is_built() {
         /// A composite asking for nothing.
         #[derive(Debug, Deserialize, Configurable)]
         struct Nothing;
 
-        assert!(Draft::<Nothing>::new(|_| {}).finish().is_ok());
+        assert!(Draft::<Nothing>::new(|_| {}).build().is_ok());
     }
 
     #[test]
-    fn finishing_with_an_answer_a_plugin_rejects_fails() {
+    fn building_with_an_answer_a_plugin_rejects_fails() {
         let draft = answered(&[
             ("format", plugin::<RoundRobin>().into()),
             ("metrics", json!([plugin::<Wins>().with("for_win", -1.0)])),
@@ -2124,7 +2213,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            draft.finish().err(),
+            draft.build().err(),
             Some(vec![Issue {
                 path: path("metrics[0].for_win"),
                 problem: Problem::Invalid(ConfigError::Rejected {
@@ -2136,7 +2225,7 @@ mod tests {
     }
 
     #[test]
-    fn finishing_reports_with_nothing_open() {
+    fn building_reports_with_nothing_open() {
         let draft = answered(&[
             ("metrics", json!([plugin::<Losses>()])),
             ("tie_break", Value::Null),
@@ -2145,7 +2234,7 @@ mod tests {
         // the unanswered format could still provide the eliminations
         assert_eq!(draft.issues(), []);
         assert_eq!(
-            draft.finish().err(),
+            draft.build().err(),
             Some(vec![
                 Issue {
                     path: path("format"),
@@ -2166,8 +2255,8 @@ mod tests {
     }
 
     #[test]
-    fn finishing_settles_what_a_single_plugin_provides() {
-        let settled = answered(&[
+    fn the_implied_plugins_are_added_to_the_answers_and_not_by_building() {
+        let mut draft = answered(&[
             (
                 "format",
                 plugin::<Knockout>().with("third_place", false).into(),
@@ -2175,38 +2264,57 @@ mod tests {
             ("metrics", json!([plugin::<Buchholz>()])),
             ("tie_break", Value::Null),
         ]);
+        let issues = draft.build().expect_err("building adds no plugin");
+        let unprovided: Vec<_> = issues
+            .iter()
+            .filter_map(|issue| match issue.problem() {
+                Problem::Unprovided { fact, .. } => Some((issue.path().to_string(), *fact)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            unprovided,
+            [
+                ("metrics".to_owned(), "points"),
+                ("tie_break".to_owned(), "points"),
+                ("metrics".to_owned(), "matches"),
+                ("tie_break".to_owned(), "matches"),
+            ]
+        );
+
+        draft.add_implied();
 
         // wins has a field, so score is the only plugin providing the points that is added
         assert_eq!(
-            settled.finish().map(|phase| format!("{:?}", phase.metrics)),
-            Ok("[Buchholz, Score, MatchCount]".to_owned())
+            draft.answers().get("metrics"),
+            Some(&json!([
+                plugin::<Buchholz>(),
+                plugin::<Score>(),
+                plugin::<MatchCount>()
+            ]))
         );
-        // finishing leaves the answers as they were
         assert_eq!(
-            settled.answers().get("metrics"),
-            Some(&json!([plugin::<Buchholz>()]))
+            draft.build().map(|phase| format!("{:?}", phase.metrics)),
+            Ok("[Buchholz, Score, MatchCount]".to_owned())
         );
     }
 
     #[test]
-    fn a_built_composite_is_finished_from_what_it_serializes_to() {
-        let phase = Phase {
-            format: Box::new(Knockout { third_place: true }),
-            metrics: vec![Box::new(Buchholz), Box::new(Score)],
-            tie_break: None,
-        };
-        let draft = Draft::from_built(singles, &phase).unwrap();
+    fn a_composite_answered_in_code_is_built() -> Result<(), ConfigError> {
+        let draft = draft()
+            .with("format", plugin::<Knockout>().with("third_place", true))?
+            .with(
+                "metrics",
+                json!([
+                    plugin::<Buchholz>(),
+                    plugin::<Score>(),
+                    plugin::<MatchCount>()
+                ]),
+            )?
+            .with("tie_break", Value::Null)?;
 
         assert_eq!(
-            draft.answers().get("format"),
-            Some(&json!({"type": "knockout", "value": {"third_place": true}}))
-        );
-        assert_eq!(
-            draft.answers().get("metrics"),
-            Some(&json!([plugin::<Buchholz>(), plugin::<Score>()]))
-        );
-        assert_eq!(
-            draft.finish().map(|phase| format!("{phase:?}")),
+            draft.build().map(|phase| format!("{phase:?}")),
             Ok(format!(
                 "{:?}",
                 Phase {
@@ -2216,9 +2324,66 @@ mod tests {
                 }
             ))
         );
+        Ok(())
     }
 
-    /// Resolution, on axes of its own so that what the catalog settles is not changed by the
+    #[test]
+    fn answering_a_field_in_code_is_checked_as_setting_it() {
+        assert_eq!(
+            draft().with("metrics", 1).err(),
+            Some(ConfigError::WrongKind {
+                path: path("metrics"),
+                expected: "a list",
+                found: "a whole number",
+            })
+        );
+        assert_eq!(
+            draft().with("rounds", 1).err(),
+            Some(ConfigError::UnknownField {
+                path: path("rounds")
+            })
+        );
+    }
+
+    /// The format recommends the metrics, so they are offered only once it is answered, and the
+    /// fields of the metrics only once those are.
+    #[test]
+    fn the_defaults_answer_what_the_answers_before_them_recommend() -> Result<(), ConfigError> {
+        let draft = draft()
+            .with("format", plugin::<RoundRobin>())?
+            .with_defaults()?;
+
+        assert_eq!(
+            Value::from(draft.answers().clone()),
+            json!({
+                "format": {"type": "round_robin", "value": {}},
+                "metrics": [
+                    {"type": "match_count", "value": {}},
+                    {"type": "wins", "value": {"for_win": 1.0}},
+                ],
+                "tie_break": null,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_defaults_keep_the_answers_and_leave_what_offers_nothing() -> Result<(), ConfigError> {
+        let draft = draft()
+            .with("metrics", json!([plugin::<Wins>().with("for_win", 3.0)]))?
+            .with_defaults()?;
+
+        assert_eq!(
+            Value::from(draft.answers().clone()),
+            json!({
+                "metrics": [{"type": "wins", "value": {"for_win": 3.0}}],
+                "tie_break": null,
+            })
+        );
+        Ok(())
+    }
+
+    /// Implied plugins, on axes of their own so that what the answers imply is not changed by the
     /// plugins of the other tests.
     /// A fact nothing provides yet only counts as still to arrive while a plugin providing it
     /// could still be added, tested on axes of their own: a criterion requiring rounds of
@@ -2380,10 +2545,11 @@ mod tests {
     mod resolution {
         use super::*;
 
+        /// A fact that implies [`Implied`].
         #[derive(Debug)]
-        struct Settled;
+        struct Implying;
 
-        impl Fact for Settled {}
+        impl Fact for Implying {}
 
         #[derive(Debug)]
         struct Ambiguous;
@@ -2431,6 +2597,24 @@ mod tests {
 
         impl Fact for Given {}
 
+        /// A fact required before [`Opening`], whose provider needs what only the plugin
+        /// [`Opening`] implies provides.
+        #[derive(Debug)]
+        struct Late;
+
+        impl Fact for Late {}
+
+        #[derive(Debug)]
+        struct Opening;
+
+        impl Fact for Opening {}
+
+        /// A fact two plugins provide, so that it implies none.
+        #[derive(Debug)]
+        struct Unlocked;
+
+        impl Fact for Unlocked {}
+
         /// The axis of [`Requiring`], taken by a single slot only.
         #[axis]
         trait Need: Plugin {}
@@ -2458,8 +2642,8 @@ mod tests {
         )]
         struct Requiring {
             #[serde(default)]
-            #[plugin(label = "Settled")]
-            settled: bool,
+            #[plugin(label = "Implying")]
+            implying: bool,
             #[serde(default)]
             #[plugin(label = "Ambiguous")]
             ambiguous: bool,
@@ -2484,12 +2668,18 @@ mod tests {
             #[serde(default)]
             #[plugin(label = "Clash")]
             clash: bool,
+            #[serde(default)]
+            #[plugin(label = "Late")]
+            late: bool,
+            #[serde(default)]
+            #[plugin(label = "Opening")]
+            opening: bool,
         }
 
         impl Requiring {
             fn declare(&self, declaration: &mut Declaration) {
-                if self.settled {
-                    declaration.require::<Settled>("the settled fact");
+                if self.implying {
+                    declaration.require::<Implying>("the implying fact");
                 }
                 if self.ambiguous {
                     declaration.require::<Ambiguous>("the ambiguous fact");
@@ -2514,6 +2704,13 @@ mod tests {
                 }
                 if self.clash {
                     declaration.require::<Clash>("the clash fact");
+                }
+                // required in this order, so that the late fact is tried first
+                if self.late {
+                    declaration.require::<Late>("the late fact");
+                }
+                if self.opening {
+                    declaration.require::<Opening>("the opening fact");
                 }
             }
         }
@@ -2540,46 +2737,46 @@ mod tests {
         #[register]
         impl Need for Alone {}
 
-        /// The only plugin without fields that provides [`Settled`].
+        /// The only plugin without fields that provides [`Implying`].
         #[derive(Debug, Serialize, Deserialize, Plugin)]
         #[plugin(
-            id = "settling",
-            label = "settling",
+            id = "implied",
+            label = "implied",
             description = "a plugin of the resolution tests",
             declare_static = Self::declare_static
         )]
-        struct Settling;
+        struct Implied;
 
-        impl Settling {
+        impl Implied {
             fn declare_static(declaration: &mut Declaration) {
-                declaration.provide(Settled);
+                declaration.provide(Implying);
             }
         }
 
         #[register]
-        impl Supply for Settling {}
+        impl Supply for Implied {}
 
-        /// A plugin providing [`Settled`] that has to be configured.
+        /// A plugin providing [`Implying`] that has to be configured.
         #[derive(Debug, Serialize, Deserialize, Plugin)]
         #[plugin(
-            id = "configured_settling",
-            label = "configured settling",
+            id = "configured_provider",
+            label = "configured provider",
             description = "a plugin of the resolution tests",
             declare_static = Self::declare_static
         )]
-        struct ConfiguredSettling {
+        struct ConfiguredProvider {
             #[plugin(label = "Rounds")]
             rounds: u32,
         }
 
-        impl ConfiguredSettling {
+        impl ConfiguredProvider {
             fn declare_static(declaration: &mut Declaration) {
-                declaration.provide(Settled);
+                declaration.provide(Implying);
             }
         }
 
         #[register]
-        impl Supply for ConfiguredSettling {}
+        impl Supply for ConfiguredProvider {}
 
         fn provides_ambiguous(declaration: &mut Declaration) {
             declaration.provide(Ambiguous);
@@ -2611,7 +2808,7 @@ mod tests {
         #[register]
         impl Supply for OtherAmbiguous {}
 
-        /// The only plugin providing [`Downstream`], requiring what [`Settling`] provides.
+        /// The only plugin providing [`Downstream`], requiring what [`Implied`] provides.
         #[derive(Debug, Serialize, Deserialize, Plugin)]
         #[plugin(
             id = "chaining",
@@ -2625,7 +2822,7 @@ mod tests {
             fn declare_static(declaration: &mut Declaration) {
                 declaration
                     .provide(Downstream)
-                    .require::<Settled>("the settled fact");
+                    .require::<Implying>("the implying fact");
             }
         }
 
@@ -2671,6 +2868,65 @@ mod tests {
 
         #[register]
         impl Supply for Clashing {}
+
+        /// The only plugin providing [`Late`], requiring what implies no plugin on its own.
+        #[derive(Debug, Serialize, Deserialize, Plugin)]
+        #[plugin(
+            id = "waiting",
+            label = "waiting",
+            description = "a plugin of the resolution tests",
+            declare_static = Self::declare_static
+        )]
+        struct Waiting;
+
+        impl Waiting {
+            fn declare_static(declaration: &mut Declaration) {
+                declaration
+                    .provide(Late)
+                    .require::<Unlocked>("the unlocked fact");
+            }
+        }
+
+        #[register]
+        impl Supply for Waiting {}
+
+        /// The only plugin providing [`Opening`], and one of the two providing [`Unlocked`].
+        #[derive(Debug, Serialize, Deserialize, Plugin)]
+        #[plugin(
+            id = "unlocking",
+            label = "unlocking",
+            description = "a plugin of the resolution tests",
+            declare_static = Self::declare_static
+        )]
+        struct Unlocking;
+
+        impl Unlocking {
+            fn declare_static(declaration: &mut Declaration) {
+                declaration.provide(Opening).provide(Unlocked);
+            }
+        }
+
+        #[register]
+        impl Supply for Unlocking {}
+
+        /// The other plugin providing [`Unlocked`].
+        #[derive(Debug, Serialize, Deserialize, Plugin)]
+        #[plugin(
+            id = "also_unlocking",
+            label = "also unlocking",
+            description = "a plugin of the resolution tests",
+            declare_static = Self::declare_static
+        )]
+        struct AlsoUnlocking;
+
+        impl AlsoUnlocking {
+            fn declare_static(declaration: &mut Declaration) {
+                declaration.provide(Unlocked);
+            }
+        }
+
+        #[register]
+        impl Supply for AlsoUnlocking {}
 
         /// A plugin providing [`Crosswise`], which [`Deepening`] of another axis provides too.
         #[derive(Debug, Serialize, Deserialize, Plugin)]
@@ -2771,10 +3027,13 @@ mod tests {
             second: Vec<Box<dyn Supply>>,
         }
 
-        /// The ids of the plugins in the lists of the composite `C` finished with `context`, its
+        /// The ids of the plugins in the lists of the composite `C` with `context`, its
         /// requirements requiring the facts named in `requires`, its lists empty and `answers`
-        /// set, or the facts it reports unprovided, each with the path it reports it at.
-        fn finished<C: Configurable + Serialize>(
+        /// set, built once the implied plugins are added, or the facts it reports unprovided, each
+        /// with the path it reports it at.
+        ///
+        /// Checks on the way that adding the implied plugins once more adds nothing.
+        fn built<C: Configurable + Serialize>(
             context: impl FnOnce(&mut Declaration),
             requires: &[&str],
             answers: &[(&str, Value)],
@@ -2795,7 +3054,15 @@ mod tests {
             for (at, answer) in answers {
                 draft.set(&path(at), answer.clone()).unwrap();
             }
-            match draft.finish() {
+            draft.add_implied();
+            let added = draft.answers().clone();
+            draft.add_implied();
+            assert_eq!(
+                draft.answers(),
+                &added,
+                "adding the implied plugins once more adds nothing"
+            );
+            match draft.build() {
                 Ok(built) => {
                     let built = serde_json::to_value(built).unwrap();
                     Ok(built
@@ -2819,18 +3086,34 @@ mod tests {
 
         #[test]
         fn the_providers_of_what_an_added_plugin_requires_are_added_too() {
-            // a plugin with fields does not make the settled fact ambiguous
+            // a plugin with fields does not make the implying fact ambiguous
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["downstream"], &[]),
-                Ok(vec!["chaining".to_owned(), "settling".to_owned()])
+                built::<Resolved>(|_| {}, &["downstream"], &[]),
+                Ok(vec!["chaining".to_owned(), "implied".to_owned()])
+            );
+        }
+
+        /// The waiting plugin needs the unlocked fact, which two plugins provide, so the late fact
+        /// implies nothing when it is tried; the unlocking plugin the opening fact implies provides
+        /// the unlocked fact as well, so the late fact implies the waiting plugin once it is tried
+        /// again.
+        #[test]
+        fn a_fact_tried_before_implies_a_plugin_by_what_a_later_addition_provides() {
+            assert_eq!(
+                built::<Resolved>(|_| {}, &["late"], &[]),
+                Err(vec![("supplies".to_owned(), "the late fact")])
+            );
+            assert_eq!(
+                built::<Resolved>(|_| {}, &["late", "opening"], &[]),
+                Ok(vec!["unlocking".to_owned(), "waiting".to_owned()])
             );
         }
 
         #[test]
-        fn a_provider_whose_requirement_cannot_be_settled_is_not_added() {
+        fn a_provider_whose_requirement_cannot_be_provided_is_not_added() {
             // the stranding plugin would leave the ambiguous fact unprovided
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["stranded"], &[]),
+                built::<Resolved>(|_| {}, &["stranded"], &[]),
                 Err(vec![("supplies".to_owned(), "the stranded fact")])
             );
         }
@@ -2842,11 +3125,11 @@ mod tests {
             };
 
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["clash"], &[]),
+                built::<Resolved>(|_| {}, &["clash"], &[]),
                 Ok(vec!["clashing".to_owned()])
             );
             assert_eq!(
-                finished::<Resolved>(given, &["clash"], &[]),
+                built::<Resolved>(given, &["clash"], &[]),
                 Err(vec![("supplies".to_owned(), "the clash fact")])
             );
         }
@@ -2854,7 +3137,7 @@ mod tests {
         #[test]
         fn a_provider_is_added_to_the_list_taking_its_axis() {
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["deep"], &[]),
+                built::<Resolved>(|_| {}, &["deep"], &[]),
                 Ok(vec!["deepening".to_owned()])
             );
         }
@@ -2862,7 +3145,7 @@ mod tests {
         #[test]
         fn a_fact_plugins_of_two_lists_provide_is_left_unprovided() {
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["crosswise"], &[]),
+                built::<Resolved>(|_| {}, &["crosswise"], &[]),
                 Err(vec![
                     ("supplies".to_owned(), "the crosswise fact"),
                     ("extras".to_owned(), "the crosswise fact"),
@@ -2873,19 +3156,19 @@ mod tests {
         #[test]
         fn nothing_is_added_for_a_fact_the_context_provides() {
             let context = |declaration: &mut Declaration| {
-                declaration.provide(Settled);
+                declaration.provide(Implying);
             };
 
             assert_eq!(
-                finished::<Resolved>(context, &["settled"], &[]),
+                built::<Resolved>(context, &["implying"], &[]),
                 Ok(Vec::new())
             );
         }
 
         #[test]
-        fn an_ambiguous_fact_is_left_unprovided_and_the_others_settled() {
+        fn an_ambiguous_fact_is_left_unprovided_and_the_others_provided() {
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["ambiguous", "settled"], &[]),
+                built::<Resolved>(|_| {}, &["ambiguous", "implying"], &[]),
                 Err(vec![("supplies".to_owned(), "the ambiguous fact")])
             );
         }
@@ -2893,7 +3176,7 @@ mod tests {
         #[test]
         fn a_single_slot_is_never_added_to() {
             assert_eq!(
-                finished::<Resolved>(|_| {}, &["lone"], &[]),
+                built::<Resolved>(|_| {}, &["lone"], &[]),
                 Err(vec![("requirements".to_owned(), "the lone fact")])
             );
         }
@@ -2901,7 +3184,7 @@ mod tests {
         #[test]
         fn a_list_of_a_plugin_is_never_added_to() {
             assert_eq!(
-                finished::<Resolved>(
+                built::<Resolved>(
                     |_| {},
                     &["nested"],
                     &[(
@@ -2919,10 +3202,10 @@ mod tests {
         #[test]
         fn an_axis_two_lists_take_is_never_added_to() {
             assert_eq!(
-                finished::<Twice>(|_| {}, &["settled"], &[]),
+                built::<Twice>(|_| {}, &["implying"], &[]),
                 Err(vec![
-                    ("first".to_owned(), "the settled fact"),
-                    ("second".to_owned(), "the settled fact"),
+                    ("first".to_owned(), "the implying fact"),
+                    ("second".to_owned(), "the implying fact"),
                 ])
             );
         }

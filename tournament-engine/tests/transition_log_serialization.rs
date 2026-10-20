@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
-    PhasePlugins, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
-    TypeMapValue,
+    RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition, TypeMapValue,
+    plugin_factory::config::PluginConfig,
     plugins::{
         metrics_calculator::{
             BuchholzCalculator, LaterFirstLoss, MorePoints, Points, PointsCalculator,
@@ -31,7 +31,12 @@ use tournament_engine::{
 const SEED: Seed = Seed::new(*b"log-trip!!!!");
 
 /// The scoring system of most association football leagues.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+fn three_one() -> PluginConfig {
+    PluginConfig::of::<PointsCalculator>()
+        .with("points_for_win", 3.0)
+        .with("points_for_draw", 1.0)
+        .with("points_for_bye", 0.0)
+}
 
 fn phase_id() -> PhaseId {
     PhaseId::new(Uuid::from_u128(0xfa5e))
@@ -76,16 +81,25 @@ fn played_competition() -> CompetitionStateMachine {
     machine
         .apply_transition(RemoveEntrant::new(entrant_id(4)))
         .unwrap();
-    let plugins = PhasePlugins::new(SingleElimination::new())
-        .rank_by(LaterFirstLoss)
-        .rank_by(MorePoints)
-        .calculate(RoundOfFirstLossCalculator)
+    let knockout = PluginConfig::of::<SingleElimination>().with("third_place_match", false);
+    let ranking = vec![
+        PluginConfig::of::<LaterFirstLoss>(),
+        PluginConfig::of::<MorePoints>(),
+    ];
+    let metrics = vec![
+        PluginConfig::of::<RoundOfFirstLossCalculator>(),
+        PluginConfig::of::<WinsDrawsLossesCalculator>(),
+        three_one(),
+        PluginConfig::of::<BuchholzCalculator>(),
+    ];
+    let plugins = machine
+        .current()
+        .phase_draft()
+        .with("format", knockout)
+        .and_then(|draft| draft.with("ranking", ranking))
+        .and_then(|draft| draft.with("metrics", metrics))
         .unwrap()
-        .calculate(WinsDrawsLossesCalculator)
-        .unwrap()
-        .calculate(THREE_ONE)
-        .unwrap()
-        .calculate(BuchholzCalculator)
+        .build()
         .unwrap();
     machine
         .apply_transition(AddPhase::new(phase_id(), plugins))

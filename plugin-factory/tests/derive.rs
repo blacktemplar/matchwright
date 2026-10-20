@@ -7,7 +7,6 @@ use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
     compatibility::{Declaration, Fact, Incompatibility, check},
     config::{ConfigError, Path, PluginConfig, Value},
-    draft::Draft,
     register,
     schema::{Configurable, Field, FieldKind, FieldType},
 };
@@ -290,26 +289,6 @@ fn an_answer_to_a_skipped_field_is_dropped() {
             .err(),
         Some(ConfigError::UnknownField {
             path: Path::ROOT.field("unknown"),
-        })
-    );
-}
-
-#[test]
-fn a_built_composite_with_state_is_drafted_without_it() {
-    let composite = Composite {
-        main: Box::new(Counter { limit: 3, seen: 2 }),
-        others: Vec::new(),
-        cap: None,
-    };
-
-    let draft = Draft::from_built(|_| {}, &composite).unwrap();
-
-    assert_eq!(
-        Value::from(draft.answers().clone()),
-        json!({
-            "main": {"type": "derive::counter", "value": {"limit": 3}},
-            "others": [],
-            "limit": null,
         })
     );
 }

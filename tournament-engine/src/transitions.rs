@@ -179,8 +179,9 @@ pub trait CompetitionStateMachineExt {
     /// ```
     /// # use tournament_engine::{
     /// #     AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt, Entrant,
-    /// #     EntrantId, MatchResult, PhaseId, PhasePlugins, ReportMatchResult, Seed,
-    /// #     SetCompetitionSeed, StartCompetition, plugins::phase_format::RoundRobin, uuid::Uuid,
+    /// #     EntrantId, MatchResult, PhaseId, ReportMatchResult, Seed, SetCompetitionSeed,
+    /// #     StartCompetition, plugin_factory::config::PluginConfig,
+    /// #     plugins::phase_format::RoundRobin, uuid::Uuid,
     /// # };
     /// # let phase_id = PhaseId::new(Uuid::from_u128(1));
     /// # let mut machine = CompetitionStateMachine::default();
@@ -189,10 +190,14 @@ pub trait CompetitionStateMachineExt {
     /// #     let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
     /// #     machine.apply_transition(AddEntrant::new(entrant))?;
     /// # }
-    /// # machine.apply_transition(AddPhase::new(
-    /// #     phase_id,
-    /// #     PhasePlugins::new(RoundRobin),
-    /// # ))?;
+    /// # let plugins = machine
+    /// #     .current()
+    /// #     .phase_draft()
+    /// #     .with("format", PluginConfig::of::<RoundRobin>())?
+    /// #     .with_defaults()?
+    /// #     .build()
+    /// #     .expect("a round robin fits");
+    /// # machine.apply_transition(AddPhase::new(phase_id, plugins))?;
     /// # machine.apply_transition(StartCompetition)?;
     /// // a round robin between four entrants, with the first and the last match reported
     /// let matches: Vec<_> = machine.current().phases()[&phase_id]
@@ -213,7 +218,10 @@ pub trait CompetitionStateMachineExt {
     ///
     /// let phase = machine.current().phases()[&phase_id].data();
     /// assert_eq!(phase.matches()[&matches[0]].result(), None);
-    /// assert_eq!(phase.matches()[&matches[5]].result(), Some(MatchResult::AWins));
+    /// assert_eq!(
+    ///     phase.matches()[&matches[5]].result(),
+    ///     Some(MatchResult::AWins)
+    /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn undo_match_result(
@@ -306,6 +314,7 @@ fn applied<T: CompetitionTransition>(
 
 #[cfg(test)]
 mod tests {
+    use plugin_factory::config::{PluginConfig, Value};
     use uuid::Uuid;
 
     use super::*;
@@ -316,6 +325,22 @@ mod tests {
 
     fn phase_id() -> PhaseId {
         PhaseId::new(Uuid::from_u128(0xfa5e))
+    }
+
+    /// The plugins of a knockout without a match for third place, neither ranked by anything nor
+    /// calculating any metrics.
+    fn knockout_plugins() -> PhasePlugins {
+        Competition::default()
+            .phase_draft()
+            .with(
+                "format",
+                PluginConfig::of::<SingleElimination>().with("third_place_match", false),
+            )
+            .and_then(|draft| draft.with("ranking", Vec::<Value>::new()))
+            .and_then(|draft| draft.with("metrics", Vec::<Value>::new()))
+            .unwrap()
+            .build()
+            .unwrap()
     }
 
     #[track_caller]
@@ -339,10 +364,7 @@ mod tests {
             machine.apply_transition(AddEntrant::new(entrant)).unwrap();
         }
         machine
-            .apply_transition(AddPhase::new(
-                phase_id(),
-                PhasePlugins::new(SingleElimination::new()),
-            ))
+            .apply_transition(AddPhase::new(phase_id(), knockout_plugins()))
             .unwrap();
         machine.apply_transition(StartCompetition).unwrap();
         machine
@@ -376,7 +398,7 @@ mod tests {
     #[test]
     fn a_competition_takes_a_single_phase() {
         let mut machine = CompetitionStateMachine::default();
-        let plugins = PhasePlugins::new(SingleElimination::new());
+        let plugins = knockout_plugins();
         machine
             .apply_transition(AddPhase::new(phase_id(), plugins.clone()))
             .unwrap();

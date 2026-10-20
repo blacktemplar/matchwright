@@ -110,8 +110,7 @@ a plugin is its configuration, so a field holding state, such as the bracket of
 default, and a saved one comes back with the state it had. The field is always
 serialized, `None` included, since `skip_serializing_if` breaks postcard, which
 reads fields by position; instead a configuration answering a skipped field is
-not rejected, but the answer is dropped, so `Draft::from_built` of a plugin that
-holds state drafts its configuration alone.
+not rejected, but the answer is dropped.
 
 **Undo needs nothing extra.** A plugin is a field of its `Phase`, so its state is
 part of the competition state: it is in a snapshot, and undo — a replay of the
@@ -261,7 +260,7 @@ checked by a test over every registered calculator; `plugin-factory` does not
 expose a plugin's declaration for a runtime assertion.
 
 **The mechanism knows no axes.** `plugin-factory` holds declarations, the check,
-a generic order of any list of plugins and the settling of missing facts. The
+a generic order of any list of plugins and the plugins missing facts imply. The
 one place that knows the axes of a phase is `PhasePlugins`, a `Configurable`
 composite of one format, a list of slice rankers and a list of calculators.
 
@@ -293,31 +292,32 @@ order: `DependencyOrderedSet::new` and deserializing a set both sort it, and fai
 on a cycle. Both also reject a
 plugin given twice, whatever it is configured with, so a phase cannot calculate
 a metric with two configurations of one calculator. Deserializing is
-how `Draft::finish` builds a composite, and how a saved `AddPhase` comes back,
-so neither a finished draft, nor a loaded log, nor `PhasePlugins::new` needs a
-step of its own. The sort keeps an order that is already valid as it is, so a
+how `Draft::build` builds a composite, and how a saved `AddPhase` comes back,
+so neither building from a draft nor loading a log needs a step of its own. The sort keeps an order that is already valid as it is, so a
 saved set replays in the order it was saved in, and one in an order its
 calculators cannot run in, e.g. edited by hand, is put into running order rather
 than run wrong. The slice rankers stay a `Vec`, since their order is the
 ranking.
 
-**Missing providers come from the catalog.** For a required fact nothing
-provides, `Draft::finish` looks among the axes of the composite's lists of
-plugins for the registered plugins that provide it and have no fields, and adds
-the one it finds if there is exactly one — the win-draw-loss record has exactly
-one calculator, so nobody is ever asked about it. Several candidates are an ambiguity it must
-not settle, so it adds nothing and the fact stays unprovided, as it does for a
-fact only a plugin with fields provides: a default a plugin offers is never
-filled in unasked. A field taking one plugin, such as the format, is never added
-to. Settling repeats until nothing changes, each fact tried once. A plugin
+**Missing providers come from the catalog: implied plugins.** For a required
+fact nothing provides, `Draft::add_implied` looks among the axes of the
+composite's lists of plugins for the registered plugins that provide it and have
+no fields, and adds the one it finds if there is exactly one — the plugin the
+fact implies, since there is neither a choice nor anything to configure. The
+win-draw-loss record has exactly one calculator, so nobody is ever asked about
+it. Several candidates are an ambiguity it must not decide, so it adds nothing
+and the fact stays unprovided, as it does for a fact only a plugin with fields
+provides: a default a plugin offers is never filled in unasked. A field taking
+one plugin, such as the format, is never added to. Adding repeats until nothing
+changes, see below. A plugin
 configured explicitly always wins, since the fact it provides is never missing.
 Consumers only configure calculators that need their configuration (points per
 win, ...) or that they want calculated without ranking by them. A UI does not
 add a provider with fields behind the operator's back either; it offers it, as
 the CLI's questionnaire does by starting out with it chosen.
 
-**A fact is settled all or nothing.** What an added plugin requires and nothing
-provides is settled the same way, in turn, and the plugins found for one missing
+**A fact implies its plugins all or nothing.** What an added plugin requires and
+nothing provides implies plugins the same way, in turn, and the plugins found for one missing
 fact are added only together and only if none of them raises an issue: a fact
 provided twice, a fact still missing, a condition not met — on what they
 require or on what they provide to a plugin already there — or a cycle.
@@ -326,16 +326,43 @@ the place the operator configured. So an automatic addition never leaves behind
 a problem with a plugin nobody chose, e.g. a calculator that cannot read a
 third-party match format. Checking a chain needs the phase's context, since a requirement the context
 meets is no issue. Problems among the configured plugins themselves do not
-block an addition. The additions are not reported ahead of finishing: no
+block an addition. The additions are not reported ahead of adding them: no
 consumer showed them, and computing them for every candidate and issue made
 `draft` the most complex part of `plugin-factory`. A candidate only reports
 whether it fits (`Candidate::conflicts`) and whether it is the only plugin
 supplying something the others require (`Candidate::is_sole_supplier`).
 
-**Settling happens before the transition, validation in it.** Settling is the
-consumer's step: it finishes a `Draft<PhasePlugins>` with the competition's
-phase context, for plugins it built itself through `Competition::phase_draft_of`
-(a `Draft::from_built` with that context). The
+**Adding the implied plugins and building are separate steps.**
+`Draft::add_implied` appends the implied plugins to the answers, and
+`Draft::build` builds the composite from the answers as they are, adding
+nothing; since it changes nothing, it borrows the draft. Whether to add the
+implied plugins is the consumer's choice, and the answers it reads afterwards
+are exactly what the composite is built from, e.g. to describe the phase it
+adds. Building without them reports the facts they would have provided as
+unprovided. `add_implied` tries every missing fact
+again after each addition, since an addition may provide what the chain of a
+fact tried before it lacked, and stops once a whole pass adds nothing, so
+calling it twice adds nothing the first call did not. Since an addition stays an
+answer even if the plugin requiring it is taken back later, a consumer whose
+draft may still change adds them to a clone, as the CLI's `Session::add_phase`
+does. Rejected: building adding them to a copy, with nothing public (the
+answers a phase was built from were unobservable); building adding them as well
+as a public `add_implied` (hid the choice, and two ways to the same result);
+and trying each fact once per call (an earlier fact a later addition made
+implying stayed missing, so a second call could add more). The name: the
+plugins are implied by the other answers — exactly one way to provide a missing
+fact and nothing to configure — which neither "settle" nor "resolve
+dependencies" says.
+
+**Implied plugins are added before the transition, validation is in it.**
+Adding them is the consumer's step: it adds them to the `Draft<PhasePlugins>` of
+`Competition::phase_draft`, which carries the competition's phase context, and
+builds the plugins from it.
+Building from that draft is the only way to make `PhasePlugins` besides
+deserializing them, so a `PhasePlugins` was either checked against a
+competition or comes from a log whose `AddPhase` validates it on replay. Code configuring a phase, tests
+included, answers the draft with configs (`Draft::with`, `Draft::with_defaults`)
+just like a UI does. The
 transition holds the complete, sorted list, so neither the log nor a snapshot
 depends on how calculators were picked — which it must not, because the catalog
 depends on which crates are linked in — and changing a registration or the way
@@ -348,10 +375,11 @@ per phase; the result-reporting path loops over an already sorted list and pays
 nothing.
 
 *Planned, once a metric has a second calculator:* a preference among the
-candidates for one metric, so that settling can decide what is an ambiguity
-today — e.g. a match format offering the points calculator that understands its
-matches (`Plugin::recommends` covers the offered default already). This is
-additive, and since settling is not part of the log it can change freely.
+candidates for one metric, so that a fact can imply a plugin where it is an
+ambiguity today — e.g. a match format offering the points calculator that
+understands its matches (`Plugin::recommends` covers the offered default
+already). This is additive, and since adding implied plugins is not part of the
+log it can change freely.
 
 ### Alternatives
 
@@ -380,14 +408,14 @@ additive, and since settling is not part of the log it can change freely.
   composite, could not express "nothing may be added to this slot", and left a
   third-party plugin unfindable. Superseded by the catalog.
 - **The requiring plugin naming the default** (`requires_or(..)`). Two plugins
-  could suggest different defaults for the same fact with nothing to settle
+  could suggest different defaults for the same fact with nothing to decide
   which wins. Rejected; a requirement names a fact and nothing else.
 - **Adding a provider whatever it brings along**, checking it like every other
   plugin afterwards (the engine's previous resolution). A provider that does not
   fit, or requires what nothing provides, turns one missing fact into a problem
   with a plugin the operator never chose and cannot see in what they
-  configured, and a UI could not tell an issue settling fixes from one it
-  replaces. Superseded by settling all or nothing.
+  configured, and a UI could not tell an issue an addition fixes from one it
+  replaces. Superseded by adding the implied plugins all or nothing.
 - **Resolving inside `AddPhase::apply`.** Replay would then depend on which
   plugins are registered, so linking a crate in would change every saved log.
   Rejected.
@@ -399,6 +427,12 @@ additive, and since settling is not part of the log it can change freely.
   its list of calculators. Kept the invariant, but in the one composite that
   knew about it rather than in the type of the list. Superseded by
   `DependencyOrderedSet`.
+- **A typed builder for `PhasePlugins`** (`PhasePlugins::new(..).rank_by(..)
+  .calculate(..)`), and turning built plugins back into a draft
+  (`Draft::from_built`) to add the implied plugins. A second way to make a phase
+  that skipped them, could not leave a field unanswered, and went from typed
+  plugins to configs only to build the same plugins again. Removed; plugins are
+  configured through drafts alone.
 - **Metrics as a kind of requirement of their own** (`required_metrics` next to
   `required`). Duplicated every rule for facts. Superseded.
 - **The engine adding a calculator's metric to its declaration** from
@@ -473,7 +507,7 @@ impl MetricsCalculator for PointsCalculator { /* … */ }
 next to its trait, and a plugin is built as a plugin of its axis, so a consumer
 gets a `Box<dyn MetricsCalculator>`, never something to downcast.
 
-**What may be added is the composite's shape**: `Draft::finish` only appends to
+**What may be added is the composite's shape**: `Draft::add_implied` only appends to
 the fields of `PhasePlugins` taking a list of plugins, so it never adds a
 second phase format.
 

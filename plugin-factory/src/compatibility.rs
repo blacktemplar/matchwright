@@ -166,7 +166,7 @@ type Holds = Box<dyn Fn(&dyn Any) -> bool + Send + Sync>;
 /// The types of the facts a plugin still to be chosen could provide.
 ///
 /// A requirement that nothing provides yet and only such a plugin can meet is not decided, so the
-/// checks treat it as met. [`Self::NOTHING`] turns that off, which is what the check of a finished
+/// checks treat it as met. [`Self::NOTHING`] turns that off, which is what the check of a built
 /// composite passes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct OpenFacts(BTreeSet<TypeId>);

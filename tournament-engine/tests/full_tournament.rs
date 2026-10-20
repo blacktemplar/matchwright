@@ -6,6 +6,7 @@ use tournament_engine::{
     AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt,
     Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, PhasePlugins, Ranking, RemoveEntrant,
     ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    plugin_factory::config::PluginConfig,
     plugins::{
         metrics_calculator::{
             Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
@@ -27,8 +28,37 @@ fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {
     competition.entrants().contains_key(&entrant.id())
 }
 
-/// The scoring system of most association football leagues, used by the phase of this test.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+/// The scoring system of most association football leagues, used by the phase of this test, with a
+/// bye worth `points_for_bye`.
+fn three_one(points_for_bye: f32) -> PluginConfig {
+    PluginConfig::of::<PointsCalculator>()
+        .with("points_for_win", 3.0)
+        .with("points_for_draw", 1.0)
+        .with("points_for_bye", points_for_bye)
+}
+
+/// A knockout that ends with the final.
+fn knockout() -> PluginConfig {
+    PluginConfig::of::<SingleElimination>().with("third_place_match", false)
+}
+
+/// The plugins of a phase of `competition` played in `format`, ranked by `ranking` and calculating
+/// the metrics of `metrics`, built from its draft.
+fn phase_plugins(
+    competition: &Competition,
+    format: PluginConfig,
+    ranking: Vec<PluginConfig>,
+    metrics: Vec<PluginConfig>,
+) -> PhasePlugins {
+    competition
+        .phase_draft()
+        .with("format", format)
+        .and_then(|draft| draft.with("ranking", ranking))
+        .and_then(|draft| draft.with("metrics", metrics))
+        .unwrap()
+        .build()
+        .unwrap()
+}
 
 /// Asserts that `ranking` holds exactly the given value of every metric calculated by the phase.
 ///
@@ -93,18 +123,18 @@ fn full_tournament() {
         .unwrap();
     sm.apply_transition(RemoveEntrant::new(entrant_c.id()))
         .unwrap();
-    let plugins = PhasePlugins::new(SingleElimination::new())
-        .rank_by(LaterFirstLoss)
-        .calculate(RoundOfFirstLossCalculator)
-        .unwrap()
-        .calculate(WinsDrawsLossesCalculator)
-        .unwrap()
-        .calculate(THREE_ONE)
-        .unwrap()
-        .calculate(BuchholzCalculator)
-        .unwrap()
-        .calculate(BuchholzOfBuchholzCalculator)
-        .unwrap();
+    let plugins = phase_plugins(
+        sm.current(),
+        knockout(),
+        vec![PluginConfig::of::<LaterFirstLoss>()],
+        vec![
+            PluginConfig::of::<RoundOfFirstLossCalculator>(),
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+            three_one(0.0),
+            PluginConfig::of::<BuchholzCalculator>(),
+            PluginConfig::of::<BuchholzOfBuchholzCalculator>(),
+        ],
+    );
     sm.apply_transition(AddPhase::new(phase_id, plugins))
         .unwrap();
     sm.apply_transition(StartCompetition).unwrap();
@@ -363,12 +393,15 @@ fn byes_are_scored_when_they_are_scheduled() {
     for _ in 0..3 {
         sm.apply_transition(AddEntrant::new(entrant())).unwrap();
     }
-    let plugins = PhasePlugins::new(RoundRobin)
-        .rank_by(MorePoints)
-        .calculate(WinsDrawsLossesCalculator)
-        .unwrap()
-        .calculate(THREE_ONE.with_points_for_bye(3.0))
-        .unwrap();
+    let plugins = phase_plugins(
+        sm.current(),
+        PluginConfig::of::<RoundRobin>(),
+        vec![PluginConfig::of::<MorePoints>()],
+        vec![
+            PluginConfig::of::<WinsDrawsLossesCalculator>(),
+            three_one(3.0),
+        ],
+    );
     sm.apply_transition(AddPhase::new(phase_id, plugins))
         .unwrap();
 
@@ -393,10 +426,12 @@ fn single_elimination_rejects_a_draw() {
     let phase_id = PhaseId::new(Uuid::new_v4());
     sm.apply_transition(AddEntrant::new(entrant())).unwrap();
     sm.apply_transition(AddEntrant::new(entrant())).unwrap();
-    let plugins = PhasePlugins::new(SingleElimination::new())
-        .rank_by(LaterFirstLoss)
-        .calculate(RoundOfFirstLossCalculator)
-        .unwrap();
+    let plugins = phase_plugins(
+        sm.current(),
+        knockout(),
+        vec![PluginConfig::of::<LaterFirstLoss>()],
+        vec![PluginConfig::of::<RoundOfFirstLossCalculator>()],
+    );
     sm.apply_transition(AddPhase::new(phase_id, plugins))
         .unwrap();
     sm.apply_transition(StartCompetition).unwrap();

@@ -6,9 +6,9 @@
 //! open: a plugin of a third-party crate ends up in the same catalog as the ones of the crate
 //! defining the axis. The plugins of an axis are browsed through its [`AnyAxis`].
 //!
-//! A program reads the catalog to offer the plugins of an axis to choose from, and to settle a
-//! fact a composite requires but none of its plugins provides, see
-//! [`Draft::finish`](crate::draft::Draft::finish).
+//! A program reads the catalog to offer the plugins of an axis to choose from, and to add the
+//! plugins implied by a fact a composite requires but none of its plugins provides, see
+//! [`Draft::add_implied`](crate::draft::Draft::add_implied).
 
 use std::{
     any::{self, TypeId},
@@ -380,9 +380,9 @@ mod tests {
 
     /// A fact exactly one registered plugin provides unasked.
     #[derive(Debug)]
-    struct Settled;
+    struct Implying;
 
-    impl Fact for Settled {}
+    impl Fact for Implying {}
 
     /// A fact two registered plugins provide unasked.
     #[derive(Debug)]
@@ -406,19 +406,19 @@ mod tests {
     #[axis]
     trait Tested: Plugin {}
 
-    /// The only plugin providing [`Settled`], and one of the two providing [`Shared`].
+    /// The only plugin providing [`Implying`], and one of the two providing [`Shared`].
     #[derive(Debug, Serialize, Deserialize, Plugin)]
     #[plugin(
         id = "only_provider",
         label = "only provider",
-        description = "the one plugin providing the settled fact",
+        description = "the one plugin providing the implying fact",
         declare_static = Self::declare_static
     )]
     struct OnlyProvider;
 
     impl OnlyProvider {
         fn declare_static(declaration: &mut Declaration) {
-            declaration.provide(Settled).provide(Shared);
+            declaration.provide(Implying).provide(Shared);
         }
     }
 
@@ -546,7 +546,7 @@ mod tests {
     #[plugin(
         id = "chained",
         label = "chained",
-        description = "a plugin requiring the settled fact",
+        description = "a plugin requiring the implying fact",
         declare_static = Self::declare_static
     )]
     struct Chained;
@@ -556,7 +556,7 @@ mod tests {
             declaration
                 .provide(Downstream)
                 .provide(Crosswise)
-                .require::<Settled>("the settled fact");
+                .require::<Implying>("the implying fact");
         }
     }
 
@@ -593,9 +593,9 @@ mod tests {
         assert_eq!(entry.label(), OnlyProvider::LABEL);
         assert_eq!(
             entry.description(),
-            Some("the one plugin providing the settled fact")
+            Some("the one plugin providing the implying fact")
         );
-        assert!(entry.declaration().provides_type(TypeId::of::<Settled>()));
+        assert!(entry.declaration().provides_type(TypeId::of::<Implying>()));
         assert!(entry.schema().fields().is_empty());
         assert_eq!(entry_of::<Handwritten>().description(), None);
     }
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn the_facts_of_an_axis_are_what_its_plugins_and_theirs_provide() {
         let facts = OpenFacts::from_iter([
-            TypeId::of::<Settled>(),
+            TypeId::of::<Implying>(),
             TypeId::of::<Ambiguous>(),
             TypeId::of::<Configured>(),
             TypeId::of::<Shared>(),
