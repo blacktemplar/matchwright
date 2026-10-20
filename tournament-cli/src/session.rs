@@ -664,9 +664,7 @@ mod tests {
 
     /// Adds the phase played with `plugins`, settled as a configured phase is.
     fn add_phase(session: &mut Session, plugins: &PhasePlugins) -> Result<String, Error> {
-        let context =
-            |declaration: &mut _| session.competition().declare_phase_context(declaration);
-        let draft = Draft::from_built(context, plugins).unwrap();
+        let draft = session.competition().phase_draft_of(plugins);
         session.add_phase(&draft)
     }
 

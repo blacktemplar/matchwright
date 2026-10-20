@@ -167,7 +167,7 @@ mod tests {
         Plugin, PluginType,
         catalog::AnyAxis,
         compatibility::{self, Declaration, Fact, Incompatibility},
-        draft::{Draft, Issue, Problem},
+        draft::{Issue, Problem},
         register,
     };
 
@@ -270,10 +270,7 @@ mod tests {
 
     /// `plugins` settled in a competition, as a consumer adding them would.
     fn settled(plugins: &PhasePlugins) -> Result<PhasePlugins, Vec<Issue>> {
-        let context = |declaration: &mut Declaration| {
-            Competition::default().declare_phase_context(declaration);
-        };
-        Draft::from_built(context, plugins).unwrap().finish()
+        Competition::default().phase_draft_of(plugins).finish()
     }
 
     /// What can be checked of the labelling guidelines of the module, for every plugin registered

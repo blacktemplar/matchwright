@@ -334,7 +334,8 @@ supplying something the others require (`Candidate::is_sole_supplier`).
 
 **Settling happens before the transition, validation in it.** Settling is the
 consumer's step: it finishes a `Draft<PhasePlugins>` with the competition's
-phase context, for plugins it built itself through `Draft::from_built`. The
+phase context, for plugins it built itself through `Competition::phase_draft_of`
+(a `Draft::from_built` with that context). The
 transition holds the complete, sorted list, so neither the log nor a snapshot
 depends on how calculators were picked — which it must not, because the catalog
 depends on which crates are linked in — and changing a registration or the way

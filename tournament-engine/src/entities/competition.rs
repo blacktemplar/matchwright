@@ -101,7 +101,7 @@ impl Competition {
     /// Declares the facts that hold for a phase added to this competition before any of its
     /// plugins declare theirs, i.e. the context of its [`PhasePlugins`] for a [`Draft`] and for
     /// [`plugin_factory::compatibility`].
-    pub fn declare_phase_context(&self, declaration: &mut Declaration) {
+    pub(crate) fn declare_phase_context(&self, declaration: &mut Declaration) {
         // every entrant gets a ranking of its own when the competition starts, see `Self::start`
         declaration.provide(EntrantsPerRanking::SINGLE);
     }
@@ -109,6 +109,16 @@ impl Competition {
     /// A draft of the plugins of a phase of this competition, with nothing answered yet.
     pub fn phase_draft(&self) -> Draft<PhasePlugins> {
         Draft::new(|declaration| self.declare_phase_context(declaration))
+    }
+
+    /// Like [`Self::phase_draft`], with every field answered as in `plugins`, see
+    /// [`Draft::from_built`]. Finishing it settles `plugins` for this competition.
+    pub fn phase_draft_of(&self, plugins: &PhasePlugins) -> Draft<PhasePlugins> {
+        Draft::from_built(
+            |declaration| self.declare_phase_context(declaration),
+            plugins,
+        )
+        .expect("built plugins are a configuration of themselves")
     }
 
     pub fn phases(&self) -> &IdMap<Phase> {

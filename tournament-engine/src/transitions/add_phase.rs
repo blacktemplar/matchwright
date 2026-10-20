@@ -12,8 +12,8 @@ use crate::{
 /// Adds the phase to a competition that has not started yet. A competition has a single phase.
 ///
 /// Applying it fails if the competition has a phase already, or if the plugins of the phase do not
-/// fit together in the competition, see [`compatibility::check`] with
-/// [`Competition::declare_phase_context`] as the context.
+/// fit together in the competition, see [`compatibility::check`], with the context that
+/// [`Competition::phase_draft`] carries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddPhase {
     id: PhaseId,
