@@ -18,17 +18,18 @@ The hooks are `cargo-fmt`, `cargo-clippy` (`-D warnings`), `cargo-clippy-wasm` (
 
 - Run a single test: `cargo test -p tournament-engine <test_name_substring>`. Integration tests live in `tournament-engine/tests/` (pick a file with `--test full_tournament`).
 - Doc tests count; several public items carry runnable examples.
-- WebAssembly: `tournament-engine`, `plugin-factory` and the library of `tournament-cli` (without its default feature `terminal`, i.e. `--no-default-features`) must build for and pass their tests on `wasm32-unknown-unknown` (the browser frontend runs on them). They are too slow for every commit, so the `wasm-test` hook (needs `wasm-pack`) is in the manual stage and runs in CI: `prek run --all-files --stage manual wasm-test`. Run it after changing those crates. For a single crate or file: `wasm-pack test --node tournament-engine --profile wasm-test [--test <file>]`; the profile drops debug info, without which the runner is more than twice as fast. Doc tests and the benchmark run natively only. Randomness from the system (`rand`'s `thread_rng`, `Uuid::new_v4`) is chosen by the final application on wasm (`getrandom/wasm_js`, `uuid/js`), so the libraries must not enable it in their normal dependencies.
+- WebAssembly: `tournament-engine`, `plugin-factory` and the library of `tournament-cli` (without its default feature `terminal`, i.e. `--no-default-features`) must build for and pass their tests on `wasm32-unknown-unknown` (the browser frontend runs on them). `tournament-web` only runs in a browser: its tests are `#[wasm_bindgen_test]`s in modules that only exist on wasm, and run in headless Chrome (`wasm-pack test --headless --chrome tournament-web`). The wasm tests are too slow for every commit, so the `wasm-test` hook (needs `wasm-pack`, and Chrome with chromedriver) is in the manual stage and runs in CI: `prek run --all-files --stage manual wasm-test`. Run it after changing those crates. For a single crate or file: `wasm-pack test --node tournament-engine --profile wasm-test [--test <file>]`; the profile drops debug info, without which the runner is more than twice as fast. Doc tests and the benchmark run natively only. Randomness from the system (`rand`'s `thread_rng`, `Uuid::new_v4`) is chosen by the final application on wasm (`getrandom/wasm_js`, `uuid/js`), so the libraries must not enable it in their normal dependencies.
 - Benchmark: `cargo bench -p tournament-engine --bench large_tournament` (criterion).
 - Example: `cargo run -p tournament-engine --example run_tournament`.
 - CLI: `cargo run -p tournament-cli -- [FILE]` (see `tournament-cli/README.md` for its commands).
+- Web: `cd tournament-web && trunk serve` (see `tournament-web/README.md`).
 - Profile `release-checked`: release with debug assertions and overflow checks.
 - Keep `Cargo.toml` dependency lists sorted (the `cargo-sort` hook checks this). Dependency versions are declared only in the root `[workspace.dependencies]`; members use `dep.workspace = true`. `plugin-factory` and its proc-macro crate `plugin-factory-derive` are the exception on purpose: they declare everything themselves, including `version`/`edition`/`license`, so that they can be moved out of the workspace together. Don't give them workspace references, and don't let them depend on the other crates.
 - `undoable-state-machine` is a git dependency (same author) that follows its `main`; `Cargo.lock` pins the commit. After pushing a change there, pick it up with `cargo update -p undoable-state-machine`.
 
 ## Architecture
 
-Two crates: `tournament-engine` (the library) and `tournament-cli` (an interactive REPL on top of it), plus `plugin-factory` (generic plugin axes, catalog, schemas, drafts, compatibility), which the engine builds on and which must not depend on the others. `DESIGN.md` is the authoritative design record, with the rationale and rejected alternatives for each decision. Read the relevant section before changing a mechanism. Sections marked *planned* are not implemented. Some type names in it may lag behind recent renames (e.g. ranking "criteria").
+Three crates: `tournament-engine` (the library), `tournament-cli` (an interactive REPL on top of it) and `tournament-web` (the CLI's command line in the browser, via wasm), plus `plugin-factory` (generic plugin axes, catalog, schemas, drafts, compatibility), which the engine builds on and which must not depend on the others. `DESIGN.md` is the authoritative design record, with the rationale and rejected alternatives for each decision. Read the relevant section before changing a mechanism. Sections marked *planned* are not implemented. Some type names in it may lag behind recent renames (e.g. ranking "criteria").
 
 ### Global constraints (from DESIGN.md, apply everywhere)
 
@@ -48,6 +49,10 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 ### Engine data flow
 
 `Competition` → `Phase` (holding its `PhaseFormat`, ranker, metrics calculators, `matches`, `byes`, `rankings`) → `Match` / `Bye` / `Ranking`. On `StartCompetition` and after every reported result the phase format schedules a `Schedule` of matches and byes (`create_new_matches(&PhaseData)`); a bye is final when scheduled, so each calculator's `update_after_bye` runs right away, followed by a re-rank. On `ReportMatchResult` the match is appended to `Ranking::played_matches` of its rankings, each `MetricsCalculator` updates metrics incrementally (`update_after_match_result`, which gets the *old* metrics of the calculators that ran before it), then the ranker re-sorts. This is the hot path, so `rank_by` looks up each ranking's metric once per sort instead of per comparison.
+
+### Web
+
+`tournament-web/src/lib.rs` holds what is testable: `LocalStorage` (the CLI's `Storage` on the browser's local storage) and `Shell`, which runs a line against a `Session` and returns a `Reply` (clap's help as output, its errors as errors; `exit` starts a new competition). `main.rs` only wires the page of `index.html` up to it (input with history, output, prompt, the competition named after `#` in the URL, a warning before leaving with unsaved changes). It is a thin text layer on purpose: the planned Rust GUI is a separate rewrite, not built on it.
 
 ### CLI
 

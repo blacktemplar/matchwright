@@ -1,1 +1,3 @@
 /target
+# the page built by trunk
+/tournament-web/dist

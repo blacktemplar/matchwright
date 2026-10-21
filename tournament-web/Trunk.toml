@@ -1,0 +1,3 @@
+[build]
+# relative URLs, so that the built page works from any directory it is served from
+public_url = "./"

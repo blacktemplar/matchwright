@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tournament</title>
+  <link data-trunk rel="rust" data-bin="tournament-web">
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font: 15px/1.4 ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
+    }
+    main {
+      padding: 1em;
+    }
+    #output div {
+      white-space: pre-wrap;
+    }
+    #output .line {
+      color: #8a8a8a;
+    }
+    #output .error {
+      color: #f48771;
+    }
+    label {
+      display: flex;
+      white-space: pre;
+    }
+    input {
+      flex: 1;
+      padding: 0;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="output"></div>
+    <label><span id="prompt"></span><input id="input" autofocus autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  </main>
+</body>
+</html>
