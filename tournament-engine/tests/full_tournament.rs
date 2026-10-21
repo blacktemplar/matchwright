@@ -18,6 +18,8 @@ use tournament_engine::{
     uuid::Uuid,
 };
 use vec1::vec1;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 fn entrant() -> Entrant {
     Entrant::new(EntrantId::new(Uuid::new_v4()))

@@ -18,12 +18,15 @@ license = "MIT OR Apache-2.0"
 clap = { version = "4.6.7", features = ["derive"] }
 criterion = "0.8.2"
 dyn-clone = "1.0.20"
+getrandom = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
 inquire = "0.9.4"
 itertools = "0.15.0"
 plugin-factory = { path = "plugin-factory" }
 postcard = { version = "1.1.3", features = ["use-std"] }
-rand = "0.10.3"
+# without the default features, which draw from the operating system: the engine only uses seeded
+# generators, and so builds for targets that have no source of randomness
+rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
 rand_seeder = "0.5.0"
 rustc-hash = "2.1.3"
 rustyline = "19.0.0"
@@ -39,9 +42,16 @@ undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state
 ] }
 uuid = { version = "1.28.0", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
+wasm-bindgen-test = "0.3.79"
 
 # Profiles are only honoured in the workspace root, so they stay here rather than in a member.
 [profile.release-checked]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
+
+# The tests compiled to wasm (the `wasm-test` hook). Debug info makes every test binary several
+# times larger, and preparing it for the test runner takes correspondingly longer.
+[profile.wasm-test]
+inherits = "dev"
+debug = false

@@ -20,11 +20,22 @@ uuid.workspace = true
 vec1.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
 postcard.workspace = true
+# a test plays a tournament from a random seed
+rand = { workspace = true, features = ["thread_rng"] }
 serde_json.workspace = true
 # the tests, benchmarks and examples of this crate build plugins directly
 tournament-engine = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# the log ids and some seeds are random, and in the browser randomness comes from JavaScript, which
+# the application picks, so the tests do
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen-test.workspace = true
 
 [features]
 # Constructors building plugins and `PhasePlugins` directly, bypassing their configuration. Meant

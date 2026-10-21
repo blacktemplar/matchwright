@@ -272,6 +272,8 @@ fn winner_bracket_slot(round: u32) -> NonZeroU32 {
 mod tests {
     use DoubleEliminationRound::{GrandFinal, GrandFinalReset, Losers, Winners};
     use itertools::Itertools;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{

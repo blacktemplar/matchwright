@@ -1,0 +1,8 @@
+# The configuration of the `cargo-clippy-wasm` hook, which lints the crates that also run in the
+# browser for `wasm32-unknown-unknown`. A clippy.toml added to the workspace root later has to be
+# repeated here, since this one replaces it for that hook.
+disallowed-macros = [
+    # the wasm test runner silently skips a plain `#[test]`; a test module runs its tests there by
+    # importing `#[cfg(target_arch = "wasm32")] use wasm_bindgen_test::wasm_bindgen_test as test;`
+    { path = "core::prelude::v1::test", reason = "it does not run in wasm; import `wasm_bindgen_test::wasm_bindgen_test as test` for wasm32" },
+]

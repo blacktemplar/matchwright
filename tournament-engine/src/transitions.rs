@@ -393,6 +393,8 @@ fn applied<T: CompetitionTransition>(
 mod tests {
     use plugin_factory::config::Config;
     use uuid::Uuid;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{

@@ -16,10 +16,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          # for the cargo-clippy-wasm hook
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
         with:
           extra-args: --all-files --skip cargo-fmt
+
+  # the tests compiled to wasm, which are too slow for a hook on every commit (Node comes with the
+  # runner image)
+  wasm-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
+        with:
+          extra-args: --all-files --stage manual wasm-test
 
   fmt:
     runs-on: ubuntu-latest

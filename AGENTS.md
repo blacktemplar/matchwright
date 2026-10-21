@@ -11,12 +11,14 @@ Verify changes by running the hooks from `.pre-commit-config.yaml` (CI runs the 
 ```sh
 prek run --all-files          # or: pre-commit run --all-files
 prek run --all-files cargo-test   # a single hook
+prek run --all-files --stage manual   # all hooks plus the slow ones only CI runs (wasm-test)
 ```
 
-The hooks are `cargo-fmt`, `cargo-clippy` (`-D warnings`), `cargo-test`, `cargo-doc` and `cargo-sort`. `cargo-fmt` needs **nightly** rustfmt because `rustfmt.toml` uses unstable options.
+The hooks are `cargo-fmt`, `cargo-clippy` (`-D warnings`), `cargo-clippy-wasm` (the crates that run in the browser, for `wasm32-unknown-unknown`, configured by `clippy-wasm/clippy.toml`), `cargo-test`, `cargo-doc` and `cargo-sort`. `cargo-fmt` needs **nightly** rustfmt because `rustfmt.toml` uses unstable options.
 
 - Run a single test: `cargo test -p tournament-engine <test_name_substring>`. Integration tests live in `tournament-engine/tests/` (pick a file with `--test full_tournament`).
 - Doc tests count; several public items carry runnable examples.
+- WebAssembly: `tournament-engine` and `plugin-factory` must build for and pass their tests on `wasm32-unknown-unknown` (the browser frontend runs on them). They are too slow for every commit, so the `wasm-test` hook (needs `wasm-pack`) is in the manual stage and runs in CI: `prek run --all-files --stage manual wasm-test`. Run it after changing those crates. For a single crate or file: `wasm-pack test --node tournament-engine --profile wasm-test [--test <file>]`; the profile drops debug info, without which the runner is more than twice as fast. Doc tests and the benchmark run natively only. Randomness from the system (`rand`'s `thread_rng`, `Uuid::new_v4`) is chosen by the final application on wasm (`getrandom/wasm_js`, `uuid/js`), so the libraries must not enable it in their normal dependencies.
 - Benchmark: `cargo bench -p tournament-engine --bench large_tournament` (criterion).
 - Example: `cargo run -p tournament-engine --example run_tournament`.
 - CLI: `cargo run -p tournament-cli -- [FILE]` (see `tournament-cli/README.md` for its commands).
@@ -55,6 +57,7 @@ Two crates: `tournament-engine` (the library) and `tournament-cli` (an interacti
 
 - **A test names only what it is about.** Build test data with a builder and leave everything else to its defaults, so that a reader sees at a glance what matters to the test. Prefer a builder over a helper function with positional parameters: a helper forces every caller to spell out every part, and hides which of them the test cares about. Don't add a helper that only wraps a builder with fixed arguments; inline the builder chain. When a test needs data no builder offers yet, extend the builder (with a sensible default) rather than writing a helper.
 - **Builders of the engine**, behind the `test-util` feature: `PhasePluginsBuilder` builds `PhasePlugins` (defaults: a round robin, an empty ranking, no metrics), `PhaseBuilder` a standalone `Phase` for unit tests of plugins (the same plugin defaults, plus `add_players`). Plugins with fields have constructors behind the same feature (`PointsCalculator::new(..)`, `SingleElimination::new()`, ...); a new plugin with fields gets one under `#[cfg(feature = "test-util")]`, and an ungated doc comment must not link to it. The engine's own tests, benchmarks and examples get the feature through a dev-dependency on the crate itself.
+- **Every test also runs in WebAssembly.** The wasm test runner only runs `#[wasm_bindgen_test]`, and silently skips a plain `#[test]`. So each test module (and integration test file) of a crate that builds for wasm imports `#[cfg(target_arch = "wasm32")] use wasm_bindgen_test::wasm_bindgen_test as test;`, which makes its `#[test]`s run there; the `cargo-clippy-wasm` hook rejects a plain `#[test]` (`disallowed-macros`). A nested module with `use super::*;` needs the import itself, since the glob would make `test` ambiguous. A test that cannot work in wasm (e.g. one using `catch_unwind`: wasm aborts on a panic) gets `#[cfg_attr(target_arch = "wasm32", ignore = "<why>")]`.
 - **Configs only where configuration is tested**: drafts (`Competition::phase_draft`, `Draft::with`, `PluginConfig`) belong in tests of configuration, of implied plugins, or of a consumer's configuring (the CLI's `Session::add_phase` takes a draft).
 
 ## Working style

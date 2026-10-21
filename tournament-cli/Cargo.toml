@@ -9,7 +9,8 @@ license.workspace = true
 clap.workspace = true
 inquire.workspace = true
 plugin-factory.workspace = true
-rand.workspace = true
+# the seed of a new competition is random
+rand = { workspace = true, features = ["thread_rng"] }
 rustyline.workspace = true
 serde.workspace = true
 serde_json.workspace = true

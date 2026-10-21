@@ -130,6 +130,8 @@ impl TypeMap {
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::plugins::metrics_calculator::{points::Points, wins_draws_losses::WinsDrawsLosses};

@@ -231,6 +231,8 @@ impl Comparison {
 mod tests {
     use uuid::Uuid;
     use vec1::vec1;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{

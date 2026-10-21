@@ -371,6 +371,8 @@ impl Debug for AnyAxis {
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{
@@ -767,6 +769,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        ignore = "WebAssembly aborts on a panic, so it cannot be caught"
+    )]
     fn the_panic_on_a_shared_id_names_both_plugins() {
         let message = std::panic::catch_unwind(|| AnyAxis::of::<dyn Clashing>().entries().count())
             .unwrap_err()

@@ -716,6 +716,8 @@ fn first_repeated<T>(items: &[T], same: impl Fn(&T, &T) -> bool) -> Option<usize
 mod tests {
     use serde::{Deserialize, Deserializer, Serialize, de::Error};
     use serde_json::json;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{Plugin, PluginType, axis, catalog::PluginEntry, register};

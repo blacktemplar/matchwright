@@ -1391,6 +1391,8 @@ impl Placed {
 mod tests {
     use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
     use serde_json::json;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{Plugin, PluginType, axis, compatibility::Fact, register};
@@ -2452,6 +2454,9 @@ mod tests {
     /// could still be added, tested on axes of their own: a criterion requiring rounds of
     /// elimination, which only a calculator requiring a format that eliminates calculates.
     mod reachability {
+        #[cfg(target_arch = "wasm32")]
+        use wasm_bindgen_test::wasm_bindgen_test as test;
+
         use super::*;
 
         #[derive(Debug)]
@@ -2606,6 +2611,9 @@ mod tests {
     }
 
     mod resolution {
+        #[cfg(target_arch = "wasm32")]
+        use wasm_bindgen_test::wasm_bindgen_test as test;
+
         use super::*;
 
         /// A fact that implies [`Implied`].

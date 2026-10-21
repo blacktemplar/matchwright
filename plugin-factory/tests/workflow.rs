@@ -13,6 +13,8 @@ use plugin_factory::{
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::json;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 /// How many entrants a ranking stands for, which the context of a phase provides.
 #[derive(Debug)]

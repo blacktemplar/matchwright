@@ -26,6 +26,8 @@ use tournament_engine::{
     undoable_state_machine::{LogEntry, LogEntryKind, SessionHistory, TransitionId},
     uuid::Uuid,
 };
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 /// Everything random here is seeded, so that all runs use the exact same tournament.
 const SEED: Seed = Seed::new(*b"log-trip!!!!");

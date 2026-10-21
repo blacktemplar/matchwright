@@ -523,6 +523,8 @@ impl<'a> Facts<'a> {
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::{

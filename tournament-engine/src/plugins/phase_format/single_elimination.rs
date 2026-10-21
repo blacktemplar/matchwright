@@ -215,6 +215,8 @@ fn bracket(phase_data: &PhaseData, third_place_match: bool) -> Bracket {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
     use crate::entities::competition::{MatchResult, Phase, PhaseBuilder, RankingId};

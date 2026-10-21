@@ -12,6 +12,8 @@ use plugin_factory::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 use serde_json::json;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 /// A plugin axis whose plugins report what they are configured with, so that a built plugin can
 /// be checked without being downcast.
