@@ -14,6 +14,11 @@ use crate::{
 /// Applying it fails if the competition has a phase already, or if the plugins of the phase do not
 /// fit together in the competition, see [`compatibility::check`], with the context that
 /// [`Competition::phase_draft`] carries.
+///
+/// The phase is changed after it was added by replacing this transition with one adding it with
+/// other plugins, see [`reconfigure_phase`].
+///
+/// [`reconfigure_phase`]: crate::CompetitionStateMachineExt::reconfigure_phase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddPhase {
     id: PhaseId,
@@ -28,6 +33,10 @@ impl AddPhase {
     /// [`Draft::add_implied`](plugin_factory::draft::Draft::add_implied).
     pub fn new(id: PhaseId, plugins: PhasePlugins) -> Self {
         Self { id, plugins }
+    }
+
+    pub fn id(&self) -> PhaseId {
+        self.id
     }
 
     pub fn plugins(&self) -> &PhasePlugins {

@@ -200,6 +200,17 @@ impl<T: Configurable> Draft<T> {
         Ok(self)
     }
 
+    /// Returns this draft with `answers` in place of every answer it holds, e.g. the answers a
+    /// composite was built from, so that they can be changed. They are checked as [`Self::set`]
+    /// checks an answer, and an answer to a field the schema leaves out is dropped.
+    ///
+    /// # Errors
+    /// Returns what [`Self::set`] returns, with paths seen from the root.
+    pub fn with_answers(mut self, answers: &Config) -> Result<Self, ConfigError> {
+        self.answers = T::schema().walk(answers, &Path::ROOT, false)?;
+        Ok(self)
+    }
+
     /// Returns this draft with every unanswered field answered by what it offers, see
     /// [`Self::default_value`]. The fields are answered in schema order, each followed by the
     /// fields of the plugins answering it, so that a field offers what the answers before it
@@ -1755,6 +1766,58 @@ mod tests {
         );
         draft.unset(&path("metrics")).unwrap();
         assert_eq!(draft.answers().get("metrics"), None);
+    }
+
+    /// The answers of a draft are taken over by another one, as they are written back after being
+    /// checked.
+    #[test]
+    fn a_draft_takes_over_the_answers_of_another_one() {
+        let filled = answered(&[
+            (
+                "format",
+                json!(plugin::<Knockout>().with("third_place", true)),
+            ),
+            ("metrics", json!([plugin::<MatchCount>()])),
+            ("tie_break", Value::Null),
+        ]);
+
+        let draft = draft().with_answers(filled.answers()).unwrap();
+
+        assert_eq!(draft.answers(), filled.answers());
+        assert!(draft.build().is_ok());
+    }
+
+    /// A composite serializes as the answers it is built from, so that it can be changed in a
+    /// draft once it is built.
+    #[test]
+    fn a_built_composite_has_the_config_it_was_built_from() {
+        let draft = answered(&[
+            (
+                "format",
+                json!(plugin::<Knockout>().with("third_place", true)),
+            ),
+            ("metrics", json!([plugin::<Wins>().with("for_win", 2.0)])),
+            ("tie_break", json!(plugin::<MatchCount>())),
+        ]);
+
+        let built = draft.build().unwrap();
+
+        assert_eq!(Config::of(&built).as_ref(), Ok(draft.answers()));
+    }
+
+    #[test]
+    fn answers_that_do_not_fit_the_schema_are_not_taken_over() {
+        let answers =
+            Config::new().with("metrics", json!([plugin::<Wins>().with("for_win", true)]));
+
+        assert_eq!(
+            draft().with_answers(&answers).err(),
+            Some(ConfigError::WrongKind {
+                path: path("metrics[0].for_win"),
+                expected: "a number",
+                found: "yes or no",
+            })
+        );
     }
 
     #[test]

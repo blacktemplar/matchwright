@@ -2,7 +2,8 @@
 //!
 //! A [`Session`] owns the [`CompetitionStateMachine`] of the competition and executes every
 //! [`Command`] against it. It is saved as that machine's transition log rather than as a snapshot
-//! of the competition, so undo and redo reach back past a save and a reload.
+//! of the competition. What can be undone and redone is what the session did itself, which is not
+//! saved: a loaded competition starts with nothing to undo.
 
 use std::{
     collections::HashSet,
@@ -24,8 +25,10 @@ use tournament_engine::{
     PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed,
     SetCompetitionSeed, StartCompetition,
     plugins::{metrics_calculator::MetricColumn, phase_format::PhaseFormat, ranker::SliceRanker},
-    transitions::{RedoLastError, UndoMatchResultError},
-    undoable_state_machine::{StateMachineError, TransitionError},
+    transitions::{ReconfigurePhaseError, UndoMatchResultError},
+    undoable_state_machine::{
+        RedoLastError, SessionHistory, StateMachineError, TransitionError, UndoLastError,
+    },
     uuid::Uuid,
 };
 
@@ -57,6 +60,16 @@ pub enum Error {
     /// be configured before it reaches one, see [`questionnaire::fill`].
     #[error("configuring a phase needs a terminal to ask at; name a format, see `help add-phase`")]
     NotConfigured,
+    /// A session never reads from the terminal, so the phase has to be edited before it reaches
+    /// one, see [`Session::edit_phase`].
+    #[error("editing the phase needs a terminal to ask at")]
+    NotEdited,
+    #[error("the competition has no phase yet")]
+    NoPhase,
+    /// The edited phase does not fit a change made after the phase was added, e.g. a result
+    /// reported for a match the edited format does not schedule.
+    #[error("the phase cannot be changed this way, since a later change no longer fits it: {0}")]
+    EditRejected(TransitionError),
     /// No registered phase format goes by this name.
     #[error(
         "there is no format {0:?}; the formats are: {formats}",
@@ -131,10 +144,12 @@ impl From<StateMachineError> for Error {
 
 /// A competition being run at the prompt, together with the file it is saved to.
 ///
-/// The first entry of the log of every session is the [`SetCompetitionSeed`] it was created with,
-/// which is never undone.
+/// The first entry of the log of every competition is the [`SetCompetitionSeed`] it was created
+/// with, which is no action of the session and so never undone.
 pub struct Session {
     machine: CompetitionStateMachine,
+    /// What this session did, which `undo` and `redo` walk through.
+    history: SessionHistory,
     path: Option<PathBuf>,
     /// The length of the log when it was last saved or loaded. The log is append-only, so every
     /// change since makes it longer, undo and redo included.
@@ -152,11 +167,13 @@ impl Session {
         Self {
             saved_log_len: machine.log().len(),
             machine,
+            history: SessionHistory::new(),
             path,
         }
     }
 
-    /// Loads the competition saved to `path`, which also becomes the file it is saved to.
+    /// Loads the competition saved to `path`, which also becomes the file it is saved to. The
+    /// session has done nothing yet, so there is nothing to undo.
     ///
     /// # Errors
     /// Returns an error if the file cannot be read or does not hold a log that replays into a
@@ -173,6 +190,7 @@ impl Session {
         Ok(Self {
             saved_log_len: machine.log().len(),
             machine,
+            history: SessionHistory::new(),
             path: Some(path),
         })
     }
@@ -202,6 +220,7 @@ impl Session {
             Command::AddPhase { format, answers } => {
                 self.add_phase_in(&format.ok_or(Error::NotConfigured)?, &answers)?
             }
+            Command::EditPhase => return Err(Error::NotEdited),
             Command::Start => self.start()?,
             Command::Matches { open, round } => self.matches(open, round)?,
             Command::Report { number, result } => self.report(number, result)?,
@@ -255,7 +274,8 @@ impl Session {
         for name in &names {
             let entrant = Entrant::new(EntrantId::new(Uuid::new_v4()))
                 .with_annotation(DisplayName::new(name.as_str()));
-            self.machine.apply_transition(AddEntrant::new(entrant))?;
+            self.machine
+                .apply_in(&mut self.history, AddEntrant::new(entrant))?;
         }
         Ok(format!(
             "{} entrant(s) added, {} in total",
@@ -270,7 +290,7 @@ impl Session {
             .ok_or_else(|| Error::UnknownEntrant(name.to_owned()))?
             .id();
         self.machine
-            .apply_transition(RemoveEntrant::new(entrant_id))?;
+            .apply_in(&mut self.history, RemoveEntrant::new(entrant_id))?;
         Ok(format!("{name} removed"))
     }
 
@@ -286,13 +306,62 @@ impl Session {
     /// because it has started, or if the plugins `draft` configures do not fit together, e.g.
     /// [`Error::InvalidPhase`].
     pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
-        let mut draft = draft.clone();
-        draft.add_implied();
-        let summary = summary(draft.answers());
-        let plugins = draft.build().map_err(Error::InvalidPhase)?;
-        self.machine
-            .apply_transition(AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins))?;
-        Ok(format!("phase added: {}", summary))
+        let (plugins, summary) = completed(draft)?;
+        self.machine.apply_in(
+            &mut self.history,
+            AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins),
+        )?;
+        Ok(format!("phase added: {summary}"))
+    }
+
+    /// A draft of the phase of the competition holding the configuration it is played with, see
+    /// [`Phase::config`], to be changed and handed to [`Self::edit_phase`].
+    ///
+    /// # Errors
+    /// Returns [`Error::NoPhase`] if the competition has no phase.
+    pub fn phase_draft_to_edit(&self) -> Result<Draft<PhasePlugins>, Error> {
+        let config = self.added_phase()?.config();
+        Ok(self.competition().phase_draft().with_answers(&config)?)
+    }
+
+    /// Plays the phase of the competition as `draft` configures it, as if it had been added that
+    /// way, see [`reconfigure_phase`]. `draft` is completed, and left as it is, as by
+    /// [`Self::add_phase`].
+    ///
+    /// [`reconfigure_phase`]: tournament_engine::CompetitionStateMachineExt::reconfigure_phase
+    ///
+    /// # Errors
+    /// Returns [`Error::NoPhase`] if the competition has no phase, [`Error::InvalidPhase`] if the
+    /// plugins `draft` configures do not fit together, and [`Error::EditRejected`] if a change
+    /// made after the phase was added, e.g. a reported result, does not fit the edited phase.
+    pub fn edit_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<String, Error> {
+        let phase_id = self.added_phase()?.id();
+        let (plugins, summary) = completed(draft)?;
+        let edited = self
+            .machine
+            .reconfigure_phase(&mut self.history, phase_id, plugins)
+            .map_err(|error| match error {
+                ReconfigurePhaseError::Rejected(StateMachineError::Transition(_, error)) => {
+                    Error::EditRejected(error)
+                }
+                ReconfigurePhaseError::Rejected(error) => Error::StateMachine(error),
+                ReconfigurePhaseError::NotAdded => {
+                    unreachable!("the phase of a session is added by an `AddPhase` in effect")
+                }
+            })?;
+        Ok(match edited {
+            Some(_) => format!("phase changed: {summary}"),
+            None => "nothing changed".to_owned(),
+        })
+    }
+
+    /// The phase of the competition, whether started or not.
+    fn added_phase(&self) -> Result<&Phase, Error> {
+        self.competition()
+            .phases()
+            .values()
+            .next()
+            .ok_or(Error::NoPhase)
     }
 
     /// Adds the phase played in the format named `format`, with its fields answered by `answers`,
@@ -330,7 +399,7 @@ impl Session {
     }
 
     fn start(&mut self) -> Result<String, Error> {
-        self.machine.apply_transition(StartCompetition)?;
+        self.machine.apply_in(&mut self.history, StartCompetition)?;
         Ok(format!(
             "competition started, {} match(es) scheduled",
             self.phase()?.data().matches().len()
@@ -440,8 +509,10 @@ impl Session {
             ReportedResult::B => MatchResult::BWins,
             ReportedResult::Draw => MatchResult::Draw,
         };
-        self.machine
-            .apply_transition(ReportMatchResult::new(phase_id, match_id, result))?;
+        self.machine.apply_in(
+            &mut self.history,
+            ReportMatchResult::new(phase_id, match_id, result),
+        )?;
 
         let phase = self.phase()?.data();
         let mut output = format!(
@@ -463,7 +534,7 @@ impl Session {
         let (phase_id, match_id) = self.match_numbered(number)?;
         let matches_before = self.phase()?.data().matches().len();
         self.machine
-            .undo_match_result(phase_id, match_id)
+            .undo_match_result(&mut self.history, phase_id, match_id)
             .map_err(|error| match error {
                 UndoMatchResultError::NotReported => Error::NotReported(number),
                 UndoMatchResultError::Rejected(_) => Error::ReportDependedOn(number),
@@ -516,18 +587,32 @@ impl Session {
         Ok(table(&header, &rows))
     }
 
-    /// Undoes the change that is the latest one still in effect.
+    /// Undoes the latest change of this session that is still in effect, which may be an
+    /// `undo-report`, bringing the result back.
     fn undo(&mut self) -> Result<String, Error> {
-        self.machine.undo_last().ok_or(Error::NothingToUndo)?;
+        self.history
+            .undo_last(&mut self.machine)
+            .map_err(|error| match error {
+                UndoLastError::NothingToUndo => Error::NothingToUndo,
+                UndoLastError::Rejected(error) => error.into(),
+                UndoLastError::UndoneElsewhere => {
+                    unreachable!("the session is the only one appending to its log")
+                }
+            })?;
         Ok("undone".to_owned())
     }
 
-    /// Redoes the latest undone change, as long as no other change was made since it was undone.
+    /// Redoes the change this session undid last, as long as it made no other change since.
     fn redo(&mut self) -> Result<String, Error> {
-        self.machine.redo_last().map_err(|error| match error {
-            RedoLastError::NothingToRedo => Error::NothingToRedo,
-            RedoLastError::Rejected(error) => error.into(),
-        })?;
+        self.history
+            .redo_last(&mut self.machine)
+            .map_err(|error| match error {
+                RedoLastError::NothingToRedo => Error::NothingToRedo,
+                RedoLastError::Rejected(error) => error.into(),
+                RedoLastError::RedoneElsewhere => {
+                    unreachable!("the session is the only one appending to its log")
+                }
+            })?;
         Ok("redone".to_owned())
     }
 
@@ -573,6 +658,18 @@ impl Session {
             None => "open".to_owned(),
         }
     }
+}
+
+/// The plugins `draft`, a phase draft, configures with the plugins its answers imply added, see
+/// [`Draft::add_implied`], together with their [`summary`].
+///
+/// # Errors
+/// Returns [`Error::InvalidPhase`] if no phase can be built from them.
+fn completed(draft: &Draft<PhasePlugins>) -> Result<(PhasePlugins, String), Error> {
+    let mut draft = draft.clone();
+    draft.add_implied();
+    let plugins = draft.build().map_err(Error::InvalidPhase)?;
+    Ok((plugins, summary(draft.answers())))
 }
 
 /// The name `add-phase` takes the format of `entry` by: its label with hyphens for spaces, e.g.
@@ -656,7 +753,7 @@ mod tests {
             FewerMatchesPlayed, MorePoints, MoreWins, PointsCalculator, SonnebornBergerCalculator,
             WinsDrawsLossesCalculator,
         },
-        phase_format::{RoundRobin, SingleElimination},
+        phase_format::{MonsterDyp, RoundRobin, SingleElimination},
     };
 
     use super::*;
@@ -890,6 +987,107 @@ mod tests {
 
         assert!(matches!(result, Err(Error::NotConfigured)));
         assert!(session.competition().phases().is_empty());
+    }
+
+    /// An edit starts out at the configuration the phase is played with, so changing the ranking
+    /// keeps the metrics, and the results reported so far stay.
+    #[test]
+    fn a_phase_is_edited_starting_out_at_its_configuration() {
+        let mut session = started("round-robin");
+        output(&mut session, "report 1 a");
+        let result = output(&mut session, "matches")
+            .lines()
+            .nth(HEADER_LINES)
+            .unwrap()
+            .to_owned();
+
+        let mut draft = session.phase_draft_to_edit().unwrap();
+        draft
+            .set(
+                &ConfigPath::ROOT.field("ranking"),
+                vec![plugin::<MoreWins>()],
+            )
+            .unwrap();
+        let edited = session.edit_phase(&draft).unwrap();
+
+        assert_eq!(edited, "phase changed: round robin, ranked by more wins");
+        assert_eq!(
+            output(&mut session, "matches").lines().nth(HEADER_LINES),
+            Some(result.as_str())
+        );
+        assert_eq!(
+            output(&mut session, "ranking")
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            ["#", "name", "W-D-L", "points", "Sonneborn-Berger"]
+        );
+    }
+
+    #[test]
+    fn a_phase_edited_without_a_change_is_left_as_it_is() {
+        let mut session = started("round-robin");
+        let log_len = session.machine.log().len();
+
+        let draft = session.phase_draft_to_edit().unwrap();
+
+        assert_eq!(session.edit_phase(&draft).unwrap(), "nothing changed");
+        assert_eq!(session.machine.log().len(), log_len);
+    }
+
+    /// The teams of a Monster DYP are pairs, so it never schedules the match of single entrants
+    /// whose result was reported.
+    #[test]
+    fn an_edit_a_reported_result_does_not_fit_is_rejected() {
+        let mut session = started("round-robin");
+        output(&mut session, "report 1 a");
+        let mut draft = session.phase_draft_to_edit().unwrap();
+        draft
+            .set(
+                &ConfigPath::ROOT.field("format"),
+                plugin::<MonsterDyp>().with("rounds", 3),
+            )
+            .unwrap();
+
+        let result = session.edit_phase(&draft);
+
+        assert!(matches!(result, Err(Error::EditRejected(_))), "{result:?}");
+        assert_eq!(
+            format!("{:?}", session.phase().unwrap().format()),
+            "RoundRobin",
+            "the phase must stay as it was"
+        );
+    }
+
+    #[test]
+    fn an_edit_is_undone_like_any_change() {
+        let mut session = started("round-robin");
+        let before = session.phase_draft_to_edit().unwrap().answers().clone();
+        let mut draft = session.phase_draft_to_edit().unwrap();
+        draft
+            .set(
+                &ConfigPath::ROOT.field("ranking"),
+                vec![plugin::<MoreWins>()],
+            )
+            .unwrap();
+        session.edit_phase(&draft).unwrap();
+
+        output(&mut session, "undo");
+
+        assert_eq!(session.phase_draft_to_edit().unwrap().answers(), &before);
+    }
+
+    #[test]
+    fn only_a_phase_that_was_added_can_be_edited() {
+        let mut session = Session::new(None);
+
+        assert!(matches!(session.phase_draft_to_edit(), Err(Error::NoPhase)));
+        assert!(matches!(
+            execute(&mut session, "edit-phase"),
+            Err(Error::NotEdited)
+        ));
     }
 
     /// A configured phase calculates exactly the metrics it was configured with, and scores them
@@ -1572,8 +1770,10 @@ mod tests {
         output(&mut session, "add Eve");
     }
 
+    /// What can be undone is what a session did itself, so a loaded competition has the state it
+    /// was saved with but nothing to undo.
     #[test]
-    fn a_saved_competition_loads_with_its_history() {
+    fn a_saved_competition_loads_without_anything_to_undo() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cup.json");
         let mut session = started("round-robin");
@@ -1590,13 +1790,27 @@ mod tests {
             output(&mut loaded, "matches"),
             output(&mut session, "matches")
         );
-        output(&mut loaded, "undo");
-        assert!(
-            output(&mut loaded, "matches")
-                .lines()
-                .skip(HEADER_LINES)
-                .all(|line| line.ends_with("open"))
-        );
+        assert!(matches!(
+            execute(&mut loaded, "undo"),
+            Err(Error::NothingToUndo)
+        ));
+        // a single result can still be undone, as it is found in the log
+        output(&mut loaded, "undo-report 1");
+    }
+
+    /// `undo-report` is a change like any other, so `undo` brings the result back rather than
+    /// undoing the change made before it.
+    #[test]
+    fn undo_brings_back_a_result_undone_by_undo_report() {
+        let mut session = started("round-robin");
+        output(&mut session, "report 1 a");
+        output(&mut session, "report 2 a");
+        let reported = output(&mut session, "matches");
+        output(&mut session, "undo-report 1");
+
+        output(&mut session, "undo");
+
+        assert_eq!(output(&mut session, "matches"), reported);
     }
 
     #[test]

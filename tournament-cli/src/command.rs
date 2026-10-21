@@ -37,6 +37,9 @@ pub enum Command {
         #[arg(requires = "format", value_name = "FIELD=VALUE")]
         answers: Vec<String>,
     },
+    /// Change the configuration of the phase at the prompt, starting out at its current one; the
+    /// results reported so far stay as long as the changed phase schedules their matches
+    EditPhase,
     /// Start the competition, which schedules the first matches
     Start,
     /// List the matches scheduled so far, with their number and result

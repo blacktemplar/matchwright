@@ -1021,8 +1021,10 @@ anyway — it just also makes it a load-time check.
 
 This is what separates the two persistence paths in practice. A snapshot is
 smaller and loads without replaying, but holds only the current state; a log also
-holds how that state came about, so undo — and undoing an undo — still works
-after a restore.
+holds how that state came about, so a change made before a restore, such as a
+reported result, can still be undone after it. What a session can undo by
+`undo`, though, is only what it did itself, see
+[Undo and redo of a session](#undo-and-redo-of-a-session).
 
 ### Tag stability
 
@@ -1086,6 +1088,100 @@ consumer, because finding the entry means knowing the shape of the log.
   would be a second, implicit decision about what the operator meant.
 - **No new transition.** An undo entry is what the log already has for reverting
   a change, and reusing it keeps the undo itself undoable.
+
+### Changing a phase after it was added
+
+A consumer changing a phase reads its config from the current state
+(`Phase::config`), puts it into a draft (`Draft::with_answers`), lets the
+operator change it as when adding the phase, and hands the plugins built from it
+to `CompetitionStateMachineExt::reconfigure_phase`. That appends a
+`LogEntryKind::Replace` of the `AddPhase` in effect by one adding the same phase
+with the new plugins, unless their config is the phase's already. The phase is
+then played as if it had been added that way, at any point of the competition.
+
+- **A replacement, not a transition of its own.** The replacement runs in the
+  slot of the `AddPhase`, so everything after it replays on the changed phase:
+  the reported results stay as long as the changed phase schedules their
+  matches, and the metrics and ranks are recalculated rather than patched. A
+  change a later entry does not fit is rejected by the state machine, with the
+  log unchanged, just like an undo a later entry depends on. A transition
+  changing the phase in place would have to migrate the phase's state, i.e.
+  every plugin would need to know how to take over from another configuration.
+- **The config is serialized from the state, not stored.** A plugin serializes
+  as the answers it is configured with, plus its runtime state in fields its
+  schema leaves out, which `Config::of` drops by checking the serialized form
+  against the schema. So the config needs no copy of its own, neither in the
+  log nor in the phase, and a snapshot can be reconfigured as well as a log. It
+  relies on every plugin serializing as it deserializes, which loading a log
+  relies on already. Rejected: `AddPhase` holding the config and building the
+  plugins whenever it is applied (built on every replay, twice, and the config
+  had to be persisted in non-self-describing formats, which cannot read a
+  `serde_json` value back). This turns built plugins back into answers, unlike
+  the `Draft::from_built` rejected above for adding the implied plugins: the
+  implied plugins are answers by now, so an operator removing what required one
+  removes it too.
+- **Found through the phase id.** The replacement keeps the phase id, so the
+  `AddPhase` in effect that added a phase is found by downcasting, as a report
+  is for `undo_match_result`.
+- **Undone like any action.** The replacement is an action of the session that
+  made it, see below, so undoing right after a change of the phase reverts that
+  change.
+
+### Undo and redo of a session
+
+`undo` and `redo` work as in an editor: they undo and redo what the operator
+did, in reverse order, not what the log happens to end with.
+`undoable_state_machine::SessionHistory` keeps the ids of the entries a session
+appended as its actions — every change it made, including an undo of an entry
+of its choice such as `undo-report`, and a reconfiguration. `undo_last` undoes
+the latest of them that is in effect, `redo_last` redoes what it undid last as
+long as the session took no action since, each by appending an ordinary undo
+entry naming its target. The engine's operations that append an action
+(`apply_in`, `undo_match_result`, `reconfigure_phase`) take the history.
+
+- **Per session, kept outside the log.** Whose an entry is matters only for
+  undo: when a log is shared, e.g. synced between a client and a server, an
+  operator expects their `undo` to revert what they did, not what was pulled in
+  from elsewhere, and not what they did in another session. Only the session
+  knows which entries it appended and whether as an action or by `undo`, so it
+  keeps that itself, and the log stays as it was. A session ends with its
+  history: a loaded competition has nothing to undo, as in other editors. A
+  single result can still be undone, since `undo_match_result` finds it in the
+  log.
+- **A targeted undo is an action.** After `undo-report`, `undo` brings the
+  result back rather than undoing the change before it, which an operator
+  correcting a result and changing their mind expects.
+- **Explicit targets.** The entry `undo` appends names the action it undoes, so
+  it means the same however the log is merged or reordered later.
+- **Fails only because of other sessions.** Undoing a session's actions in
+  reverse order returns to states the log was in before, so it cannot fail while
+  only that session writes. A change another session made since may depend on
+  the action, e.g. a result reported for a match only a reconfiguration
+  schedules; then the undo is rejected like any other, with the log unchanged.
+  Another session may also have undone the action itself (or, for a redo, the
+  undo of it). Then the history no longer matches the log, and `undo` fails
+  instead of passing over the action: passing over it would undo older actions
+  while the newer one could come back, should the other session take its undo
+  back. Either way the action stays the next one to undo. An action the session
+  undid itself, by a targeted undo, never blocks: it lies below that undo, which
+  is undone first and brings it back.
+- **The seed is no action.** It is applied outside any history, so it is never
+  undone, and nothing before it either.
+
+Rejected:
+- **Deriving the history from the log**, with `undo` undoing the latest change in
+  effect. After `undo-report`, `undo` skipped it and undid an unrelated change;
+  undoing a reconfiguration could fail even within a single session once an
+  undo reached behind it; and an `undo-report` of the latest change could not be
+  told apart from `undo`.
+- **Dedicated log entries for `undo` and `redo`**, telling them apart from
+  targeted undos in the log. They record whether an undo was navigation, but not
+  whose it is, which a shared log needs, and they change the log format for
+  something only the session uses.
+- **An origin per user in the log.** A user with two sessions would undo in one
+  what they did in the other.
+- **Persisting the history**, e.g. next to the log in the CLI's file. It is not
+  part of the competition, and editors do not keep it either.
 
 ## Dependencies this implies
 

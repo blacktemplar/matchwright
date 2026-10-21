@@ -45,12 +45,13 @@ cup> exit
 | `add-entrant <NAME>...` (`add`) | Adds entrants. Names must be unique; quote names containing spaces. If one name is invalid, none is added. |
 | `remove-entrant <NAME>` (`remove`) | Removes an entrant. |
 | `add-phase [FORMAT [FIELD=VALUE]...]` | Adds the phase the competition is played in: the format named, or, without a format, the phase configured at the prompt, see below. Only one phase is supported. |
-| `start` | Starts the competition and schedules the first matches. Entrants and the phase cannot be changed afterwards. |
+| `edit-phase` | Changes the configuration of the phase at the prompt, see below. |
+| `start` | Starts the competition and schedules the first matches. Entrants cannot be changed afterwards. |
 | `matches [--open] [--round <ROUND>]` | Lists the matches with their number, round, stage (for a format that names its stages, e.g. "Quarterfinals" in a knockout) and result, followed by the byes, i.e. who has no match in which round. `--open` leaves the byes out. |
 | `report <NUMBER> <a\|b\|draw>` | Reports the result of a match: team a wins, team b wins, or a draw. |
 | `undo-report <NUMBER>` | Undoes the result reported for a match, however long ago it was reported, keeping every other change. |
 | `ranking` | Shows the current ranking with every metric the phase calculates. |
-| `undo` / `redo` | Undoes the last change, or redoes the last undone one. |
+| `undo` / `redo` | Undoes the last change made since the CLI was started, or redoes the last undone one. |
 | `save [PATH]` | Saves to `PATH`, or to the file loaded from or last saved to. |
 | `exit [--force]` (`quit`) | Exits. Refuses while there are unsaved changes, unless `--force` is given. |
 | `help [COMMAND]` | Shows the commands, or the help of one of them. |
@@ -143,19 +144,34 @@ again, starting out at the answers given.
 Since this needs a terminal to ask at, a piped `add-phase` has to name a
 format.
 
+## Editing a phase
+
+`edit-phase` asks the same questions again, each starting out at the answer the
+phase is played with, whether it was added by its format or configured, so
+accepting all of them changes nothing and changing one thing means answering
+one question differently. A metric that was calculated without being picked is
+among the chosen ones now and can be deselected like any other.
+
+The phase is then played as if it had been added this way, before or after the
+start: the results reported so far stay, and the ranking is recalculated with
+the new configuration. An edit under which a reported result no longer fits,
+e.g. a different format that does not schedule that match, is rejected; undo
+those results first. An edit is a change like any other, so `undo` reverts it.
+Like configuring, editing needs a terminal to ask at.
+
 ## Saving, undo and redo
 
 A competition is saved as the JSON log of every change made to it, undos
-included, not as a snapshot of its current state. Loading replays that log, so
-undo and redo keep working across a save and a reload, and a file whose log no
-longer replays is rejected instead of loading into a state no sequence of
-changes could reach. A save is written to a temporary file next to the target
-first, so a failed save never destroys the previous one.
+included, not as a snapshot of its current state. Loading replays that log, and
+a file whose log no longer replays is rejected instead of loading into a state
+no sequence of changes could reach. A save is written to a temporary file next
+to the target first, so a failed save never destroys the previous one.
 
-`undo` reverts the latest change that is still in effect; repeated, it walks
-further back. `redo` reapplies the latest undone change, but only until a new
-change is made, as in an editor. Undo and redo are changes themselves, so they
-count as unsaved.
+`undo` reverts the latest change made since the CLI was started; repeated, it
+walks further back. `redo` reapplies the latest undone change, but only until a
+new change is made. As in an editor, this history is not saved: after a reload
+there is nothing to undo, though a single result can still be undone with
+`undo-report`. Undo and redo are changes themselves, so they count as unsaved.
 
 `undo-report <NUMBER>` reaches a single result instead of the latest change: it
 undoes the result reported for that match whenever it was reported, and every
@@ -165,7 +181,8 @@ has a result — so the dependent result has to be undone first. The match the
 result was undone for is open again and can be reported anew, which is how a
 result reported wrongly a while ago is corrected. Matches that were only
 scheduled because of the undone result are unscheduled with it, which renumbers
-the matches after them.
+the matches after them. An `undo-report` is a change like any other, so `undo`
+right after it brings the result back.
 
 Every new competition gets a random seed, which makes the shuffled pairings
 differ between competitions while keeping them reproducible from the log. The

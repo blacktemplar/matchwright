@@ -1,7 +1,7 @@
 use std::{any::Any, hash::Hash, num::NonZeroU32};
 
 use itertools::{Either, Itertools};
-use plugin_factory::{compatibility::Declaration, draft::Draft};
+use plugin_factory::{compatibility::Declaration, config::Config, draft::Draft};
 use rand::{RngExt, rngs::StdRng, seq::SliceRandom};
 use rand_seeder::Seeder;
 use serde::{Deserialize, Serialize};
@@ -356,6 +356,21 @@ impl Phase {
     /// The format the matches of this phase are scheduled by.
     pub fn format(&self) -> &dyn PhaseFormat {
         &*self.phase_format
+    }
+
+    /// The answers to a [`Competition::phase_draft`] the plugins of this phase are built from,
+    /// without their runtime state, see [`PhasePlugins::config`]. Put back into a draft with
+    /// [`Draft::with_answers`], they are changed and built into the plugins the phase is
+    /// reconfigured with, see
+    /// [`reconfigure_phase`](crate::CompetitionStateMachineExt::reconfigure_phase).
+    pub fn config(&self) -> Config {
+        PhasePlugins::from_parts(
+            self.phase_format.clone(),
+            self.ranker.slice_rankers().to_vec(),
+            self.metrics_calculators.clone(),
+        )
+        .expect("the calculators of a phase are in running order")
+        .config()
     }
 
     pub(crate) fn start(&mut self, ranking_entrants: Vec<Vec1<EntrantId>>) {

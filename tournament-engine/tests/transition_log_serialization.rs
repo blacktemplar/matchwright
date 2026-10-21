@@ -23,7 +23,7 @@ use tournament_engine::{
         },
         phase_format::SingleElimination,
     },
-    undoable_state_machine::{LogEntry, LogEntryKind, TransitionId},
+    undoable_state_machine::{LogEntry, LogEntryKind, SessionHistory, TransitionId},
     uuid::Uuid,
 };
 
@@ -271,6 +271,29 @@ fn a_log_round_trips_through_a_binary_format() {
     let restored = binary_round_trip(&machine);
 
     assert_current_is(&restored, machine.current());
+}
+
+/// A reconfiguration is a replacement of the transition that added the phase, which has to round
+/// trip like an undo, in both kinds of format.
+#[test]
+fn a_reconfigured_phase_round_trips() {
+    let mut machine = played_competition();
+    let ranked_by_points = PhasePluginsBuilder::new()
+        .format(SingleElimination::new())
+        .add_ranking(MorePoints)
+        .add_metric(WinsDrawsLossesCalculator)
+        .add_metric(THREE_ONE)
+        .build()
+        .unwrap();
+    machine
+        .reconfigure_phase(&mut SessionHistory::new(), phase_id(), ranked_by_points)
+        .unwrap()
+        .expect("the plugins changed");
+
+    for restored in [round_trip(&machine), binary_round_trip(&machine)] {
+        assert_eq!(restored.log().len(), machine.log().len());
+        assert_current_is(&restored, machine.current());
+    }
 }
 
 #[test]

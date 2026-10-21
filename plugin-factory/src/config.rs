@@ -158,6 +158,22 @@ impl Config {
         Self::default()
     }
 
+    /// The config `configured` is built from: the answers to the fields of its schema, as it
+    /// serializes them. What it holds besides, in a field its schema leaves out, such as runtime
+    /// state, is dropped.
+    ///
+    /// # Errors
+    /// Returns [`ConfigError::Rejected`] if `configured` cannot be serialized or is not serialized
+    /// as a config, and what checking a config against the schemas fails with if it serializes
+    /// an answer its schema does not take, i.e. if it does not serialize as it deserializes.
+    pub fn of<T: Configurable + Serialize>(configured: &T) -> Result<Self, ConfigError> {
+        let written = serde_json::to_value(configured).map_err(|error| ConfigError::Rejected {
+            path: Path::ROOT,
+            reason: error.to_string(),
+        })?;
+        T::schema().walk(&deserialize(&written, &Path::ROOT)?, &Path::ROOT, false)
+    }
+
     /// This config with `field` answered by `answer`, replacing an answer it holds already.
     #[must_use]
     pub fn with(mut self, field: impl Into<String>, answer: impl Into<Value>) -> Self {

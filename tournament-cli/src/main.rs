@@ -15,6 +15,7 @@ use std::{
 
 use clap::Parser;
 use inquire::InquireError;
+use plugin_factory::draft::Draft;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use thiserror::Error;
 use tournament_cli::{
@@ -22,6 +23,7 @@ use tournament_cli::{
     questionnaire::{self, Terminal},
     session::{self, Outcome, Session},
 };
+use tournament_engine::PhasePlugins;
 
 /// Runs a tournament interactively.
 #[derive(Parser)]
@@ -97,7 +99,16 @@ fn run(mut session: Session) -> Result<(), Error> {
         // a session never asks the operator anything, so a phase that is to be configured is
         // configured here and reaches the session as the configuration it produced
         let outcome = match command {
-            Command::AddPhase { format: None, .. } => add_configured_phase(&mut session),
+            Command::AddPhase { format: None, .. } => {
+                let draft = session.competition().phase_draft();
+                configure_phase(&mut session, draft, Session::add_phase, Phase::Added)
+            }
+            Command::EditPhase => session
+                .phase_draft_to_edit()
+                .map_err(Error::Session)
+                .and_then(|draft| {
+                    configure_phase(&mut session, draft, Session::edit_phase, Phase::Edited)
+                }),
             command => session.execute(command).map_err(Error::Session),
         };
         match outcome {
@@ -109,29 +120,49 @@ fn run(mut session: Session) -> Result<(), Error> {
     }
 }
 
-/// Configures a phase at the prompt and adds it, leaving the competition untouched if the
-/// operator cancels the configuration. A phase whose plugins do not fit together is configured
-/// again, starting out at the answers given.
-fn add_configured_phase(session: &mut Session) -> Result<Outcome, Error> {
-    let mut draft = session.competition().phase_draft();
+/// What [`configure_phase`] does with the phase it configures.
+#[derive(Clone, Copy)]
+enum Phase {
+    Added,
+    Edited,
+}
+
+/// Configures a phase at the prompt, starting out at the answers of `draft`, and hands it to
+/// `apply`, leaving the competition untouched if the operator cancels the configuration. A phase
+/// whose plugins do not fit together is configured again, starting out at the answers given.
+fn configure_phase(
+    session: &mut Session,
+    mut draft: Draft<PhasePlugins>,
+    apply: fn(&mut Session, &Draft<PhasePlugins>) -> Result<String, session::Error>,
+    phase: Phase,
+) -> Result<Outcome, Error> {
     loop {
         match questionnaire::fill(&mut draft, &mut Terminal) {
             Ok(()) => {}
             Err(questionnaire::Error::Prompt(
                 InquireError::OperationCanceled | InquireError::OperationInterrupted,
-            )) => return Ok(Outcome::Continue("cancelled, no phase added".to_owned())),
+            )) => {
+                let cancelled = match phase {
+                    Phase::Added => "cancelled, no phase added",
+                    Phase::Edited => "cancelled, the phase is unchanged",
+                };
+                return Ok(Outcome::Continue(cancelled.to_owned()));
+            }
             // input that is piped in cannot answer any question, which is what the session says
-            // when it is handed an unconfigured phase itself
+            // when it is handed the command itself
             Err(questionnaire::Error::Prompt(InquireError::NotTTY)) => {
-                return Err(Error::Session(session::Error::NotConfigured));
+                return Err(Error::Session(match phase {
+                    Phase::Added => session::Error::NotConfigured,
+                    Phase::Edited => session::Error::NotEdited,
+                }));
             }
             Err(error) => return Err(Error::Configure(error)),
         }
-        match session.add_phase(&draft) {
+        match apply(session, &draft) {
             Err(error @ session::Error::InvalidPhase(_)) => {
                 eprintln!("error: {error}\nplease answer again");
             }
-            added => return added.map(Outcome::Continue).map_err(Error::Session),
+            applied => return applied.map(Outcome::Continue).map_err(Error::Session),
         }
     }
 }

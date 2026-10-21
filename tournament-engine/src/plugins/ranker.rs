@@ -22,6 +22,11 @@ impl HierarchicalRanker {
         Self(slice_rankers)
     }
 
+    /// The slice rankers, in the order they are applied in.
+    pub fn slice_rankers(&self) -> &[Box<dyn SliceRanker>] {
+        &self.0
+    }
+
     /// The new rank of every ranking of `phase_data`.
     ///
     /// The ranks satisfy the following invariant: ordered by rank, the first ranking has rank 1 and

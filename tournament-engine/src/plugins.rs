@@ -35,7 +35,10 @@
 //! - **A field offers an answer**, with `#[plugin(default = ..)]`, wherever one value suits most
 //!   phases, e.g. the scoring of chess for points.
 
-use plugin_factory::schema::{Configurable, DependencyOrderedSet};
+use plugin_factory::{
+    config::Config,
+    schema::{Configurable, DependencyOrderedSet},
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "test-util")]
@@ -112,8 +115,7 @@ pub struct PhasePlugins {
 
 impl PhasePlugins {
     /// The plugins of a phase played in `format`, ranked by `ranking` and calculating the metrics
-    /// of `metrics`, put into the order they run in, see [`PhasePluginsBuilder::build`].
-    #[cfg(feature = "test-util")]
+    /// of `metrics`, put into the order they run in.
     pub(crate) fn from_parts(
         format: Box<dyn PhaseFormat>,
         ranking: Vec<Box<dyn SliceRanker>>,
@@ -138,6 +140,12 @@ impl PhasePlugins {
     /// The metrics calculators, in the order they run in.
     pub fn metrics(&self) -> &DependencyOrderedSet<dyn MetricsCalculator> {
         &self.metrics
+    }
+
+    /// The answers to a [`Competition::phase_draft`](crate::Competition::phase_draft) these
+    /// plugins are built from, without their runtime state, see [`Config::of`].
+    pub fn config(&self) -> Config {
+        Config::of(self).expect("every plugin serializes as it is configured")
     }
 
     /// The format, the ranker and the metrics calculators a phase is run with.
