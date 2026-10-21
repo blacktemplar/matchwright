@@ -90,6 +90,8 @@ pub struct PluginEntry {
     instantiate: Instantiate,
     schema: fn() -> Schema,
     complete: fn(Config) -> Value,
+    /// This is a fn as `any::type_name::<P>` is not a `const fn` yet (it is unstable). We should
+    /// simplify this as soon as it is stable.
     type_name: fn() -> &'static str,
 }
 

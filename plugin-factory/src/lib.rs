@@ -67,13 +67,12 @@ pub mod __private {
     // so that a crate declaring an axis or registering a plugin does not have to depend on them
     pub use inventory;
     pub use serde;
-    use serde_json::value::Serializer;
+    pub use serde_json::value::Serializer;
 
     use crate::{
         Plugin, PluginType,
         catalog::{Axis, PluginEntry},
         compatibility::{Declaration, OpenFacts},
-        config::Value,
         schema::Configurable,
     };
 
@@ -172,18 +171,6 @@ pub mod __private {
         fn sub_plugins(&self) -> Vec<&dyn Plugin> {
             Configurable::plugins(self)
         }
-    }
-
-    /// The default `value` of a field, written by `serialize` as the field is serialized.
-    ///
-    /// # Panics
-    /// Panics if `value` cannot be written as JSON.
-    pub fn default_value<T>(
-        value: &T,
-        serialize: impl FnOnce(&T, Serializer) -> Result<Value, serde_json::Error>,
-    ) -> Value {
-        serialize(value, Serializer)
-            .unwrap_or_else(|error| panic!("the default of a field cannot be written: {error}"))
     }
 }
 

@@ -403,9 +403,13 @@ impl Field {
             // annotation
             quote! {
                 let default: #ty = #default;
-                let field = field.with_default(
-                    ::plugin_factory::__private::default_value(&default, #serialize),
+                let default: ::plugin_factory::config::Value = #serialize(
+                    &default,
+                    ::plugin_factory::__private::Serializer
+                ).unwrap_or_else(
+                    |error| panic!("the default of a field cannot be written: {error}")
                 );
+                let field = field.with_default(default);
             }
         });
         quote! {
