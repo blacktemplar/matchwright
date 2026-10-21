@@ -1,9 +1,6 @@
 //! The commands an operator types at the prompt, and how a line of input becomes one.
 
-use std::{
-    num::{NonZeroU32, NonZeroUsize},
-    path::PathBuf,
-};
+use std::num::{NonZeroU32, NonZeroUsize};
 
 use clap::{Parser, ValueEnum};
 use thiserror::Error;
@@ -71,8 +68,8 @@ pub enum Command {
     Undo,
     /// Redo the last undone change
     Redo,
-    /// Save the competition, to the file it was loaded from or last saved to unless a path is given
-    Save { path: Option<PathBuf> },
+    /// Save the competition, under the name it was loaded or last saved under unless one is given
+    Save { name: Option<String> },
     /// Exit; refuses if there are unsaved changes, unless forced
     #[command(visible_alias = "quit")]
     Exit {
@@ -139,6 +136,8 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, error::ErrorKind};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
 

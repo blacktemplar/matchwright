@@ -1290,6 +1290,7 @@ name = "tournament-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "getrandom",
  "inquire",
  "plugin-factory",
  "rand",
@@ -1302,6 +1303,7 @@ dependencies = [
  "tournament-engine",
  "typetag",
  "uuid",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

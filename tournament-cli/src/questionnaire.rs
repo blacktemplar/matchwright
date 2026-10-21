@@ -7,14 +7,12 @@
 //!
 //! Every question starts out at the answer the field already has in the draft, or else at the
 //! answer the draft offers for it, see [`Draft::default_value`], so accepting every question
-//! answers the composite as its plugins recommend. [`Terminal`] asks at the terminal, and
-//! [`AcceptDefaults`] accepts every offered answer without asking anything.
+//! answers the composite as its plugins recommend. `Terminal` (feature `terminal`) asks at the
+//! terminal, and [`AcceptDefaults`] accepts every offered answer without asking anything.
 
-use std::{
-    fmt::{self, Display, Formatter},
-    str::FromStr,
-};
+use std::fmt::{self, Display, Formatter};
 
+#[cfg(feature = "terminal")]
 use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
@@ -152,6 +150,7 @@ pub trait Prompter {
 #[derive(Debug, Error)]
 pub enum Error {
     /// The terminal did not answer, e.g. because the operator cancelled the question.
+    #[cfg(feature = "terminal")]
     #[error(transparent)]
     Prompt(#[from] InquireError),
     /// [`AcceptDefaults`] has no answer to give, because the question offers none.
@@ -337,8 +336,10 @@ impl Display for IssueList<'_> {
 }
 
 /// Asks at the terminal.
+#[cfg(feature = "terminal")]
 pub struct Terminal;
 
+#[cfg(feature = "terminal")]
 impl Prompter for Terminal {
     fn confirm(&mut self, question: &Question, default: Option<bool>) -> Result<bool, Error> {
         let prompt = Confirm {
@@ -399,7 +400,8 @@ impl Prompter for Terminal {
 
 /// Asks `question` at the terminal for a number, repeating it with `error_message` until the
 /// answer is one.
-fn ask_number<T: Clone + FromStr + ToString>(
+#[cfg(feature = "terminal")]
+fn ask_number<T: Clone + std::str::FromStr + ToString>(
     question: &Question,
     default: Option<T>,
     error_message: &str,
@@ -759,6 +761,8 @@ mod tests {
     use std::{collections::VecDeque, fmt::Debug};
 
     use tournament_engine::{Competition, PhasePlugins};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
 

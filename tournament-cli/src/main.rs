@@ -9,7 +9,7 @@
 
 use std::{
     io::{self, IsTerminal},
-    path::PathBuf,
+    path::Path,
     process::ExitCode,
 };
 
@@ -22,6 +22,7 @@ use tournament_cli::{
     command::{Command, ParseError},
     questionnaire::{self, Terminal},
     session::{self, Outcome, Session},
+    storage::FileStorage,
 };
 use tournament_engine::PhasePlugins;
 
@@ -30,7 +31,7 @@ use tournament_engine::PhasePlugins;
 #[command(version)]
 struct Args {
     /// The file the competition is loaded from, if it exists, and saved to
-    file: Option<PathBuf>,
+    file: Option<String>,
 }
 
 /// Why the session ended other than by an `exit`.
@@ -51,8 +52,9 @@ enum Error {
 fn main() -> ExitCode {
     let args = Args::parse();
     let session = match args.file {
-        Some(path) if path.exists() => Session::load(path),
-        path => Ok(Session::new(path)),
+        Some(file) if Path::new(&file).exists() => Session::load(FileStorage, file),
+        Some(file) => Ok(Session::new(FileStorage).named(file)),
+        None => Ok(Session::new(FileStorage)),
     };
     match session.map_err(Error::from).and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
@@ -170,8 +172,8 @@ fn configure_phase(
 /// Names the file the competition is saved to and marks unsaved changes with a `*`.
 fn prompt(session: &Session) -> String {
     let name = session
-        .path()
-        .and_then(|path| path.file_stem())
+        .name()
+        .and_then(|file| Path::new(file).file_stem())
         .map_or("tournament".into(), |stem| stem.to_string_lossy());
     let unsaved = if session.has_unsaved_changes() {
         "*"

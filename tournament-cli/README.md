@@ -52,7 +52,7 @@ cup> exit
 | `undo-report <NUMBER>` | Undoes the result reported for a match, however long ago it was reported, keeping every other change. |
 | `ranking` | Shows the current ranking with every metric the phase calculates. |
 | `undo` / `redo` | Undoes the last change made since the CLI was started, or redoes the last undone one. |
-| `save [PATH]` | Saves to `PATH`, or to the file loaded from or last saved to. |
+| `save [NAME]` | Saves to the file `NAME`, or to the file loaded from or last saved to. |
 | `exit [--force]` (`quit`) | Exits. Refuses while there are unsaved changes, unless `--force` is given. |
 | `help [COMMAND]` | Shows the commands, or the help of one of them. |
 

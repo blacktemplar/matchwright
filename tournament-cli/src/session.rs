@@ -8,9 +8,8 @@
 use std::{
     collections::HashSet,
     fmt::Write as _,
-    fs, io,
+    io,
     num::{NonZeroU32, NonZeroUsize},
-    path::{Path, PathBuf},
 };
 
 use plugin_factory::{
@@ -36,6 +35,7 @@ use crate::{
     annotations::DisplayName,
     command::{Command, ReportedResult},
     questionnaire::{self, AcceptDefaults, IssueList},
+    storage::Storage,
 };
 
 /// What the prompt does after a command was executed.
@@ -99,8 +99,8 @@ pub enum Error {
     NothingToUndo,
     #[error("there is nothing to redo")]
     NothingToRedo,
-    #[error("the competition has not been saved yet, so a path to save it to is needed")]
-    NoPath,
+    #[error("the competition has not been saved yet, so a name to save it under is needed")]
+    NoName,
     #[error("there are unsaved changes; save them, or exit with --force to discard them")]
     UnsavedChanges,
     /// The competition does not accept the change in its current state, e.g. an entrant added
@@ -120,17 +120,17 @@ pub enum Error {
     Configuration(#[from] ConfigError),
     #[error(transparent)]
     StateMachine(StateMachineError),
-    #[error("cannot read {}: {source}", path.display())]
-    Read { path: PathBuf, source: io::Error },
-    #[error("{} is not a competition saved by this CLI: {source}", path.display())]
+    #[error("cannot read {name}: {source}")]
+    Read { name: String, source: io::Error },
+    #[error("{name} is not a competition saved by this CLI: {source}")]
     Load {
-        path: PathBuf,
+        name: String,
         source: serde_json::Error,
     },
     #[error("cannot serialize the competition: {0}")]
     Serialize(serde_json::Error),
-    #[error("cannot write {}: {source}", path.display())]
-    Write { path: PathBuf, source: io::Error },
+    #[error("cannot save {name}: {source}")]
+    Write { name: String, source: io::Error },
 }
 
 impl From<StateMachineError> for Error {
@@ -142,7 +142,8 @@ impl From<StateMachineError> for Error {
     }
 }
 
-/// A competition being run at the prompt, together with the file it is saved to.
+/// A competition being run at the prompt, together with the storage it is saved to and the name it
+/// is saved under.
 ///
 /// The first entry of the log of every competition is the [`SetCompetitionSeed`] it was created
 /// with, which is no action of the session and so never undone.
@@ -150,16 +151,17 @@ pub struct Session {
     machine: CompetitionStateMachine,
     /// What this session did, which `undo` and `redo` walk through.
     history: SessionHistory,
-    path: Option<PathBuf>,
+    storage: Box<dyn Storage>,
+    name: Option<String>,
     /// The length of the log when it was last saved or loaded. The log is append-only, so every
     /// change since makes it longer, undo and redo included.
     saved_log_len: usize,
 }
 
 impl Session {
-    /// Creates a session for a new competition with a random seed, to be saved to `path` once it
-    /// is saved without an explicit path.
-    pub fn new(path: Option<PathBuf>) -> Self {
+    /// Creates a session for a new competition with a random seed, saved to `storage`. It has no
+    /// name yet, see [`Session::named`].
+    pub fn new(storage: impl Storage + 'static) -> Self {
         let mut machine = CompetitionStateMachine::default();
         machine
             .apply_transition(SetCompetitionSeed::new(Seed::new(rand::random())))
@@ -168,30 +170,41 @@ impl Session {
             saved_log_len: machine.log().len(),
             machine,
             history: SessionHistory::new(),
-            path,
+            storage: Box::new(storage),
+            name: None,
         }
     }
 
-    /// Loads the competition saved to `path`, which also becomes the file it is saved to. The
-    /// session has done nothing yet, so there is nothing to undo.
+    /// This session, saving its competition under `name` once it is saved without one.
+    pub fn named(self, name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..self
+        }
+    }
+
+    /// Loads the competition saved in `storage` under `name`, which also becomes the name it is
+    /// saved under. The session has done nothing yet, so there is nothing to undo.
     ///
     /// # Errors
-    /// Returns an error if the file cannot be read or does not hold a log that replays into a
-    /// competition.
-    pub fn load(path: PathBuf) -> Result<Self, Error> {
-        let bytes = match fs::read(&path) {
+    /// Returns an error if nothing can be read under `name`, or what is read is no log that
+    /// replays into a competition.
+    pub fn load(storage: impl Storage + 'static, name: impl Into<String>) -> Result<Self, Error> {
+        let name = name.into();
+        let bytes = match storage.read(&name) {
             Ok(bytes) => bytes,
-            Err(source) => return Err(Error::Read { path, source }),
+            Err(source) => return Err(Error::Read { name, source }),
         };
         let machine: CompetitionStateMachine = match serde_json::from_slice(&bytes) {
             Ok(machine) => machine,
-            Err(source) => return Err(Error::Load { path, source }),
+            Err(source) => return Err(Error::Load { name, source }),
         };
         Ok(Self {
             saved_log_len: machine.log().len(),
             machine,
             history: SessionHistory::new(),
-            path: Some(path),
+            storage: Box::new(storage),
+            name: Some(name),
         })
     }
 
@@ -199,9 +212,9 @@ impl Session {
         self.machine.current()
     }
 
-    /// The file the competition is saved to unless a save is given another one.
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+    /// The name the competition is saved under unless a save is given another one.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
@@ -228,7 +241,7 @@ impl Session {
             Command::Ranking => self.ranking()?,
             Command::Undo => self.undo()?,
             Command::Redo => self.redo()?,
-            Command::Save { path } => self.save(path)?,
+            Command::Save { name } => self.save(name)?,
             Command::Exit { force } => {
                 if self.has_unsaved_changes() && !force {
                     return Err(Error::UnsavedChanges);
@@ -616,25 +629,14 @@ impl Session {
         Ok("redone".to_owned())
     }
 
-    fn save(&mut self, path: Option<PathBuf>) -> Result<String, Error> {
-        let path = path.or_else(|| self.path.clone()).ok_or(Error::NoPath)?;
+    fn save(&mut self, name: Option<String>) -> Result<String, Error> {
+        let name = name.or_else(|| self.name.clone()).ok_or(Error::NoName)?;
         let json = serde_json::to_vec_pretty(&self.machine).map_err(Error::Serialize)?;
-        // writing to a sibling first and moving that over the file means a failed write never
-        // destroys the previous save
-        let mut temporary = path.clone().into_os_string();
-        temporary.push(".tmp");
-        let temporary = PathBuf::from(temporary);
-        if let Err(source) = fs::write(&temporary, json) {
-            return Err(Error::Write {
-                path: temporary,
-                source,
-            });
+        if let Err(source) = self.storage.write(&name, &json) {
+            return Err(Error::Write { name, source });
         }
-        if let Err(source) = fs::rename(&temporary, &path) {
-            return Err(Error::Write { path, source });
-        }
-        let output = format!("saved to {}", path.display());
-        self.path = Some(path);
+        let output = format!("saved to {name}");
+        self.name = Some(name);
         self.saved_log_len = self.machine.log().len();
         Ok(output)
     }
@@ -755,8 +757,11 @@ mod tests {
         },
         phase_format::{MonsterDyp, RoundRobin, SingleElimination},
     };
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
+    use crate::storage::MemoryStorage;
 
     /// The header and its underline, which every table shown by a command starts with.
     const HEADER_LINES: usize = 2;
@@ -820,7 +825,7 @@ mod tests {
     /// A session with a started competition between Alice, Bob, Carol and Dave in a phase of
     /// `preset`.
     fn started(preset: &str) -> Session {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
         output(&mut session, &format!("add-phase {preset}"));
         output(&mut session, "start");
@@ -829,7 +834,7 @@ mod tests {
 
     #[test]
     fn entrants_are_listed_by_name() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         output(&mut session, "add Alice 'Bob B.'");
 
@@ -838,7 +843,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_name_adds_none_of_the_entrants() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice");
 
         let result = execute(&mut session, "add Bob Alice");
@@ -849,7 +854,7 @@ mod tests {
 
     #[test]
     fn a_name_cannot_be_given_twice_in_one_command() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         let result = execute(&mut session, "add Bob Bob");
 
@@ -859,7 +864,7 @@ mod tests {
 
     #[test]
     fn an_entrant_is_removed_by_name() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob");
 
         output(&mut session, "remove Alice");
@@ -873,7 +878,7 @@ mod tests {
 
     #[test]
     fn only_one_phase_can_be_added() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add-phase round-robin");
 
         let result = execute(&mut session, "add-phase single-elimination");
@@ -923,7 +928,7 @@ mod tests {
         ];
 
         for (preset, summary) in presets {
-            let mut session = Session::new(None);
+            let mut session = Session::new(MemoryStorage::default());
 
             match execute(&mut session, &format!("add-phase {preset}")) {
                 Ok(Outcome::Continue(added)) => {
@@ -957,7 +962,7 @@ mod tests {
     /// A format or an answer the session cannot make sense of adds no phase, and says why.
     #[test]
     fn an_unknown_format_or_answer_is_rejected() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         for (line, message) in [
             ("add-phase swiss", "there is no format \"swiss\""),
@@ -981,7 +986,7 @@ mod tests {
     /// `add-phase` without a format has to be configured before the command reaches it.
     #[test]
     fn a_phase_to_be_configured_cannot_be_added_by_the_session_itself() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         let result = execute(&mut session, "add-phase");
 
@@ -1081,7 +1086,7 @@ mod tests {
 
     #[test]
     fn only_a_phase_that_was_added_can_be_edited() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         assert!(matches!(session.phase_draft_to_edit(), Err(Error::NoPhase)));
         assert!(matches!(
@@ -1094,7 +1099,7 @@ mod tests {
     /// the way it was configured to.
     #[test]
     fn a_configured_phase_is_played_the_way_it_was_configured() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
 
         let draft = draft(
@@ -1136,7 +1141,7 @@ mod tests {
     /// results the points are scored from, which have nothing to be configured.
     #[test]
     fn a_phase_calculates_the_metrics_its_own_are_derived_from() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
         let sonneborn_berger = plugin::<SonnebornBergerCalculator>()
             .with("weight_for_win", 1.0)
@@ -1171,7 +1176,7 @@ mod tests {
     /// calculator is not added with one the operator was not asked about.
     #[test]
     fn a_calculator_that_has_to_be_configured_is_not_added_unasked() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
 
         let draft = draft(
@@ -1200,7 +1205,7 @@ mod tests {
     /// a phase can be ranked by the wins alone, without calculating anything besides that metric.
     #[test]
     fn a_phase_can_be_ranked_by_wins_alone() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
         let draft = draft(
             &session,
@@ -1251,7 +1256,7 @@ mod tests {
     /// the two that went out in the semifinal rank above the two finalists.
     #[test]
     fn ranking_by_the_matches_played_puts_the_entrants_that_played_fewest_first() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
         // a match for third place would have every entrant play two matches, which is exactly the
         // tie this criterion is shown by breaking
@@ -1290,7 +1295,7 @@ mod tests {
 
     #[test]
     fn a_phase_configured_without_a_ranking_leaves_every_entrant_tied() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol Dave");
         let draft = draft(
             &session,
@@ -1318,7 +1323,7 @@ mod tests {
 
     #[test]
     fn matches_and_ranking_need_a_started_competition() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         assert!(matches!(
             execute(&mut session, "matches"),
@@ -1482,7 +1487,7 @@ mod tests {
     /// matches but not among the open ones.
     #[test]
     fn byes_are_listed_after_the_matches() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice Bob Carol");
         output(&mut session, "add-phase round-robin");
         output(&mut session, "start");
@@ -1716,7 +1721,7 @@ mod tests {
 
     #[test]
     fn undo_and_redo_walk_back_and_forth_through_the_changes() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice");
         output(&mut session, "add Bob");
 
@@ -1738,7 +1743,7 @@ mod tests {
 
     #[test]
     fn a_new_change_discards_what_could_be_redone() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         output(&mut session, "add Alice");
         output(&mut session, "undo");
 
@@ -1752,7 +1757,7 @@ mod tests {
 
     #[test]
     fn the_seed_of_a_session_is_never_undone() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
 
         assert!(matches!(
             execute(&mut session, "undo"),
@@ -1774,16 +1779,18 @@ mod tests {
     /// was saved with but nothing to undo.
     #[test]
     fn a_saved_competition_loads_without_anything_to_undo() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("cup.json");
-        let mut session = started("round-robin");
+        let storage = MemoryStorage::default();
+        let mut session = Session::new(storage.clone());
+        output(&mut session, "add Alice Bob Carol Dave");
+        output(&mut session, "add-phase round-robin");
+        output(&mut session, "start");
         output(&mut session, "report 1 a");
         let ranking = output(&mut session, "ranking");
 
-        output(&mut session, &format!("save {}", path.display()));
-        let mut loaded = Session::load(path.clone()).unwrap();
+        output(&mut session, "save cup");
+        let mut loaded = Session::load(storage, "cup").unwrap();
 
-        assert_eq!(loaded.path(), Some(path.as_path()));
+        assert_eq!(loaded.name(), Some("cup"));
         assert!(!loaded.has_unsaved_changes());
         assert_eq!(output(&mut loaded, "ranking"), ranking);
         assert_eq!(
@@ -1814,29 +1821,31 @@ mod tests {
     }
 
     #[test]
-    fn a_save_without_a_path_goes_to_the_last_one() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("cup.json");
-        let mut session = Session::new(Some(path.clone()));
+    fn a_save_without_a_name_goes_under_the_last_one() {
+        let storage = MemoryStorage::default();
+        let mut session = Session::new(storage.clone()).named("cup");
         output(&mut session, "add Alice");
 
         output(&mut session, "save");
         output(&mut session, "add Bob");
         output(&mut session, "save");
 
-        assert_eq!(names(&Session::load(path).unwrap()), ["Alice", "Bob"]);
+        assert_eq!(
+            names(&Session::load(storage, "cup").unwrap()),
+            ["Alice", "Bob"]
+        );
     }
 
     #[test]
-    fn a_session_that_was_never_saved_needs_a_path() {
-        let mut session = Session::new(None);
+    fn a_session_that_was_never_saved_needs_a_name() {
+        let mut session = Session::new(MemoryStorage::default());
 
-        assert!(matches!(execute(&mut session, "save"), Err(Error::NoPath)));
+        assert!(matches!(execute(&mut session, "save"), Err(Error::NoName)));
     }
 
     #[test]
     fn exit_refuses_to_discard_unsaved_changes_unless_forced() {
-        let mut session = Session::new(None);
+        let mut session = Session::new(MemoryStorage::default());
         assert_eq!(execute(&mut session, "exit").unwrap(), Outcome::Exit);
         output(&mut session, "add Alice");
 
@@ -1852,8 +1861,7 @@ mod tests {
 
     #[test]
     fn undo_is_an_unsaved_change_too() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut session = Session::new(Some(directory.path().join("cup.json")));
+        let mut session = Session::new(MemoryStorage::default()).named("cup");
         output(&mut session, "add Alice");
         output(&mut session, "save");
 
@@ -1863,12 +1871,22 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_no_competition_is_rejected() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("notes.json");
-        fs::write(&path, "{}").unwrap();
+    fn what_is_no_competition_is_rejected() {
+        let mut storage = MemoryStorage::default();
+        storage.write("notes", b"{}").unwrap();
 
-        assert!(matches!(Session::load(path), Err(Error::Load { .. })));
+        assert!(matches!(
+            Session::load(storage, "notes"),
+            Err(Error::Load { .. })
+        ));
+    }
+
+    #[test]
+    fn a_name_nothing_is_saved_under_cannot_be_loaded() {
+        assert!(matches!(
+            Session::load(MemoryStorage::default(), "cup"),
+            Err(Error::Read { .. })
+        ));
     }
 
     #[test]

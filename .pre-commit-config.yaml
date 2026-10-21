@@ -19,7 +19,7 @@ repos:
       # runner would skip
       - id: cargo-clippy-wasm
         name: cargo clippy (wasm)
-        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine --lib --tests --examples -- -D warnings
+        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine -p tournament-cli --no-default-features --lib --tests --examples -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
@@ -36,7 +36,7 @@ repos:
       # runs in CI or on request: `prek run --all-files --stage manual wasm-test`
       - id: wasm-test
         name: wasm test
-        entry: sh -c 'wasm-pack test --node plugin-factory --profile wasm-test && wasm-pack test --node tournament-engine --profile wasm-test'
+        entry: sh -c 'wasm-pack test --node plugin-factory --profile wasm-test && wasm-pack test --node tournament-engine --profile wasm-test && wasm-pack test --node tournament-cli --profile wasm-test --no-default-features'
         language: system
         types: [rust]
         pass_filenames: false

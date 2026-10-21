@@ -5,13 +5,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "tournament-cli"
+required-features = ["terminal"]
+
 [dependencies]
 clap.workspace = true
-inquire.workspace = true
+inquire = { workspace = true, optional = true }
 plugin-factory.workspace = true
 # the seed of a new competition is random
 rand = { workspace = true, features = ["thread_rng"] }
-rustyline.workspace = true
+rustyline = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
@@ -22,5 +26,18 @@ typetag.workspace = true
 # shown with
 uuid = { workspace = true, features = ["v4"] }
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# seeds and ids are random, and in the browser randomness comes from JavaScript, which the
+# application picks, so the tests do
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen-test.workspace = true
+
+[features]
+default = ["terminal"]
+# What only works at a terminal: the binary, and asking the questions of a phase there. Without it,
+# the library builds for WebAssembly.
+terminal = ["dep:inquire", "dep:rustyline"]

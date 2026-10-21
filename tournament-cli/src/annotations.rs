@@ -59,6 +59,8 @@ impl From<DisplayName> for String {
 mod tests {
     use serde_json::json;
     use tournament_engine::{Annotated, Entrant, EntrantId, uuid::Uuid};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
 

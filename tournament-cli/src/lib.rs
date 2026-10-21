@@ -7,9 +7,15 @@
 //! phase.
 //!
 //! Everything a tournament needs in order to be *shown* to an operator is defined in
-//! [`annotations`] and reaches the engine as an annotation on an entity.
+//! [`annotations`] and reaches the engine as an annotation on an entity. A session saves to a
+//! [`Storage`](storage::Storage), e.g. to files.
+//!
+//! The library also builds for WebAssembly, without the default feature `terminal`, which adds
+//! what only works at a terminal: the binary and asking at the terminal
+//! (`questionnaire::Terminal`).
 
 pub mod annotations;
 pub mod command;
 pub mod questionnaire;
 pub mod session;
+pub mod storage;
