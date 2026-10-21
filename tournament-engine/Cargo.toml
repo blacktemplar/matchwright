@@ -23,6 +23,14 @@ vec1.workspace = true
 criterion.workspace = true
 postcard.workspace = true
 serde_json.workspace = true
+# the tests, benchmarks and examples of this crate build plugins directly
+tournament-engine = { workspace = true, features = ["test-util"] }
+
+[features]
+# Constructors building plugins and `PhasePlugins` directly, bypassing their configuration. Meant
+# for tests: production code configures plugins through a draft, which also adds the plugins they
+# imply.
+test-util = []
 
 [[bench]]
 name = "large_tournament"

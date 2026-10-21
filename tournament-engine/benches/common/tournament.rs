@@ -10,8 +10,8 @@ use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
     AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt, Entrant, EntrantId,
-    MatchId, MatchResult, PhaseId, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
-    plugin_factory::config::PluginConfig,
+    MatchId, MatchResult, PhaseId, PhasePluginsBuilder, ReportMatchResult, Seed,
+    SetCompetitionSeed, StartCompetition,
     plugins::{metrics_calculator::*, phase_format::RandomRounds},
     uuid::Uuid,
 };
@@ -27,20 +27,11 @@ const ROUNDS: u32 = 10;
 const SEED: Seed = Seed::new(*b"bench-seed!!");
 
 /// The scoring system of most association football leagues.
-fn three_one() -> PluginConfig {
-    PluginConfig::of::<PointsCalculator>()
-        .with("points_for_win", 3.0)
-        .with("points_for_draw", 1.0)
-        .with("points_for_bye", 0.0)
-}
+const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
 
 /// The classical Sonneborn-Berger weights: the points of a beaten opponent count fully, those of
 /// an opponent that was played to a draw count half.
-fn sonneborn_berger() -> PluginConfig {
-    PluginConfig::of::<SonnebornBergerCalculator>()
-        .with("weight_for_win", 1.0)
-        .with("weight_for_draw", 0.5)
-}
+const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
 
 /// The id of the single phase every tournament of this module consists of.
 ///
@@ -89,30 +80,18 @@ pub fn run_tournament(entrants: usize) -> CompetitionStateMachine {
         sm.apply_transition(AddEntrant::new(Entrant::new(id)))
             .unwrap();
     }
-    let ranking = vec![
-        PluginConfig::of::<MorePoints>(),
-        PluginConfig::of::<MoreBuchholz>(),
-        PluginConfig::of::<MoreSonnebornBerger>(),
-        PluginConfig::of::<MoreBuchholzOfBuchholz>(),
-    ];
-    let metrics = vec![
-        PluginConfig::of::<RoundOfFirstLossCalculator>(),
-        PluginConfig::of::<WinsDrawsLossesCalculator>(),
-        three_one(),
-        PluginConfig::of::<BuchholzCalculator>(),
-        sonneborn_berger(),
-        PluginConfig::of::<BuchholzOfBuchholzCalculator>(),
-    ];
-    let plugins = sm
-        .current()
-        .phase_draft()
-        .with(
-            "format",
-            PluginConfig::of::<RandomRounds>().with("rounds", ROUNDS),
-        )
-        .and_then(|draft| draft.with("ranking", ranking))
-        .and_then(|draft| draft.with("metrics", metrics))
-        .unwrap()
+    let plugins = PhasePluginsBuilder::new()
+        .format(RandomRounds::new(ROUNDS))
+        .add_ranking(MorePoints)
+        .add_ranking(MoreBuchholz)
+        .add_ranking(MoreSonnebornBerger)
+        .add_ranking(MoreBuchholzOfBuchholz)
+        .add_metric(RoundOfFirstLossCalculator)
+        .add_metric(WinsDrawsLossesCalculator)
+        .add_metric(THREE_ONE)
+        .add_metric(BuchholzCalculator)
+        .add_metric(SONNEBORN_BERGER)
+        .add_metric(BuchholzOfBuchholzCalculator)
         .build()
         .unwrap();
     sm.apply_transition(AddPhase::new(phase_id(), plugins))

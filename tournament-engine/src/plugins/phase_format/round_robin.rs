@@ -99,9 +99,7 @@ mod tests {
 
     #[test]
     fn round_robin_schedules_every_pair_exactly_once_for_even_number_of_players() {
-        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
-            .with_players(6)
-            .build();
+        let mut phase = PhaseBuilder::new().add_players(6).build();
 
         phase.create_new_matches();
 
@@ -114,9 +112,7 @@ mod tests {
 
     #[test]
     fn round_robin_schedules_every_pair_exactly_once_for_odd_number_of_players() {
-        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
-            .with_players(7)
-            .build();
+        let mut phase = PhaseBuilder::new().add_players(7).build();
 
         phase.create_new_matches();
 
@@ -129,9 +125,7 @@ mod tests {
 
     #[test]
     fn every_ranking_has_one_bye_in_a_round_robin_of_an_odd_number_of_players() {
-        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
-            .with_players(7)
-            .build();
+        let mut phase = PhaseBuilder::new().add_players(7).build();
 
         phase.create_new_matches();
 
@@ -143,9 +137,7 @@ mod tests {
 
     #[test]
     fn nobody_has_a_bye_in_a_round_robin_of_an_even_number_of_players() {
-        let mut phase = PhaseBuilder::new(Box::new(RoundRobin))
-            .with_players(6)
-            .build();
+        let mut phase = PhaseBuilder::new().add_players(6).build();
 
         phase.create_new_matches();
 

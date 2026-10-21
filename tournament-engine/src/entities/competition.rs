@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::{Uuid, uuid};
 use vec1::{Vec1, vec1};
 
+#[cfg(feature = "test-util")]
+use crate::plugins::{PhasePluginsBuilder, ranker::SliceRanker};
 use crate::{
     map::{IdAble, IdMap},
     plugins::{
@@ -878,67 +880,97 @@ impl Annotated for Bye {
     }
 }
 
-/// Builds a standalone [`Phase`] with prepopulated rankings, without a [`Competition`] around it,
-/// for unit tests of [`PhaseFormat`](crate::plugins::phase_format::PhaseFormat) and
-/// [`SliceRanker`](crate::plugins::ranker::SliceRanker) implementations.
-#[cfg(test)]
-pub(crate) struct PhaseBuilder {
-    phase_format: Box<dyn PhaseFormat>,
-    ranker: HierarchicalRanker,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-    rankings: Vec<Ranking>,
+/// Builds a standalone [`Phase`] with rankings of single players, without a [`Competition`]
+/// around it, for unit tests of plugins.
+///
+/// Its plugins are given as to a [`PhasePluginsBuilder`], with the same defaults: a round robin,
+/// neither ranked by anything nor calculating any metrics. Without players, the phase has no
+/// rankings.
+///
+/// Requires the `test-util` feature.
+///
+/// # Examples
+/// ```
+/// use tournament_engine::{
+///     PhaseBuilder,
+///     plugins::{metrics_calculator::WinsDrawsLossesCalculator, phase_format::SingleElimination},
+/// };
+///
+/// let phase = PhaseBuilder::new()
+///     .format(SingleElimination::new())
+///     .add_metric(WinsDrawsLossesCalculator)
+///     .add_players(4)
+///     .build();
+///
+/// assert_eq!(phase.data().rankings().len(), 4);
+/// ```
+#[cfg(feature = "test-util")]
+#[derive(Debug, Clone, Default)]
+pub struct PhaseBuilder {
+    plugins: PhasePluginsBuilder,
+    players: u32,
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-util")]
 impl PhaseBuilder {
-    /// Creates a builder with no rankings yet and a ranker that leaves all ranks at 1 (use
-    /// [`PhaseBuilder::ranker`] to override it if the test cares about ranks).
-    pub(crate) fn new(phase_format: Box<dyn PhaseFormat>) -> Self {
-        Self {
-            phase_format,
-            ranker: HierarchicalRanker::default(),
-            metrics_calculators: Vec::new(),
-            rankings: Vec::new(),
-        }
+    /// A builder with nothing given, i.e. of a round robin without rankings, neither ranked by
+    /// anything nor calculating any metrics.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub(crate) fn ranker(mut self, ranker: HierarchicalRanker) -> Self {
-        self.ranker = ranker;
+    /// Plays the phase in `format`, see [`PhasePluginsBuilder::format`].
+    pub fn format(mut self, format: impl PhaseFormat) -> Self {
+        self.plugins = self.plugins.format(format);
         self
     }
 
-    /// Adds a metrics calculator whose metrics get initialized in [`PhaseBuilder::build`].
-    pub(crate) fn metrics_calculator(
-        mut self,
-        metrics_calculator: Box<dyn MetricsCalculator>,
-    ) -> Self {
-        self.metrics_calculators.push(metrics_calculator);
+    /// Ranks the phase by `criterion` as well, see [`PhasePluginsBuilder::add_ranking`].
+    pub fn add_ranking(mut self, criterion: impl SliceRanker) -> Self {
+        self.plugins = self.plugins.add_ranking(criterion);
         self
     }
 
-    /// Adds `num_players` more rankings, each a single entrant, ranked after the rankings
-    /// already added.
-    pub(crate) fn with_players(mut self, num_players: u32) -> Self {
-        for _ in 0..num_players {
-            let entrant_id = EntrantId::new(Uuid::from_u128(self.rankings.len() as u128));
-            let unique_rank = NonZeroU32::new(self.rankings.len() as u32 + 1).unwrap();
-            self.rankings
-                .push(Ranking::new(vec1![entrant_id], unique_rank));
-        }
+    /// Calculates the metric of `calculator` as well, see [`PhasePluginsBuilder::add_metric`].
+    /// Its metric is initialized for every ranking when the phase is built.
+    pub fn add_metric(mut self, calculator: impl MetricsCalculator) -> Self {
+        self.plugins = self.plugins.add_metric(calculator);
         self
     }
 
-    pub(crate) fn build(self) -> Phase {
+    /// Adds `players` more rankings, each a single entrant, ranked after the rankings already
+    /// added.
+    pub fn add_players(mut self, players: u32) -> Self {
+        self.players += players;
+        self
+    }
+
+    /// The phase, with the metrics of its rankings initialized and nothing scheduled yet.
+    ///
+    /// # Panics
+    /// Panics if building its plugins fails, see [`PhasePluginsBuilder::build`].
+    pub fn build(self) -> Phase {
+        let (format, ranker, metrics) = self
+            .plugins
+            .build()
+            .expect("the plugins of the phase can be ordered")
+            .into_parts();
         let mut phase = Phase::new(
             PhaseId::new(Uuid::nil()),
-            self.phase_format,
-            self.ranker,
-            self.metrics_calculators,
+            format,
+            ranker,
+            metrics,
             Seed::default(),
         );
-        phase.data.ranking_ids_ordered_by_unique_rank =
-            self.rankings.iter().map(Ranking::id).collect();
-        phase.data.rankings = self.rankings.into_iter().collect();
+        let rankings: Vec<_> = (0..self.players)
+            .map(|index| {
+                let entrant_id = EntrantId::new(Uuid::from_u128(index.into()));
+                let unique_rank = NonZeroU32::new(index + 1).unwrap();
+                Ranking::new(vec1![entrant_id], unique_rank)
+            })
+            .collect();
+        phase.data.ranking_ids_ordered_by_unique_rank = rankings.iter().map(Ranking::id).collect();
+        phase.data.rankings = rankings.into_iter().collect();
         phase.initialize_metrics();
         phase
     }
@@ -963,7 +995,7 @@ mod tests {
     #[test]
     fn every_ranking_of_both_teams_plays_a_reported_match() {
         let matches = vec![(1, vec![0, 1], vec![2, 3]), (1, vec![4], vec![5])];
-        let mut phase = test_utils::phase_with(6, matches, vec![]);
+        let mut phase = test_utils::phase_with(PhaseBuilder::new().add_players(6), matches);
         let match_id = match_id(&phase, 1, &[0, 1], &[2, 3]);
 
         phase.report_match_result(match_id, MatchResult::BWins);
@@ -985,7 +1017,7 @@ mod tests {
             (2, vec![1], vec![3]),
             (3, vec![1], vec![2]),
         ];
-        let mut phase = test_utils::phase_with(4, matches.clone(), vec![]);
+        let mut phase = test_utils::phase_with(PhaseBuilder::new().add_players(4), matches.clone());
         let match_ids: Vec<_> = matches
             .iter()
             .map(|(round, team_a, team_b)| match_id(&phase, *round, team_a, team_b))

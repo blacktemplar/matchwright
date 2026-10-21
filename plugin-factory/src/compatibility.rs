@@ -245,6 +245,14 @@ pub fn check(
     )
 }
 
+/// Whether `plugin`, configured as it is, provides a fact of type `F`. What a plugin provides
+/// includes what the plugins it holds provide, as for [`check`].
+pub fn provides_fact<F: Fact>(plugin: &dyn Plugin) -> bool {
+    Declared::of(plugin)
+        .declaration
+        .provides_type(TypeId::of::<F>())
+}
+
 /// An order in which `plugins` can run one after another, so that each runs after the plugins
 /// providing the facts it requires, given as indices into `plugins`. Plugins keep their given
 /// order wherever the requirements allow it, so an order that is already valid stays as it is.
@@ -639,6 +647,15 @@ mod tests {
             declaration.required().iter().map(RequiredFact::name).next(),
             Some("a derived fact")
         );
+    }
+
+    #[test]
+    fn a_plugin_provides_what_it_and_its_sub_plugins_declare_to_provide() {
+        assert!(provides_fact::<Annotated>(&Leaf));
+        assert!(!provides_fact::<Derived>(&Leaf));
+        assert!(provides_fact::<Annotated>(&composite()));
+        // a fact it requires is not one it provides
+        assert!(!provides_fact::<Derived>(&composite()));
     }
 
     #[test]

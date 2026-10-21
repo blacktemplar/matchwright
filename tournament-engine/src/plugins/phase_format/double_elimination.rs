@@ -49,7 +49,8 @@ use crate::{
 /// entrant out with [`Eliminates`]. Draws are not allowed.
 ///
 /// [`SingleElimination`]: super::single_elimination::SingleElimination
-#[derive(Debug, Clone, Default, Deserialize, Serialize, Plugin)]
+#[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
+#[cfg_attr(feature = "test-util", derive(Default))]
 #[plugin(
     id = "tournament_engine::double_elimination",
     label = "double elimination",
@@ -74,6 +75,9 @@ pub struct DoubleElimination {
 impl DoubleElimination {
     /// A double elimination whose grand final is a single match: whoever loses it is out, even the
     /// champion of the winner bracket with its first loss.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new() -> Self {
         Self {
             grand_final_reset: false,
@@ -83,6 +87,9 @@ impl DoubleElimination {
 
     /// Returns this double elimination with the champion of the winner bracket also needing to
     /// lose twice: if it loses the grand final, the two play it once more.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn with_grand_final_reset(mut self) -> Self {
         self.grand_final_reset = true;
         self
@@ -136,8 +143,8 @@ pub enum DoubleEliminationRound {
     Losers { round: u32, rounds: u32 },
     /// The match between the champions of both brackets.
     GrandFinal,
-    /// The grand final played once more, because the champion of the winner bracket lost it, see
-    /// [`DoubleElimination::with_grand_final_reset`].
+    /// The grand final played once more, because the champion of the winner bracket lost it, if
+    /// the double elimination is configured with a grand final reset.
     GrandFinalReset,
 }
 
@@ -269,14 +276,11 @@ mod tests {
     use super::*;
     use crate::{
         entities::competition::{MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
-        plugins::{
-            metrics_calculator::{
-                round_of_elimination::{
-                    LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,
-                },
-                wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
+        plugins::metrics_calculator::{
+            round_of_elimination::{
+                LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,
             },
-            ranker::HierarchicalRanker,
+            wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
         },
     };
 
@@ -320,13 +324,13 @@ mod tests {
     /// A double elimination between `num_players` entrants with its first matches scheduled,
     /// ranked by the round of elimination and then by the losses.
     fn bracket(format: DoubleElimination, num_players: u32) -> Phase {
-        let ranker =
-            HierarchicalRanker::new(vec![Box::new(LaterElimination), Box::new(FewerLosses)]);
-        let mut phase = PhaseBuilder::new(Box::new(format))
-            .with_players(num_players)
-            .metrics_calculator(Box::new(RoundOfEliminationCalculator))
-            .metrics_calculator(Box::new(WinsDrawsLossesCalculator))
-            .ranker(ranker)
+        let mut phase = PhaseBuilder::new()
+            .format(format)
+            .add_players(num_players)
+            .add_ranking(LaterElimination)
+            .add_ranking(FewerLosses)
+            .add_metric(RoundOfEliminationCalculator)
+            .add_metric(WinsDrawsLossesCalculator)
             .build();
         phase.create_new_matches();
         phase

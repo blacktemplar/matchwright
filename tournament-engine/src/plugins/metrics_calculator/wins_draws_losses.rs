@@ -200,7 +200,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{MatchResult, Phase},
+        entities::competition::{MatchResult, Phase, PhaseBuilder},
         plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 
@@ -208,9 +208,10 @@ mod tests {
     /// with all matches of `matches` already scheduled.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(WinsDrawsLossesCalculator),
             matches,
-            vec![Box::new(WinsDrawsLossesCalculator)],
         )
     }
 
@@ -318,10 +319,11 @@ mod tests {
     #[test]
     fn a_bye_is_counted_as_soon_as_it_is_scheduled_but_not_as_a_match() {
         let mut phase = test_utils::phase_with_byes(
-            3,
+            PhaseBuilder::new()
+                .add_players(3)
+                .add_metric(WinsDrawsLossesCalculator),
             vec![(1, vec![0], vec![1])],
             vec![(1, 2), (2, 2)],
-            vec![Box::new(WinsDrawsLossesCalculator)],
         );
         assert_eq!(metric_of(&phase, 2).byes, 1);
 

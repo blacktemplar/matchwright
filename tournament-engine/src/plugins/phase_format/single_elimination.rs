@@ -27,8 +27,12 @@ use crate::{
 /// two the best seeds get the byes.
 ///
 /// Optionally the two entrants knocked out in the semifinals play one more match, for third place,
-/// see [`SingleElimination::with_third_place_match`].
-#[derive(Debug, Clone, Default, Deserialize, Serialize, Plugin)]
+/// scheduled in the same round as the final. Both of them lost their first match in the semifinal
+/// whichever way it goes, so [`LaterFirstLoss`] ties them and the ranking needs a further criterion
+/// to tell the two apart, e.g. [`FewerLosses`]. A bracket of three entrants has nobody to play the
+/// match against and so is not given it.
+#[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
+#[cfg_attr(feature = "test-util", derive(Default))]
 #[plugin(
     id = "tournament_engine::single_elimination",
     label = "single elimination",
@@ -53,6 +57,9 @@ pub struct SingleElimination {
 impl SingleElimination {
     /// A knockout that ends with the final, which leaves the two entrants knocked out in the
     /// semifinals as far as the bracket takes them, i.e. third equal.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new() -> Self {
         Self {
             third_place_match: false,
@@ -61,16 +68,10 @@ impl SingleElimination {
     }
 
     /// Returns this knockout with the two entrants knocked out in the semifinals playing for third
-    /// place, scheduled in the same round as the final.
+    /// place.
     ///
-    /// Both of them lost their first match in the semifinal whichever way the match for third place
-    /// goes, so [`LaterFirstLoss`] ties them and the ranking needs a further criterion to tell the
-    /// two apart, e.g. [`FewerLosses`].
-    ///
-    /// A bracket of three entrants has nobody to play the match against and so is not given it.
-    ///
-    /// [`LaterFirstLoss`]: crate::plugins::metrics_calculator::LaterFirstLoss
-    /// [`FewerLosses`]: crate::plugins::metrics_calculator::FewerLosses
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn with_third_place_match(mut self) -> Self {
         self.third_place_match = true;
         self
@@ -119,7 +120,7 @@ pub enum KnockoutRound {
     /// semifinals, 8 the quarterfinals and so on. A bye counts as a match won, so the first round
     /// of six entrants is the round of 8.
     RoundOf(u32),
-    /// The match for third place, see [`SingleElimination::with_third_place_match`].
+    /// The match for third place, if the knockout is configured with one.
     ThirdPlace,
 }
 
@@ -253,8 +254,9 @@ mod tests {
 
     /// A knockout between `num_players` entrants with its first round already scheduled.
     fn knockout(format: SingleElimination, num_players: u32) -> Phase {
-        let mut phase = PhaseBuilder::new(Box::new(format))
-            .with_players(num_players)
+        let mut phase = PhaseBuilder::new()
+            .format(format)
+            .add_players(num_players)
             .build();
         phase.create_new_matches();
         phase

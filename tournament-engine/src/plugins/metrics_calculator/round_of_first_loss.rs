@@ -118,7 +118,7 @@ impl MetricsCalculator for RoundOfFirstLossCalculator {
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::{MatchResult, Phase},
+        entities::competition::{MatchResult, Phase, PhaseBuilder},
         plugins::metrics_calculator::test_utils::{self, MatchSpec, match_id},
     };
 
@@ -131,9 +131,10 @@ mod tests {
     /// called for, so it is the only calculator of the phase.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(RoundOfFirstLossCalculator),
             matches,
-            vec![Box::new(RoundOfFirstLossCalculator)],
         )
     }
 
@@ -221,10 +222,11 @@ mod tests {
     #[test]
     fn a_bye_is_never_lost() {
         let phase = test_utils::phase_with_byes(
-            2,
+            PhaseBuilder::new()
+                .add_players(2)
+                .add_metric(RoundOfFirstLossCalculator),
             vec![],
             vec![(1, 0)],
-            vec![Box::new(RoundOfFirstLossCalculator)],
         );
 
         assert_eq!(phase.data().byes().len(), 1);

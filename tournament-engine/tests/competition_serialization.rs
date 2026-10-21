@@ -8,9 +8,8 @@ use serde_json::Value;
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseData,
-    PhaseId, PhasePlugins, Ranking, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
-    TypeMapValue,
-    plugin_factory::config::PluginConfig,
+    PhaseId, PhasePluginsBuilder, Ranking, ReportMatchResult, Seed, SetCompetitionSeed,
+    StartCompetition, TypeMapValue,
     plugins::{
         metrics_calculator::{
             Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
@@ -28,19 +27,10 @@ use tournament_engine::{
 const SEED: Seed = Seed::new(*b"round-trip!!");
 
 /// The scoring system of most association football leagues.
-fn three_one() -> PluginConfig {
-    PluginConfig::of::<PointsCalculator>()
-        .with("points_for_win", 3.0)
-        .with("points_for_draw", 1.0)
-        .with("points_for_bye", 0.0)
-}
+const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
 
 /// The classical Sonneborn-Berger weights.
-fn sonneborn_berger() -> PluginConfig {
-    PluginConfig::of::<SonnebornBergerCalculator>()
-        .with("weight_for_win", 1.0)
-        .with("weight_for_draw", 0.5)
-}
+const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
 
 fn phase_id() -> PhaseId {
     PhaseId::new(Uuid::from_u128(0xfa5e))
@@ -79,45 +69,24 @@ fn competition_with_a_phase() -> CompetitionStateMachine {
         let entrant = Entrant::new(id).with_annotation(Nickname(format!("entrant {entrant}")));
         sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    let plugins = phase_plugins(
-        sm.current(),
-        vec![
-            PluginConfig::of::<LaterFirstLoss>(),
-            PluginConfig::of::<MorePoints>(),
-            PluginConfig::of::<MoreBuchholz>(),
-            PluginConfig::of::<MoreSonnebornBerger>(),
-            PluginConfig::of::<MoreBuchholzOfBuchholz>(),
-        ],
-        vec![
-            PluginConfig::of::<RoundOfFirstLossCalculator>(),
-            PluginConfig::of::<WinsDrawsLossesCalculator>(),
-            three_one(),
-            PluginConfig::of::<BuchholzCalculator>(),
-            sonneborn_berger(),
-            PluginConfig::of::<BuchholzOfBuchholzCalculator>(),
-        ],
-    );
+    let plugins = PhasePluginsBuilder::new()
+        .format(SingleElimination::new())
+        .add_ranking(LaterFirstLoss)
+        .add_ranking(MorePoints)
+        .add_ranking(MoreBuchholz)
+        .add_ranking(MoreSonnebornBerger)
+        .add_ranking(MoreBuchholzOfBuchholz)
+        .add_metric(RoundOfFirstLossCalculator)
+        .add_metric(WinsDrawsLossesCalculator)
+        .add_metric(THREE_ONE)
+        .add_metric(BuchholzCalculator)
+        .add_metric(SONNEBORN_BERGER)
+        .add_metric(BuchholzOfBuchholzCalculator)
+        .build()
+        .unwrap();
     sm.apply_transition(AddPhase::new(phase_id(), plugins))
         .unwrap();
     sm
-}
-
-/// The plugins of a phase of `competition` played as a knockout that ends with the final, ranked by
-/// `ranking` and calculating the metrics of `metrics`, built from its draft.
-fn phase_plugins(
-    competition: &Competition,
-    ranking: Vec<PluginConfig>,
-    metrics: Vec<PluginConfig>,
-) -> PhasePlugins {
-    let knockout = PluginConfig::of::<SingleElimination>().with("third_place_match", false);
-    competition
-        .phase_draft()
-        .with("format", knockout)
-        .and_then(|draft| draft.with("ranking", ranking))
-        .and_then(|draft| draft.with("metrics", metrics))
-        .unwrap()
-        .build()
-        .unwrap()
 }
 
 /// [`competition_with_a_phase`] started, so that its rankings, metrics and the matches of the
@@ -383,11 +352,11 @@ fn a_competition_with_a_bye_round_trips() {
         let entrant = Entrant::new(EntrantId::new(Uuid::from_u128(entrant)));
         sm.apply_transition(AddEntrant::new(entrant)).unwrap();
     }
-    let plugins = phase_plugins(
-        sm.current(),
-        Vec::new(),
-        vec![PluginConfig::of::<WinsDrawsLossesCalculator>()],
-    );
+    let plugins = PhasePluginsBuilder::new()
+        .format(SingleElimination::new())
+        .add_metric(WinsDrawsLossesCalculator)
+        .build()
+        .unwrap();
     sm.apply_transition(AddPhase::new(phase_id(), plugins))
         .unwrap();
     sm.apply_transition(StartCompetition).unwrap();

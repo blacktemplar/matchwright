@@ -38,12 +38,16 @@
 use plugin_factory::schema::{Configurable, DependencyOrderedSet};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "test-util")]
+pub use crate::plugins::builder::PhasePluginsBuilder;
 use crate::plugins::{
     metrics_calculator::MetricsCalculator,
     phase_format::PhaseFormat,
     ranker::{HierarchicalRanker, SliceRanker},
 };
 
+#[cfg(feature = "test-util")]
+mod builder;
 pub mod facts;
 pub mod metrics_calculator;
 pub mod phase_format;
@@ -54,7 +58,7 @@ pub mod ranker;
 ///
 /// It is configured as a composite of `plugin_factory`, through the
 /// [`Competition::phase_draft`](crate::Competition::phase_draft) of the competition it is added to,
-/// or loaded.
+/// or loaded. Tests can build it directly with `PhasePluginsBuilder` (feature `test-util`).
 ///
 /// The calculators are a [`DependencyOrderedSet`]: a phase calculates each metric once, and the
 /// set holds them in the order they run in, each after the calculators of the metrics it reads.
@@ -107,6 +111,21 @@ pub struct PhasePlugins {
 }
 
 impl PhasePlugins {
+    /// The plugins of a phase played in `format`, ranked by `ranking` and calculating the metrics
+    /// of `metrics`, put into the order they run in, see [`PhasePluginsBuilder::build`].
+    #[cfg(feature = "test-util")]
+    pub(crate) fn from_parts(
+        format: Box<dyn PhaseFormat>,
+        ranking: Vec<Box<dyn SliceRanker>>,
+        metrics: Vec<Box<dyn MetricsCalculator>>,
+    ) -> Result<Self, plugin_factory::schema::DependencyOrderedSetError> {
+        Ok(Self {
+            format,
+            ranking,
+            metrics: DependencyOrderedSet::new(metrics)?,
+        })
+    }
+
     pub fn format(&self) -> &dyn PhaseFormat {
         &*self.format
     }
@@ -144,8 +163,8 @@ mod tests {
     use plugin_factory::{
         Plugin, PluginType,
         catalog::AnyAxis,
-        compatibility::{self, Declaration, Fact, Incompatibility},
-        config::{ConfigError, PluginConfig},
+        compatibility::{self, Declaration, Incompatibility, provides_fact},
+        config::PluginConfig,
         draft::{Draft, Issue, Problem},
         register,
         schema::DependencyOrderedSetError,
@@ -187,20 +206,6 @@ mod tests {
     /// Two entrants per ranking, i.e. the rankings a draw pairing the entrants up leaves behind.
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(NonZeroU32::new(2).unwrap());
 
-    /// The plugins of a phase played in `format`, ranked by `ranking` and calculating the metrics
-    /// of `metrics`.
-    fn phase(
-        format: impl PhaseFormat,
-        ranking: Vec<Box<dyn SliceRanker>>,
-        metrics: Vec<Box<dyn MetricsCalculator>>,
-    ) -> PhasePlugins {
-        PhasePlugins {
-            format: Box::new(format),
-            ranking,
-            metrics: DependencyOrderedSet::new(metrics).unwrap(),
-        }
-    }
-
     /// Whether `plugins` fit together in a competition, i.e. what `AddPhase` checks.
     fn check(plugins: &PhasePlugins) -> Result<(), Incompatibility> {
         check_in(
@@ -215,20 +220,6 @@ mod tests {
         plugins: &PhasePlugins,
     ) -> Result<(), Incompatibility> {
         compatibility::check(context, &plugins.plugins())
-    }
-
-    /// Whether `plugin` provides a fact of type `T`: it does exactly if it conflicts with a
-    /// context providing one.
-    fn provides<T: Fact + Default>(plugin: &dyn Plugin) -> bool {
-        matches!(
-            compatibility::check(
-                |declaration| {
-                    declaration.provide(T::default());
-                },
-                &[plugin]
-            ),
-            Err(Incompatibility::FactProvidedByContext { .. })
-        )
     }
 
     /// The [`Debug`] forms of the metrics the calculators of `plugins` calculate, in the order
@@ -333,17 +324,14 @@ mod tests {
     #[test]
     fn a_calculator_runs_after_the_calculators_of_the_metrics_it_reads() {
         // listed so that every calculator reading a metric comes before the one calculating it
-        let plugins = phase(
-            RoundRobin,
-            Vec::new(),
-            vec![
-                Box::new(BuchholzOfBuchholzCalculator),
-                Box::new(FULL_HALF),
-                Box::new(BuchholzCalculator),
-                Box::new(ONE_HALF),
-                Box::new(WinsDrawsLossesCalculator),
-            ],
-        );
+        let plugins = PhasePluginsBuilder::new()
+            .add_metric(BuchholzOfBuchholzCalculator)
+            .add_metric(FULL_HALF)
+            .add_metric(BuchholzCalculator)
+            .add_metric(ONE_HALF)
+            .add_metric(WinsDrawsLossesCalculator)
+            .build()
+            .unwrap();
 
         assert_eq!(
             metrics(&plugins),
@@ -363,20 +351,15 @@ mod tests {
     /// its points two ways.
     #[test]
     fn a_phase_takes_a_calculator_once() {
-        let result = Competition::default().phase_draft().with(
-            "metrics",
-            vec![
-                plugin::<PointsCalculator>(),
-                plugin::<WinsDrawsLossesCalculator>(),
-                plugin::<PointsCalculator>().with("points_for_win", 3.0),
-            ],
-        );
+        let built = PhasePluginsBuilder::new()
+            .add_metric(ONE_HALF)
+            .add_metric(WinsDrawsLossesCalculator)
+            .add_metric(PointsCalculator::new(3.0, 1.0))
+            .build();
 
         assert_eq!(
-            result.err(),
-            Some(ConfigError::Duplicate {
-                path: "metrics[2]".parse().unwrap(),
-            })
+            built.err(),
+            Some(DependencyOrderedSetError::Duplicate { position: 2 })
         );
     }
 
@@ -384,11 +367,11 @@ mod tests {
     /// running order when it is loaded, while a saved valid order stays as it is.
     #[test]
     fn deserialized_calculators_are_put_into_running_order() {
-        let ordered = phase(
-            RoundRobin,
-            Vec::new(),
-            vec![Box::new(WinsDrawsLossesCalculator), Box::new(ONE_HALF)],
-        );
+        let ordered = PhasePluginsBuilder::new()
+            .add_metric(WinsDrawsLossesCalculator)
+            .add_metric(ONE_HALF)
+            .build()
+            .unwrap();
         let mut saved = serde_json::to_value(&ordered).unwrap();
         saved["metrics"].as_array_mut().unwrap().reverse();
 
@@ -496,15 +479,14 @@ mod tests {
 
     #[test]
     fn a_round_robin_ranked_by_the_sonneborn_berger_fits_with_every_metric_it_reads() {
-        let plugins = phase(
-            RoundRobin,
-            vec![Box::new(MorePoints), Box::new(MoreSonnebornBerger)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(ONE_HALF),
-                Box::new(FULL_HALF),
-            ],
-        );
+        let plugins = PhasePluginsBuilder::new()
+            .add_ranking(MorePoints)
+            .add_ranking(MoreSonnebornBerger)
+            .add_metric(WinsDrawsLossesCalculator)
+            .add_metric(ONE_HALF)
+            .add_metric(FULL_HALF)
+            .build()
+            .unwrap();
 
         assert_eq!(check(&plugins), Ok(()));
     }
@@ -512,11 +494,11 @@ mod tests {
     #[test]
     fn a_metric_a_calculator_reads_has_to_be_calculated_as_well() {
         // the Sonneborn-Berger sums the points of the opponents a ranking met
-        let plugins = phase(
-            RoundRobin,
-            Vec::new(),
-            vec![Box::new(WinsDrawsLossesCalculator), Box::new(FULL_HALF)],
-        );
+        let plugins = PhasePluginsBuilder::new()
+            .add_metric(WinsDrawsLossesCalculator)
+            .add_metric(FULL_HALF)
+            .build()
+            .unwrap();
 
         assert_eq!(
             check(&plugins),
@@ -529,11 +511,11 @@ mod tests {
 
     #[test]
     fn ranking_by_a_metric_nothing_calculates_is_an_error() {
-        let plugins = phase(
-            RoundRobin,
-            vec![Box::new(MorePoints)],
-            vec![Box::new(WinsDrawsLossesCalculator)],
-        );
+        let plugins = PhasePluginsBuilder::new()
+            .add_ranking(MorePoints)
+            .add_metric(WinsDrawsLossesCalculator)
+            .build()
+            .unwrap();
 
         assert_eq!(
             check(&plugins),
@@ -548,7 +530,10 @@ mod tests {
     /// of its own.
     #[test]
     fn a_criterion_bringing_its_own_order_requires_its_metric_too() {
-        let plugins = phase(RoundRobin, vec![Box::new(FewerLosses)], Vec::new());
+        let plugins = PhasePluginsBuilder::new()
+            .add_ranking(FewerLosses)
+            .build()
+            .unwrap();
 
         assert_eq!(
             check(&plugins),
@@ -561,19 +546,19 @@ mod tests {
 
     #[test]
     fn the_round_of_elimination_needs_a_format_that_knocks_entrants_out() {
-        let ranking: Vec<Box<dyn SliceRanker>> = vec![Box::new(LaterElimination)];
-        let metrics: Vec<Box<dyn MetricsCalculator>> = vec![Box::new(RoundOfEliminationCalculator)];
+        let ranked_by_elimination = PhasePluginsBuilder::new()
+            .add_ranking(LaterElimination)
+            .add_metric(RoundOfEliminationCalculator);
+        let double_elimination = ranked_by_elimination
+            .clone()
+            .format(DoubleElimination::new())
+            .build()
+            .unwrap();
+        let round_robin = ranked_by_elimination.build().unwrap();
 
+        assert_eq!(check(&double_elimination), Ok(()));
         assert_eq!(
-            check(&phase(
-                DoubleElimination::new(),
-                ranking.clone(),
-                metrics.clone()
-            )),
-            Ok(())
-        );
-        assert_eq!(
-            check(&phase(RoundRobin, ranking, metrics)),
+            check(&round_robin),
             Err(Incompatibility::FactNotProvided {
                 fact: "an elimination annotation on the matches",
                 required_by: format!("{RoundOfEliminationCalculator:?}"),
@@ -585,37 +570,40 @@ mod tests {
     /// plugin reading it — a display of the bracket, say — can require it.
     #[test]
     fn a_bracket_format_provides_the_annotations_it_writes() {
-        assert!(provides::<MatchAnnotation<KnockoutRound>>(
-            &SingleElimination::new()
+        let single = SingleElimination::new();
+        let double = DoubleElimination::new();
+
+        assert!(provides_fact::<MatchAnnotation<KnockoutRound>>(&single));
+        assert!(provides_fact::<MatchAnnotation<DoubleEliminationRound>>(
+            &double
         ));
-        assert!(provides::<MatchAnnotation<DoubleEliminationRound>>(
-            &DoubleElimination::new()
-        ));
-        assert!(provides::<MatchAnnotation<Eliminates>>(
-            &DoubleElimination::new()
-        ));
-        assert!(!provides::<MatchAnnotation<Eliminates>>(
-            &SingleElimination::new()
-        ));
+        assert!(provides_fact::<MatchAnnotation<Eliminates>>(&double));
+        assert!(!provides_fact::<MatchAnnotation<Eliminates>>(&single));
     }
 
     #[test]
     fn a_monster_dyp_fits_a_competition_whose_rankings_are_single_entrants() {
-        assert_eq!(
-            check(&phase(MonsterDyp::new(3), Vec::new(), Vec::new())),
-            Ok(())
-        );
+        let plugins = PhasePluginsBuilder::new()
+            .format(MonsterDyp::new(3))
+            .build()
+            .unwrap();
+
+        assert_eq!(check(&plugins), Ok(()));
     }
 
     #[test]
     fn a_monster_dyp_cannot_follow_a_draw_that_paired_the_entrants_up() {
         let format = MonsterDyp::new(3);
+        let plugins = PhasePluginsBuilder::new()
+            .format(format.clone())
+            .build()
+            .unwrap();
         let pairs = |declaration: &mut Declaration| {
             declaration.provide(PAIRS);
         };
 
         assert_eq!(
-            check_in(pairs, &phase(format.clone(), Vec::new(), Vec::new())),
+            check_in(pairs, &plugins),
             Err(Incompatibility::ConditionNotMet {
                 condition: "rankings of single players",
                 required_by: format!("{format:?}"),
@@ -708,10 +696,10 @@ mod tests {
 
     #[test]
     fn calculators_requiring_each_other_cannot_be_ordered() {
-        let built = DependencyOrderedSet::<dyn MetricsCalculator>::new(vec![
-            Box::new(CircularCalculator),
-            Box::new(Cycling),
-        ]);
+        let built = PhasePluginsBuilder::new()
+            .add_metric(CircularCalculator)
+            .add_metric(Cycling)
+            .build();
         let saved = serde_json::json!({
             "format": {"type": RoundRobin::ID, "value": null},
             "ranking": [],

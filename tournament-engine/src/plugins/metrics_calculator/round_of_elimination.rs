@@ -142,7 +142,7 @@ impl MetricsCalculator for RoundOfEliminationCalculator {
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::Phase,
+        entities::competition::{Phase, PhaseBuilder},
         plugins::metrics_calculator::test_utils::{self, AnnotatedMatchSpec, MatchSpec, match_id},
         type_map::TypeMap,
     };
@@ -157,10 +157,11 @@ mod tests {
     /// result of the match it is called for, so it is the only calculator of the phase.
     fn phase_with(num_players: u32, matches: Vec<AnnotatedMatchSpec>) -> Phase {
         test_utils::phase_with_annotated_matches(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(RoundOfEliminationCalculator),
             matches,
             vec![],
-            vec![Box::new(RoundOfEliminationCalculator)],
         )
     }
 
@@ -287,10 +288,11 @@ mod tests {
     #[test]
     fn a_bye_knocks_nobody_out() {
         let phase = test_utils::phase_with_byes(
-            2,
+            PhaseBuilder::new()
+                .add_players(2)
+                .add_metric(RoundOfEliminationCalculator),
             vec![],
             vec![(1, 0)],
-            vec![Box::new(RoundOfEliminationCalculator)],
         );
 
         assert_eq!(phase.data().byes().len(), 1);

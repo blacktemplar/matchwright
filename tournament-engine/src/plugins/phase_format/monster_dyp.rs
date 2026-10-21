@@ -43,6 +43,9 @@ pub struct MonsterDyp {
 
 impl MonsterDyp {
     /// A Monster DYP of `rounds` rounds.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new(rounds: u32) -> Self {
         Self { rounds }
     }
@@ -123,9 +126,10 @@ mod tests {
     };
 
     fn phase(rounds: u32, num_players: u32) -> Phase {
-        let mut phase = PhaseBuilder::new(Box::new(MonsterDyp::new(rounds)))
-            .metrics_calculator(Box::new(WinsDrawsLossesCalculator))
-            .with_players(num_players)
+        let mut phase = PhaseBuilder::new()
+            .format(MonsterDyp::new(rounds))
+            .add_metric(WinsDrawsLossesCalculator)
+            .add_players(num_players)
             .build();
         phase.create_new_matches();
         phase

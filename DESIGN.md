@@ -358,11 +358,32 @@ dependencies" says.
 Adding them is the consumer's step: it adds them to the `Draft<PhasePlugins>` of
 `Competition::phase_draft`, which carries the competition's phase context, and
 builds the plugins from it.
-Building from that draft is the only way to make `PhasePlugins` besides
-deserializing them, so a `PhasePlugins` was either checked against a
-competition or comes from a log whose `AddPhase` validates it on replay. Code configuring a phase, tests
-included, answers the draft with configs (`Draft::with`, `Draft::with_defaults`)
-just like a UI does. The
+In production, building from that draft is the only way to make `PhasePlugins`
+besides deserializing them. Code configuring a phase answers the draft with
+configs (`Draft::with`, `Draft::with_defaults`) just like a UI does.
+
+**Tests build plugins directly, behind the `test-util` feature.** The
+constructors of plugins with fields (`PointsCalculator::new`, ...), their
+`with_..` methods, `PhasePluginsBuilder` and `PhaseBuilder` (a standalone
+`Phase` for unit tests of plugins, built on `PhasePluginsBuilder`) exist only
+with the feature, which the engine's tests, benchmarks and examples enable
+through a dev-dependency on the crate itself. A test that is not about
+configuration names only the plugins it cares about, with no configs to spell
+out by field name; builders rather than helper functions, so that whatever a
+test leaves out comes from a default and what it names is what it is about.
+What a test leaves out of the builder is empty, apart from the format, which is
+a round robin: an empty ranking is a valid one that leaves every entrant tied,
+so `PhasePluginsBuilder::new().build()` is a phase that can be played, and a
+test that does not care about the ranking or the metrics does not name any.
+Rejected: defaulting to a ranking by points with the calculators it needs,
+which took rules of its own for what to add and when, for no test that needed
+it; and `PhasePlugins::new(format, ranking, metrics)` next to the builder, a
+second way to the same result in which every part has to be given. The builder
+adds no implied plugins, which only a draft adds. Tests of configuration, of implied plugins,
+and of a consumer's configuring (the CLI's `Session::add_phase` takes a draft)
+still use drafts. A consumer enables the feature only in its dev-dependencies,
+so production code has no way to make plugins that skips their configuration.
+`AddPhase` validates directly built plugins like any others. The
 transition holds the complete, sorted list, so neither the log nor a snapshot
 depends on how calculators were picked — which it must not, because the catalog
 depends on which crates are linked in — and changing a registration or the way
@@ -432,7 +453,11 @@ log it can change freely.
   (`Draft::from_built`) to add the implied plugins. A second way to make a phase
   that skipped them, could not leave a field unanswered, and went from typed
   plugins to configs only to build the same plugins again. Removed; plugins are
-  configured through drafts alone.
+  configured through drafts alone in production.
+- **Tests configuring every plugin through drafts** (the previous state, after
+  the builder was removed). Every test that only needed a phase spelled out
+  configs by field name and went through a draft, which is clumsy and hides what
+  the test is about. Superseded by constructors behind the `test-util` feature.
 - **Metrics as a kind of requirement of their own** (`required_metrics` next to
   `required`). Duplicated every rule for facts. Superseded.
 - **The engine adding a calculator's metric to its declaration** from

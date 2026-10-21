@@ -1,5 +1,7 @@
 //! Shared test-only helpers for unit testing [`MetricsCalculator`] implementations against a
 //! standalone [`Phase`] with a fixed, hand written schedule of matches.
+//!
+//! [`MetricsCalculator`]: super::MetricsCalculator
 
 use std::num::NonZeroU32;
 
@@ -12,10 +14,7 @@ use crate::{
     entities::competition::{
         Annotated, Bye, Match, MatchId, MatchResult, Phase, PhaseBuilder, PhaseData, RankingId,
     },
-    plugins::{
-        metrics_calculator::MetricsCalculator,
-        phase_format::{PhaseFormat, Schedule},
-    },
+    plugins::phase_format::{PhaseFormat, Schedule},
     type_map::TypeMap,
 };
 
@@ -95,48 +94,34 @@ impl PhaseFormat for FixedMatches {
     }
 }
 
-/// Builds a phase with `num_players` rankings whose metrics got initialized by
-/// `metrics_calculators` and with all matches of `matches` already scheduled.
-///
-/// The calculators are run in the given order, so a calculator that reads the metrics of another
-/// one has to be listed after it.
-pub(crate) fn phase_with(
-    num_players: u32,
-    matches: Vec<MatchSpec>,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
-) -> Phase {
-    phase_with_byes(num_players, matches, vec![], metrics_calculators)
+/// Builds the phase of `builder`, which gives its players and calculators, with all matches of
+/// `matches` already scheduled.
+pub(crate) fn phase_with(builder: PhaseBuilder, matches: Vec<MatchSpec>) -> Phase {
+    phase_with_byes(builder, matches, vec![])
 }
 
 /// Like [`phase_with`], with the byes of `byes` scheduled as well: those of a round once every
 /// match of the rounds before it is reported, so the byes of the first round right away.
 pub(crate) fn phase_with_byes(
-    num_players: u32,
+    builder: PhaseBuilder,
     matches: Vec<MatchSpec>,
     byes: Vec<ByeSpec>,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 ) -> Phase {
     let matches = matches
         .into_iter()
         .map(|r#match| (r#match, TypeMap::new()))
         .collect();
-    phase_with_annotated_matches(num_players, matches, byes, metrics_calculators)
+    phase_with_annotated_matches(builder, matches, byes)
 }
 
 /// Like [`phase_with_byes`], where every match carries the annotations given next to its schedule,
 /// which is what a calculator reading a match annotation needs.
 pub(crate) fn phase_with_annotated_matches(
-    num_players: u32,
+    builder: PhaseBuilder,
     matches: Vec<AnnotatedMatchSpec>,
     byes: Vec<ByeSpec>,
-    metrics_calculators: Vec<Box<dyn MetricsCalculator>>,
 ) -> Phase {
-    let mut builder =
-        PhaseBuilder::new(Box::new(FixedMatches { matches, byes })).with_players(num_players);
-    for metrics_calculator in metrics_calculators {
-        builder = builder.metrics_calculator(metrics_calculator);
-    }
-    let mut phase = builder.build();
+    let mut phase = builder.format(FixedMatches { matches, byes }).build();
     phase.create_new_matches();
     phase
 }

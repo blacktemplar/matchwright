@@ -285,6 +285,9 @@ impl SonnebornBergerCalculator {
     /// Counts the points of every beaten opponent with `weight_for_win` and the points of every
     /// opponent that was played to a draw with `weight_for_draw`, the points of an opponent that
     /// won are never counted.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new(weight_for_win: f32, weight_for_draw: f32) -> Self {
         Self {
             weight_for_win,
@@ -424,7 +427,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::Phase,
+        entities::competition::{Phase, PhaseBuilder},
         plugins::metrics_calculator::{
             points::PointsCalculator,
             test_utils::{self, MatchSpec, SCENARIO, match_id, play_scenario, scenario_matches},
@@ -450,13 +453,12 @@ mod tests {
     /// it declares, so the phase calculates nothing else.
     fn phase_with(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(THREE_ONE)
+                .add_metric(BuchholzCalculator),
             matches,
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(BuchholzCalculator),
-            ],
         )
     }
 
@@ -464,14 +466,13 @@ mod tests {
     /// [`Buchholz`] and therefore runs last.
     fn phase_with_buchholz_of_buchholz(num_players: u32, matches: Vec<MatchSpec>) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(THREE_ONE)
+                .add_metric(BuchholzCalculator)
+                .add_metric(BuchholzOfBuchholzCalculator),
             matches,
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE),
-                Box::new(BuchholzCalculator),
-                Box::new(BuchholzOfBuchholzCalculator),
-            ],
         )
     }
 
@@ -497,13 +498,12 @@ mod tests {
         calculator: SonnebornBergerCalculator,
     ) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(points)
+                .add_metric(calculator),
             matches,
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(points),
-                Box::new(calculator),
-            ],
         )
     }
 
@@ -645,14 +645,13 @@ mod tests {
     #[test]
     fn the_points_of_a_bye_count_for_the_opponents_of_its_ranking() {
         let mut phase = test_utils::phase_with_byes(
-            3,
+            PhaseBuilder::new()
+                .add_players(3)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(THREE_ONE.with_points_for_bye(3.0))
+                .add_metric(BuchholzCalculator),
             vec![(1, vec![0], vec![1]), (2, vec![0], vec![2])],
             vec![(1, 2), (2, 1)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE.with_points_for_bye(3.0)),
-                Box::new(BuchholzCalculator),
-            ],
         );
 
         let first_match = match_id(&phase, 1, &[0], &[1]);
@@ -675,9 +674,10 @@ mod tests {
     #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_buchholz_without_the_points_metric_panics() {
         let mut phase = test_utils::phase_with(
-            2,
+            PhaseBuilder::new()
+                .add_players(2)
+                .add_metric(BuchholzCalculator),
             vec![(1, vec![0], vec![1])],
-            vec![Box::new(BuchholzCalculator)],
         );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
@@ -830,9 +830,10 @@ mod tests {
     #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_buchholz_of_buchholz_without_the_buchholz_metric_panics() {
         let mut phase = test_utils::phase_with(
-            2,
+            PhaseBuilder::new()
+                .add_players(2)
+                .add_metric(BuchholzOfBuchholzCalculator),
             vec![(1, vec![0], vec![1])],
-            vec![Box::new(BuchholzOfBuchholzCalculator)],
         );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
@@ -1133,14 +1134,13 @@ mod tests {
     #[test]
     fn the_points_of_a_bye_count_for_the_opponents_that_beat_its_ranking() {
         let mut phase = test_utils::phase_with_byes(
-            3,
+            PhaseBuilder::new()
+                .add_players(3)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(THREE_ONE.with_points_for_bye(3.0))
+                .add_metric(FULL_HALF),
             vec![(1, vec![0], vec![1]), (2, vec![0], vec![2])],
             vec![(1, 2), (2, 1)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE.with_points_for_bye(3.0)),
-                Box::new(FULL_HALF),
-            ],
         );
 
         let first_match = match_id(&phase, 1, &[0], &[1]);
@@ -1162,8 +1162,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn calculating_the_sonneborn_berger_without_the_points_metric_panics() {
-        let mut phase =
-            test_utils::phase_with(2, vec![(1, vec![0], vec![1])], vec![Box::new(FULL_HALF)]);
+        let mut phase = test_utils::phase_with(
+            PhaseBuilder::new().add_players(2).add_metric(FULL_HALF),
+            vec![(1, vec![0], vec![1])],
+        );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
         phase.report_match_result(match_id, MatchResult::AWins);

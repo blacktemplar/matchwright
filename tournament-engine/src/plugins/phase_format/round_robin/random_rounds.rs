@@ -19,7 +19,10 @@ use crate::{
     },
 };
 
-/// Randomly chosen rounds of a round robin, see [`RandomRounds::new`].
+/// Randomly chosen rounds of a round robin, all scheduled at once.
+///
+/// If there are more rounds than a full round robin has, a full round robin is scheduled instead.
+/// With an odd number of rankings, one ranking has a bye in every round, and no ranking has two.
 #[derive(Debug, Clone, Deserialize, Serialize, Plugin)]
 #[plugin(
     id = "tournament_engine::random_rounds",
@@ -37,11 +40,10 @@ pub struct RandomRounds {
 }
 
 impl RandomRounds {
-    /// Schedules `rounds` randomly chosen rounds of a round robin, all at once.
+    /// Schedules `rounds` randomly chosen rounds of a round robin.
     ///
-    /// If `rounds` is larger than the number of rounds a full round robin has, a full round robin
-    /// is scheduled instead. With an odd number of rankings, one ranking has a bye in every round,
-    /// and no ranking has two.
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new(rounds: u32) -> Self {
         Self { rounds }
     }
@@ -105,8 +107,9 @@ mod tests {
 
     #[test]
     fn random_rounds_schedules_number_of_rounds_with_no_match_overlaps() {
-        let mut phase = PhaseBuilder::new(Box::new(RandomRounds { rounds: 3 }))
-            .with_players(6)
+        let mut phase = PhaseBuilder::new()
+            .format(RandomRounds::new(3))
+            .add_players(6)
             .build();
 
         phase.create_new_matches();
@@ -122,8 +125,9 @@ mod tests {
 
     #[test]
     fn random_rounds_schedules_number_of_rounds_with_no_match_overlaps_with_odd_players() {
-        let mut phase = PhaseBuilder::new(Box::new(RandomRounds { rounds: 3 }))
-            .with_players(7)
+        let mut phase = PhaseBuilder::new()
+            .format(RandomRounds::new(3))
+            .add_players(7)
             .build();
 
         phase.create_new_matches();
@@ -139,8 +143,9 @@ mod tests {
 
     #[test]
     fn random_rounds_with_odd_players_give_a_different_ranking_a_bye_every_round() {
-        let mut phase = PhaseBuilder::new(Box::new(RandomRounds { rounds: 3 }))
-            .with_players(7)
+        let mut phase = PhaseBuilder::new()
+            .format(RandomRounds::new(3))
+            .add_players(7)
             .build();
 
         phase.create_new_matches();
@@ -160,8 +165,9 @@ mod tests {
 
     #[test]
     fn random_rounds_if_rounds_is_larger_than_players_does_full_round_robin() {
-        let mut phase = PhaseBuilder::new(Box::new(RandomRounds { rounds: 8 }))
-            .with_players(7)
+        let mut phase = PhaseBuilder::new()
+            .format(RandomRounds::new(8))
+            .add_players(7)
             .build();
 
         phase.create_new_matches();

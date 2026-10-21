@@ -79,6 +79,9 @@ pub struct PointsCalculator {
 impl PointsCalculator {
     /// Scores every win with `points_for_win` and every draw with `points_for_draw` points, a
     /// loss and a bye are worth no points.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn new(points_for_win: f32, points_for_draw: f32) -> Self {
         Self {
             points_for_win,
@@ -88,6 +91,9 @@ impl PointsCalculator {
     }
 
     /// Returns this calculator scoring every bye with `points_for_bye` points.
+    ///
+    /// Requires the `test-util` feature.
+    #[cfg(feature = "test-util")]
     pub const fn with_points_for_bye(mut self, points_for_bye: f32) -> Self {
         self.points_for_bye = points_for_bye;
         self
@@ -154,7 +160,7 @@ impl MetricsCalculator for PointsCalculator {
 mod tests {
     use super::*;
     use crate::{
-        entities::competition::{MatchResult, Phase},
+        entities::competition::{MatchResult, Phase, PhaseBuilder},
         plugins::metrics_calculator::{
             test_utils::{self, MatchSpec, match_id},
             wins_draws_losses::WinsDrawsLossesCalculator,
@@ -184,9 +190,11 @@ mod tests {
         calculator: PointsCalculator,
     ) -> Phase {
         test_utils::phase_with(
-            num_players,
+            PhaseBuilder::new()
+                .add_players(num_players)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(calculator),
             matches,
-            vec![Box::new(WinsDrawsLossesCalculator), Box::new(calculator)],
         )
     }
 
@@ -301,10 +309,12 @@ mod tests {
     /// in round 2, scoring with `calculator`.
     fn phase_with_a_bye(calculator: PointsCalculator) -> Phase {
         let mut phase = test_utils::phase_with_byes(
-            3,
+            PhaseBuilder::new()
+                .add_players(3)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(calculator),
             vec![(2, vec![0], vec![1])],
             vec![(1, 2)],
-            vec![Box::new(WinsDrawsLossesCalculator), Box::new(calculator)],
         );
         let match_id = match_id(&phase, 2, &[0], &[1]);
         phase.report_match_result(match_id, MatchResult::AWins);
@@ -330,13 +340,12 @@ mod tests {
     #[test]
     fn the_points_of_a_bye_add_to_those_of_matches() {
         let mut phase = test_utils::phase_with_byes(
-            2,
+            PhaseBuilder::new()
+                .add_players(2)
+                .add_metric(WinsDrawsLossesCalculator)
+                .add_metric(THREE_ONE.with_points_for_bye(2.0)),
             vec![(2, vec![0], vec![1])],
             vec![(1, 0)],
-            vec![
-                Box::new(WinsDrawsLossesCalculator),
-                Box::new(THREE_ONE.with_points_for_bye(2.0)),
-            ],
         );
         let match_id = match_id(&phase, 2, &[0], &[1]);
 
@@ -349,8 +358,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
     fn scoring_without_the_wins_draws_losses_metric_panics() {
-        let mut phase =
-            test_utils::phase_with(2, vec![(1, vec![0], vec![1])], vec![Box::new(THREE_ONE)]);
+        let mut phase = test_utils::phase_with(
+            PhaseBuilder::new().add_players(2).add_metric(THREE_ONE),
+            vec![(1, vec![0], vec![1])],
+        );
         let match_id = match_id(&phase, 1, &[0], &[1]);
 
         phase.report_match_result(match_id, MatchResult::AWins);
