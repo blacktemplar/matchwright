@@ -100,7 +100,11 @@ pub mod ranker;
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Configurable)]
 pub struct PhasePlugins {
-    #[plugin(label = "format", description = "how the matches are scheduled")]
+    #[plugin(
+        label = "format",
+        description = "how the matches are scheduled",
+        default = Box::new(phase_format::RoundRobin)
+    )]
     format: Box<dyn PhaseFormat>,
     #[serde(default)]
     #[plugin(

@@ -23,9 +23,12 @@ The commands are those of the CLI (type `help`), except:
   argument of the CLI: `index.html#cup` opens the competition saved as `cup`,
   and saving sets the URL to the name saved under, so reloading the page opens
   it again.
-- `add-phase` needs a format (e.g. `add-phase round-robin rounds=2`), and
-  `edit-phase` is not available yet, since the page cannot ask the questions of
-  a phase yet.
+- `add-phase` without a format and `edit-phase` ask their questions line by
+  line: each question lists its options by number, and the prompt says what it
+  takes, with the answer it offers in brackets, e.g. `number [3]>`. An option is
+  chosen by its number or its name, several by their numbers separated by
+  spaces (or `none`). An empty answer takes the one in brackets, and `cancel`
+  stops the questions.
 - `exit` starts a new competition, still refusing to discard unsaved changes
   unless forced. Leaving the page with unsaved changes asks first.
 - The arrow keys walk through the lines typed so far.

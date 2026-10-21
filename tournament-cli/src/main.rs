@@ -141,9 +141,7 @@ fn configure_phase(
     loop {
         match questionnaire::fill(&mut draft, &mut Terminal) {
             Ok(()) => {}
-            Err(questionnaire::Error::Prompt(
-                InquireError::OperationCanceled | InquireError::OperationInterrupted,
-            )) => {
+            Err(questionnaire::Error::Cancelled) => {
                 let cancelled = match phase {
                     Phase::Added => "cancelled, no phase added",
                     Phase::Edited => "cancelled, the phase is unchanged",

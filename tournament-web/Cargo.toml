@@ -8,7 +8,9 @@ license.workspace = true
 [dependencies]
 console_error_panic_hook.workspace = true
 js-sys.workspace = true
+plugin-factory.workspace = true
 tournament-cli.workspace = true
+tournament-engine.workspace = true
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [
     "Document",

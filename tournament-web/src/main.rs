@@ -112,10 +112,11 @@ impl Page {
             self.history.push(line.to_owned());
         }
         self.cursor = self.history.len();
-        match self.shell.run(line) {
-            Some(Reply::Output(output)) => self.show("output", &output),
-            Some(Reply::Error(error)) => self.show("error", &error),
-            None => {}
+        for reply in self.shell.run(line) {
+            match reply {
+                Reply::Output(output) => self.show("output", &output),
+                Reply::Error(error) => self.show("error", &error),
+            }
         }
         self.update();
     }

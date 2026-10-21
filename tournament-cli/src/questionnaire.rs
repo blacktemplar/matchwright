@@ -10,7 +10,11 @@
 //! answers the composite as its plugins recommend. `Terminal` (feature `terminal`) asks at the
 //! terminal, and [`AcceptDefaults`] accepts every offered answer without asking anything.
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    fmt::{self, Display, Formatter},
+    pin::pin,
+    task::{Context, Poll, Waker},
+};
 
 #[cfg(feature = "terminal")]
 use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
@@ -97,7 +101,8 @@ impl Display for Choice {
     }
 }
 
-/// Asks the questions [`fill`] has, each starting out at the answer it offers, if any.
+/// Asks the questions [`fill`] has, each starting out at the answer it offers, if any, and returns
+/// the answer right away.
 pub trait Prompter {
     /// Asks for yes or no.
     ///
@@ -146,13 +151,97 @@ pub trait Prompter {
     fn retry(&mut self, issues: Vec<Issue>) -> Result<(), Error>;
 }
 
+/// Asks the questions [`fill_async`] has like a [`Prompter`], but may wait for the answers, e.g.
+/// for an operator typing them into a page, which cannot block until they do. Every [`Prompter`]
+/// is one.
+pub trait AsyncPrompter {
+    /// Asks for yes or no, see [`Prompter::confirm`].
+    fn confirm(
+        &mut self,
+        question: &Question,
+        default: Option<bool>,
+    ) -> impl Future<Output = Result<bool, Error>>;
+
+    /// Asks for a whole number, see [`Prompter::integer`].
+    fn integer(
+        &mut self,
+        question: &Question,
+        default: Option<i64>,
+    ) -> impl Future<Output = Result<i64, Error>>;
+
+    /// Asks for a number, see [`Prompter::decimal`].
+    fn decimal(
+        &mut self,
+        question: &Question,
+        default: Option<f64>,
+    ) -> impl Future<Output = Result<f64, Error>>;
+
+    /// Asks for one of `options`, see [`Prompter::select`].
+    fn select(
+        &mut self,
+        question: &Question,
+        options: &[Choice],
+        default: Option<usize>,
+    ) -> impl Future<Output = Result<usize, Error>>;
+
+    /// Asks for any number of `options`, see [`Prompter::select_many`].
+    fn select_many(
+        &mut self,
+        question: &Question,
+        options: &[Choice],
+        defaults: &[usize],
+    ) -> impl Future<Output = Result<Vec<usize>, Error>>;
+
+    /// Tells that the answers given have `issues`, see [`Prompter::retry`].
+    fn retry(&mut self, issues: Vec<Issue>) -> impl Future<Output = Result<(), Error>>;
+}
+
+impl<P: Prompter> AsyncPrompter for P {
+    async fn confirm(&mut self, question: &Question, default: Option<bool>) -> Result<bool, Error> {
+        Prompter::confirm(self, question, default)
+    }
+
+    async fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
+        Prompter::integer(self, question, default)
+    }
+
+    async fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
+        Prompter::decimal(self, question, default)
+    }
+
+    async fn select(
+        &mut self,
+        question: &Question,
+        options: &[Choice],
+        default: Option<usize>,
+    ) -> Result<usize, Error> {
+        Prompter::select(self, question, options, default)
+    }
+
+    async fn select_many(
+        &mut self,
+        question: &Question,
+        options: &[Choice],
+        defaults: &[usize],
+    ) -> Result<Vec<usize>, Error> {
+        Prompter::select_many(self, question, options, defaults)
+    }
+
+    async fn retry(&mut self, issues: Vec<Issue>) -> Result<(), Error> {
+        Prompter::retry(self, issues)
+    }
+}
+
 /// Why the questions of a schema were not all answered.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The terminal did not answer, e.g. because the operator cancelled the question.
+    /// The operator cancelled the questions.
+    #[error("the questions were cancelled")]
+    Cancelled,
+    /// The terminal did not answer, other than because the operator cancelled the question.
     #[cfg(feature = "terminal")]
     #[error(transparent)]
-    Prompt(#[from] InquireError),
+    Prompt(InquireError),
     /// [`AcceptDefaults`] has no answer to give, because the question offers none.
     #[error("{question:?} offers no answer, so it has to be answered")]
     NoDefault { question: String },
@@ -166,6 +255,16 @@ pub enum Error {
     /// causes.
     #[error(transparent)]
     Config(#[from] ConfigError),
+}
+
+#[cfg(feature = "terminal")]
+impl From<InquireError> for Error {
+    fn from(error: InquireError) -> Self {
+        match error {
+            InquireError::OperationCanceled | InquireError::OperationInterrupted => Self::Cancelled,
+            error => Self::Prompt(error),
+        }
+    }
 }
 
 /// Asks for every field of `draft` that is not to be answered by the operator differently, through
@@ -193,14 +292,29 @@ pub enum Error {
 /// one. The draft keeps the answers given so far.
 pub fn fill<T: Configurable>(
     draft: &mut Draft<T>,
-    prompter: &mut dyn Prompter,
+    prompter: &mut impl Prompter,
+) -> Result<(), Error> {
+    let mut context = Context::from_waker(Waker::noop());
+    match pin!(fill_async(draft, prompter)).poll(&mut context) {
+        Poll::Ready(result) => result,
+        Poll::Pending => unreachable!("a `Prompter` answers right away, so filling never waits"),
+    }
+}
+
+/// [`fill`], through a prompter that may wait for the answers.
+///
+/// # Errors
+/// As [`fill`].
+pub async fn fill_async<T: Configurable>(
+    draft: &mut Draft<T>,
+    prompter: &mut impl AsyncPrompter,
 ) -> Result<(), Error> {
     let schema = T::schema();
     let mut asked: Vec<&Field> = schema.fields().iter().collect();
     loop {
         let mut asker = Asker { draft, prompter };
         for field in asked {
-            asker.field(field, &Path::ROOT, None)?;
+            asker.field(field, &Path::ROOT, None).await?;
         }
         let issues: Vec<_> = draft
             .issues()
@@ -224,7 +338,7 @@ pub fn fill<T: Configurable>(
         if asked.is_empty() {
             asked = schema.fields().iter().collect();
         }
-        prompter.retry(issues)?;
+        prompter.retry(issues).await?;
     }
 }
 
@@ -465,15 +579,15 @@ impl Prompter for AcceptDefaults {
 }
 
 /// Asks the fields of one draft, see [`fill`].
-struct Asker<'a, T> {
+struct Asker<'a, T, P> {
     draft: &'a mut Draft<T>,
-    prompter: &'a mut dyn Prompter,
+    prompter: &'a mut P,
 }
 
-impl<T: Configurable> Asker<'_, T> {
+impl<T: Configurable, P: AsyncPrompter> Asker<'_, T, P> {
     /// Asks `field` of the config at `at`, which is that of the plugin labelled `plugin` unless it
     /// is the composite's own.
-    fn field(&mut self, field: &Field, at: &Path, plugin: Option<&str>) -> Result<(), Error> {
+    async fn field(&mut self, field: &Field, at: &Path, plugin: Option<&str>) -> Result<(), Error> {
         let path = at.clone().field(field.name());
         let label = match plugin {
             Some(plugin) => format!("{plugin}: {}", field.label()),
@@ -487,11 +601,12 @@ impl<T: Configurable> Asker<'_, T> {
             Some(answer) => Some(answer.clone()),
             None => self.draft.default_value(&path)?,
         };
-        self.answer(field.kind(), &path, &question, default)
+        // boxed, since answering a plugin asks for its fields in turn
+        Box::pin(self.answer(field.kind(), &path, &question, default)).await
     }
 
     /// Asks `question` for the answer of `kind` at `path`, starting out at `default`.
-    fn answer(
+    async fn answer(
         &mut self,
         kind: &FieldKind,
         path: &Path,
@@ -501,27 +616,30 @@ impl<T: Configurable> Asker<'_, T> {
         let answer = match kind {
             FieldKind::Bool => {
                 let default = default.as_ref().and_then(Value::as_bool);
-                Value::from(self.prompter.confirm(question, default)?)
+                Value::from(self.prompter.confirm(question, default).await?)
             }
             FieldKind::Integer => {
                 let default = default.as_ref().and_then(Value::as_i64);
-                Value::from(self.prompter.integer(question, default)?)
+                Value::from(self.prompter.integer(question, default).await?)
             }
             FieldKind::Decimal => {
                 let default = default.as_ref().and_then(Value::as_f64);
-                Value::from(self.prompter.decimal(question, default)?)
+                Value::from(self.prompter.decimal(question, default).await?)
             }
-            FieldKind::Plugin(_) => return self.plugin(path, question, default, false),
+            FieldKind::Plugin(_) => return self.plugin(path, question, default, false).await,
             FieldKind::Optional(inner) => match **inner {
-                FieldKind::Plugin(_) => return self.plugin(path, question, default, true),
+                FieldKind::Plugin(_) => return self.plugin(path, question, default, true).await,
                 _ => {
-                    let answered = self.prompter.confirm(
-                        &question.relabelled(format!("{}: give an answer?", question.label())),
-                        Some(default.as_ref().is_some_and(|default| !default.is_null())),
-                    )?;
+                    let answered = self
+                        .prompter
+                        .confirm(
+                            &question.relabelled(format!("{}: give an answer?", question.label())),
+                            Some(default.as_ref().is_some_and(|default| !default.is_null())),
+                        )
+                        .await?;
                     if answered {
                         let default = default.filter(|default| !default.is_null());
-                        return self.answer(inner, path, question, default);
+                        return Box::pin(self.answer(inner, path, question, default)).await;
                     }
                     Value::Null
                 }
@@ -533,9 +651,9 @@ impl<T: Configurable> Asker<'_, T> {
                 };
                 self.draft.set(path, Value::Array(Vec::new()))?;
                 return if *ordered {
-                    self.plugin_list(path, question, &defaults)
+                    self.plugin_list(path, question, &defaults).await
                 } else {
-                    self.plugin_set(path, question, &defaults)
+                    self.plugin_set(path, question, &defaults).await
                 };
             }
         };
@@ -557,7 +675,7 @@ impl<T: Configurable> Asker<'_, T> {
 
     /// Asks `question` for the plugin at `path`, or for none if `optional`, starting out at
     /// `default`.
-    fn plugin(
+    async fn plugin(
         &mut self,
         path: &Path,
         question: &Question,
@@ -585,16 +703,19 @@ impl<T: Configurable> Asker<'_, T> {
         if options.is_empty() {
             return Err(Error::NoCandidate { path: path.clone() });
         }
-        let chosen = self.prompter.select(question, &options, cursor)?;
+        let chosen = self.prompter.select(question, &options, cursor).await?;
         match candidates.get(chosen) {
-            Some(candidate) => self.put(candidate.entry(), path, default_plugin.as_ref()),
+            Some(candidate) => {
+                self.put(candidate.entry(), path, default_plugin.as_ref())
+                    .await
+            }
             None => Ok(self.draft.set(path, Value::Null)?),
         }
     }
 
     /// Asks `question` for the plugins of the unordered list at `path`, starting out with
     /// `defaults` and the plugins that are the only source of something another one requires.
-    fn plugin_set(
+    async fn plugin_set(
         &mut self,
         path: &Path,
         question: &Question,
@@ -626,13 +747,15 @@ impl<T: Configurable> Asker<'_, T> {
         }
         let chosen = self
             .prompter
-            .select_many(question, &options, &preselected)?;
+            .select_many(question, &options, &preselected)
+            .await?;
         for (position, index) in chosen.into_iter().enumerate() {
             let entry = candidates[index].entry();
             let default = defaults
                 .iter()
                 .find(|default| default.plugin() == entry.id());
-            self.put(entry, &path.clone().index(position), default)?;
+            self.put(entry, &path.clone().index(position), default)
+                .await?;
         }
         Ok(())
     }
@@ -640,7 +763,7 @@ impl<T: Configurable> Asker<'_, T> {
     /// Asks `question` for the plugins of the ordered list at `path` one after another, until the
     /// operator asks for no further one or none fits, each starting out at the first of `defaults`
     /// that fits.
-    fn plugin_list(
+    async fn plugin_list(
         &mut self,
         path: &Path,
         question: &Question,
@@ -674,21 +797,24 @@ impl<T: Configurable> Asker<'_, T> {
             } else {
                 question.relabelled(format!("{}, then", question.label()))
             };
-            let chosen = self.prompter.select(&question, &options, Some(cursor))?;
+            let chosen = self
+                .prompter
+                .select(&question, &options, Some(cursor))
+                .await?;
             let Some(candidate) = candidates.get(chosen) else {
                 break;
             };
             let default = defaults
                 .iter()
                 .find(|default| default.plugin() == candidate.entry().id());
-            self.put(candidate.entry(), &at, default)?;
+            self.put(candidate.entry(), &at, default).await?;
         }
         Ok(())
     }
 
     /// Answers `path` with the plugin `entry`, configured as `default` if that is the same plugin,
     /// and asks for the fields of the plugin.
-    fn put(
+    async fn put(
         &mut self,
         entry: &'static PluginEntry,
         path: &Path,
@@ -701,7 +827,7 @@ impl<T: Configurable> Asker<'_, T> {
         self.draft.set(path, answer)?;
         loop {
             for field in entry.schema().fields() {
-                self.field(field, path, Some(entry.label()))?;
+                self.field(field, path, Some(entry.label())).await?;
             }
             // checked right away, since a plugin that cannot be built recommends nothing for the
             // questions after it
@@ -717,7 +843,7 @@ impl<T: Configurable> Asker<'_, T> {
             if rejected.is_empty() {
                 return Ok(());
             }
-            self.prompter.retry(rejected)?;
+            self.prompter.retry(rejected).await?;
         }
     }
 }
@@ -760,6 +886,7 @@ fn plugins(answers: &[Value]) -> Vec<PluginConfig> {
 mod tests {
     use std::{collections::VecDeque, fmt::Debug};
 
+    use serde::Deserialize;
     use tournament_engine::{Competition, PhasePlugins};
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -929,10 +1056,10 @@ mod tests {
         assert_eq!(
             script.options[0],
             [
+                "round robin",
                 "double elimination",
                 "Monster DYP",
                 "random rounds",
-                "round robin",
                 "single elimination"
             ]
         );
@@ -1052,10 +1179,17 @@ mod tests {
 
     #[test]
     fn accepting_every_question_needs_each_to_offer_an_answer() {
-        let result = fill(&mut phase_draft(), &mut AcceptDefaults);
+        /// A composite whose only field offers no answer.
+        #[derive(Deserialize, Configurable)]
+        struct Rounds {
+            #[plugin(label = "rounds")]
+            _rounds: u32,
+        }
+
+        let result = fill(&mut Draft::<Rounds>::new(|_| {}), &mut AcceptDefaults);
 
         assert!(
-            matches!(&result, Err(Error::NoDefault { question }) if question == "Format"),
+            matches!(&result, Err(Error::NoDefault { question }) if question == "Rounds"),
             "{result:?}"
         );
     }
