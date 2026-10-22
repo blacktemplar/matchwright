@@ -2,6 +2,9 @@
 //! uses it through a [`Terminal`], the way an operator does, by typing into its input.
 //!
 //! The page is served from `tournament-web/dist`, which `trunk build` has to have built before.
+//! Chrome is driven by the chromedriver matching it, which is downloaded and cached in the user's
+//! cache directory, unless the environment variable `E2E_CHROMEDRIVER` names one to use instead.
+//!
 //! With the environment variable `E2E_HEADED` set to anything but `0`, Chrome opens a window, which
 //! shows what a test does; `E2E_LINGER` set to a number of seconds then keeps it open that long
 //! after the test, whether it passed or failed, and `E2E_PAUSE` pauses that long after each action
@@ -24,6 +27,7 @@ use thirtyfour::{
     bidi::events::UserPromptOpened,
     error::WebDriverResult,
     extensions::query::{ElementPollerWithTimeout, ElementQuery, ElementQueryable},
+    manager::BrowserKind,
     stringmatch::Needle,
     testing::run_browser_test,
 };
@@ -38,7 +42,8 @@ const INTERVAL: Duration = Duration::from_millis(20);
 const LAST_REPLY: &str = "(//div[@id='output']/div[not(contains(@class, 'line'))])[last()]";
 
 /// Runs `test` on the page freshly opened in a new Chrome, headless unless `E2E_HEADED` says
-/// otherwise, with nothing saved yet.
+/// otherwise, with nothing saved yet. The chromedriver is the one `E2E_CHROMEDRIVER` names, if
+/// any, see the [crate docs](crate).
 ///
 /// # Panics
 /// Panics if `test` fails, or if the page logs an error, such as a panic of the WebAssembly, or
@@ -61,8 +66,11 @@ pub async fn run(test: impl AsyncFnOnce(Terminal) -> WebDriverResult<()>) {
             serde_json::json!({ "beforeUnload": "ignore" }),
         )
         .unwrap();
-    let session = WebDriver::managed(capabilities)
+    let mut session = WebDriver::managed(capabilities)
         .poller(Arc::new(ElementPollerWithTimeout::new(TIMEOUT, INTERVAL)));
+    if let Some(chromedriver) = std::env::var_os("E2E_CHROMEDRIVER") {
+        session = session.driver_binary(BrowserKind::Chrome, chromedriver);
+    }
     let result = run_browser_test(session, |driver| async move {
         let terminal = Terminal { driver, url };
         terminal.open().await?;

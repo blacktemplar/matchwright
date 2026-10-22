@@ -37,7 +37,7 @@ The commands are those of the CLI (type `help`), except:
 
 [`tournament-web-e2e`](../tournament-web-e2e) types into the page in headless
 Chrome. It needs Chrome installed, and fetches the matching chromedriver
-itself. The tests are ignored by a plain `cargo test`, and run on the page as
+itself, unless `E2E_CHROMEDRIVER` names one to use. The tests are ignored by a plain `cargo test`, and run on the page as
 last built:
 
 ```text
