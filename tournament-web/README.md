@@ -32,3 +32,26 @@ The commands are those of the CLI (type `help`), except:
 - `exit` starts a new competition, still refusing to discard unsaved changes
   unless forced. Leaving the page with unsaved changes asks first.
 - The arrow keys walk through the lines typed so far.
+
+## End-to-end tests
+
+[`tournament-web-e2e`](../tournament-web-e2e) types into the page in headless
+Chrome. It needs Chrome installed, and fetches the matching chromedriver
+itself. The tests are ignored by a plain `cargo test`, and run on the page as
+last built:
+
+```text
+(cd tournament-web && trunk build) && cargo test -p tournament-web-e2e -- --ignored
+```
+
+With `E2E_HEADED=1`, Chrome opens a window for each test, which shows what it
+does. `E2E_PAUSE=<seconds>` then slows the test down, pausing that long after
+each of its actions (a line typed, then run, a key pressed, the page opened,
+reloaded or left), and `E2E_LINGER=<seconds>` keeps the window open that long
+after the test, passed or failed. The tests of a file run in parallel; to watch
+them one after the other, add `--test-threads=1`, or name a single test after
+`-p tournament-web-e2e`:
+
+```text
+E2E_HEADED=1 E2E_PAUSE=0.5 E2E_LINGER=5 cargo test -p tournament-web-e2e the_arrow_keys -- --ignored
+```

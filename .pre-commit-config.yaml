@@ -43,6 +43,17 @@ repos:
         pass_filenames: false
         stages: [manual]
 
+      # the end-to-end tests of the page, which type into it in headless Chrome (started through
+      # chromedriver, which they download if needed) and need the page built by trunk. Too slow for
+      # every commit, like wasm-test: `prek run --all-files --stage manual web-e2e`
+      - id: web-e2e
+        name: web end-to-end test
+        entry: sh -c '(cd tournament-web && trunk build) && cargo test -p tournament-web-e2e --no-fail-fast -- --ignored'
+        language: system
+        types_or: [rust, html]
+        pass_filenames: false
+        stages: [manual]
+
       - id: cargo-doc
         name: cargo doc
         entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps

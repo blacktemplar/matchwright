@@ -42,6 +42,23 @@ jobs:
         with:
           extra-args: --all-files --stage manual wasm-test
 
+  # the end-to-end tests of the page in headless Chrome, which comes with the runner image; the tests
+  # download the chromedriver matching it
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
+        with:
+          extra-args: --all-files --stage manual web-e2e
+
   fmt:
     runs-on: ubuntu-latest
     steps:

@@ -5,6 +5,7 @@ members = [
     "tournament-cli",
     "tournament-engine",
     "tournament-web",
+    "tournament-web-e2e",
 ]
 resolver = "3"
 
@@ -16,10 +17,12 @@ license = "MIT OR Apache-2.0"
 # Dependency versions live here so that every member resolves to the same one, and a bump is a
 # single edit.
 [workspace.dependencies]
+axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive"] }
 console_error_panic_hook = "0.1.7"
 criterion = "0.8.2"
 dyn-clone = "1.0.20"
+futures-util = "0.3.31"
 getrandom = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
 inquire = "0.9.4"
@@ -37,10 +40,19 @@ serde = "1.0.229"
 serde_json = "1.0.154"
 shlex = "2.0.1"
 tempfile = "3.27.0"
+# a client of WebDriver that starts the driver itself (`manager`), downloading it if needed, and
+# speaks WebDriver BiDi (`bidi`), which is what tells about the browser asking whether to leave a page
+thirtyfour = { version = "0.38.1", default-features = false, features = [
+    "bidi",
+    "manager",
+    "rustls",
+] }
 thiserror = "2.0.21"
+tokio = "1.54.1"
 # without the default feature `terminal`, which only the binary of the CLI needs
 tournament-cli = { path = "tournament-cli", default-features = false }
 tournament-engine = { path = "tournament-engine" }
+tower-http = "0.7.1"
 typetag = "0.2.23"
 undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine", features = [
     "serde",
