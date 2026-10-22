@@ -66,6 +66,15 @@ jobs:
       - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
         with:
           extra-args: --all-files --stage manual web-e2e
+      # a screenshot and a report on the page of each failed test; the tests of the harness fail on
+      # purpose, so theirs are left out
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-failures
+          path: |
+            target/e2e-failures
+            !target/e2e-failures/harness
 
   fmt:
     runs-on: ubuntu-latest

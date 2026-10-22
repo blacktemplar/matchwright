@@ -15,4 +15,5 @@ tokio = { workspace = true, features = ["net", "rt", "time"] }
 tower-http = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
+futures-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

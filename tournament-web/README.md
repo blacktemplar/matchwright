@@ -44,6 +44,10 @@ last built:
 (cd tournament-web && trunk build) && cargo test -p tournament-web-e2e -- --ignored
 ```
 
+A failed test leaves a screenshot of the page and a report on it (URL, page
+source, browser log) in `target/e2e-failures/<test file>/<test>/`; in CI they
+are uploaded as the artifact `e2e-failures`.
+
 With `E2E_HEADED=1`, Chrome opens a window for each test, which shows what it
 does. `E2E_PAUSE=<seconds>` then slows the test down, pausing that long after
 each of its actions (a line typed, then run, a key pressed, the page opened,

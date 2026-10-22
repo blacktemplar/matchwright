@@ -5,6 +5,8 @@
 //! Chrome is driven by the chromedriver matching it, which is downloaded and cached in the user's
 //! cache directory, unless the environment variable `E2E_CHROMEDRIVER` names one to use instead.
 //!
+//! A failing test saves a screenshot of the page and a report on it, see [`failures`].
+//!
 //! With the environment variable `E2E_HEADED` set to anything but `0`, Chrome opens a window, which
 //! shows what a test does; `E2E_LINGER` set to a number of seconds then keeps it open that long
 //! after the test, whether it passed or failed, and `E2E_PAUSE` pauses that long after each action
@@ -12,8 +14,9 @@
 
 use std::{
     fmt::Debug,
+    fs, io,
     panic::{self, AssertUnwindSafe},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -22,14 +25,17 @@ use axum::Router;
 use futures_util::{FutureExt, StreamExt};
 pub use thirtyfour;
 use thirtyfour::{
-    By, CapabilitiesHelper, ChromiumLikeCapabilities, DesiredCapabilities, Key,
+    BrowserLogEntry, By, CapabilitiesHelper, ChromiumLikeCapabilities, DesiredCapabilities, Key,
     LoggingPrefsLogLevel, WebDriver, WebElement,
     bidi::events::UserPromptOpened,
-    error::WebDriverResult,
+    error::{WebDriverError, WebDriverResult},
     extensions::query::{ElementPollerWithTimeout, ElementQuery, ElementQueryable},
     manager::BrowserKind,
     stringmatch::Needle,
-    testing::run_browser_test,
+    testing::{
+        Artifact, FailureArtifactCollector, FailureArtifactConfig, FailureArtifacts,
+        run_browser_test,
+    },
 };
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
@@ -44,6 +50,8 @@ const LAST_REPLY: &str = "(//div[@id='output']/div[not(contains(@class, 'line'))
 /// Runs `test` on the page freshly opened in a new Chrome, headless unless `E2E_HEADED` says
 /// otherwise, with nothing saved yet. The chromedriver is the one `E2E_CHROMEDRIVER` names, if
 /// any, see the [crate docs](crate).
+///
+/// A failing test leaves a screenshot of the page and a report in [`failures`].
 ///
 /// # Panics
 /// Panics if `test` fails, or if the page logs an error, such as a panic of the WebAssembly, or
@@ -71,13 +79,35 @@ pub async fn run(test: impl AsyncFnOnce(Terminal) -> WebDriverResult<()>) {
     if let Some(chromedriver) = std::env::var_os("E2E_CHROMEDRIVER") {
         session = session.driver_binary(BrowserKind::Chrome, chromedriver);
     }
+    let failures = failures();
+    // what is saved there is always of the last run
+    if let Err(error) = fs::remove_dir_all(&failures)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        panic!("cannot remove {}: {error}", failures.display());
+    }
     let result = run_browser_test(session, |driver| async move {
+        // reading the browser log empties it, so it is read once below, for the check of errors and
+        // for the report alike
+        let mut config = FailureArtifactConfig::default();
+        config.browser_logs = None;
+        let collector = FailureArtifactCollector::with_config(&driver, config);
         let terminal = Terminal { driver, url };
-        terminal.open().await?;
-        // a failing expectation panics, after which the window is worth seeing all the more
-        let tested = AssertUnwindSafe(test(terminal.clone()))
-            .catch_unwind()
-            .await;
+        // a failing expectation panics, after which the page is worth seeing all the more
+        let tested = AssertUnwindSafe(async {
+            terminal.open().await?;
+            test(terminal.clone()).await
+        })
+        .catch_unwind()
+        .await;
+        let log = terminal.driver.browser_log().await;
+        let failed = !matches!(tested, Ok(Ok(())))
+            || log
+                .as_ref()
+                .map_or(true, |log| !page_errors(log).is_empty());
+        if failed {
+            save(&collector.capture().await, &log, &failures);
+        }
         if let Some(linger) = linger() {
             tokio::time::sleep(linger).await;
         }
@@ -85,11 +115,77 @@ pub async fn run(test: impl AsyncFnOnce(Terminal) -> WebDriverResult<()>) {
             Ok(tested) => tested?,
             Err(panic) => panic::resume_unwind(panic),
         }
-        terminal.assert_no_errors().await
+        let log = log?;
+        let errors = page_errors(&log);
+        assert!(
+            errors.is_empty(),
+            "the page must report no errors, got {errors:#?}"
+        );
+        Ok::<_, WebDriverError>(())
     })
     .await;
     if let Err(error) = result {
         panic!("{error}");
+    }
+}
+
+/// Where [`run`] saves what the page showed when the current test failed: the directory
+/// `e2e-failures/<test file>/<test>` in the target directory, with `screenshot.png`, and
+/// `report.txt` with the page's URL, source and logs.
+pub fn failures() -> PathBuf {
+    let target = option_env!("CARGO_TARGET_DIR").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../target"),
+        PathBuf::from,
+    );
+    // the binary of an integration test is named after its file, followed by a hash
+    let binary = std::env::args()
+        .next()
+        .map(PathBuf::from)
+        .and_then(|binary| Some(binary.file_name()?.to_str()?.to_owned()))
+        .unwrap_or_default();
+    let file = binary.rsplit_once('-').map_or(&*binary, |(file, _)| file);
+    // the test harness names the thread a test runs on after the test
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .replace("::", "-");
+    target.join("e2e-failures").join(file).join(test)
+}
+
+/// The errors the page logged or threw, in the browser `log`.
+fn page_errors(log: &[BrowserLogEntry]) -> Vec<&str> {
+    log.iter()
+        // a failed request, such as the favicon the page has none of, is no error of the page
+        .filter(|entry| entry.source.as_deref() != Some("network"))
+        .map(|entry| entry.message.as_str())
+        .collect()
+}
+
+/// Saves `artifacts` and the browser `log` into `dir`, see [`failures`]. A failure to save is only
+/// reported, so that it does not hide the failure of the test.
+fn save(artifacts: &FailureArtifacts, log: &WebDriverResult<Vec<BrowserLogEntry>>, dir: &Path) {
+    let mut report = artifacts.to_string();
+    match log {
+        Ok(log) => {
+            report += &format!("browser log: {} entries\n", log.len());
+            for entry in log {
+                report += &format!("  [{}] {}\n", entry.level, entry.message);
+            }
+        }
+        Err(error) => report += &format!("browser log: unavailable: {error}\n"),
+    }
+    let saved = fs::create_dir_all(dir)
+        .and_then(|()| match &artifacts.screenshot {
+            Artifact::Captured(png) => fs::write(dir.join("screenshot.png"), png),
+            _ => Ok(()),
+        })
+        .and_then(|()| fs::write(dir.join("report.txt"), report));
+    match saved {
+        Ok(()) => eprintln!("what the page showed is saved in {}", dir.display()),
+        Err(error) => eprintln!(
+            "cannot save what the page showed in {}: {error}",
+            dir.display()
+        ),
     }
 }
 
@@ -373,23 +469,5 @@ impl Terminal {
             Err(_) => "nothing".to_owned(),
         };
         panic!("{by} must have {expected}, but has {found}");
-    }
-
-    /// Fails if the page logged an error or threw one since the last call.
-    async fn assert_no_errors(&self) -> WebDriverResult<()> {
-        let errors: Vec<_> = self
-            .driver
-            .browser_log()
-            .await?
-            .into_iter()
-            // a failed request, such as the favicon the page has none of, is no error of the page
-            .filter(|entry| entry.source.as_deref() != Some("network"))
-            .map(|entry| entry.message)
-            .collect();
-        assert!(
-            errors.is_empty(),
-            "the page must report no errors, got {errors:#?}"
-        );
-        Ok(())
     }
 }
