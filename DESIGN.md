@@ -1294,3 +1294,154 @@ Rejected:
   reproducible shuffling; `vec1` for non-empty collections.
 - No `enum_dispatch`, `linkme`, `ambassador` or `intertrait`: each was only
   needed for an alternative ruled out above.
+
+## Frontend
+
+*Planned* (decided 2026-10-23): the GUI an organizer runs a competition with,
+in the browser, offline. `requirements.md` says what it must do;
+`FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
+the browser, stays a text layer; the GUI is a rewrite and does not build on it.
+
+### Framework
+
+#### Decision
+
+**Dioxus** (0.7), rendering real DOM in the browser, built with its CLI `dx`.
+
+- **Real HTML.** WCAG 2.1 AA, print layouts, embeds and lists on phones all
+  need the browser's own elements: its accessibility tree, its print styles,
+  its text.
+- **The code reads well.** Components re-run and their output is diffed, so a
+  component is a plain function of the rows it is handed, close to how the
+  app crate (below) hands them out.
+- **Fast where it matters.** Updating long lists built from plain rows was
+  1.5–2x faster than with Leptos (see [the measurements](#measurements)).
+- **Desktop and mobile stay possible.** Native apps are a non-goal (a PWA
+  instead), but Dioxus keeps the option open with the same components.
+
+#### Alternatives
+
+Both Dioxus and Leptos were spiked in `spikes/`: the same app on a shared core
+(`spike-core`), with the measurements in `spikes/README.md`, copied below.
+
+- **Leptos** (0.8). The close alternative: fine-grained signals, real DOM,
+  loaded slightly faster (1750 vs. 1850 ms at 1x). Slower at updating the
+  lists: reporting a result took 160–200 ms against Dioxus's 75–90 ms, going
+  back from 2500 to 5000 rows 630–720 against 370–390 ms. Keying its lists by
+  position, with a memo per line updating single cells, was slower still
+  (report 260–290 ms, filter 470–500 ms). Its `view!` with `Memo`s and `For`
+  read worse next to `rsx!`. Rejected.
+- **Canvas GUIs** (egui, iced, Slint). Draw their own pixels, so no
+  accessibility tree a screen reader can rely on, no print layout, no embeds,
+  and text that does not behave like the browser's on phones. Rejected without
+  a spike.
+
+### The app crate
+
+#### Decision
+
+**A UI-free crate between engine and GUI** holds what is about an operator at
+a screen: the session (state machine and its undo history), turning an action
+into transitions (a new entrant: an id, `AddEntrant`, a name), checks only a UI
+cares about, the names (`People`), saving and loading through a storage trait,
+data for screens (rows of matches, standings, the actions possible now), and
+messages for the operator. It is the CLI's `Session` with typed data instead of
+text; later the CLI can sit on top of it.
+
+- **The engine stays as it is**: what is true about a competition whoever
+  looks at it, and replays identically. Names, storage and an operator's
+  undo history are none of that.
+- **Testable without a browser.** The crate builds natively and for wasm and
+  depends on no UI, so what a screen shows is tested like the engine, and the
+  GUI's components only lay it out.
+
+#### Alternatives
+
+- **In the engine.** Mixes what the log records with what one screen needs, and
+  would pull names and storage into the crate that must replay identically.
+  Rejected.
+- **In the GUI crate.** Only testable in a browser, and the CLI could never
+  share it. Rejected.
+- **The CLI's `Session` as it is.** Answers with text for a terminal; a GUI
+  needs rows and typed errors. It is the starting point instead.
+
+### Storage
+
+#### Decision
+
+**IndexedDB, one record per log entry**, appended in a transaction as each
+change is accepted, so that no accepted result is lost. Names are stored apart
+from the log. **One writer tab per competition**, held by a lock of the Web
+Locks API; other tabs open it read-only and follow the writer through a
+`BroadcastChannel`.
+
+#### Alternatives
+
+- **The whole log as one value** (as the CLI and `tournament-web` save it).
+  Rewrites everything on every result (1.4 MB of JSON at 5000 results), and is
+  not saved at all until the operator saves. Rejected.
+- **Several writer tabs.** Two tabs appending to the same log from different
+  states fork it; merging them is the sync problem (`requirements.md`), not
+  something a second tab should start. Rejected.
+
+### Translation
+
+**Fluent** (`fluent-bundle`) for all UI text from the first screen. Plugin
+labels, descriptions and fields get keys derived from the plugin id and field
+name, with the English label from the code as the fallback, so plugins
+(including third-party ones) need no change and show in English until
+translated.
+
+### Accessibility
+
+**WCAG 2.1 AA.** Widgets that need more than HTML (select, dialog, ...) come
+from the Dioxus team's components: `dx components add` copies their source into
+the project, and they build on `dioxus-primitives` from
+`DioxusLabs/dioxus-components`, which is unreleased, so a git dependency pinned
+in `Cargo.lock`. Everything else is semantic HTML. The e2e tests run an
+axe-core check on every page.
+
+#### Alternatives
+
+- **Own components from the start.** The ARIA patterns of a select or a dialog
+  (focus, keyboard, announcements) are much work to get right. Kept as a later
+  option instead: since the components' source is in the project, each can be
+  replaced on its own when the library falls behind.
+
+### Performance
+
+Fine for the first use cases (20–50 entrants). With 1000 entrants, undo, redo
+and loading replay the whole log, ~1.8 s in wasm at 5000 results and several
+seconds on a phone, which misses the requirement (< 1 s with 500 entrants on a
+mid-range phone). Snapshot checkpoints fix that, and come later. Independently
+of that, the UI shows one round (or a page) of matches at a time rather than
+thousands of rows.
+
+#### Measurements
+
+Measured 2026-10-23 with the competition of the engine's `large_tournament`
+benchmark: 1000 entrants, random rounds over 10 rounds (5000 matches), every
+metric, ranked by 4 criteria.
+
+The engine alone, in wasm (`spike-core/tests/large.rs`), in ms:
+
+| results reported | report one | undo / redo / load (replay) | native undo |
+|---|---|---|---|
+| 0 | 2.0 | 7–13 | 5 |
+| 2500 | 0.4 | 760–810 | 505 |
+| 4999 | 0.5 | 1680–1810 | 1120 |
+
+Building the match rows (5000) and standings (1000) takes 2–4 ms; saving the
+log as JSON 3–8 ms.
+
+In headless Chrome, with all 5000 matches and 1000 standings rows on the page
+and 2500 results reported, in ms until the page shows the change (4x CPU is
+Lighthouse's mid-range phone):
+
+| | Leptos 1x | Dioxus 1x | Leptos 4x CPU | Dioxus 4x CPU |
+|---|---|---|---|---|
+| load and render | 1750 | 1850 | 6660 | 7470 |
+| report one result | 160–200 | 75–90 | 480–510 | 320–350 |
+| undo it | 850–890 | 770–820 | 3410–3760 | 3080–3140 |
+| filter to 2500 rows | 135–150 | 130–145 | 550 | 510–530 |
+| back to 5000 rows | 630–720 | 370–390 | 2710–2780 | 1550–1560 |

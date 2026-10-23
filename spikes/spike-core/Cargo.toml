@@ -1,0 +1,23 @@
+[package]
+name = "spike-core"
+description = "What both GUI spikes show and do, without any UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+plugin-factory.workspace = true
+serde_json.workspace = true
+tournament-cli.workspace = true
+# the constructors of the plugins, for the competition of the engine's benchmark
+tournament-engine = { workspace = true, features = ["test-util"] }
+uuid.workspace = true
+
+[dev-dependencies]
+web-time.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen-test.workspace = true
