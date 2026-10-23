@@ -1365,6 +1365,22 @@ text; later the CLI can sit on top of it.
 - **The CLI's `Session` as it is.** Answers with text for a terminal; a GUI
   needs rows and typed errors. It is the starting point instead.
 
+#### Implementation
+
+Implemented as `tournament-app` (2026-10-23). The CLI does not sit on it yet,
+but takes its `People` from it.
+
+- **An error type per action** (`AddEntrantError`, `ReportError`, ...) rather
+  than one for all of them, so that a GUI handles exactly what the action it
+  ran can return. The engine's errors arrive as a boxed `TransitionError` and
+  are recognized by downcasting; anything else, e.g. a check added to the
+  engine later, is `Rejected` with the engine's message instead of a panic.
+- **Names are `Option`s** in the rows: an entrant of a log written elsewhere
+  may have none, and what to show for it is the GUI's (translated) text.
+- **What can be undone and redone** is counted by the session, since
+  `SessionHistory` does not tell. Moving that into `undoable-state-machine`
+  would remove the counting.
+
 ### Storage
 
 #### Decision
@@ -1375,8 +1391,38 @@ from the log. **One writer tab per competition**, held by a lock of the Web
 Locks API; other tabs open it read-only and follow the writer through a
 `BroadcastChannel`.
 
+**The storage trait is asynchronous** (`tournament-app`'s `Storage`), since
+IndexedDB is. Its methods return `impl Future` without `Send`, as the
+browser's futures are not; the trait is therefore not dyn-compatible, and the
+session is not generic over it but takes the storage where it loads or saves.
+It knows records, not competitions: the JSON of each log entry and each
+person, and a listing (key and name) for the list of competitions to open.
+
+- **The session changes in memory first, and storage catches up.** A
+  transition is only known to be accepted once applied, and the append-only
+  log cannot take an entry back, so persisting first would need a trial run on
+  a copy of the state. Instead a save hands the storage the entries appended
+  since the last save (`Changes`) and marks them saved only once written; a
+  failed write leaves them for the next one, and the GUI shows what is unsaved.
+- **Saving is take, write, mark.** `unsaved_changes()` copies the changes
+  out, the write runs without any borrow of the session, and `mark_saved`
+  takes them back, so a GUI holds no lock of its state across an `await`.
+  Entries are written at their position in the log, which never changes, so
+  writing changes twice, or an older write finishing after a newer one, stores
+  the same.
+- **The CLI's synchronous file storage fits** by returning futures that are
+  ready at once, which a synchronous caller polls once (as `questionnaire::fill`
+  polls `fill_async`), so no executor is needed. It keeps its own `Storage` until
+  it sits on the app crate.
+
 #### Alternatives
 
+- **A synchronous trait**, with the GUI writing to IndexedDB on its own. Would
+  leave the format of the records and when to write them to the GUI, untested
+  outside a browser. Rejected.
+- **The session owning its storage**, every action `async`. A GUI would hold
+  the session borrowed across the write of each action, and an action could
+  not be shown before its write finished. Rejected.
 - **The whole log as one value** (as the CLI and `tournament-web` save it).
   Rewrites everything on every result (1.4 MB of JSON at 5000 results), and is
   not saved at all until the operator saves. Rejected.

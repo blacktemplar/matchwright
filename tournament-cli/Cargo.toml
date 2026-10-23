@@ -20,6 +20,8 @@ serde.workspace = true
 serde_json.workspace = true
 shlex.workspace = true
 thiserror.workspace = true
+# the people the entrants are
+tournament-app.workspace = true
 tournament-engine.workspace = true
 # entrant and phase ids are random, which is what keeps them independent of the name they are
 # shown with

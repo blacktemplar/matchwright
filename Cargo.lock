@@ -2524,6 +2524,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tournament-app"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "indexmap",
+ "plugin-factory",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tournament-engine",
+ "uuid",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "tournament-cli"
 version = "0.1.0"
 dependencies = [
@@ -2538,6 +2553,7 @@ dependencies = [
  "shlex",
  "tempfile",
  "thiserror",
+ "tournament-app",
  "tournament-engine",
  "uuid",
  "wasm-bindgen-test",

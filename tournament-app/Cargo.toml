@@ -1,0 +1,26 @@
+[package]
+name = "tournament-app"
+description = "What a GUI for running tournaments does, without any UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# the seed of a new competition is random
+getrandom.workspace = true
+indexmap.workspace = true
+plugin-factory.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tournament-engine.workspace = true
+# competition and entrant ids are random, which is what keeps them independent of the names they
+# are shown with
+uuid = { workspace = true, features = ["v4"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# seeds and ids are random, and in the browser randomness comes from JavaScript, which the
+# application picks, so the tests do
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }
+wasm-bindgen-test.workspace = true

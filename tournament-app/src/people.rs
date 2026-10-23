@@ -1,4 +1,4 @@
-//! The personal data of the entrants of a competition, such as the names this CLI shows them by.
+//! The personal data of the entrants of a competition, such as the names they are shown by.
 //!
 //! It is kept apart from the competition, whose transition log holds only the ids of the entrants:
 //! the log has to replay as it was written, whereas personal data can be deleted.
@@ -44,7 +44,7 @@ impl IdAble for Person {
 ///
 /// # Examples
 /// ```
-/// use tournament_cli::people::{People, Person};
+/// use tournament_app::people::{People, Person};
 /// use tournament_engine::{EntrantId, uuid::Uuid};
 ///
 /// let alice = EntrantId::new(Uuid::from_u128(1));
@@ -64,9 +64,14 @@ impl People {
         self.0.insert(person);
     }
 
+    /// The person the entrant `id` is, if this knows who it is.
+    pub fn get(&self, id: &EntrantId) -> Option<&Person> {
+        self.0.get(id)
+    }
+
     /// The name of the entrant `id`, if this knows who it is.
     pub fn name(&self, id: &EntrantId) -> Option<&str> {
-        self.0.get(id).map(Person::name)
+        self.get(id).map(Person::name)
     }
 }
 

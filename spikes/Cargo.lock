@@ -3795,6 +3795,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
+name = "tournament-app"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "indexmap",
+ "plugin-factory",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tournament-engine",
+ "uuid",
+]
+
+[[package]]
 name = "tournament-cli"
 version = "0.1.0"
 dependencies = [
@@ -3805,6 +3819,7 @@ dependencies = [
  "serde_json",
  "shlex",
  "thiserror 2.0.21",
+ "tournament-app",
  "tournament-engine",
  "uuid",
 ]

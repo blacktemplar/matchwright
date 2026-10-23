@@ -47,7 +47,15 @@ they outlive the spikes.
 
 Done when DESIGN.md has the section and the spikes are committed.
 
-### 1. The app crate
+### 1. The app crate (done 2026-10-23)
+
+`tournament-app`. The storage trait is async and takes records (one per log entry and per person);
+the session changes in memory and a save writes what was appended since the last one, see
+DESIGN.md, *Storage*. Changed on the way: `People` moved from the CLI into the app crate (the CLI
+re-exports it); the CLI keeps its own session and storage until it sits on the app crate. The
+session counts what can be undone and redone itself, which `undoable-state-machine` could tell
+instead (`SessionHistory::can_undo`/`can_redo`), a small change there worth making. Undo and redo
+do not say yet what they undid, which step 6 needs for its announcement.
 
 A new crate (name to choose, e.g. `tournament-app`), in the workspace, building for wasm, with no UI
 dependency. Start from `spikes/spike-core` and the CLI's `Session`:
@@ -117,7 +125,8 @@ large events, the CLI on top of the app crate, and what becomes of `tournament-w
 
 ## Open questions
 
-- Is the storage trait async, and does the CLI share it? (step 1)
+- ~~Is the storage trait async, and does the CLI share it? (step 1)~~ Async; the CLI's file storage
+  fits it with futures that are ready at once, once the CLI sits on the app crate.
 - One e2e crate for both pages, or one per page? (step 2)
 - CSS: plain CSS files, or something like Tailwind (an extra tool)? (step 2)
 - Hosting of the page. (step 7)

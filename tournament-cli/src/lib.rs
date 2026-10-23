@@ -6,15 +6,16 @@
 //! configures the plugins of a phase through their schemas, and which the session then adds as a
 //! phase.
 //!
-//! The names the entrants are shown by are [`people`], kept apart from the competition. A session
-//! saves both to a [`Storage`](storage::Storage), e.g. to files.
+//! The names the entrants are shown by are [`people`] (those of [`tournament_app`]), kept apart
+//! from the competition. A session saves both to a [`Storage`](storage::Storage), e.g. to files.
 //!
 //! The library also builds for WebAssembly, without the default feature `terminal`, which adds
 //! what only works at a terminal: the binary and asking at the terminal
 //! (`questionnaire::Terminal`).
 
 pub mod command;
-pub mod people;
 pub mod questionnaire;
 pub mod session;
 pub mod storage;
+
+pub use tournament_app::people;

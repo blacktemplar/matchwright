@@ -2,6 +2,7 @@
 members = [
     "plugin-factory",
     "plugin-factory-derive",
+    "tournament-app",
     "tournament-cli",
     "tournament-engine",
     "tournament-web",
@@ -49,6 +50,7 @@ thirtyfour = { version = "0.38.1", default-features = false, features = [
 ] }
 thiserror = "2.0.21"
 tokio = "1.54.1"
+tournament-app = { path = "tournament-app" }
 # without the default feature `terminal`, which only the binary of the CLI needs
 tournament-cli = { path = "tournament-cli", default-features = false }
 tournament-engine = { path = "tournament-engine" }
