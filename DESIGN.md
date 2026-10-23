@@ -519,8 +519,8 @@ them:
 #[plugin(id = "tournament_engine::points", label = "points",
          description = "…", declare_static = Self::declare_static)]
 pub struct PointsCalculator {
-    #[plugin(label = "points for a win", default = 1.0)]
-    points_for_win: f32,
+    #[plugin(label = "points for a win", default = Score::ONE)]
+    points_for_win: Score,
     // …
 }
 
@@ -668,10 +668,100 @@ see [Compatibility between plugins](#compatibility-between-plugins).
   calculators, but cost grows with tournament size on the hottest path.
   Rejected.
 
+## Scores
+
+Points, and the tiebreaks summing or weighting them (Buchholz,
+Sonneborn-Berger), are compared, sorted and hashed, and have to be the same
+after a replay on every platform.
+
+### Decision
+
+**They are `Score`, a finite `f64` with a total order.** It is never NaN or
+infinite, and `-0.0` is made `0.0`, so `==`, `Ord` (`total_cmp`) and `Hash`
+(the bits) agree, and `Eq`, `Ord` and `Hash` hold. An operation whose result is
+not finite panics. It is shown, parsed and serialized as its `f64`, and a plugin
+field of it takes any decimal answer.
+
+- **Deterministic everywhere.** `+`, `-` and `*` on `f64` are exactly rounded
+  by IEEE 754, so the same calculation gives the same bits on every platform,
+  natively and in wasm; Rust neither enables fast-math nor fuses operations.
+  Only functions like `exp` or `ln` differ between platforms, which a score
+  does not use.
+- **Exact for what is played.** Every scoring system in use counts in halves or
+  quarters, which an `f64` holds exactly, and so are their sums and the classic
+  Sonneborn-Berger products (weights 1 and 0.5). Only a value with no exact
+  binary form, such as `0.1`, can leave two mathematically equal scores
+  unequal, depending on the order of additions. A field that must rule that out
+  narrows itself with `#[plugin(multiple_of = 0.25)]`, see [Ranges of
+  numbers](#ranges-of-numbers).
+- **The wrapper is needed anyway.** `FieldType` is foreign to the engine and so
+  is any float type, so no crate's ordered float could be a field without one.
+
+### Alternatives
+
+- **Plain `f32`/`f64`** (the first design). No `Eq`, `Ord` or `Hash`, NaN
+  possible, and `f32` loses precision on large sums. Rejected.
+- **`ordered_float::OrderedFloat`.** Orders NaN rather than ruling it out, and
+  still needs a wrapper for `FieldType`. Rejected.
+- **An `i32` counting quarters** (the design before this one). Exact by its
+  type for every sum, but it needs its own parsing, display and serialization,
+  rounds products, and refuses anything finer than a quarter, for exactness no
+  scoring system in use needs. Rejected as too much for the gain.
+- **`rust_decimal`.** Exact for every decimal anyone types, but 16 bytes per
+  value and a heavier comparison. Rejected.
+- **`fixed::FixedI32<U2>`.** Its `Display` shows the shortest text that tells
+  quarters apart (`66.8` for 66.75), its parsing rounds `0.1` to `0` silently,
+  and its serde form is `{"bits": 2}`. Rejected.
+- **Rationals** (`num-rational`). Exact even for thirds, but every comparison
+  cross-multiplies and every sum normalizes by a gcd, on the hot path. Rejected.
+
+## Ranges of numbers
+
+A field taking a number states which numbers in the schema, so that a UI can
+show and check them and an operator learns that a number is no answer before
+anything is built.
+
+### Decision
+
+- **`FieldKind::Integer(IntegerRange)`** has a `min` and a `max` always (an
+  integer type's own bounds) and a `multiple_of`, 1 unless narrowed. A bound
+  is *stated* if chosen for what the number means (by a field attribute or
+  `IntegerRange::new`) and only a *limit* otherwise (`IntegerRange::limits`,
+  e.g. `u32::MAX`). Both bound the range, and a UI may encode both, e.g. as the
+  bounds of an input; the description an operator reads names only stated
+  ones.
+  **`FieldKind::Decimal(DecimalRange)`** has each of them optionally; `f64`
+  has none.
+- **`multiple_of` is anchored at 0**, as JSON Schema's `multipleOf`: the numbers
+  are the multiples of it from `min` to `max`, and `min` and `max` have to be
+  multiples themselves, so that "from `min` in steps of `multiple_of`" means the
+  same. For a decimal it is a whole number or a power of two, whose multiples
+  `%` on floats checks exactly.
+- **The type declares, a field narrows.** `FieldType::kind` gives the type's
+  range (`u8`: 0 to 255); `#[plugin(min, max, multiple_of)]` on a
+  field narrows it, never widens it. A narrowing the type does not allow (a
+  bound that is no multiple, a `multiple_of` that is no multiple of the type's)
+  or a default out of the range panics when the schema is built, since the
+  type's range is only known then.
+- **Checked twice, by the schema and by the type.** `FieldKind::walk` rejects a
+  number out of range with `ConfigError::OutOfRange` naming the field, and a
+  prompter asks for numbers of the range only. The type's own `Deserialize`
+  still checks, since a snapshot or log is deserialized without a schema.
+
+### Alternatives
+
+- **A step anchored at `min`** (HTML's `step`). Makes the numbers depend on two
+  declarations that may come from the type and the field (`min = 0.1` on
+  multiples of 0.25 leaves no number) and cannot be checked exactly for
+  decimals; a setting that needs odd numbers is rephrased instead (best of N as
+  first to K wins). Rejected.
+- **Checking only in `Deserialize`.** Reports a wrong number late, as the plugin
+  rejecting its answer, and tells a UI nothing. Rejected.
+
 ## Consumer data on entities
 
-Consumers want to attach data core never reads — a display name, a table
-assignment, a database id.
+Consumers want to attach data core never reads — a table assignment, a database
+id, a club.
 
 ### Decision
 
@@ -694,7 +784,7 @@ who creates the entity:
 - **Entrants** are consumer-created, so the `TypeMap` on `Entrant` is populated by
   the `AddEntrant` that creates it — an `Entrant` is built with
   `Entrant::new(id).with_annotation(value)` and read with
-  `entrant.annotation::<DisplayName>()`.
+  `entrant.annotation::<ClubId>()`.
 - **Matches** are created by the phase format, so the `TypeMap` on `Match` is
   populated by the format when it schedules the match
   (`Match::new(..).with_annotation(value)`), with whatever it knows about the match
@@ -718,6 +808,16 @@ per match, and it buys an entity that is self-contained.
 Undo needs no inverse: it is a replay without that log entry, and re-annotating
 the same type overwrites via `TypeMap::insert_boxed`.
 
+**Personal data is the exception: it stays out of the log.** A name, a contact,
+a birth date has to be deletable, and a log replays as it was written and cannot
+have parts removed. So a consumer keeps personal data in a store of its own keyed
+by `EntrantId` (the CLI's `People`), saved next to the log in the same file, and
+the log holds only the ids. That store keeps everyone ever entered, removed
+entrants included, since an undo or redo can bring them back. This is the
+side-table rejected below for consumer data in general; for personal data,
+being deletable outweighs sharing the persistence paths, and nothing in the
+engine reads it.
+
 This requires `TypeMapValue: DynClone`, because `Transition::apply` takes
 `&self` and so must clone its payload on every replay. That ripples into
 `Metric`, but every metric type is a trivially-`Clone` plain struct, and it
@@ -734,9 +834,9 @@ serialization tests.
   per-match bytes are not a real constraint at this crate's scale.
 - **Consumer-owned side-tables keyed by entity id** (the previous decision here).
   Zero core change, but a side-table shares neither of the persistence paths: it
-  is not in the snapshot and not in the log, so names must be persisted
-  separately, kept from drifting, and are untouched by undo. Superseded once both
-  persistence paths became requirements.
+  is not in the snapshot and not in the log, so its data must be persisted
+  separately, kept from drifting, and is untouched by undo. Superseded once both
+  persistence paths became requirements, except for personal data (see above).
 - **A core `name: String` field on `Entrant`.** Concedes that a display label is
   universal, but gives core no principle for refusing the next field — country,
   club, seed rating, external id. Rejected.
@@ -902,8 +1002,7 @@ see what it already decided.
 
 **Points stay calculated from counts.** `WinsDrawsLosses` counts byes next to
 wins, draws and losses (but not as matches played), and `PointsCalculator`
-scores them with `points_for_bye`, 0 unless set. Adding up points result by
-result would drift for scores a float cannot represent exactly.
+scores them with `points_for_bye`, 0 unless set.
 
 *Not covered yet:* kinds of byes worth different points (a requested half-point
 bye, a sit-out scored with average points). A requested bye is transition data
@@ -952,12 +1051,10 @@ pub trait TypeMapValue: Any + Debug + DynClone {}
 impl TypeMapValue for Eliminates {}
 ```
 
-*Outstanding:* most metric impls do not name their tag yet — they use bare
-`#[typetag::serde]`, so their tag is the default bare type name (`"Buchholz"`,
-`"Points"`, ...). That is both the collision risk this decision meant to avoid
-and a silent break of old snapshots on any type rename. Worth fixing before the
-first snapshot anyone needs to keep. Plugins and every `CompetitionTransition`
-impl name their tags.
+Metrics, annotations, plugins and every `CompetitionTransition` impl name their
+tags. A metric's tag may equal the id of the plugin calculating it (both
+`tournament_engine::points`), since every trait object has a registry of its
+own.
 
 This gives `Box<dyn Trait>` a working `Serialize`/`Deserialize` backed by an
 `inventory`-populated tag → type registry inside `typetag`, with no registry

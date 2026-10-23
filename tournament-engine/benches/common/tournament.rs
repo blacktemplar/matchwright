@@ -10,7 +10,7 @@ use itertools::Itertools;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tournament_engine::{
     AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt, Entrant, EntrantId,
-    MatchId, MatchResult, PhaseId, PhasePluginsBuilder, ReportMatchResult, Seed,
+    MatchId, MatchResult, PhaseId, PhasePluginsBuilder, ReportMatchResult, Score, Seed,
     SetCompetitionSeed, StartCompetition,
     plugins::{metrics_calculator::*, phase_format::RandomRounds},
     uuid::Uuid,
@@ -27,11 +27,12 @@ const ROUNDS: u32 = 10;
 const SEED: Seed = Seed::new(*b"bench-seed!!");
 
 /// The scoring system of most association football leagues.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
 
 /// The classical Sonneborn-Berger weights: the points of a beaten opponent count fully, those of
 /// an opponent that was played to a draw count half.
-const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+const SONNEBORN_BERGER: SonnebornBergerCalculator =
+    SonnebornBergerCalculator::new(Score::ONE, Score::new(0.5));
 
 /// The id of the single phase every tournament of this module consists of.
 ///

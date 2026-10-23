@@ -94,7 +94,7 @@ pub mod ranker;
 /// assert_eq!(
 ///     format!("{:?}", plugins.metrics()),
 ///     "DependencyOrderedSet([WinsDrawsLossesCalculator, PointsCalculator { points_for_win: \
-///      3.0, points_for_draw: 0.5, points_for_bye: 1.0 }])"
+///      3, points_for_draw: 0.5, points_for_bye: 1 }])"
 /// );
 /// # Ok::<(), plugin_factory::config::ConfigError>(())
 /// ```
@@ -209,14 +209,16 @@ mod tests {
                 single_elimination::{KnockoutRound, SingleElimination},
             },
         },
+        score::Score,
         type_map::TypeMapValue,
     };
 
     /// The scoring system of chess: a win is worth a point, a draw half of one.
-    const ONE_HALF: PointsCalculator = PointsCalculator::new(1.0, 0.5);
+    const ONE_HALF: PointsCalculator = PointsCalculator::new(Score::ONE, Score::new(0.5));
     /// The classic Sonneborn-Berger weights: a beaten opponent counts fully, an opponent played to
     /// a draw counts half.
-    const FULL_HALF: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+    const FULL_HALF: SonnebornBergerCalculator =
+        SonnebornBergerCalculator::new(Score::ONE, Score::new(0.5));
     /// Two entrants per ranking, i.e. the rankings a draw pairing the entrants up leaves behind.
     const PAIRS: EntrantsPerRanking = EntrantsPerRanking(NonZeroU32::new(2).unwrap());
 
@@ -368,7 +370,7 @@ mod tests {
         let built = PhasePluginsBuilder::new()
             .add_metric(ONE_HALF)
             .add_metric(WinsDrawsLossesCalculator)
-            .add_metric(PointsCalculator::new(3.0, 1.0))
+            .add_metric(PointsCalculator::new(Score::new(3.0), Score::ONE))
             .build();
 
         assert_eq!(

@@ -8,7 +8,7 @@ use serde_json::Value;
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, PhaseData,
-    PhaseId, PhasePluginsBuilder, Ranking, ReportMatchResult, Seed, SetCompetitionSeed,
+    PhaseId, PhasePluginsBuilder, Ranking, ReportMatchResult, Score, Seed, SetCompetitionSeed,
     StartCompetition, TypeMapValue,
     plugins::{
         metrics_calculator::{
@@ -29,10 +29,11 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const SEED: Seed = Seed::new(*b"round-trip!!");
 
 /// The scoring system of most association football leagues.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
 
 /// The classical Sonneborn-Berger weights.
-const SONNEBORN_BERGER: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+const SONNEBORN_BERGER: SonnebornBergerCalculator =
+    SonnebornBergerCalculator::new(Score::ONE, Score::new(0.5));
 
 fn phase_id() -> PhaseId {
     PhaseId::new(Uuid::from_u128(0xfa5e))
@@ -288,7 +289,7 @@ fn a_started_competition_round_trips() {
     // the metrics of a started competition are all at their default value, so this only shows
     // that they exist at all
     for ranking in phase.standings() {
-        assert_eq!(ranking.metric::<Points>(), Some(&Points(0.0)));
+        assert_eq!(ranking.metric::<Points>(), Some(&Points(Score::ZERO)));
     }
     assert_same_competition(sm.current(), &competition);
 }
@@ -314,7 +315,7 @@ fn a_partially_played_competition_round_trips() {
     let winners = phase
         .rankings()
         .values()
-        .filter(|ranking| ranking.metric::<Points>() == Some(&Points(3.0)))
+        .filter(|ranking| ranking.metric::<Points>() == Some(&Points(Score::new(3.0))))
         .count();
     assert_eq!(winners, 2);
     assert_same_competition(sm.current(), &competition);

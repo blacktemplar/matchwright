@@ -34,6 +34,7 @@ pub struct RandomRounds {
     #[plugin(
         label = "rounds",
         description = "a full round robin is scheduled if that is shorter",
+        min = 1,
         default = 5
     )]
     rounds: u32,

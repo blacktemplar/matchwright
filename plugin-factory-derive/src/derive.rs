@@ -251,8 +251,43 @@ struct Field {
     description: Option<LitStr>,
     /// The answer the schema offers, from `#[plugin(default ..)]`.
     default: Option<Offered>,
+    /// How the range of numbers the field's type takes is narrowed.
+    narrowing: Narrowing,
     /// The function the field is serialized with instead of its `Serialize` impl.
     serialize_with: Option<ExprPath>,
+}
+
+/// How a field narrows the range of numbers its type takes: its `#[plugin(min = .., max = ..,
+/// multiple_of = ..)]`, each a number.
+#[derive(Default)]
+struct Narrowing {
+    min: Option<Expr>,
+    max: Option<Expr>,
+    multiple_of: Option<Expr>,
+}
+
+impl Narrowing {
+    /// Whether the field narrows its range at all.
+    fn narrows(&self) -> bool {
+        self.min.is_some() || self.max.is_some() || self.multiple_of.is_some()
+    }
+
+    /// The calls narrowing `field`, the `Field` of the schema: to the multiples first, since the
+    /// bounds have to be multiples.
+    fn calls(&self) -> TokenStream {
+        let calls = [
+            (&self.multiple_of, quote!(multiple_of)),
+            (&self.min, quote!(at_least)),
+            (&self.max, quote!(at_most)),
+        ]
+        .into_iter()
+        .filter_map(|(value, method)| {
+            value
+                .as_ref()
+                .map(|value| quote!(let field = field.#method((#value) as f64);))
+        });
+        quote!(#(#calls)*)
+    }
 }
 
 impl Field {
@@ -308,6 +343,7 @@ impl Field {
         let mut label = None;
         let mut description = None;
         let mut default = None;
+        let mut narrowing = Narrowing::default();
         let mut left_out = None;
         for attribute in attributes(&field.attrs, "plugin") {
             attribute.parse_nested_meta(|meta| {
@@ -317,20 +353,30 @@ impl Field {
                     set_once(&mut description, &meta, meta.value()?.parse()?)
                 } else if meta.path.is_ident("default") {
                     set_once(&mut default, &meta, Offered::parse(&meta)?)
+                } else if meta.path.is_ident("min") {
+                    set_once(&mut narrowing.min, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("max") {
+                    set_once(&mut narrowing.max, &meta, meta.value()?.parse()?)
+                } else if meta.path.is_ident("multiple_of") {
+                    set_once(&mut narrowing.multiple_of, &meta, meta.value()?.parse()?)
                 } else if meta.path.is_ident("skip") {
                     set_once(&mut left_out, &meta, meta.path.clone())
                 } else {
-                    Err(meta.error("expected `label`, `description`, `default` or `skip`"))
+                    Err(meta.error(
+                        "expected `label`, `description`, `default`, `min`, `max`, `multiple_of` \
+                         or `skip`",
+                    ))
                 }
             })?;
         }
         if let Some(left_out) = left_out {
-            if label.is_some() || description.is_some() || default.is_some() {
+            if label.is_some() || description.is_some() || default.is_some() || narrowing.narrows()
+            {
                 return Err(Error::new_spanned(
                     left_out,
                     format!(
-                        "a field of a {what} left out of the schema takes no label, description \
-                         or default"
+                        "a field of a {what} left out of the schema takes no label, description, \
+                         default or range"
                     ),
                 ));
             }
@@ -372,6 +418,7 @@ impl Field {
             label,
             description,
             default,
+            narrowing,
             serialize_with,
         }))))
     }
@@ -385,11 +432,14 @@ impl Field {
             label,
             description,
             default,
+            narrowing,
             serialize_with,
         } = self;
         let described = description
             .as_ref()
             .map(|description| quote!(let field = field.described(#description);));
+        // before the default, which has to be in the narrowed range
+        let narrowing = narrowing.calls();
         let default = default.as_ref().map(|default| {
             let default = match default {
                 Offered::Trait => quote!(<#ty as ::core::default::Default>::default()),
@@ -420,6 +470,7 @@ impl Field {
                     <#ty as ::plugin_factory::schema::FieldType>::kind(),
                 );
                 #described
+                #narrowing
                 #default
                 field
             }
@@ -605,8 +656,35 @@ mod tests {
                     state: i64,
                 }
             }),
-            "a field of a plugin left out of the schema takes no label, description or default"
+            "a field of a plugin left out of the schema takes no label, description, default or \
+             range"
         );
+    }
+
+    /// A field is narrowed to the multiples before its bounds, which have to be multiples, and
+    /// before its default, which has to be in the narrowed range.
+    #[test]
+    fn a_range_narrows_a_field_before_its_default() {
+        let expanded = expand_plugin(&parse_quote! {
+            #[plugin(id = "points", label = "points")]
+            struct Points {
+                #[plugin(label = "for a win", min = 0, max = 10, multiple_of = 0.5, default = 1.0)]
+                for_win: f64,
+            }
+        })
+        .unwrap()
+        .to_string();
+
+        let position = |call: TokenStream| {
+            expanded
+                .find(&call.to_string())
+                .unwrap_or_else(|| panic!("{call} is not in {expanded}"))
+        };
+        let multiple_of = position(quote!(let field = field.multiple_of((0.5) as f64);));
+        let at_least = position(quote!(let field = field.at_least((0) as f64);));
+        let at_most = position(quote!(let field = field.at_most((10) as f64);));
+        let default = position(quote!(let default: f64 = 1.0;));
+        assert!(multiple_of < at_least && at_least < at_most && at_most < default);
     }
 
     /// What a field offers is told apart from what `serde` reads it missing as.

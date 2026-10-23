@@ -2,8 +2,9 @@
 //!
 //! A [`Session`] owns the [`CompetitionStateMachine`] of the competition and executes every
 //! [`Command`] against it. It is saved as that machine's transition log rather than as a snapshot
-//! of the competition. What can be undone and redone is what the session did itself, which is not
-//! saved: a loaded competition starts with nothing to undo.
+//! of the competition, next to the [`People`] the entrants are, which the log knows by id only.
+//! What can be undone and redone is what the session did itself, which is not saved: a loaded
+//! competition starts with nothing to undo.
 
 use std::{
     collections::HashSet,
@@ -17,12 +18,12 @@ use plugin_factory::{
     config::{Config, ConfigError, Path as ConfigPath, PluginConfig, Value},
     draft::{Draft, Issue},
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tournament_engine::{
-    AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
-    CompetitionStateMachineExt as _, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
-    PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed,
-    SetCompetitionSeed, StartCompetition,
+    AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt as _,
+    Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData, PhaseId, PhasePlugins,
+    RankingId, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
     plugins::{metrics_calculator::MetricColumn, phase_format::PhaseFormat, ranker::SliceRanker},
     transitions::{ReconfigurePhaseError, UndoMatchResultError},
     undoable_state_machine::{
@@ -32,8 +33,8 @@ use tournament_engine::{
 };
 
 use crate::{
-    annotations::DisplayName,
     command::{Command, ReportedResult},
+    people::{People, Person},
     questionnaire::{self, AcceptDefaults, IssueList},
     storage::Storage,
 };
@@ -149,6 +150,9 @@ impl From<StateMachineError> for Error {
 /// with, which is no action of the session and so never undone.
 pub struct Session {
     machine: CompetitionStateMachine,
+    /// Everyone ever entered in the log, removed entrants included, since undoing their removal
+    /// brings them back.
+    people: People,
     /// What this session did, which `undo` and `redo` walk through.
     history: SessionHistory,
     storage: Box<dyn Storage>,
@@ -169,6 +173,7 @@ impl Session {
         Self {
             saved_log_len: machine.log().len(),
             machine,
+            people: People::default(),
             history: SessionHistory::new(),
             storage: Box::new(storage),
             name: None,
@@ -195,13 +200,19 @@ impl Session {
             Ok(bytes) => bytes,
             Err(source) => return Err(Error::Read { name, source }),
         };
-        let machine: CompetitionStateMachine = match serde_json::from_slice(&bytes) {
-            Ok(machine) => machine,
+        let saved: Result<Saved<CompetitionStateMachine, People>, _> =
+            serde_json::from_slice(&bytes);
+        let Saved {
+            log: machine,
+            people,
+        } = match saved {
+            Ok(saved) => saved,
             Err(source) => return Err(Error::Load { name, source }),
         };
         Ok(Self {
             saved_log_len: machine.log().len(),
             machine,
+            people,
             history: SessionHistory::new(),
             storage: Box::new(storage),
             name: Some(name),
@@ -258,8 +269,8 @@ impl Session {
             return "there are no entrants yet".to_owned();
         }
         entrants
-            .values()
-            .map(name_of)
+            .keys()
+            .map(|id| self.name_of(id))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -268,7 +279,13 @@ impl Session {
         self.competition()
             .entrants()
             .values()
-            .find(|entrant| name_of(entrant) == name)
+            .find(|entrant| self.name_of(&entrant.id()) == name)
+    }
+
+    /// The name the entrant `id` is shown with. Every entrant this CLI adds has one, so the
+    /// fallback is only for a log written by someone else.
+    fn name_of(&self, id: &EntrantId) -> &str {
+        self.people.name(id).unwrap_or("<unnamed>")
     }
 
     /// Adds all of `names` or, if any of them is not a valid new name, none of them.
@@ -285,10 +302,10 @@ impl Session {
         // the first entrant is rejected exactly when every other one would be, so nothing is
         // added partially
         for name in &names {
-            let entrant = Entrant::new(EntrantId::new(Uuid::new_v4()))
-                .with_annotation(DisplayName::new(name.as_str()));
+            let id = EntrantId::new(Uuid::new_v4());
             self.machine
-                .apply_in(&mut self.history, AddEntrant::new(entrant))?;
+                .apply_in(&mut self.history, AddEntrant::new(Entrant::new(id)))?;
+            self.people.add(Person::new(id, name.as_str()));
         }
         Ok(format!(
             "{} entrant(s) added, {} in total",
@@ -631,7 +648,11 @@ impl Session {
 
     fn save(&mut self, name: Option<String>) -> Result<String, Error> {
         let name = name.or_else(|| self.name.clone()).ok_or(Error::NoName)?;
-        let json = serde_json::to_vec_pretty(&self.machine).map_err(Error::Serialize)?;
+        let saved = Saved {
+            log: &self.machine,
+            people: &self.people,
+        };
+        let json = serde_json::to_vec_pretty(&saved).map_err(Error::Serialize)?;
         if let Err(source) = self.storage.write(&name, &json) {
             return Err(Error::Write { name, source });
         }
@@ -645,7 +666,7 @@ impl Session {
         rankings
             .iter()
             .flat_map(|id| phase.rankings()[id].entrants())
-            .map(|id| name_of(&self.competition().entrants()[id]))
+            .map(|id| self.name_of(id))
             .collect::<Vec<_>>()
             .join(" & ")
     }
@@ -709,12 +730,12 @@ fn summary(answers: &Config) -> String {
     format!("{format}, ranked by {}", ranked_by.join(", then "))
 }
 
-/// The name `entrant` is shown with. Every entrant this CLI adds has one, so the fallback is only
-/// for a log written by someone else.
-fn name_of(entrant: &Entrant) -> &str {
-    entrant
-        .annotation::<DisplayName>()
-        .map_or("<unnamed>", DisplayName::as_str)
+/// What a competition is saved as: the transition log of its machine, and the people its
+/// entrants are, apart from the log.
+#[derive(Serialize, Deserialize)]
+struct Saved<L, P> {
+    log: L,
+    people: P,
 }
 
 /// Lays `header` and `rows` out as left-aligned columns, with the header underlined.
@@ -817,8 +838,8 @@ mod tests {
         session
             .competition()
             .entrants()
-            .values()
-            .map(name_of)
+            .keys()
+            .map(|id| session.name_of(id))
             .collect()
     }
 
@@ -1834,6 +1855,21 @@ mod tests {
             names(&Session::load(storage, "cup").unwrap()),
             ["Alice", "Bob"]
         );
+    }
+
+    /// The log knows the entrants by id only, so that their names can be deleted without touching
+    /// the log.
+    #[test]
+    fn names_are_saved_apart_from_the_log() {
+        let storage = MemoryStorage::default();
+        let mut session = Session::new(storage.clone()).named("cup");
+        output(&mut session, "add Alice");
+
+        output(&mut session, "save");
+
+        let saved: Value = serde_json::from_slice(&storage.read("cup").unwrap()).unwrap();
+        assert!(!saved["log"].to_string().contains("Alice"));
+        assert_eq!(saved["people"][0]["name"], "Alice");
     }
 
     #[test]

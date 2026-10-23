@@ -1,8 +1,11 @@
 //! Asking the questions of a questionnaire line by line, as the page cannot wait for an answer.
 
-use std::{cell::RefCell, future, mem, rc::Rc, task::Poll};
+use std::{cell::RefCell, fmt::Display, future, mem, rc::Rc, task::Poll};
 
-use plugin_factory::draft::Issue;
+use plugin_factory::{
+    draft::Issue,
+    schema::{DecimalRange, IntegerRange},
+};
 use tournament_cli::questionnaire::{AsyncPrompter, Choice, Error, IssueList, Question};
 
 use crate::Reply;
@@ -110,24 +113,34 @@ impl AsyncPrompter for LinePrompter {
         .await
     }
 
-    async fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
+    async fn integer(
+        &mut self,
+        question: &Question,
+        range: &IntegerRange,
+        default: Option<i64>,
+    ) -> Result<i64, Error> {
         self.ask(
-            heading(question),
+            ranged(question, range),
             "whole number",
             default,
-            "this takes a whole number",
-            |line| line.parse().ok(),
+            &format!("this takes {range}"),
+            |line| line.parse().ok().filter(|number| range.contains(*number)),
         )
         .await
     }
 
-    async fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
+    async fn decimal(
+        &mut self,
+        question: &Question,
+        range: &DecimalRange,
+        default: Option<f64>,
+    ) -> Result<f64, Error> {
         self.ask(
-            heading(question),
+            ranged(question, range),
             "number",
             default,
-            "this takes a number",
-            |line| line.parse().ok().filter(|number: &f64| number.is_finite()),
+            &format!("this takes {range}"),
+            |line| line.parse().ok().filter(|number| range.contains(*number)),
         )
         .await
     }
@@ -248,6 +261,12 @@ fn heading(question: &Question) -> String {
         Some(description) => format!("{}\n  {description}", question.label()),
         None => question.label().to_owned(),
     }
+}
+
+/// The heading of `question`, followed by what it takes, `range`, e.g. "takes a number of at least
+/// 0".
+fn ranged(question: &Question, range: &impl Display) -> String {
+    format!("{}\n  takes {range}", heading(question))
 }
 
 /// The heading of `question`, followed by its numbered `options`. A question taking several of

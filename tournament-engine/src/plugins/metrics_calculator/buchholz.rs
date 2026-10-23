@@ -12,13 +12,14 @@ use crate::{
         metrics_calculator::{MetricsCalculator, points::Points},
         ranker::{Comparison, RankingCriterion, requires_metric},
     },
+    score::Score,
     type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct Buchholz(pub f32);
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub struct Buchholz(pub Score);
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::buchholz")]
 impl TypeMapValue for Buchholz {}
 
 impl Display for Buchholz {
@@ -27,14 +28,14 @@ impl Display for Buchholz {
     }
 }
 
-impl AsRef<f32> for Buchholz {
-    fn as_ref(&self) -> &f32 {
+impl AsRef<Score> for Buchholz {
+    fn as_ref(&self) -> &Score {
         &self.0
     }
 }
 
-impl From<f32> for Buchholz {
-    fn from(value: f32) -> Self {
+impl From<Score> for Buchholz {
+    fn from(value: Score) -> Self {
         Self(value)
     }
 }
@@ -52,7 +53,7 @@ impl RankingCriterion for MoreBuchholz {
     type Metric = Buchholz;
 
     fn compare(&self, first: &Buchholz, second: &Buchholz) -> Comparison {
-        Comparison::greater_is_better(first.0.total_cmp(&second.0))
+        Comparison::greater_is_better(first.0.cmp(&second.0))
     }
 }
 
@@ -91,7 +92,7 @@ impl MetricsCalculator for BuchholzCalculator {
             phase_data,
             Some(r#match),
             old_metrics,
-            |_| 1.,
+            |_| Score::ONE,
         )
     }
 
@@ -103,7 +104,9 @@ impl MetricsCalculator for BuchholzCalculator {
         _: &Bye,
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
-        weighted_opponent_sum_changes::<Points, Buchholz>(phase_data, None, old_metrics, |_| 1.)
+        weighted_opponent_sum_changes::<Points, Buchholz>(phase_data, None, old_metrics, |_| {
+            Score::ONE
+        })
     }
 
     fn column(&self) -> Option<MetricColumn> {
@@ -111,10 +114,10 @@ impl MetricsCalculator for BuchholzCalculator {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct BuchholzOfBuchholz(pub f32);
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub struct BuchholzOfBuchholz(pub Score);
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::buchholz_of_buchholz")]
 impl TypeMapValue for BuchholzOfBuchholz {}
 
 impl Display for BuchholzOfBuchholz {
@@ -123,14 +126,14 @@ impl Display for BuchholzOfBuchholz {
     }
 }
 
-impl AsRef<f32> for BuchholzOfBuchholz {
-    fn as_ref(&self) -> &f32 {
+impl AsRef<Score> for BuchholzOfBuchholz {
+    fn as_ref(&self) -> &Score {
         &self.0
     }
 }
 
-impl From<f32> for BuchholzOfBuchholz {
-    fn from(value: f32) -> Self {
+impl From<Score> for BuchholzOfBuchholz {
+    fn from(value: Score) -> Self {
         Self(value)
     }
 }
@@ -148,7 +151,7 @@ impl RankingCriterion for MoreBuchholzOfBuchholz {
     type Metric = BuchholzOfBuchholz;
 
     fn compare(&self, first: &BuchholzOfBuchholz, second: &BuchholzOfBuchholz) -> Comparison {
-        Comparison::greater_is_better(first.0.total_cmp(&second.0))
+        Comparison::greater_is_better(first.0.cmp(&second.0))
     }
 }
 
@@ -187,7 +190,7 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
             phase_data,
             Some(r#match),
             old_metrics,
-            |_| 1.,
+            |_| Score::ONE,
         )
     }
 
@@ -203,7 +206,7 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
             phase_data,
             None,
             old_metrics,
-            |_| 1.,
+            |_| Score::ONE,
         )
     }
 
@@ -214,10 +217,10 @@ impl MetricsCalculator for BuchholzOfBuchholzCalculator {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct SonnebornBerger(pub f32);
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub struct SonnebornBerger(pub Score);
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::sonneborn_berger")]
 impl TypeMapValue for SonnebornBerger {}
 
 impl Display for SonnebornBerger {
@@ -226,14 +229,14 @@ impl Display for SonnebornBerger {
     }
 }
 
-impl AsRef<f32> for SonnebornBerger {
-    fn as_ref(&self) -> &f32 {
+impl AsRef<Score> for SonnebornBerger {
+    fn as_ref(&self) -> &Score {
         &self.0
     }
 }
 
-impl From<f32> for SonnebornBerger {
-    fn from(value: f32) -> Self {
+impl From<Score> for SonnebornBerger {
+    fn from(value: Score) -> Self {
         Self(value)
     }
 }
@@ -251,7 +254,7 @@ impl RankingCriterion for MoreSonnebornBerger {
     type Metric = SonnebornBerger;
 
     fn compare(&self, first: &SonnebornBerger, second: &SonnebornBerger) -> Comparison {
-        Comparison::greater_is_better(first.0.total_cmp(&second.0))
+        Comparison::greater_is_better(first.0.cmp(&second.0))
     }
 }
 
@@ -270,15 +273,17 @@ pub struct SonnebornBergerCalculator {
     #[plugin(
         label = "weight of a beaten opponent",
         description = "the points of that opponent are multiplied by this",
-        default = 1.0
+        min = 0,
+        default = Score::ONE
     )]
-    weight_for_win: f32,
+    weight_for_win: Score,
     #[plugin(
         label = "weight of an opponent played to a draw",
         description = "the points of that opponent are multiplied by this",
-        default = 0.5
+        min = 0,
+        default = Score::new(0.5)
     )]
-    weight_for_draw: f32,
+    weight_for_draw: Score,
 }
 
 impl SonnebornBergerCalculator {
@@ -288,7 +293,7 @@ impl SonnebornBergerCalculator {
     ///
     /// Requires the `test-util` feature.
     #[cfg(feature = "test-util")]
-    pub const fn new(weight_for_win: f32, weight_for_draw: f32) -> Self {
+    pub const fn new(weight_for_win: Score, weight_for_draw: Score) -> Self {
         Self {
             weight_for_win,
             weight_for_draw,
@@ -301,11 +306,11 @@ impl SonnebornBergerCalculator {
             .require::<CalculatesMetric<Points>>("the points");
     }
 
-    fn weight(&self, result: ResultOfTeam) -> f32 {
+    fn weight(&self, result: ResultOfTeam) -> Score {
         match result {
             ResultOfTeam::Win => self.weight_for_win,
             ResultOfTeam::Draw => self.weight_for_draw,
-            ResultOfTeam::Loss => 0.,
+            ResultOfTeam::Loss => Score::ZERO,
         }
     }
 }
@@ -363,18 +368,18 @@ fn weighted_opponent_sum_changes<M, B>(
     phase_data: &PhaseData,
     r#match: Option<&Match>,
     old_metrics: &OldMetrics,
-    weight: impl Fn(ResultOfTeam) -> f32,
+    weight: impl Fn(ResultOfTeam) -> Score,
 ) -> Vec<(RankingId, Metric)>
 where
-    M: TypeMapValue + AsRef<f32>,
-    B: TypeMapValue + AsRef<f32> + From<f32>,
+    M: TypeMapValue + AsRef<Score>,
+    B: TypeMapValue + AsRef<Score> + From<Score>,
 {
-    let mut changes: Map<_, f32> = Map::default();
+    let mut changes: Map<_, Score> = Map::default();
     for (r_id, old_metric) in old_metrics.of::<M>() {
         let ranking = &phase_data.rankings()[&r_id];
         let new_metric = ranking.metric::<M>().unwrap();
         let m_diff = *new_metric.as_ref() - *old_metric.as_ref();
-        if m_diff != 0. {
+        if !m_diff.is_zero() {
             // `B` of all opponents of this ranking change, according to their result against it
             for match_id in ranking.played_matches() {
                 if r#match.is_some_and(|r#match| match_id == &r#match.id()) {
@@ -385,7 +390,7 @@ where
                 let match_of_r = &phase_data.matches()[match_id];
                 let opponent_team = match_of_r.team_of(&r_id).unwrap().opponent();
                 let opponent_weight = weight(played(match_of_r).for_team(opponent_team));
-                if opponent_weight != 0. {
+                if !opponent_weight.is_zero() {
                     let change = opponent_weight * m_diff;
                     for opponent in match_of_r.rankings_of(opponent_team) {
                         *changes.entry(*opponent).or_default() += change;
@@ -400,11 +405,11 @@ where
         .flat_map(|r#match| [(r#match, Team::A), (r#match, Team::B)])
     {
         let team_weight = weight(played(r#match).for_team(team));
-        if team_weight == 0. {
+        if team_weight.is_zero() {
             continue;
         }
         // add metric `M` of the opponent team, weighted, to `B` of team
-        let m_sum: f32 = r#match
+        let m_sum: Score = r#match
             .rankings_of(team.opponent())
             .iter()
             .map(|r_id| *phase_data.rankings()[r_id].metric::<M>().unwrap().as_ref())
@@ -440,12 +445,17 @@ mod tests {
 
     /// The scoring system of most association football leagues, used by every test here but
     /// [`the_neustadtl_scores_of_a_published_cross_table_are_reproduced`].
-    const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+    const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
     /// The scoring system of chess: a win is worth a point, a draw half of one.
-    const ONE_HALF: PointsCalculator = PointsCalculator::new(1.0, 0.5);
+    const ONE_HALF: PointsCalculator = PointsCalculator::new(Score::ONE, Score::new(0.5));
     /// The classic Sonneborn-Berger weights: a beaten opponent counts fully, an opponent played to
     /// a draw counts half.
-    const FULL_HALF: SonnebornBergerCalculator = SonnebornBergerCalculator::new(1.0, 0.5);
+    const FULL_HALF: SonnebornBergerCalculator =
+        SonnebornBergerCalculator::new(Score::ONE, Score::new(0.5));
+
+    fn score(text: &str) -> Score {
+        text.parse().unwrap()
+    }
 
     /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
     /// scoring finished matches with [`THREE_ONE`].
@@ -555,7 +565,7 @@ mod tests {
         let phase = phase_with(4, vec![]);
 
         for ranking_index in 0..4 {
-            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(0.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(score("0")));
         }
     }
 
@@ -564,23 +574,23 @@ mod tests {
         let phase = scenario(0..SCENARIO.len());
 
         // opponents of `0` are `1` (3 points) and `2` (7 points)
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("10")));
         // opponents of `1` are `0` (3), `3` (1) and `2` (7)
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(11.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("11")));
         // opponents of `2` are `3` (1), `0` (3) and `1` (3)
-        assert_eq!(buchholz_of(&phase, 2), Buchholz(7.0));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(score("7")));
         // opponents of `3` are `2` (7) and `1` (3)
-        assert_eq!(buchholz_of(&phase, 3), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(score("10")));
     }
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_buchholz() {
         let phase = scenario((0..SCENARIO.len()).rev());
 
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(10.0));
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(11.0));
-        assert_eq!(buchholz_of(&phase, 2), Buchholz(7.0));
-        assert_eq!(buchholz_of(&phase, 3), Buchholz(10.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("10")));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("11")));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(score("7")));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(score("10")));
     }
 
     #[test]
@@ -590,15 +600,15 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
         // `1` has no points yet, so beating it is worth nothing so far
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(0.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("0")));
 
         let second_match = match_id(&phase, 2, &[1], &[2]);
         phase.report_match_result(second_match, MatchResult::AWins);
 
         // the three points `1` won in its second match count for `0` as well
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(3.0));
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
-        assert_eq!(buchholz_of(&phase, 2), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("3")));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("3")));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(score("3")));
     }
 
     #[test]
@@ -617,10 +627,10 @@ mod tests {
 
         // the scheduled but unreported match of `0` against `2` contributes nothing, even though
         // `2` won its first match
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(0.0));
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
-        assert_eq!(buchholz_of(&phase, 2), Buchholz(0.0));
-        assert_eq!(buchholz_of(&phase, 3), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("0")));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("3")));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(score("0")));
+        assert_eq!(buchholz_of(&phase, 3), Buchholz(score("3")));
     }
 
     #[test]
@@ -635,11 +645,11 @@ mod tests {
 
         // `2` and `3` end up with one point each, counted once for each of the two matches
         for ranking_index in [0, 1] {
-            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(4.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(score("4")));
         }
         // `0` and `1` end up with four points each, again counted for both matches
         for ranking_index in [2, 3] {
-            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(16.0));
+            assert_eq!(buchholz_of(&phase, ranking_index), Buchholz(score("16")));
         }
     }
 
@@ -651,7 +661,7 @@ mod tests {
             PhaseBuilder::new()
                 .add_players(3)
                 .add_metric(WinsDrawsLossesCalculator)
-                .add_metric(THREE_ONE.with_points_for_bye(3.0))
+                .add_metric(THREE_ONE.with_points_for_bye(Score::new(3.0)))
                 .add_metric(BuchholzCalculator),
             vec![(1, vec![0], vec![1]), (2, vec![0], vec![2])],
             vec![(1, 2), (2, 1)],
@@ -660,17 +670,17 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
         // the bye `1` got after its loss gave it three points, which count for `0` already
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("3")));
         // a bye has no opponent whose points could count
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(3.0));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("3")));
 
         let second_match = match_id(&phase, 2, &[0], &[2]);
         phase.report_match_result(second_match, MatchResult::Draw);
 
         // `0` has 4 points, `1` 3 and `2` 4
-        assert_eq!(buchholz_of(&phase, 0), Buchholz(7.0));
-        assert_eq!(buchholz_of(&phase, 1), Buchholz(4.0));
-        assert_eq!(buchholz_of(&phase, 2), Buchholz(4.0));
+        assert_eq!(buchholz_of(&phase, 0), Buchholz(score("7")));
+        assert_eq!(buchholz_of(&phase, 1), Buchholz(score("4")));
+        assert_eq!(buchholz_of(&phase, 2), Buchholz(score("4")));
     }
 
     #[test]
@@ -689,11 +699,12 @@ mod tests {
 
     #[test]
     fn a_higher_buchholz_is_better() {
-        let compare = |first, second| MoreBuchholz.compare(&Buchholz(first), &Buchholz(second));
-        assert_eq!(compare(7.0, 3.0), Comparison::Better);
-        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
-        assert_eq!(compare(0.5, 0.0), Comparison::Better);
-        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
+        let compare =
+            |first, second| MoreBuchholz.compare(&Buchholz(score(first)), &Buchholz(score(second)));
+        assert_eq!(compare("7", "3"), Comparison::Better);
+        assert_eq!(compare("3", "7"), Comparison::Worse);
+        assert_eq!(compare("0.5", "0"), Comparison::Better);
+        assert_eq!(compare("3", "3"), Comparison::Equal);
     }
 
     #[test]
@@ -715,23 +726,47 @@ mod tests {
         // the buchholz of the scenario are `0`: 10, `1`: 11, `2`: 7, `3`: 10
 
         // opponents of `0` are `1` (11) and `2` (7)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(18.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("18"))
+        );
         // opponents of `1` are `0` (10), `3` (10) and `2` (7)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(27.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("27"))
+        );
         // opponents of `2` are `3` (10), `0` (10) and `1` (11)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(31.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 2),
+            BuchholzOfBuchholz(score("31"))
+        );
         // opponents of `3` are `2` (7) and `1` (11)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(18.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 3),
+            BuchholzOfBuchholz(score("18"))
+        );
     }
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_buchholz_of_buchholz() {
         let phase = scenario_with_buchholz_of_buchholz((0..SCENARIO.len()).rev());
 
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(18.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(27.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(31.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(18.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("18"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("27"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 2),
+            BuchholzOfBuchholz(score("31"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 3),
+            BuchholzOfBuchholz(score("18"))
+        );
     }
 
     #[test]
@@ -743,17 +778,32 @@ mod tests {
         phase.report_match_result(first_match, MatchResult::AWins);
         // `1` lost against `0`, so its buchholz is already 3 and counts for `0`, whereas the
         // buchholz of `0` itself is still 0, as `1` has no points
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(0.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("3"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("0"))
+        );
 
         let second_match = match_id(&phase, 2, &[1], &[2]);
         phase.report_match_result(second_match, MatchResult::AWins);
 
         // every ranking now faced exactly one opponent with a buchholz of 3, except `1`, which
         // faced two of them
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(6.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(3.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("3"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("6"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 2),
+            BuchholzOfBuchholz(score("3"))
+        );
     }
 
     #[test]
@@ -772,13 +822,25 @@ mod tests {
 
         // the last match gave `2` its three points, which raised the buchholz of `1` from 3 to 6
         // and with it the buchholz of buchholz of `0`, even though `0` never faced `2`
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(6.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("6"))
+        );
         // opponents of `1` are `0` (buchholz 3) and `2` (buchholz 3)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(6.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("6"))
+        );
         // opponents of `2` are `1` (buchholz 6) and `3` (buchholz 3)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(9.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 2),
+            BuchholzOfBuchholz(score("9"))
+        );
         // the only opponent of `3` is `2` (buchholz 3)
-        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(3.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 3),
+            BuchholzOfBuchholz(score("3"))
+        );
     }
 
     #[test]
@@ -797,10 +859,22 @@ mod tests {
 
         // the scheduled but unreported match of `0` against `2` contributes nothing, even though
         // `2` has a buchholz of 3 by now
-        assert_eq!(buchholz_of_buchholz_of(&phase, 0), BuchholzOfBuchholz(3.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 1), BuchholzOfBuchholz(0.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 2), BuchholzOfBuchholz(3.0));
-        assert_eq!(buchholz_of_buchholz_of(&phase, 3), BuchholzOfBuchholz(0.0));
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 0),
+            BuchholzOfBuchholz(score("3"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 1),
+            BuchholzOfBuchholz(score("0"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 2),
+            BuchholzOfBuchholz(score("3"))
+        );
+        assert_eq!(
+            buchholz_of_buchholz_of(&phase, 3),
+            BuchholzOfBuchholz(score("0"))
+        );
     }
 
     #[test]
@@ -817,14 +891,14 @@ mod tests {
         for ranking_index in [0, 1] {
             assert_eq!(
                 buchholz_of_buchholz_of(&phase, ranking_index),
-                BuchholzOfBuchholz(64.0)
+                BuchholzOfBuchholz(score("64"))
             );
         }
         // `0` and `1` end up with a buchholz of 4 each, again counted for both matches
         for ranking_index in [2, 3] {
             assert_eq!(
                 buchholz_of_buchholz_of(&phase, ranking_index),
-                BuchholzOfBuchholz(16.0)
+                BuchholzOfBuchholz(score("16"))
             );
         }
     }
@@ -846,12 +920,15 @@ mod tests {
     #[test]
     fn a_higher_buchholz_of_buchholz_is_better() {
         let compare = |first, second| {
-            MoreBuchholzOfBuchholz.compare(&BuchholzOfBuchholz(first), &BuchholzOfBuchholz(second))
+            MoreBuchholzOfBuchholz.compare(
+                &BuchholzOfBuchholz(score(first)),
+                &BuchholzOfBuchholz(score(second)),
+            )
         };
-        assert_eq!(compare(7.0, 3.0), Comparison::Better);
-        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
-        assert_eq!(compare(0.5, 0.0), Comparison::Better);
-        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
+        assert_eq!(compare("7", "3"), Comparison::Better);
+        assert_eq!(compare("3", "7"), Comparison::Worse);
+        assert_eq!(compare("0.5", "0"), Comparison::Better);
+        assert_eq!(compare("3", "3"), Comparison::Equal);
     }
 
     #[test]
@@ -861,7 +938,7 @@ mod tests {
         for ranking_index in 0..4 {
             assert_eq!(
                 sonneborn_berger_of(&phase, ranking_index),
-                SonnebornBerger(0.0)
+                SonnebornBerger(score("0"))
             );
         }
     }
@@ -871,23 +948,35 @@ mod tests {
         let phase = scenario_with_sonneborn_berger(FULL_HALF, 0..SCENARIO.len());
 
         // `0` beat `1` (3 points) and lost against `2`
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
         // `1` beat `3` (1 point) and lost against `0` and `2`
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(1.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("1")));
         // `2` beat `0` (3) and `1` (3) and drew against `3` (1)
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(6.5));
+        assert_eq!(
+            sonneborn_berger_of(&phase, 2),
+            SonnebornBerger(score("6.5"))
+        );
         // `3` drew against `2` (7) and lost against `1`
-        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(3.5));
+        assert_eq!(
+            sonneborn_berger_of(&phase, 3),
+            SonnebornBerger(score("3.5"))
+        );
     }
 
     #[test]
     fn the_order_in_which_results_are_reported_does_not_change_the_sonneborn_berger() {
         let phase = scenario_with_sonneborn_berger(FULL_HALF, (0..SCENARIO.len()).rev());
 
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(1.0));
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(6.5));
-        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(3.5));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("1")));
+        assert_eq!(
+            sonneborn_berger_of(&phase, 2),
+            SonnebornBerger(score("6.5"))
+        );
+        assert_eq!(
+            sonneborn_berger_of(&phase, 3),
+            SonnebornBerger(score("3.5"))
+        );
     }
 
     #[test]
@@ -901,16 +990,16 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
         // `1` has no points yet, so beating it is worth nothing so far
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("0")));
 
         let second_match = match_id(&phase, 2, &[1], &[2]);
         phase.report_match_result(second_match, MatchResult::AWins);
 
         // the three points `1` won in its second match count for `0` as well
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
         // `1` beat `2`, which is still without points
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(0.0));
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("0")));
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("0")));
     }
 
     #[test]
@@ -924,16 +1013,22 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::Draw);
         // the draw gave `1` a single point, half of which counts for `0`
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(0.5));
+        assert_eq!(
+            sonneborn_berger_of(&phase, 0),
+            SonnebornBerger(score("0.5"))
+        );
 
         let second_match = match_id(&phase, 2, &[1], &[2]);
         phase.report_match_result(second_match, MatchResult::AWins);
 
         // `1` is now at four points, still counted half by `0`
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(2.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("2")));
         // `1` drew against `0` (1 point) and beat `2` (no points)
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(0.5));
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(0.0));
+        assert_eq!(
+            sonneborn_berger_of(&phase, 1),
+            SonnebornBerger(score("0.5"))
+        );
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("0")));
     }
 
     #[test]
@@ -955,41 +1050,41 @@ mod tests {
         }
 
         // `0` won twice against `1` (3 points), its loss adds nothing
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(6.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("6")));
         // `1` won once against `0` (6 points), its two losses add nothing
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(6.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("6")));
     }
 
     #[test]
     fn the_weights_scale_the_points_of_the_opponents() {
         let phase = scenario_with_sonneborn_berger(
-            SonnebornBergerCalculator::new(2.0, 1.0),
+            SonnebornBergerCalculator::new(Score::new(2.0), Score::ONE),
             0..SCENARIO.len(),
         );
 
         // `0` beat `1` (3 points)
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(6.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("6")));
         // `1` beat `3` (1)
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(2.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("2")));
         // `2` beat `0` (3) and `1` (3) and drew against `3` (1)
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(13.0));
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("13")));
         // `3` drew against `2` (7)
-        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(7.0));
+        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(score("7")));
     }
 
     #[test]
     fn a_draw_weight_of_zero_counts_beaten_opponents_only() {
         let phase = scenario_with_sonneborn_berger(
-            SonnebornBergerCalculator::new(1.0, 0.0),
+            SonnebornBergerCalculator::new(Score::ONE, Score::ZERO),
             0..SCENARIO.len(),
         );
 
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(1.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("1")));
         // the draw of `2` against `3` no longer contributes
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(6.0));
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("6")));
         // `3` only ever drew, so it stays at zero
-        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(score("0")));
     }
 
     #[test]
@@ -1008,13 +1103,13 @@ mod tests {
         }
 
         // `0` beat `1`, which is at three points by now
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
         // `1` beat `3`, which is without points
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("0")));
         // the scheduled but unreported match of `0` against `2` contributes nothing, even though
         // `2` won its first match and `0` has three points
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(0.0));
-        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("0")));
+        assert_eq!(sonneborn_berger_of(&phase, 3), SonnebornBerger(score("0")));
     }
 
     #[test]
@@ -1032,14 +1127,14 @@ mod tests {
         for ranking_index in [0, 1] {
             assert_eq!(
                 sonneborn_berger_of(&phase, ranking_index),
-                SonnebornBerger(3.0)
+                SonnebornBerger(score("3"))
             );
         }
         // `0` and `1` end up with four points each, of which only the drawn match counts, by half
         for ranking_index in [2, 3] {
             assert_eq!(
                 sonneborn_berger_of(&phase, ranking_index),
-                SonnebornBerger(4.0)
+                SonnebornBerger(score("4"))
             );
         }
     }
@@ -1068,22 +1163,22 @@ mod tests {
 
     /// The points and the Neustadtl scores that the article lists for [`CROSS_TABLE`], in the
     /// order of its rows.
-    const PUBLISHED_SCORES: [(f32, f32); 15] = [
-        (11.0, 69.5),
-        (11.0, 66.75),
-        (10.5, 67.5),
-        (8.5, 54.75),
-        (8.0, 47.75),
-        (7.0, 45.25),
-        (7.0, 42.5),
-        (7.0, 41.5),
-        (7.0, 41.5),
-        (7.0, 40.5),
-        (5.5, 33.25),
-        (5.5, 28.5),
-        (4.5, 24.75),
-        (4.5, 22.75),
-        (1.0, 7.75),
+    const PUBLISHED_SCORES: [(&str, &str); 15] = [
+        ("11", "69.5"),
+        ("11", "66.75"),
+        ("10.5", "67.5"),
+        ("8.5", "54.75"),
+        ("8", "47.75"),
+        ("7", "45.25"),
+        ("7", "42.5"),
+        ("7", "41.5"),
+        ("7", "41.5"),
+        ("7", "40.5"),
+        ("5.5", "33.25"),
+        ("5.5", "28.5"),
+        ("4.5", "24.75"),
+        ("4.5", "22.75"),
+        ("1", "7.75"),
     ];
 
     /// The Neustadtl score of chess is the Sonneborn-Berger of [`FULL_HALF`] over the points of
@@ -1121,12 +1216,12 @@ mod tests {
         for (index, (points, neustadtl)) in PUBLISHED_SCORES.into_iter().enumerate() {
             assert_eq!(
                 test_utils::metric_of::<Points>(&phase, index),
-                Points(points),
+                Points(score(points)),
                 "player {index} ended up with the wrong number of points"
             );
             assert_eq!(
                 sonneborn_berger_of(&phase, index),
-                SonnebornBerger(neustadtl),
+                SonnebornBerger(score(neustadtl)),
                 "player {index} ended up with the wrong Neustadtl score"
             );
         }
@@ -1140,7 +1235,7 @@ mod tests {
             PhaseBuilder::new()
                 .add_players(3)
                 .add_metric(WinsDrawsLossesCalculator)
-                .add_metric(THREE_ONE.with_points_for_bye(3.0))
+                .add_metric(THREE_ONE.with_points_for_bye(Score::new(3.0)))
                 .add_metric(FULL_HALF),
             vec![(1, vec![0], vec![1]), (2, vec![0], vec![2])],
             vec![(1, 2), (2, 1)],
@@ -1149,17 +1244,17 @@ mod tests {
         let first_match = match_id(&phase, 1, &[0], &[1]);
         phase.report_match_result(first_match, MatchResult::AWins);
         // the bye `1` got after its loss gave it three points, which count for `0` already
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(3.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("3")));
 
         let second_match = match_id(&phase, 2, &[0], &[2]);
         phase.report_match_result(second_match, MatchResult::Draw);
 
         // `0` beat `1` (3 points) and drew against `2` (4 points)
-        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(5.0));
+        assert_eq!(sonneborn_berger_of(&phase, 0), SonnebornBerger(score("5")));
         // `1` lost its only match, and a bye has no opponent whose points could count
-        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(0.0));
+        assert_eq!(sonneborn_berger_of(&phase, 1), SonnebornBerger(score("0")));
         // `2` drew against `0` (4 points)
-        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(2.0));
+        assert_eq!(sonneborn_berger_of(&phase, 2), SonnebornBerger(score("2")));
     }
 
     #[test]
@@ -1177,11 +1272,14 @@ mod tests {
     #[test]
     fn a_higher_sonneborn_berger_is_better() {
         let compare = |first, second| {
-            MoreSonnebornBerger.compare(&SonnebornBerger(first), &SonnebornBerger(second))
+            MoreSonnebornBerger.compare(
+                &SonnebornBerger(score(first)),
+                &SonnebornBerger(score(second)),
+            )
         };
-        assert_eq!(compare(7.0, 3.0), Comparison::Better);
-        assert_eq!(compare(3.0, 7.0), Comparison::Worse);
-        assert_eq!(compare(0.5, 0.0), Comparison::Better);
-        assert_eq!(compare(3.0, 3.0), Comparison::Equal);
+        assert_eq!(compare("7", "3"), Comparison::Better);
+        assert_eq!(compare("3", "7"), Comparison::Worse);
+        assert_eq!(compare("0.5", "0"), Comparison::Better);
+        assert_eq!(compare("3", "3"), Comparison::Equal);
     }
 }

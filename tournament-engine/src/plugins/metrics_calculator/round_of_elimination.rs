@@ -46,7 +46,7 @@ impl Display for RoundOfElimination {
     }
 }
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::round_of_elimination")]
 impl TypeMapValue for RoundOfElimination {}
 
 /// Ranks by [`RoundOfElimination`]: the later a ranking was knocked out the better, still being in

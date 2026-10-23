@@ -43,7 +43,7 @@ impl Display for WinsDrawsLosses {
     }
 }
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::wins_draws_losses")]
 impl TypeMapValue for WinsDrawsLosses {}
 
 /// Ranks by the wins of [`WinsDrawsLosses`], where more wins are better.

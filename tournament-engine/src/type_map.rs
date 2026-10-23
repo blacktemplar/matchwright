@@ -91,10 +91,12 @@ impl TypeMap {
     ///
     /// # Examples
     /// ```
-    /// # use tournament_engine::{TypeMap, plugins::metrics_calculator::Points};
-    /// let map = TypeMap::new().with(Points(1.0)).with(Points(2.0));
+    /// # use tournament_engine::{Score, TypeMap, plugins::metrics_calculator::Points};
+    /// let map = TypeMap::new()
+    ///     .with(Points(Score::new(1.0)))
+    ///     .with(Points(Score::new(2.0)));
     ///
-    /// assert_eq!(map.get::<Points>(), Some(&Points(2.0)));
+    /// assert_eq!(map.get::<Points>(), Some(&Points(Score::new(2.0))));
     /// ```
     pub fn with<T: TypeMapValue>(mut self, value: T) -> Self {
         self.insert(value);
@@ -134,7 +136,16 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
-    use crate::plugins::metrics_calculator::{points::Points, wins_draws_losses::WinsDrawsLosses};
+    use crate::{
+        plugins::metrics_calculator::{
+            buchholz::{Buchholz, BuchholzOfBuchholz, SonnebornBerger},
+            points::Points,
+            round_of_elimination::RoundOfElimination,
+            round_of_first_loss::RoundOfFirstLoss,
+            wins_draws_losses::WinsDrawsLosses,
+        },
+        score::Score,
+    };
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct Count {
@@ -247,10 +258,46 @@ mod tests {
         );
     }
 
+    /// The tag of a metric is part of every snapshot saved, so a change to it is a breaking one
+    /// and has to be deliberate. Pinning them here makes a rename of a type fail this test instead
+    /// of silently invalidating old snapshots.
+    #[test]
+    fn metric_types_of_the_engine_are_serialized_under_their_explicitly_chosen_tags() {
+        let map = TypeMap::new()
+            .with(WinsDrawsLosses::default())
+            .with(Points::default())
+            .with(Buchholz::default())
+            .with(BuchholzOfBuchholz::default())
+            .with(SonnebornBerger::default())
+            .with(RoundOfFirstLoss::default())
+            .with(RoundOfElimination::default());
+
+        let value = serde_json::to_value(&map).unwrap();
+
+        let tags: Vec<_> = value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            tags,
+            [
+                "tournament_engine::wins_draws_losses",
+                "tournament_engine::points",
+                "tournament_engine::buchholz",
+                "tournament_engine::buchholz_of_buchholz",
+                "tournament_engine::sonneborn_berger",
+                "tournament_engine::round_of_first_loss",
+                "tournament_engine::round_of_elimination",
+            ]
+        );
+    }
+
     #[test]
     fn metric_types_of_the_engine_survive_a_round_trip() {
         let mut map = TypeMap::new();
-        map.insert(Points(2.5));
+        map.insert(Points(Score::new(2.5)));
         map.insert(WinsDrawsLosses {
             wins: 3,
             draws: 1,
@@ -260,7 +307,7 @@ mod tests {
 
         let map = round_trip(&map);
 
-        assert_eq!(map.get::<Points>(), Some(&Points(2.5)));
+        assert_eq!(map.get::<Points>(), Some(&Points(Score::new(2.5))));
         assert_eq!(
             map.get::<WinsDrawsLosses>(),
             Some(&WinsDrawsLosses {

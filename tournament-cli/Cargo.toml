@@ -21,7 +21,6 @@ serde_json.workspace = true
 shlex.workspace = true
 thiserror.workspace = true
 tournament-engine.workspace = true
-typetag.workspace = true
 # entrant and phase ids are random, which is what keeps them independent of the name they are
 # shown with
 uuid = { workspace = true, features = ["v4"] }

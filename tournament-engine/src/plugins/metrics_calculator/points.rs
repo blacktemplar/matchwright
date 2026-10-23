@@ -11,13 +11,14 @@ use crate::{
         metrics_calculator::{MetricsCalculator, wins_draws_losses::WinsDrawsLosses},
         ranker::{Comparison, RankingCriterion, requires_metric},
     },
+    score::Score,
     type_map::TypeMapValue,
 };
 
-#[derive(Default, Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct Points(pub f32);
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub struct Points(pub Score);
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::points")]
 impl TypeMapValue for Points {}
 
 impl Display for Points {
@@ -26,8 +27,8 @@ impl Display for Points {
     }
 }
 
-impl AsRef<f32> for Points {
-    fn as_ref(&self) -> &f32 {
+impl AsRef<Score> for Points {
+    fn as_ref(&self) -> &Score {
         &self.0
     }
 }
@@ -45,7 +46,7 @@ impl RankingCriterion for MorePoints {
     type Metric = Points;
 
     fn compare(&self, first: &Points, second: &Points) -> Comparison {
-        Comparison::greater_is_better(first.0.total_cmp(&second.0))
+        Comparison::greater_is_better(first.0.cmp(&second.0))
     }
 }
 
@@ -64,16 +65,17 @@ crate::register_criterion!(MorePoints);
     declare_static = Self::declare_static
 )]
 pub struct PointsCalculator {
-    #[plugin(label = "points for a win", default = 1.0)]
-    points_for_win: f32,
-    #[plugin(label = "points for a draw", default = 0.5)]
-    points_for_draw: f32,
+    #[plugin(label = "points for a win", min = 0, default = Score::ONE)]
+    points_for_win: Score,
+    #[plugin(label = "points for a draw", min = 0, default = Score::new(0.5))]
+    points_for_draw: Score,
     #[plugin(
         label = "points for a bye",
         description = "a round without a match, e.g. with an odd number of entrants",
-        default = 1.0
+        min = 0,
+        default = Score::ONE
     )]
-    points_for_bye: f32,
+    points_for_bye: Score,
 }
 
 impl PointsCalculator {
@@ -82,11 +84,11 @@ impl PointsCalculator {
     ///
     /// Requires the `test-util` feature.
     #[cfg(feature = "test-util")]
-    pub const fn new(points_for_win: f32, points_for_draw: f32) -> Self {
+    pub const fn new(points_for_win: Score, points_for_draw: Score) -> Self {
         Self {
             points_for_win,
             points_for_draw,
-            points_for_bye: 0.0,
+            points_for_bye: Score::ZERO,
         }
     }
 
@@ -94,23 +96,21 @@ impl PointsCalculator {
     ///
     /// Requires the `test-util` feature.
     #[cfg(feature = "test-util")]
-    pub const fn with_points_for_bye(mut self, points_for_bye: f32) -> Self {
+    pub const fn with_points_for_bye(mut self, points_for_bye: Score) -> Self {
         self.points_for_bye = points_for_bye;
         self
     }
 
     fn points_of(&self, ranking_id: &RankingId, phase_data: &PhaseData) -> Metric {
-        // calculated from the counts rather than added up result by result, so that a number of
-        // points not exactly representable as a float always comes out the same
         let WinsDrawsLosses {
             wins, draws, byes, ..
         } = *phase_data.rankings()[ranking_id]
             .metric::<WinsDrawsLosses>()
             .unwrap();
         Box::new(Points(
-            self.points_for_win * wins as f32
-                + self.points_for_draw * draws as f32
-                + self.points_for_bye * byes as f32,
+            self.points_for_win * wins.into()
+                + self.points_for_draw * draws.into()
+                + self.points_for_bye * byes.into(),
         ))
     }
 
@@ -145,7 +145,7 @@ impl MetricsCalculator for PointsCalculator {
         bye: &Bye,
         _: &OldMetrics,
     ) -> Vec<(RankingId, Metric)> {
-        if self.points_for_bye == 0.0 {
+        if self.points_for_bye.is_zero() {
             return vec![];
         }
         vec![(bye.ranking(), self.points_of(&bye.ranking(), phase_data))]
@@ -170,17 +170,17 @@ mod tests {
         },
     };
 
-    const fn calculator(points_for_win: Points, points_for_draw: Points) -> PointsCalculator {
-        PointsCalculator::new(points_for_win.0, points_for_draw.0)
-    }
-
     /// The scoring system of most association football leagues.
-    const THREE_ONE: PointsCalculator = calculator(Points(3.0), Points(1.0));
+    const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
     /// The scoring system association football used before it moved to [`THREE_ONE`], still in
     /// use e.g. in ice hockey.
-    const TWO_ONE: PointsCalculator = calculator(Points(2.0), Points(1.0));
+    const TWO_ONE: PointsCalculator = PointsCalculator::new(Score::new(2.0), Score::ONE);
     /// The scoring system of chess and most other games scoring a draw as half a win.
-    const ONE_HALF: PointsCalculator = calculator(Points(1.0), Points(0.5));
+    const ONE_HALF: PointsCalculator = PointsCalculator::new(Score::ONE, Score::new(0.5));
+
+    fn points(text: &str) -> Points {
+        Points(text.parse().unwrap())
+    }
 
     /// Builds a phase with `num_players` rankings and all matches of `matches` already scheduled,
     /// scoring finished matches with `calculator`.
@@ -218,7 +218,7 @@ mod tests {
         let phase = phase_with(4, vec![], THREE_ONE);
 
         for ranking_index in 0..4 {
-            assert_eq!(metric_of(&phase, ranking_index), Points(0.0));
+            assert_eq!(metric_of(&phase, ranking_index), points("0"));
         }
     }
 
@@ -226,30 +226,30 @@ mod tests {
     fn three_points_for_a_win_and_one_for_a_draw() {
         let phase = play_scenario(THREE_ONE);
 
-        assert_eq!(metric_of(&phase, 0), Points(3.0));
-        assert_eq!(metric_of(&phase, 1), Points(3.0));
-        assert_eq!(metric_of(&phase, 2), Points(7.0));
-        assert_eq!(metric_of(&phase, 3), Points(1.0));
+        assert_eq!(metric_of(&phase, 0), points("3"));
+        assert_eq!(metric_of(&phase, 1), points("3"));
+        assert_eq!(metric_of(&phase, 2), points("7"));
+        assert_eq!(metric_of(&phase, 3), points("1"));
     }
 
     #[test]
     fn two_points_for_a_win_and_one_for_a_draw() {
         let phase = play_scenario(TWO_ONE);
 
-        assert_eq!(metric_of(&phase, 0), Points(2.0));
-        assert_eq!(metric_of(&phase, 1), Points(2.0));
-        assert_eq!(metric_of(&phase, 2), Points(5.0));
-        assert_eq!(metric_of(&phase, 3), Points(1.0));
+        assert_eq!(metric_of(&phase, 0), points("2"));
+        assert_eq!(metric_of(&phase, 1), points("2"));
+        assert_eq!(metric_of(&phase, 2), points("5"));
+        assert_eq!(metric_of(&phase, 3), points("1"));
     }
 
     #[test]
     fn one_point_for_a_win_and_half_a_point_for_a_draw() {
         let phase = play_scenario(ONE_HALF);
 
-        assert_eq!(metric_of(&phase, 0), Points(1.0));
-        assert_eq!(metric_of(&phase, 1), Points(1.0));
-        assert_eq!(metric_of(&phase, 2), Points(2.5));
-        assert_eq!(metric_of(&phase, 3), Points(0.5));
+        assert_eq!(metric_of(&phase, 0), points("1"));
+        assert_eq!(metric_of(&phase, 1), points("1"));
+        assert_eq!(metric_of(&phase, 2), points("2.5"));
+        assert_eq!(metric_of(&phase, 3), points("0.5"));
     }
 
     #[test]
@@ -266,8 +266,8 @@ mod tests {
             phase.report_match_result(match_id, MatchResult::Draw);
         }
 
-        assert_eq!(metric_of(&phase, 0), Points(1.5));
-        assert_eq!(metric_of(&phase, 1), Points(1.5));
+        assert_eq!(metric_of(&phase, 0), points("1.5"));
+        assert_eq!(metric_of(&phase, 1), points("1.5"));
     }
 
     #[test]
@@ -277,8 +277,8 @@ mod tests {
 
         phase.report_match_result(match_id, MatchResult::BWins);
 
-        assert_eq!(metric_of(&phase, 0), Points(0.0));
-        assert_eq!(metric_of(&phase, 1), Points(3.0));
+        assert_eq!(metric_of(&phase, 0), points("0"));
+        assert_eq!(metric_of(&phase, 1), points("3"));
     }
 
     #[test]
@@ -289,11 +289,11 @@ mod tests {
 
         phase.report_match_result(match_id, MatchResult::AWins);
 
-        assert_eq!(metric_of(&phase, 0), Points(3.0));
-        assert_eq!(metric_of(&phase, 1), Points(0.0));
+        assert_eq!(metric_of(&phase, 0), points("3"));
+        assert_eq!(metric_of(&phase, 1), points("0"));
         // the rankings of the other match are still at their initial value
-        assert_eq!(metric_of(&phase, 2), Points(0.0));
-        assert_eq!(metric_of(&phase, 3), Points(0.0));
+        assert_eq!(metric_of(&phase, 2), points("0"));
+        assert_eq!(metric_of(&phase, 3), points("0"));
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
         phase.report_match_result(match_id, MatchResult::Draw);
 
         for ranking_index in 0..4 {
-            assert_eq!(metric_of(&phase, ranking_index), Points(1.0));
+            assert_eq!(metric_of(&phase, ranking_index), points("1"));
         }
     }
 
@@ -328,16 +328,16 @@ mod tests {
     fn a_bye_is_worth_no_points_by_default() {
         let phase = phase_with_a_bye(ONE_HALF);
 
-        assert_eq!(metric_of(&phase, 2), Points(0.0));
+        assert_eq!(metric_of(&phase, 2), points("0"));
     }
 
     #[test]
     fn a_bye_is_worth_the_points_for_a_bye() {
-        let phase = phase_with_a_bye(ONE_HALF.with_points_for_bye(1.0));
+        let phase = phase_with_a_bye(ONE_HALF.with_points_for_bye(Score::ONE));
 
-        assert_eq!(metric_of(&phase, 0), Points(1.0));
-        assert_eq!(metric_of(&phase, 1), Points(0.0));
-        assert_eq!(metric_of(&phase, 2), Points(1.0));
+        assert_eq!(metric_of(&phase, 0), points("1"));
+        assert_eq!(metric_of(&phase, 1), points("0"));
+        assert_eq!(metric_of(&phase, 2), points("1"));
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
             PhaseBuilder::new()
                 .add_players(2)
                 .add_metric(WinsDrawsLossesCalculator)
-                .add_metric(THREE_ONE.with_points_for_bye(2.0)),
+                .add_metric(THREE_ONE.with_points_for_bye(Score::new(2.0))),
             vec![(2, vec![0], vec![1])],
             vec![(1, 0)],
         );
@@ -354,8 +354,8 @@ mod tests {
 
         phase.report_match_result(match_id, MatchResult::Draw);
 
-        assert_eq!(metric_of(&phase, 0), Points(3.0));
-        assert_eq!(metric_of(&phase, 1), Points(1.0));
+        assert_eq!(metric_of(&phase, 0), points("3"));
+        assert_eq!(metric_of(&phase, 1), points("1"));
     }
 
     #[test]
@@ -372,10 +372,10 @@ mod tests {
 
     #[test]
     fn more_points_are_better() {
-        let compare = |first, second| MorePoints.compare(&Points(first), &Points(second));
-        assert_eq!(compare(3.0, 1.0), Comparison::Better);
-        assert_eq!(compare(1.0, 3.0), Comparison::Worse);
-        assert_eq!(compare(1.5, 1.0), Comparison::Better);
-        assert_eq!(compare(1.5, 1.5), Comparison::Equal);
+        let compare = |first, second| MorePoints.compare(&points(first), &points(second));
+        assert_eq!(compare("3", "1"), Comparison::Better);
+        assert_eq!(compare("1", "3"), Comparison::Worse);
+        assert_eq!(compare("1.5", "1"), Comparison::Better);
+        assert_eq!(compare("1.5", "1.5"), Comparison::Equal);
     }
 }

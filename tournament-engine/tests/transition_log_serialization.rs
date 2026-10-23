@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseId,
-    PhasePluginsBuilder, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed,
+    PhasePluginsBuilder, RemoveEntrant, ReportMatchResult, Score, Seed, SetCompetitionSeed,
     StartCompetition, TypeMapValue,
     plugins::{
         metrics_calculator::{
@@ -33,7 +33,7 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const SEED: Seed = Seed::new(*b"log-trip!!!!");
 
 /// The scoring system of most association football leagues.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
 
 fn phase_id() -> PhaseId {
     PhaseId::new(Uuid::from_u128(0xfa5e))
@@ -352,7 +352,7 @@ fn a_round_tripped_log_can_still_be_undone() {
         phase
             .rankings()
             .values()
-            .filter(|ranking| ranking.metric::<Points>() == Some(&Points(3.0)))
+            .filter(|ranking| ranking.metric::<Points>() == Some(&Points(Score::new(3.0))))
             .count(),
         1
     );

@@ -487,6 +487,25 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn a_number_shows_its_range_and_one_out_of_it_is_asked_again() {
+        let mut shell = Shell::new();
+        output(&mut shell, "add-phase");
+
+        let asked = output(&mut shell, "random rounds");
+        assert!(
+            asked.ends_with("takes a whole number of at least 1"),
+            "{asked}"
+        );
+        let replies = shell.run("0");
+
+        let [Reply::Error(complaint)] = &replies[..] else {
+            panic!("the answer must only be complained about, got {replies:?}");
+        };
+        assert_eq!(complaint, "this takes a whole number of at least 1");
+        assert_eq!(shell.prompt(), "whole number [5]> ");
+    }
+
+    #[wasm_bindgen_test]
     fn cancel_stops_the_questions_without_adding_a_phase() {
         let mut shell = Shell::new();
         output(&mut shell, "add-phase");

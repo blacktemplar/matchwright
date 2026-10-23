@@ -37,7 +37,7 @@ use crate::{
     recommends = Self::recommends
 )]
 pub struct MonsterDyp {
-    #[plugin(label = "rounds", default = 5)]
+    #[plugin(label = "rounds", min = 1, default = 5)]
     rounds: u32,
 }
 

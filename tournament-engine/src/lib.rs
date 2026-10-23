@@ -1,6 +1,7 @@
 pub mod entities;
 pub mod map;
 pub mod plugins;
+pub mod score;
 pub mod transitions;
 pub mod type_map;
 
@@ -13,6 +14,7 @@ pub use entities::competition::{
 pub use plugins::PhasePlugins;
 #[cfg(feature = "test-util")]
 pub use plugins::PhasePluginsBuilder;
+pub use score::Score;
 pub use transitions::{
     AddEntrant, AddPhase, CompetitionStateMachine, CompetitionStateMachineExt,
     CompetitionTransition, RemoveEntrant, ReportMatchResult, SetCompetitionSeed, StartCompetition,

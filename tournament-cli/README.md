@@ -162,7 +162,9 @@ Like configuring, editing needs a terminal to ask at.
 ## Saving, undo and redo
 
 A competition is saved as the JSON log of every change made to it, undos
-included, not as a snapshot of its current state. Loading replays that log, and
+included, not as a snapshot of its current state. The log knows the entrants by
+id only; their names are saved next to it in the same file, under `people`, so
+that they can be deleted without touching the log. Loading replays that log, and
 a file whose log no longer replays is rejected instead of loading into a state
 no sequence of changes could reach. A save is written to a temporary file next
 to the target first, so a failed save never destroys the previous one.

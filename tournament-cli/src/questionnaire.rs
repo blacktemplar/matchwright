@@ -17,12 +17,12 @@ use std::{
 };
 
 #[cfg(feature = "terminal")]
-use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select};
+use inquire::{Confirm, CustomType, InquireError, MultiSelect, Select, validator::Validation};
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
     config::{ConfigError, Path, PluginConfig, Segment, Value},
     draft::{Candidate, Draft, Issue, Problem},
-    schema::{Configurable, Field, FieldKind},
+    schema::{Configurable, DecimalRange, Field, FieldKind, IntegerRange},
 };
 use thiserror::Error;
 
@@ -110,17 +110,27 @@ pub trait Prompter {
     /// Returns an error if the question is not answered.
     fn confirm(&mut self, question: &Question, default: Option<bool>) -> Result<bool, Error>;
 
-    /// Asks for a whole number.
+    /// Asks for a whole number of `range`, which `default` is one of.
     ///
     /// # Errors
     /// Returns an error if the question is not answered.
-    fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error>;
+    fn integer(
+        &mut self,
+        question: &Question,
+        range: &IntegerRange,
+        default: Option<i64>,
+    ) -> Result<i64, Error>;
 
-    /// Asks for a number.
+    /// Asks for a number of `range`, which `default` is one of.
     ///
     /// # Errors
     /// Returns an error if the question is not answered.
-    fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error>;
+    fn decimal(
+        &mut self,
+        question: &Question,
+        range: &DecimalRange,
+        default: Option<f64>,
+    ) -> Result<f64, Error>;
 
     /// Asks for one of `options`, which are never empty, and returns its index.
     ///
@@ -166,6 +176,7 @@ pub trait AsyncPrompter {
     fn integer(
         &mut self,
         question: &Question,
+        range: &IntegerRange,
         default: Option<i64>,
     ) -> impl Future<Output = Result<i64, Error>>;
 
@@ -173,6 +184,7 @@ pub trait AsyncPrompter {
     fn decimal(
         &mut self,
         question: &Question,
+        range: &DecimalRange,
         default: Option<f64>,
     ) -> impl Future<Output = Result<f64, Error>>;
 
@@ -201,12 +213,22 @@ impl<P: Prompter> AsyncPrompter for P {
         Prompter::confirm(self, question, default)
     }
 
-    async fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
-        Prompter::integer(self, question, default)
+    async fn integer(
+        &mut self,
+        question: &Question,
+        range: &IntegerRange,
+        default: Option<i64>,
+    ) -> Result<i64, Error> {
+        Prompter::integer(self, question, range, default)
     }
 
-    async fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
-        Prompter::decimal(self, question, default)
+    async fn decimal(
+        &mut self,
+        question: &Question,
+        range: &DecimalRange,
+        default: Option<f64>,
+    ) -> Result<f64, Error> {
+        Prompter::decimal(self, question, range, default)
     }
 
     async fn select(
@@ -408,15 +430,19 @@ fn describe_answer(kind: &FieldKind, answer: &Value) -> String {
 ///
 /// # Examples
 /// ```
-/// use plugin_factory::{config::Value, schema::FieldKind};
+/// use plugin_factory::{
+///     config::Value,
+///     schema::{FieldKind, IntegerRange},
+/// };
 /// use tournament_cli::questionnaire::parse_answer;
 ///
 /// assert_eq!(
 ///     parse_answer(&FieldKind::Bool, "no"),
 ///     Some(Value::from(false))
 /// );
-/// assert_eq!(parse_answer(&FieldKind::Integer, "7"), Some(Value::from(7)));
-/// assert_eq!(parse_answer(&FieldKind::Integer, "seven"), None);
+/// let whole_number = FieldKind::Integer(IntegerRange::ALL);
+/// assert_eq!(parse_answer(&whole_number, "7"), Some(Value::from(7)));
+/// assert_eq!(parse_answer(&whole_number, "seven"), None);
 /// ```
 pub fn parse_answer(kind: &FieldKind, text: &str) -> Option<Value> {
     match kind {
@@ -425,8 +451,8 @@ pub fn parse_answer(kind: &FieldKind, text: &str) -> Option<Value> {
             "no" | "false" => Some(Value::from(false)),
             _ => None,
         },
-        FieldKind::Integer => text.parse::<i64>().ok().map(Value::from),
-        FieldKind::Decimal => text
+        FieldKind::Integer(_) => text.parse::<i64>().ok().map(Value::from),
+        FieldKind::Decimal(_) => text
             .parse::<f64>()
             .ok()
             .filter(|number| number.is_finite())
@@ -464,12 +490,28 @@ impl Prompter for Terminal {
         Ok(prompt.prompt()?)
     }
 
-    fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
-        ask_number(question, default, "this takes a whole number")
+    fn integer(
+        &mut self,
+        question: &Question,
+        range: &IntegerRange,
+        default: Option<i64>,
+    ) -> Result<i64, Error> {
+        let range = *range;
+        ask_number(question, default, &range, move |number| {
+            range.contains(*number)
+        })
     }
 
-    fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
-        ask_number(question, default, "this takes a number")
+    fn decimal(
+        &mut self,
+        question: &Question,
+        range: &DecimalRange,
+        default: Option<f64>,
+    ) -> Result<f64, Error> {
+        let range = *range;
+        ask_number(question, default, &range, move |number| {
+            range.contains(*number)
+        })
     }
 
     fn select(
@@ -512,18 +554,33 @@ impl Prompter for Terminal {
     }
 }
 
-/// Asks `question` at the terminal for a number, repeating it with `error_message` until the
-/// answer is one.
+/// Asks `question` at the terminal for a number of `range`, which `contains` tells, repeating it
+/// until the answer is one.
 #[cfg(feature = "terminal")]
 fn ask_number<T: Clone + std::str::FromStr + ToString>(
     question: &Question,
     default: Option<T>,
-    error_message: &str,
+    range: &impl Display,
+    contains: impl Fn(&T) -> bool + Clone + 'static,
 ) -> Result<T, Error> {
+    let error_message = format!("this takes {range}");
+    let help = match question.description() {
+        Some(description) => format!("{description}; {range}"),
+        None => capitalized(&range.to_string()),
+    };
+    let complaint = error_message.clone();
     let prompt = CustomType {
         default,
-        help_message: question.description(),
-        ..CustomType::new(question.label()).with_error_message(error_message)
+        help_message: Some(&help),
+        ..CustomType::new(question.label())
+            .with_error_message(&error_message)
+            .with_validator(move |number: &T| {
+                Ok(if contains(number) {
+                    Validation::Valid
+                } else {
+                    Validation::Invalid(complaint.clone().into())
+                })
+            })
     };
     Ok(prompt.prompt()?)
 }
@@ -547,11 +604,21 @@ impl Prompter for AcceptDefaults {
         Self::accept(question, default)
     }
 
-    fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
+    fn integer(
+        &mut self,
+        question: &Question,
+        _: &IntegerRange,
+        default: Option<i64>,
+    ) -> Result<i64, Error> {
         Self::accept(question, default)
     }
 
-    fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
+    fn decimal(
+        &mut self,
+        question: &Question,
+        _: &DecimalRange,
+        default: Option<f64>,
+    ) -> Result<f64, Error> {
         Self::accept(question, default)
     }
 
@@ -618,13 +685,31 @@ impl<T: Configurable, P: AsyncPrompter> Asker<'_, T, P> {
                 let default = default.as_ref().and_then(Value::as_bool);
                 Value::from(self.prompter.confirm(question, default).await?)
             }
-            FieldKind::Integer => {
-                let default = default.as_ref().and_then(Value::as_i64);
-                Value::from(self.prompter.integer(question, default).await?)
+            // a prompter asks for a number of the range, but one out of it is asked for again
+            // rather than trusted
+            FieldKind::Integer(range) => {
+                let default = default
+                    .as_ref()
+                    .and_then(Value::as_i64)
+                    .filter(|default| range.contains(*default));
+                loop {
+                    let answer = self.prompter.integer(question, range, default).await?;
+                    if range.contains(answer) {
+                        break Value::from(answer);
+                    }
+                }
             }
-            FieldKind::Decimal => {
-                let default = default.as_ref().and_then(Value::as_f64);
-                Value::from(self.prompter.decimal(question, default).await?)
+            FieldKind::Decimal(range) => {
+                let default = default
+                    .as_ref()
+                    .and_then(Value::as_f64)
+                    .filter(|default| range.contains(*default));
+                loop {
+                    let answer = self.prompter.decimal(question, range, default).await?;
+                    if range.contains(answer) {
+                        break Value::from(answer);
+                    }
+                }
             }
             FieldKind::Plugin(_) => return self.plugin(path, question, default, false).await,
             FieldKind::Optional(inner) => match **inner {
@@ -940,7 +1025,12 @@ mod tests {
             }
         }
 
-        fn integer(&mut self, question: &Question, default: Option<i64>) -> Result<i64, Error> {
+        fn integer(
+            &mut self,
+            question: &Question,
+            _: &IntegerRange,
+            default: Option<i64>,
+        ) -> Result<i64, Error> {
             match self.next(question) {
                 Step::Accept => Ok(Self::offered(question, default)),
                 Step::Integer(answer) => Ok(answer),
@@ -948,7 +1038,12 @@ mod tests {
             }
         }
 
-        fn decimal(&mut self, question: &Question, default: Option<f64>) -> Result<f64, Error> {
+        fn decimal(
+            &mut self,
+            question: &Question,
+            _: &DecimalRange,
+            default: Option<f64>,
+        ) -> Result<f64, Error> {
             match self.next(question) {
                 Step::Accept => Ok(Self::offered(question, default)),
                 _ => panic!("{:?} is only accepted", question.label()),
@@ -1117,20 +1212,21 @@ mod tests {
         );
     }
 
-    /// A rejected answer is asked again right away, so that the questions after it start out at
-    /// what the plugin recommends once it is configured.
+    /// A number out of the range of its field is asked for again right away, even from a prompter
+    /// that does not check it, so that the questions after it start out at what the plugin
+    /// recommends once it is configured.
     #[test]
-    fn an_answer_a_plugin_rejects_is_asked_again_before_the_next_question() {
+    fn a_number_out_of_range_is_asked_again_before_the_next_question() {
         let mut script = Script::new([
             Step::Pick("random rounds"),
-            Step::Integer(-1),
+            Step::Integer(0),
             Step::Integer(3),
         ]);
         let mut draft = phase_draft();
 
         fill(&mut draft, &mut script).unwrap();
 
-        assert_eq!(script.retries, 1);
+        assert_eq!(script.retries, 0);
         assert_eq!(
             script.asked[..4],
             [

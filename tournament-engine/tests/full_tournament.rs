@@ -5,7 +5,7 @@ use rand::{RngExt, rng};
 use tournament_engine::{
     AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt,
     Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, PhasePluginsBuilder, Ranking,
-    RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    RemoveEntrant, ReportMatchResult, Score, Seed, SetCompetitionSeed, StartCompetition,
     plugins::{
         metrics_calculator::{
             Buchholz, BuchholzCalculator, BuchholzOfBuchholz, BuchholzOfBuchholzCalculator,
@@ -30,22 +30,25 @@ fn is_attending(competition: &Competition, entrant: &Entrant) -> bool {
 }
 
 /// The scoring system of most association football leagues, used by the phase of this test.
-const THREE_ONE: PointsCalculator = PointsCalculator::new(3.0, 1.0);
+const THREE_ONE: PointsCalculator = PointsCalculator::new(Score::new(3.0), Score::ONE);
 
 /// Asserts that `ranking` holds exactly the given value of every metric calculated by the phase.
 ///
 /// `round_of_first_loss` is given as a plain round number, `wins_draws_losses` as
-/// wins/draws/losses.
+/// wins/draws/losses, and the points and both Buchholz values as whole numbers, which they are
+/// with [`THREE_ONE`].
 #[track_caller]
 fn assert_metrics(
     ranking: &Ranking,
     round_of_first_loss: Option<u32>,
     wins_draws_losses: (u32, u32, u32),
-    points: f32,
+    points: u32,
     matches: &[MatchId],
-    buchholz: f32,
-    buchholz_of_buchholz: f32,
+    buchholz: u32,
+    buchholz_of_buchholz: u32,
 ) {
+    let [points, buchholz, buchholz_of_buchholz] =
+        [points, buchholz, buchholz_of_buchholz].map(Score::from);
     let round_of_first_loss = round_of_first_loss.map(|r| NonZeroU32::new(r).unwrap());
     assert_eq!(
         ranking.metric::<RoundOfFirstLoss>(),
@@ -147,7 +150,7 @@ fn full_tournament() {
     }));
     // every metric starts out at its default value
     for ranking in phase.standings() {
-        assert_metrics(ranking, None, (0, 0, 0), 0.0, &[], 0.0, 0.0);
+        assert_metrics(ranking, None, (0, 0, 0), 0, &[], 0, 0);
     }
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);
@@ -221,42 +224,10 @@ fn full_tournament() {
     // assert metrics: every ranking played exactly one match, so the buchholz of the two losers
     // is the three points of the winner that knocked them out, whereas the two winners beat
     // opponents without any points. The buchholz of buchholz mirrors that.
-    assert_metrics(
-        ranking_0,
-        Some(1),
-        (0, 0, 1),
-        0.0,
-        &[match_0_vs_3_id],
-        3.0,
-        0.0,
-    );
-    assert_metrics(
-        ranking_1,
-        None,
-        (1, 0, 0),
-        3.0,
-        &[match_1_vs_2_id],
-        0.0,
-        3.0,
-    );
-    assert_metrics(
-        ranking_2,
-        Some(1),
-        (0, 0, 1),
-        0.0,
-        &[match_1_vs_2_id],
-        3.0,
-        0.0,
-    );
-    assert_metrics(
-        ranking_3,
-        None,
-        (1, 0, 0),
-        3.0,
-        &[match_0_vs_3_id],
-        0.0,
-        3.0,
-    );
+    assert_metrics(ranking_0, Some(1), (0, 0, 1), 0, &[match_0_vs_3_id], 3, 0);
+    assert_metrics(ranking_1, None, (1, 0, 0), 3, &[match_1_vs_2_id], 0, 3);
+    assert_metrics(ranking_2, Some(1), (0, 0, 1), 0, &[match_1_vs_2_id], 3, 0);
+    assert_metrics(ranking_3, None, (1, 0, 0), 3, &[match_0_vs_3_id], 0, 3);
     // assert next round matches
     let match_3_vs_1_id = Match::new(
         vec1![ranking_id_by_initial_rank[3]],
@@ -313,44 +284,28 @@ fn full_tournament() {
     assert_eq!(ranking_3.initial_unique_rank(), NonZeroU32::new(4).unwrap());
     // assert metrics
     // the only opponent of `0` is the winner `3` (6 points), whose own buchholz is 3
-    assert_metrics(
-        ranking_0,
-        Some(1),
-        (0, 0, 1),
-        0.0,
-        &[match_0_vs_3_id],
-        6.0,
-        3.0,
-    );
+    assert_metrics(ranking_0, Some(1), (0, 0, 1), 0, &[match_0_vs_3_id], 6, 3);
     // `1` faced `2` (0 points, buchholz 3) and `3` (6 points, buchholz 3)
     assert_metrics(
         ranking_1,
         Some(2),
         (1, 0, 1),
-        3.0,
+        3,
         &[match_1_vs_2_id, match_3_vs_1_id],
-        6.0,
-        6.0,
+        6,
+        6,
     );
     // the only opponent of `2` is `1` (3 points, buchholz 6)
-    assert_metrics(
-        ranking_2,
-        Some(1),
-        (0, 0, 1),
-        0.0,
-        &[match_1_vs_2_id],
-        3.0,
-        6.0,
-    );
+    assert_metrics(ranking_2, Some(1), (0, 0, 1), 0, &[match_1_vs_2_id], 3, 6);
     // the winner `3` faced `0` (0 points, buchholz 6) and `1` (3 points, buchholz 6)
     assert_metrics(
         ranking_3,
         None,
         (2, 0, 0),
-        6.0,
+        6,
         &[match_0_vs_3_id, match_3_vs_1_id],
-        3.0,
-        12.0,
+        3,
+        12,
     );
 }
 
@@ -366,7 +321,7 @@ fn byes_are_scored_when_they_are_scheduled() {
     // a round robin
     let plugins = PhasePluginsBuilder::new()
         .add_metric(WinsDrawsLossesCalculator)
-        .add_metric(THREE_ONE.with_points_for_bye(3.0))
+        .add_metric(THREE_ONE.with_points_for_bye(Score::new(3.0)))
         .build()
         .unwrap();
     sm.apply_transition(AddPhase::new(phase_id, plugins))
@@ -381,7 +336,7 @@ fn byes_are_scored_when_they_are_scheduled() {
         let wins_draws_losses = ranking.metric::<WinsDrawsLosses>().unwrap();
         assert_eq!(wins_draws_losses.byes, 1);
         assert_eq!(wins_draws_losses.matches_played(), 0);
-        assert_eq!(ranking.metric::<Points>(), Some(&Points(3.0)));
+        assert_eq!(ranking.metric::<Points>(), Some(&Points(Score::new(3.0))));
     }
 }
 

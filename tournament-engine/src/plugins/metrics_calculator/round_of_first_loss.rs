@@ -29,7 +29,7 @@ impl Display for RoundOfFirstLoss {
     }
 }
 
-#[typetag::serde]
+#[typetag::serde(name = "tournament_engine::round_of_first_loss")]
 impl TypeMapValue for RoundOfFirstLoss {}
 
 /// Ranks by the [`RoundOfFirstLoss`]: the later the better, never having lost is best.

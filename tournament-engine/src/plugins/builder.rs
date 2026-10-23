@@ -21,7 +21,7 @@ use crate::{
 /// # Examples
 /// ```
 /// use tournament_engine::{
-///     PhasePluginsBuilder,
+///     PhasePluginsBuilder, Score,
 ///     plugins::{
 ///         metrics_calculator::{MorePoints, PointsCalculator, WinsDrawsLossesCalculator},
 ///         phase_format::SingleElimination,
@@ -35,14 +35,14 @@ use crate::{
 /// let knockout = PhasePluginsBuilder::new()
 ///     .format(SingleElimination::new())
 ///     .add_ranking(MorePoints)
-///     .add_metric(PointsCalculator::new(3.0, 1.0))
+///     .add_metric(PointsCalculator::new(Score::new(3.0), Score::ONE))
 ///     .add_metric(WinsDrawsLossesCalculator)
 ///     .build()?;
 /// // the points are scored from the wins, draws and losses, so those are calculated first
 /// assert_eq!(
 ///     format!("{:?}", knockout.metrics()),
 ///     "DependencyOrderedSet([WinsDrawsLossesCalculator, PointsCalculator { points_for_win: \
-///      3.0, points_for_draw: 1.0, points_for_bye: 0.0 }])"
+///      3, points_for_draw: 1, points_for_bye: 0 }])"
 /// );
 /// # Ok::<(), tournament_engine::plugin_factory::schema::DependencyOrderedSetError>(())
 /// ```

@@ -109,7 +109,7 @@ dyn_clone::clone_trait_object!(SliceRanker);
 ///     type Metric = Points;
 ///
 ///     fn compare(&self, first: &Points, second: &Points) -> Comparison {
-///         Comparison::less_is_better(first.0.total_cmp(&second.0))
+///         Comparison::less_is_better(first.0.cmp(&second.0))
 ///     }
 /// }
 ///
@@ -241,13 +241,13 @@ mod tests {
     };
 
     /// The `index`th of a list of rankings, holding `points` if given.
-    fn ranking(index: u128, points: Option<f32>) -> Ranking {
+    fn ranking(index: u128, points: Option<u32>) -> Ranking {
         let ranking = Ranking::new(
             vec1![EntrantId::new(Uuid::from_u128(index))],
             NonZeroU32::new(index as u32 + 1).unwrap(),
         );
         match points {
-            Some(points) => ranking.with_metric(Points(points)),
+            Some(points) => ranking.with_metric(Points(points.into())),
             None => ranking,
         }
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn rank_by_sorts_the_slice_and_ranks_from_the_rank_it_came_in_with() {
         let rankings: Vec<_> = (0..)
-            .zip([1.0, 3.0, 1.0, 2.0])
+            .zip([1, 3, 1, 2])
             .map(|(index, points)| ranking(index, Some(points)))
             .collect();
         let mut slice: Vec<_> = rankings.iter().map(|ranking| (ranking, rank(5))).collect();
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the phase calculates the metric of every criterion")]
     fn rank_by_panics_if_a_ranking_lacks_the_metric() {
-        let rankings = [ranking(0, Some(1.0)), ranking(1, None)];
+        let rankings = [ranking(0, Some(1)), ranking(1, None)];
         let mut slice: Vec<_> = rankings.iter().map(|ranking| (ranking, rank(1))).collect();
 
         rank_by(&MorePoints, &mut slice);

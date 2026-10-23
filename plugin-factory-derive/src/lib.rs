@@ -39,6 +39,11 @@ pub fn axis(arguments: TokenStream, input: TokenStream) -> TokenStream {
 /// - `label = "..."`, required, `description = "..."`, optional, and `default = expression` or
 ///   `default`, optional: the answer the field offers, an expression of the field's type, or its
 ///   `Default` impl;
+/// - on a field taking a number, `min = number`, `max = number` and `multiple_of = number`, each
+///   optional, narrowing the range of numbers its type takes (`IntegerRange`, `DecimalRange`):
+///   `multiple_of` has to be a multiple of what the type takes multiples of, and `min` and `max`
+///   multiples of `multiple_of`. A bound wider than the type's leaves the type's; a bound or
+///   default out of the range makes building the schema panic;
 /// - or `skip` alone, which leaves the field out of the schema, e.g. for state a plugin builds up
 ///   once it is configured. Such a field needs a `#[serde(default)]`, on the field or the struct,
 ///   which is what a plugin built from a config holds in it; a config answering it is not
@@ -71,7 +76,8 @@ pub fn derive_plugin(input: TokenStream) -> TokenStream {
 /// # Attributes
 ///
 /// None on the struct. On every field `serde` deserializes, `label = "..."`, required, and
-/// `description = "..."` and `default`, optional, or `skip`, as for `Plugin`.
+/// `description = "..."`, `default`, `min`, `max` and `multiple_of`, optional, or `skip`, as for
+/// `Plugin`.
 ///
 /// # Errors
 ///

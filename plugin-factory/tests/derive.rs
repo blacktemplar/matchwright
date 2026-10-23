@@ -8,7 +8,7 @@ use plugin_factory::{
     compatibility::{Declaration, Fact, Incompatibility, check},
     config::{ConfigError, Path, PluginConfig, Value},
     register,
-    schema::{Configurable, Field, FieldKind, FieldType},
+    schema::{Configurable, DecimalRange, Field, FieldKind, FieldType, IntegerRange},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 use serde_json::json;
@@ -54,9 +54,12 @@ impl TryFrom<f64> for NonNegative {
     }
 }
 
+// declared without its minimum on purpose: with it, the schema would reject a negative number
+// before `try_from` sees it, and `an_answer_the_field_type_rejects_is_rejected` tests that a
+// rejection by the type itself reaches the draft
 impl FieldType for NonNegative {
     fn kind() -> FieldKind {
-        FieldKind::Decimal
+        FieldKind::Decimal(DecimalRange::ALL)
     }
 }
 
@@ -155,6 +158,20 @@ struct Unit;
 #[register]
 impl Derived for Unit {}
 
+/// A plugin whose fields narrow the ranges of numbers their types take.
+#[derive(Debug, Serialize, Deserialize, Plugin)]
+#[plugin(id = "derive::bounded", label = "bounded")]
+struct Bounded {
+    #[plugin(label = "Rounds", min = 3, max = 9, multiple_of = 3)]
+    rounds: u8,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[plugin(label = "Points for a win", min = 0, multiple_of = 0.5, default = Some(1.0))]
+    for_win: Option<f64>,
+}
+
+#[register]
+impl Derived for Bounded {}
+
 /// A plugin made of other plugins, read missing as its `Default` impl, which offers nothing but
 /// what its fields offer.
 #[derive(Debug, Serialize, Deserialize, Plugin)]
@@ -248,7 +265,7 @@ fn a_derived_plugin_is_registered_under_its_id() {
     assert_eq!(entry.label(), "points");
     assert_eq!(entry.description(), Some("points per result"));
     assert_eq!(entry_of::<Unit>().description(), None);
-    assert_eq!(AnyAxis::of::<dyn Derived>().entries().count(), 4);
+    assert_eq!(AnyAxis::of::<dyn Derived>().entries().count(), 5);
 }
 
 #[test]
@@ -330,12 +347,18 @@ fn a_field_is_described_by_its_attribute() {
 fn a_field_takes_the_kind_of_answer_its_type_deserializes_from() {
     let plugin = FieldKind::plugin::<dyn Derived>();
 
-    assert_eq!(field_of::<Points>("for_win").kind(), &FieldKind::Decimal);
+    assert_eq!(
+        field_of::<Points>("for_win").kind(),
+        &FieldKind::Decimal(DecimalRange::ALL)
+    );
     assert_eq!(field_of::<Points>("byes").kind(), &FieldKind::Bool);
-    assert_eq!(field_of::<Points>("rounds").kind(), &FieldKind::Integer);
+    assert_eq!(
+        field_of::<Points>("rounds").kind(),
+        &FieldKind::Integer(IntegerRange::limits(0, u32::MAX.into()))
+    );
     assert_eq!(
         field_of::<Points>("for_bye").kind(),
-        &FieldKind::optional(FieldKind::Decimal)
+        &FieldKind::optional(FieldKind::Decimal(DecimalRange::ALL))
     );
     assert_eq!(field_of::<Ranker>("by").kind(), &plugin);
     assert_eq!(
@@ -404,6 +427,76 @@ fn an_answer_the_field_type_rejects_is_rejected() {
             reason: "the points cannot be negative".to_owned(),
         })
     );
+}
+
+#[test]
+fn a_field_takes_the_range_its_attribute_narrows_its_type_to() {
+    assert_eq!(
+        field_of::<Bounded>("rounds").kind(),
+        &FieldKind::Integer(IntegerRange::new(3, 9).multiples_of(3))
+    );
+    assert_eq!(
+        field_of::<Bounded>("for_win").kind(),
+        &FieldKind::optional(FieldKind::Decimal(
+            DecimalRange::ALL.multiples_of(0.5).at_least(0.0)
+        ))
+    );
+    assert_eq!(
+        field_of::<Bounded>("for_win")
+            .kind()
+            .range()
+            .unwrap()
+            .to_string(),
+        "a number of at least 0 that is a multiple of 0.5"
+    );
+}
+
+#[test]
+fn a_number_out_of_the_range_of_its_field_is_rejected_by_the_schema() {
+    let bounded = |rounds: Value, for_win: Value| {
+        PluginConfig::of::<Bounded>()
+            .with("rounds", rounds)
+            .with("for_win", for_win)
+            .build::<dyn Derived>()
+            .err()
+    };
+    let out_of_range = |field: &str| ConfigError::OutOfRange {
+        path: Path::ROOT.field(field),
+        allowed: field_of::<Bounded>(field).kind().range().unwrap(),
+    };
+
+    assert_eq!(bounded(json!(6), json!(1.5)), None);
+    assert_eq!(bounded(json!(9), Value::Null), None);
+    for rounds in [json!(0), json!(4), json!(12)] {
+        assert_eq!(bounded(rounds, json!(1.0)), Some(out_of_range("rounds")));
+    }
+    for for_win in [json!(-0.5), json!(0.25)] {
+        assert_eq!(bounded(json!(3), for_win), Some(out_of_range("for_win")));
+    }
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", ignore = "wasm aborts on a panic")]
+#[should_panic(
+    expected = "the range of the field for_win cannot be narrowed: 0.1 is not a multiple of 0.5"
+)]
+fn a_bound_that_is_no_multiple_fails_building_the_schema() {
+    let _ = Field::new(
+        "for_win",
+        "Points for a win",
+        FieldKind::Decimal(DecimalRange::ALL),
+    )
+    .multiple_of(0.5)
+    .at_least(0.1);
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", ignore = "wasm aborts on a panic")]
+#[should_panic(expected = "the default of a field does not answer it")]
+fn a_default_out_of_the_range_fails_building_the_schema() {
+    let _ = Field::new("rounds", "Rounds", u8::kind())
+        .at_least(1.0)
+        .with_default(0);
 }
 
 #[test]
@@ -501,7 +594,7 @@ fn a_composite_reads_its_schema_from_its_fields_as_a_plugin_does() {
     assert_eq!(field("others").default_value(), Some(&json!([])));
     assert_eq!(
         field("limit").kind(),
-        &FieldKind::optional(FieldKind::Integer)
+        &FieldKind::optional(FieldKind::Integer(IntegerRange::limits(0, u32::MAX.into())))
     );
     assert_eq!(field("limit").default_value(), None);
 }

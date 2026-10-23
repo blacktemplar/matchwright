@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::{
     PluginType,
     catalog::{AnyAxis, Axis},
-    schema::Configurable,
+    schema::{Configurable, NumberRange},
 };
 
 /// One plugin as the answer to a field, i.e. which plugin it is and how it is configured.
@@ -467,6 +467,9 @@ pub enum ConfigError {
     /// An answer in a list is the same as one before it.
     #[error("{path} repeats an earlier answer, but the list takes each answer only once")]
     Duplicate { path: Path },
+    /// A number out of the range of numbers its field takes.
+    #[error("{path} is out of range: it takes {allowed}")]
+    OutOfRange { path: Path, allowed: NumberRange },
     /// The plugin's `Deserialize` impl rejected the answer, e.g. through a custom error.
     #[error("{path} is rejected: {reason}")]
     Rejected { path: Path, reason: String },
@@ -481,6 +484,7 @@ impl ConfigError {
             | Self::WrongKind { path, .. }
             | Self::UnknownPlugin { path }
             | Self::Duplicate { path }
+            | Self::OutOfRange { path, .. }
             | Self::Rejected { path, .. } => path,
         }
     }

@@ -6,9 +6,12 @@
 //! [`Config`]. A plugin registers in the [catalog](crate::catalog) with its schema, so that a
 //! program reads the questions of a plugin before it is chosen and never names one.
 
+mod range;
+
 use std::fmt::{self, Debug, Formatter};
 
 pub use plugin_factory_derive::Configurable;
+pub use range::{DecimalRange, IntegerRange, NumberRange};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{DeserializeOwned, Error as _},
@@ -89,8 +92,10 @@ pub trait Configurable: Sized + DeserializeOwned + 'static {
 /// Implemented for `bool`, the integer and floating point types, `Box<dyn Trait>` for the trait of
 /// a plugin axis, `Option` of any of them, and `Vec<Box<dyn Trait>>` and
 /// [`DependencyOrderedSet`]`<dyn Trait>` for lists of plugins: a `Vec` takes an ordered list, a
-/// `DependencyOrderedSet` an unordered one. A type that deserializes from one of these answers,
-/// such as a newtype checking its value, implements it to be a field.
+/// `DependencyOrderedSet` an unordered one. An integer type takes the whole numbers it holds, a
+/// floating point type every number. A type that deserializes from one of these answers, such as
+/// a newtype checking its value, implements it to be a field, with the range of numbers it takes
+/// if it is a number.
 pub trait FieldType {
     /// The kind of answer a field of this type takes.
     fn kind() -> FieldKind;
@@ -107,21 +112,36 @@ impl FieldType for bool {
     }
 }
 
-/// Implements [`FieldType`] for each of the types, as answered by `$kind`.
-macro_rules! field_types {
-    ($kind:ident: $($type:ty),*) => {
+/// Implements [`FieldType`] for each of the integer types, taking the whole numbers it holds, as
+/// far as an `i64` holds them.
+macro_rules! integer_types {
+    ($($type:ty),*) => {
         $(
             impl FieldType for $type {
                 fn kind() -> FieldKind {
-                    FieldKind::$kind
+                    FieldKind::Integer(IntegerRange::limits(
+                        i64::try_from(<$type>::MIN).unwrap_or(i64::MIN),
+                        i64::try_from(<$type>::MAX).unwrap_or(i64::MAX),
+                    ))
                 }
             }
         )*
     };
 }
 
-field_types!(Integer: i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
-field_types!(Decimal: f32, f64);
+integer_types!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+
+impl FieldType for f32 {
+    fn kind() -> FieldKind {
+        FieldKind::Decimal(DecimalRange::ALL)
+    }
+}
+
+impl FieldType for f64 {
+    fn kind() -> FieldKind {
+        FieldKind::Decimal(DecimalRange::ALL)
+    }
+}
 
 impl<A: Axis + ?Sized> FieldType for Box<A> {
     fn kind() -> FieldKind {
@@ -540,10 +560,80 @@ impl Field {
 
     /// This field with `default` as the answer it offers. Called by the derive; not part of the
     /// API.
+    ///
+    /// # Panics
+    /// If `default` is a number out of the range of the field.
     #[doc(hidden)]
     #[must_use]
     pub fn with_default(mut self, default: impl Into<Value>) -> Self {
-        self.default = Some(default.into());
+        let default = default.into();
+        // only a number is checked: walking a plugin would build the schemas of the plugins
+        if self.kind.range().is_some()
+            && let Err(error) = self
+                .kind
+                .walk(&default, &Path::ROOT.field(self.name), false)
+        {
+            panic!("the default of a field does not answer it: {error}");
+        }
+        self.default = Some(default);
+        self
+    }
+
+    /// This field taking only the multiples of `multiple_of` among the numbers of its type, from
+    /// `#[plugin(multiple_of = ..)]`. Called by the derive before the bounds; not part of the API.
+    ///
+    /// # Panics
+    /// If the field takes no number, or `multiple_of` is not a multiple of what its type takes
+    /// multiples of.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn multiple_of(self, multiple_of: f64) -> Self {
+        self.narrowed(
+            |range| range.narrowed_to_multiples_of(multiple_of),
+            |range| range.narrowed_to_multiples_of(multiple_of),
+        )
+    }
+
+    /// This field taking only the numbers from `min` on, from `#[plugin(min = ..)]`. Called by the
+    /// derive; not part of the API.
+    ///
+    /// # Panics
+    /// If the field takes no number, or `min` is not a number of its range.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn at_least(self, min: f64) -> Self {
+        self.narrowed(
+            |range| range.narrowed_to_at_least(min),
+            |range| range.narrowed_to_at_least(min),
+        )
+    }
+
+    /// This field taking only the numbers up to `max`, from `#[plugin(max = ..)]`. Called by the
+    /// derive; not part of the API.
+    ///
+    /// # Panics
+    /// If the field takes no number, or `max` is not a number of its range.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn at_most(self, max: f64) -> Self {
+        self.narrowed(
+            |range| range.narrowed_to_at_most(max),
+            |range| range.narrowed_to_at_most(max),
+        )
+    }
+
+    /// This field with the range of the number it takes narrowed by `integer` or `decimal`.
+    fn narrowed(
+        mut self,
+        integer: impl FnOnce(IntegerRange) -> Result<IntegerRange, String>,
+        decimal: impl FnOnce(DecimalRange) -> Result<DecimalRange, String>,
+    ) -> Self {
+        if let Err(reason) = self.kind.narrow(integer, decimal) {
+            panic!(
+                "the range of the field {} cannot be narrowed: {reason}",
+                self.name
+            );
+        }
         self
     }
 
@@ -579,10 +669,10 @@ impl Field {
 pub enum FieldKind {
     /// Yes or no, answered by [`Value::Bool`].
     Bool,
-    /// A whole number, answered by a [`Value::Number`] that fits an `i64`.
-    Integer,
-    /// A number with a fractional part, answered by any [`Value::Number`].
-    Decimal,
+    /// A whole number of the range, answered by a [`Value::Number`] that fits an `i64`.
+    Integer(IntegerRange),
+    /// A number of the range, which may have a fractional part, answered by a [`Value::Number`].
+    Decimal(DecimalRange),
     /// One plugin of the axis, answered by a [`PluginConfig`] naming a plugin registered for it.
     Plugin(AnyAxis),
     /// Any number of distinct plugins of the axis, answered by a [`Value::Array`] of
@@ -631,8 +721,39 @@ impl FieldKind {
         match self {
             Self::Plugin(axis) | Self::List { axis, .. } => Some(*axis),
             Self::Optional(inner) => inner.axis(),
-            Self::Bool | Self::Integer | Self::Decimal => None,
+            Self::Bool | Self::Integer(_) | Self::Decimal(_) => None,
         }
+    }
+
+    /// The range of numbers this kind of answer takes, or [`None`] if it takes no number. That of
+    /// an optional number is the range of the number.
+    pub fn range(&self) -> Option<NumberRange> {
+        match self {
+            Self::Integer(range) => Some(NumberRange::Integer(*range)),
+            Self::Decimal(range) => Some(NumberRange::Decimal(*range)),
+            Self::Optional(inner) => inner.range(),
+            Self::Bool | Self::Plugin(_) | Self::List { .. } => None,
+        }
+    }
+
+    /// Narrows the range of numbers this kind of answer takes by `integer` or `decimal`.
+    ///
+    /// # Errors
+    /// Returns why if it takes no number or the range cannot be narrowed.
+    fn narrow(
+        &mut self,
+        integer: impl FnOnce(IntegerRange) -> Result<IntegerRange, String>,
+        decimal: impl FnOnce(DecimalRange) -> Result<DecimalRange, String>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Integer(range) => *range = integer(*range)?,
+            Self::Decimal(range) => *range = decimal(*range)?,
+            Self::Optional(inner) => inner.narrow(integer, decimal)?,
+            Self::Bool | Self::Plugin(_) | Self::List { .. } => {
+                return Err("it takes no number".to_owned());
+            }
+        }
+        Ok(())
     }
 
     /// `answer`, the answer at `at`, checked against this kind, with the config of every plugin
@@ -648,8 +769,22 @@ impl FieldKind {
     ) -> Result<Value, ConfigError> {
         match (self, answer) {
             (Self::Bool, Value::Bool(_)) | (Self::Optional(_), Value::Null) => Ok(answer.clone()),
-            (Self::Integer, Value::Number(number)) if number.is_i64() => Ok(answer.clone()),
-            (Self::Decimal, Value::Number(_)) => Ok(answer.clone()),
+            (Self::Integer(range), Value::Number(number)) if number.is_i64() => {
+                match number.as_i64() {
+                    Some(number) if range.contains(number) => Ok(answer.clone()),
+                    _ => Err(ConfigError::OutOfRange {
+                        path: at.clone(),
+                        allowed: NumberRange::Integer(*range),
+                    }),
+                }
+            }
+            (Self::Decimal(range), Value::Number(number)) => match number.as_f64() {
+                Some(number) if range.contains(number) => Ok(answer.clone()),
+                _ => Err(ConfigError::OutOfRange {
+                    path: at.clone(),
+                    allowed: NumberRange::Decimal(*range),
+                }),
+            },
             (Self::Optional(inner), _) => inner.walk(answer, at, complete),
             (Self::List { axis, .. }, Value::Array(answers)) => {
                 let element = Self::Plugin(*axis);
@@ -691,8 +826,8 @@ impl FieldKind {
     fn name(&self) -> &'static str {
         match self {
             Self::Bool => names::BOOL,
-            Self::Integer => names::INTEGER,
-            Self::Decimal => names::DECIMAL,
+            Self::Integer(_) => names::INTEGER,
+            Self::Decimal(_) => names::DECIMAL,
             Self::Plugin(_) => names::PLUGIN,
             Self::List { .. } => names::LIST,
             Self::Optional(_) => "an optional answer",
