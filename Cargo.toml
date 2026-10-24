@@ -1,10 +1,13 @@
 [workspace]
 members = [
+    "e2e-harness",
     "plugin-factory",
     "plugin-factory-derive",
     "tournament-app",
     "tournament-cli",
     "tournament-engine",
+    "tournament-gui",
+    "tournament-gui-e2e",
     "tournament-web",
     "tournament-web-e2e",
 ]
@@ -22,7 +25,11 @@ axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive"] }
 console_error_panic_hook = "0.1.7"
 criterion = "0.8.2"
+# `dx`, its CLI that builds the GUI, has to be of the same version
+dioxus = "0.7.10"
+dirs = "7.0.0"
 dyn-clone = "1.0.20"
+e2e-harness = { path = "e2e-harness" }
 futures-util = "0.3.31"
 getrandom = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
@@ -35,10 +42,12 @@ postcard = { version = "1.1.3", features = ["use-std"] }
 # generators, and so builds for targets that have no source of randomness
 rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
 rand_seeder = "0.5.0"
+reqwest = { version = "0.13.5", default-features = false }
 rustc-hash = "2.1.3"
 rustyline = "19.0.0"
 serde = "1.0.229"
 serde_json = "1.0.154"
+sha2 = "0.10.9"
 shlex = "2.0.1"
 tempfile = "3.27.0"
 # a client of WebDriver that starts the driver itself (`manager`), downloading it if needed, and

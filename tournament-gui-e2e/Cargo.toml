@@ -1,0 +1,13 @@
+[package]
+name = "tournament-gui-e2e"
+description = "End-to-end tests of tournament-gui, using its screen in a browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+e2e-harness.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

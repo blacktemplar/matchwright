@@ -62,6 +62,24 @@ async fn an_error_the_page_logs_fails_the_test() {
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by trunk; run by the web-e2e hook"]
+#[should_panic(expected = "the page must be accessible, but violates")]
+async fn an_inaccessible_page_fails_the_test() {
+    run(async |terminal| {
+        // an image without a text alternative
+        terminal
+            .driver
+            .execute(
+                "document.body.append(document.createElement('img'))",
+                Vec::new(),
+            )
+            .await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by trunk; run by the web-e2e hook"]
 #[should_panic(expected = "must have the text \"Bob\", but has the text \"Alice\"")]
 async fn an_expectation_not_met_fails_with_what_the_page_shows() {
     run(async |terminal| {

@@ -1,0 +1,17 @@
+[package]
+name = "tournament-gui"
+description = "The GUI for running tournaments, in the browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dioxus = { workspace = true, features = ["web"] }
+tournament-app.workspace = true
+tournament-engine.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# seeds and ids are random, and in the browser randomness comes from JavaScript
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }

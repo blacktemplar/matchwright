@@ -19,7 +19,7 @@ repos:
       # runner would skip
       - id: cargo-clippy-wasm
         name: cargo clippy (wasm)
-        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine -p tournament-app -p tournament-cli -p tournament-web --no-default-features --lib --bins --tests --examples -- -D warnings
+        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine -p tournament-app -p tournament-cli -p tournament-web -p tournament-gui --no-default-features --lib --bins --tests --examples -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
@@ -51,6 +51,17 @@ repos:
         entry: sh -c '(cd tournament-web && trunk build) && cargo test -p tournament-web-e2e --no-fail-fast -- --ignored'
         language: system
         types_or: [rust, html]
+        pass_filenames: false
+        stages: [manual]
+
+      # the end-to-end tests of the GUI, like web-e2e, on the page built by dx (which has to be of
+      # the version of dioxus in Cargo.lock); the release build, since the debug build tries to
+      # reach the server of `dx serve`: `prek run --all-files --stage manual gui-e2e`
+      - id: gui-e2e
+        name: gui end-to-end test
+        entry: sh -c 'dx build -p tournament-gui --release && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
+        language: system
+        types_or: [rust, html, css]
         pass_filenames: false
         stages: [manual]
 

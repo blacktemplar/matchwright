@@ -3,28 +3,49 @@ body {
   max-width: 60em;
   margin: 0 auto;
   padding: 1em;
+  color: #1a1a1a;
+  background: #fff;
 }
+
 header {
   display: flex;
   gap: 0.5em;
   align-items: center;
 }
+
 header h1 {
   flex: 1;
   font-size: 1.4em;
 }
+
 .error {
   color: #b00020;
   min-height: 1.5em;
 }
+
 table {
   border-collapse: collapse;
 }
-th, td {
+
+th,
+td {
   padding: 0.2em 0.6em;
   border-bottom: 1px solid #ddd;
   text-align: left;
 }
+
 button {
   margin: 0.1em;
+}
+
+.rounds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25em;
+  padding: 0;
+  list-style: none;
+}
+
+.rounds button[aria-pressed="true"] {
+  font-weight: bold;
 }

@@ -72,7 +72,17 @@ Tests native and in wasm, as for the other crates. Update AGENTS.md (crates, com
 
 Done when the crate covers what the spike's core does, with tests, and the hooks pass.
 
-### 2. The GUI crate, first screen
+### 2. The GUI crate, first screen (done 2026-10-24)
+
+`tournament-gui`, built with `dx build -p tournament-gui` (dx 0.7.10, as `dioxus` in `Cargo.lock`).
+The e2e harness became the crate `e2e-harness`, used by `tournament-web-e2e` and the new
+`tournament-gui-e2e`, each with its own manual hook (`web-e2e`, `gui-e2e`) and CI job; every e2e
+test of both pages ends with an axe-core check (WCAG 2.1 A/AA), axe-core downloaded at a pinned
+version and cached. CSS is a plain file. Changed on the way: the e2e tests run on the release
+build, since a debug build tries to reach `dx serve`; sides of a match come from the random seed, so
+the tests do not depend on them; `plugin-factory-derive` boxes an `Expr`, since Dioxus enables
+features of `syn` that made a clippy lint fire. The screen does not name the phase's format once
+added (the session does not tell it yet). Not measured with the GUI yet; the spikes' numbers stay in DESIGN.md.
 
 A Dioxus crate (e.g. `tournament-gui`) on the app crate, with in-memory storage for now:
 
@@ -127,6 +137,7 @@ large events, the CLI on top of the app crate, and what becomes of `tournament-w
 
 - ~~Is the storage trait async, and does the CLI share it? (step 1)~~ Async; the CLI's file storage
   fits it with futures that are ready at once, once the CLI sits on the app crate.
-- One e2e crate for both pages, or one per page? (step 2)
-- CSS: plain CSS files, or something like Tailwind (an extra tool)? (step 2)
+- ~~One e2e crate for both pages, or one per page? (step 2)~~ One per page, on a shared
+  `e2e-harness`.
+- ~~CSS: plain CSS files, or something like Tailwind (an extra tool)? (step 2)~~ Plain CSS.
 - Hosting of the page. (step 7)

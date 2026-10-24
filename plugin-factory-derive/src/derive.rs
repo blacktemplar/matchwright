@@ -483,13 +483,15 @@ enum Offered {
     /// `default`, i.e. the `Default` impl of the field's type.
     Trait,
     /// `default = expression`, an expression of the field's type.
-    Value(Expr),
+    // boxed, since an `Expr` is large with the features of `syn` other crates of a workspace may
+    // enable
+    Value(Box<Expr>),
 }
 
 impl Offered {
     fn parse(meta: &ParseNestedMeta) -> Result<Self> {
         if meta.input.peek(Token![=]) {
-            Ok(Self::Value(meta.value()?.parse()?))
+            Ok(Self::Value(Box::new(meta.value()?.parse()?)))
         } else {
             Ok(Self::Trait)
         }

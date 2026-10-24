@@ -7,12 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-axum.workspace = true
-futures-util.workspace = true
-serde_json.workspace = true
-thirtyfour.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "time"] }
-tower-http = { workspace = true, features = ["fs"] }
+e2e-harness.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true

@@ -76,6 +76,29 @@ jobs:
             target/e2e-failures
             !target/e2e-failures/harness
 
+  # the end-to-end tests of the GUI in headless Chrome, as web-e2e, on the page built by dx
+  gui-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # of the version of dioxus in Cargo.lock
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7.10
+      - run: echo "E2E_CHROMEDRIVER=$CHROMEWEBDRIVER/chromedriver" >> "$GITHUB_ENV"
+      - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
+        with:
+          extra-args: --all-files --stage manual gui-e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: gui-e2e-failures
+          path: target/e2e-failures
+
   fmt:
     runs-on: ubuntu-latest
     steps:

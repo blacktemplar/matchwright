@@ -1297,7 +1297,8 @@ Rejected:
 
 ## Frontend
 
-*Planned* (decided 2026-10-23): the GUI an organizer runs a competition with,
+*Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
+screen): the GUI an organizer runs a competition with,
 in the browser, offline. `requirements.md` says what it must do;
 `FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
 the browser, stays a text layer; the GUI is a rewrite and does not build on it.
@@ -1322,7 +1323,9 @@ the browser, stays a text layer; the GUI is a rewrite and does not build on it.
 #### Alternatives
 
 Both Dioxus and Leptos were spiked in `spikes/`: the same app on a shared core
-(`spike-core`), with the measurements in `spikes/README.md`, copied below.
+(`spike-core`), with the measurements in `spikes/README.md`, copied below. The
+spikes were deleted once the GUI existed; they are in the history (commit
+`0902482`).
 
 - **Leptos** (0.8). The close alternative: fine-grained signals, real DOM,
   loaded slightly faster (1750 vs. 1850 ms at 1x). Slower at updating the
@@ -1335,6 +1338,21 @@ Both Dioxus and Leptos were spiked in `spikes/`: the same app on a shared core
   accessibility tree a screen reader can rely on, no print layout, no embeds,
   and text that does not behave like the browser's on phones. Rejected without
   a spike.
+
+#### Implementation
+
+`tournament-gui` (2026-10-24), built with `dx`, whose version has to be that
+of `dioxus` in `Cargo.lock`. Its components only lay out what the app crate's
+`Session` hands out; the state they share is the session, the storage and the
+message of the last refused action, as signals. A change is saved after each
+action, take/write/mark as below, to a `MemoryStorage` until IndexedDB.
+
+- **Plain CSS** (`assets/style.css`, included through `asset!()`), not
+  Tailwind: no extra tool in the build, and the page is small. Revisit if the
+  styles grow into a design system.
+- **The e2e tests run on the release build.** A debug build of Dioxus connects
+  to the server of `dx serve` for hot reloading, which a test's static server
+  is not, and would log the failure as an error.
 
 ### The app crate
 
@@ -1447,6 +1465,22 @@ the project, and they build on `dioxus-primitives` from
 in `Cargo.lock`. Everything else is semantic HTML. The e2e tests run an
 axe-core check on every page.
 
+Implemented in `e2e-harness`, which both pages' e2e tests use: every test
+ends with a check of the page by axe-core against the rules of WCAG 2.1 A and
+AA, and a test can check states in between. axe-core is downloaded at a
+pinned version, checked against its SHA-256 and cached in the user's cache
+directory, like the chromedriver; it is too large (650 kB) to commit.
+
+#### End-to-end tests
+
+**A harness crate shared by one e2e crate per page** (`e2e-harness`,
+`tournament-web-e2e`, `tournament-gui-e2e`). The harness serves a built
+directory and runs Chrome, checks errors and accessibility and keeps what a
+failed test leaves; each page's crate wraps a `Page` in what an operator does
+there (`Terminal`, `Gui`). One crate for both pages would build both pages for
+either's tests, in one hook and one CI job; separate hooks let each be built
+by its own tool (trunk, dx) and fail on its own.
+
 #### Alternatives
 
 - **Own components from the start.** The ARIA patterns of a select or a dialog
@@ -1469,7 +1503,8 @@ Measured 2026-10-23 with the competition of the engine's `large_tournament`
 benchmark: 1000 entrants, random rounds over 10 rounds (5000 matches), every
 metric, ranked by 4 criteria.
 
-The engine alone, in wasm (`spike-core/tests/large.rs`), in ms:
+The engine alone, in wasm (`spike-core/tests/large.rs`, in the history), in
+ms:
 
 | results reported | report one | undo / redo / load (replay) | native undo |
 |---|---|---|---|
