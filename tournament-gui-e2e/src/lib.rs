@@ -1,5 +1,6 @@
 //! End-to-end tests of `tournament-gui`: [`run`] opens the page in headless Chrome, and the test
-//! uses it through a [`Gui`], the way an operator does, by typing and clicking. A [`Gui`] compares
+//! uses it through a [`Gui`], the way an operator does, by typing and clicking; a test about a
+//! single competition starts in a new one with [`run_in_new_competition`]. A [`Gui`] compares
 //! texts without the [`ISOLATION_MARKS`] the translation puts around names and numbers.
 //!
 //! The page is served from where `dx build -p tournament-gui --release` builds it. Everything else,
@@ -17,7 +18,24 @@ use e2e_harness::{
 };
 pub use e2e_harness::{failures, thirtyfour};
 
-/// Runs `test` on the page freshly opened, see [`e2e_harness::run`].
+/// The name of the competition [`run_in_new_competition`] creates.
+pub const COMPETITION: &str = "Cup";
+
+/// Runs `test` on a new competition named [`COMPETITION`], open on the page freshly opened, see
+/// [`run`].
+///
+/// # Panics
+/// Panics as [`run`] does.
+pub async fn run_in_new_competition(test: impl AsyncFnOnce(Gui) -> WebDriverResult<()>) {
+    run(async move |gui| {
+        gui.new_competition(COMPETITION).await?;
+        test(gui).await
+    })
+    .await;
+}
+
+/// Runs `test` on the page freshly opened, which lists the competitions stored, none yet, see
+/// [`e2e_harness::run`].
 ///
 /// # Panics
 /// Panics if `test` fails, if the page logs an error, or if it is not accessible at the end.
@@ -51,6 +69,84 @@ pub struct Gui {
 }
 
 impl Gui {
+    /// Creates the competition `name` from the list of competitions, and waits until it is open.
+    pub async fn new_competition(&self, name: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Css("form input")).first().await?;
+        input.send_keys(name).await?;
+        Page::pause().await;
+        self.click("Create").await?;
+        self.expect_open(name).await
+    }
+
+    /// Opens the competition `name` from the list of competitions, and waits until it is open.
+    pub async fn open_competition(&self, name: &str) -> WebDriverResult<()> {
+        self.follow(name).await?;
+        self.expect_open(name).await
+    }
+
+    /// Imports the competition of the file at `path` from the list of competitions, which opens it.
+    pub async fn import(&self, path: &Path) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id("import")).first().await?;
+        input
+            .send_keys(path.to_str().expect("the path is a text"))
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Follows the link whose text is `text`, e.g. `"All competitions"`.
+    pub async fn follow(&self, text: &str) -> WebDriverResult<()> {
+        self.driver
+            .query(By::LinkText(text))
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the competitions listed are `names`, in this order.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with those listed instead.
+    pub async fn expect_competitions(&self, names: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("#competition-list a"), names)
+            .await
+    }
+
+    /// Waits until the competition `name` is open.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_open(&self, name: &str) -> WebDriverResult<()> {
+        self.page.expect_texts(By::Css("h1"), &[name]).await?;
+        // the screen of the competition, before or after the start, rather than that of opening it
+        self.driver
+            .query(By::Css("#entrants, #matches"))
+            .first()
+            .await?;
+        Ok(())
+    }
+
+    /// Waits until the competition open is shown only, since another tab changes it, if
+    /// `read_only`, or else until it can be changed here.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_read_only(&self, read_only: bool) -> WebDriverResult<()> {
+        let notices: &[&str] = if read_only {
+            &[
+                "This competition is open in another tab, so it is only shown here. It follows \
+               what is done there, and can be changed here once that tab leaves it.",
+            ]
+        } else {
+            &[]
+        };
+        self.page.expect_texts(By::Css(".notice"), notices).await
+    }
+
     /// Adds the entrant `name`, and waits until it is listed.
     pub async fn add_entrant(&self, name: &str) -> WebDriverResult<()> {
         let input = self.driver.query(By::Css("form input")).first().await?;

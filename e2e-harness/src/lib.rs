@@ -26,12 +26,13 @@ use std::{
 use axum::Router;
 use futures_util::{FutureExt, StreamExt};
 use sha2::{Digest, Sha256};
+use tempfile::TempDir;
 pub use thirtyfour;
 use thirtyfour::{
     BrowserLogEntry, By, CapabilitiesHelper, ChromiumLikeCapabilities, DesiredCapabilities,
-    LoggingPrefsLogLevel, WebDriver,
+    LoggingPrefsLogLevel, WebDriver, WindowHandle,
     bidi::events::UserPromptOpened,
-    error::{WebDriverError, WebDriverResult},
+    error::{WebDriverError, WebDriverErrorInner, WebDriverResult},
     extensions::query::{ElementPollerWithTimeout, ElementQuery, ElementQueryable},
     manager::BrowserKind,
     stringmatch::Needle,
@@ -82,6 +83,7 @@ pub struct Site {
 /// [`Page::check_accessibility`].
 pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>) {
     let url = serve(&site).await;
+    let downloads = Arc::new(tempfile::tempdir().expect("a directory for the downloads"));
     let mut capabilities = DesiredCapabilities::chrome();
     if !headed() {
         capabilities.set_headless().unwrap();
@@ -92,10 +94,16 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
     // prefers English, whatever the language of the system, so that a page speaking the
     // browser's language does so in English
     capabilities.add_arg("--lang=en-US").unwrap();
+    // downloads into a directory of the test's own, without asking where to (see
+    // `Page::expect_download`)
     capabilities
         .add_experimental_option(
             "prefs",
-            serde_json::json!({ "intl.accept_languages": "en-US,en" }),
+            serde_json::json!({
+                "intl.accept_languages": "en-US,en",
+                "download.default_directory": downloads.path(),
+                "download.prompt_for_download": false,
+            }),
         )
         .unwrap();
     // reports the browser asking whether to leave the page (see `Page::leave`), and leaves the
@@ -129,6 +137,7 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
             driver,
             url,
             ready: site.ready,
+            downloads,
         };
         // a failing expectation panics, after which the page is worth seeing all the more
         let tested = AssertUnwindSafe(async {
@@ -345,6 +354,8 @@ pub struct Page {
     url: String,
     /// See [`Site::ready`].
     ready: By,
+    /// Where the browser downloads files to, removed with the last clone.
+    downloads: Arc<TempDir>,
 }
 
 impl Page {
@@ -414,6 +425,59 @@ impl Page {
             }
         }
         panic!("the page must be left, or the browser ask first");
+    }
+
+    /// The tab in use, to come back to with [`Page::switch_to`].
+    pub async fn tab(&self) -> WebDriverResult<WindowHandle> {
+        self.driver.window().await
+    }
+
+    /// Opens the page at the URL it is at now in a new tab, uses that tab from now on, and waits
+    /// until the page runs there. Returns the new tab.
+    pub async fn open_tab(&self) -> WebDriverResult<WindowHandle> {
+        let url = self.driver.current_url().await?;
+        let tab = self.driver.new_tab().await?;
+        self.driver.switch_to_window(tab.clone()).await?;
+        self.driver.goto(url.as_str()).await?;
+        self.ready().await?;
+        Self::pause().await;
+        Ok(tab)
+    }
+
+    /// Uses the tab `tab` from now on.
+    pub async fn switch_to(&self, tab: &WindowHandle) -> WebDriverResult<()> {
+        self.driver.switch_to_window(tab.clone()).await?;
+        Self::pause().await;
+        Ok(())
+    }
+
+    /// Closes the tab in use, and uses the tab `then` from now on.
+    pub async fn close_tab(&self, then: &WindowHandle) -> WebDriverResult<()> {
+        self.driver.close_window().await?;
+        self.switch_to(then).await
+    }
+
+    /// Waits until the browser has downloaded the file `name`, and returns where it is.
+    ///
+    /// # Panics
+    /// Panics if it has not in time, with the files downloaded instead.
+    pub async fn expect_download(&self, name: &str) -> WebDriverResult<PathBuf> {
+        let path = self.downloads.path().join(name);
+        let start = Instant::now();
+        // the browser downloads into a file of another name, and renames it when done
+        while !path.is_file() {
+            if start.elapsed() > TIMEOUT {
+                let found: Vec<_> = fs::read_dir(self.downloads.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.file_name())
+                    .collect();
+                panic!("the browser must download {name:?}, but downloaded {found:?}");
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+        Ok(path)
     }
 
     /// Pauses as long as `E2E_PAUSE` says, after an action.
@@ -496,7 +560,17 @@ impl Page {
         loop {
             let mut found = Vec::new();
             for element in self.driver.find_all(by.clone()).await? {
-                found.push(element.text().await?.replace(ISOLATION_MARKS, ""));
+                match element.text().await {
+                    Ok(text) => found.push(text.replace(ISOLATION_MARKS, "")),
+                    // replaced by the page since it was found, so looked for again
+                    Err(error)
+                        if matches!(*error, WebDriverErrorInner::StaleElementReference(_)) =>
+                    {
+                        found.clear();
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             if found == texts {
                 return Ok(());

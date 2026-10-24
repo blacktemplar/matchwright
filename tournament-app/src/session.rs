@@ -15,6 +15,7 @@ use tournament_engine::{
     CompetitionTransition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData,
     PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed,
     StartCompetition,
+    map::IdAble as _,
     plugins::phase_format::PhaseFormat,
     transitions::{
         self as engine, CompetitionAlreadyStarted, ReconfigurePhaseError, UndoMatchResultError,
@@ -27,12 +28,13 @@ use tournament_engine::{
 
 use crate::{
     error::{
-        AddEntrantError, AddPhaseError, EditPhaseError, LoadError, NoPhase, NothingToRedo,
-        NothingToUndo, PhaseDraftError, RemoveEntrantError, ReportError, StartError,
+        AddEntrantError, AddPhaseError, EditPhaseError, ImportError, LoadError, NoPhase,
+        NothingToRedo, NothingToUndo, PhaseDraftError, RemoveEntrantError, ReportError, StartError,
         UndoReportError,
     },
+    file::{self, File},
     people::{People, Person},
-    storage::{Changes, CompetitionKey, Listing, Storage},
+    storage::{Changes, CompetitionKey, Listing, Storage, Stored},
     view::{
         Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
         RoundSummary, StandingRow, Standings,
@@ -97,25 +99,10 @@ impl Session {
         storage: &S,
         key: CompetitionKey,
     ) -> Result<Self, LoadError<S::Error>> {
-        let stored = storage
-            .read(key)
-            .await
-            .map_err(LoadError::Storage)?
-            .ok_or(LoadError::NotFound)?;
-        let log = stored
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(position, entry)| {
-                serde_json::from_str::<LogEntry<Box<dyn CompetitionTransition>>>(entry)
-                    .map_err(|source| LoadError::Entry { position, source })
-            })
-            .collect::<Result<_, _>>()?;
-        let machine = CompetitionStateMachine::build(log).map_err(LoadError::Replay)?;
-        let mut people = People::default();
-        for person in &stored.people {
-            people.add(serde_json::from_str(person).map_err(LoadError::Person)?);
-        }
+        let stored = read(storage, key, 0).await?;
+        let machine =
+            CompetitionStateMachine::build(entries(&stored, 0)?).map_err(LoadError::Replay)?;
+        let people = people(&stored)?;
         Ok(Self {
             key,
             name: stored.name,
@@ -127,6 +114,74 @@ impl Session {
             redoable: 0,
             unsaved_people: IndexSet::new(),
         })
+    }
+
+    /// Catches up with what was saved of the competition in `storage` since this session loaded or
+    /// caught up last, e.g. by a session in another tab, see [`Self::catch_up_with`]: reads what
+    /// is stored from [`Self::next_entry`] on and hands it over. Returns how many entries it
+    /// appended.
+    ///
+    /// # Errors
+    /// Returns an error if nothing is stored under the session's key, the storage cannot be read,
+    /// or an entry cannot be read or does not apply, see [`Self::catch_up_with`].
+    ///
+    /// # Panics
+    /// Panics if the session has unsaved changes, see [`Self::catch_up_with`].
+    pub async fn catch_up<S: Storage>(
+        &mut self,
+        storage: &S,
+    ) -> Result<usize, LoadError<S::Error>> {
+        let first_entry = self.next_entry();
+        let stored = read(storage, self.key, first_entry).await?;
+        self.catch_up_with(&stored, first_entry)
+    }
+
+    /// The position in the log of the entry appended next, from which a storage is read to catch
+    /// up, see [`Self::catch_up_with`].
+    pub fn next_entry(&self) -> usize {
+        self.machine.log().len()
+    }
+
+    /// Catches up with `stored`, what a storage holds of this session's competition with the
+    /// entries from the position `first_entry` on, which is [`Self::next_entry`] when it was read:
+    /// appends the entries, each as [`Self::load`] would have replayed it, and takes the people as
+    /// stored. Returns how many entries it appended. They are no actions of this session, so
+    /// there is nothing more to undo. [`Self::catch_up`] reads and catches up in one; reading
+    /// apart lets a GUI hold no borrow of the session while it reads.
+    ///
+    /// An entry that undoes or replaces an earlier one replays the log after that one, as it did
+    /// when it was appended; any other entry only applies to the current state.
+    ///
+    /// # Errors
+    /// Returns an error if an entry cannot be read or does not apply. If one cannot be read,
+    /// nothing is appended; if one does not apply, the entries before it stay appended.
+    ///
+    /// # Panics
+    /// Panics if `first_entry` is not [`Self::next_entry`], or the session has unsaved changes:
+    /// what was stored after them is of another session that took over the competition, and the
+    /// log would fork.
+    pub fn catch_up_with<E>(
+        &mut self,
+        stored: &Stored,
+        first_entry: usize,
+    ) -> Result<usize, LoadError<E>> {
+        assert!(
+            !self.has_unsaved_changes(),
+            "a session catches up only with nothing unsaved"
+        );
+        assert_eq!(
+            first_entry,
+            self.next_entry(),
+            "a session catches up from the end of its log"
+        );
+        let entries = entries(stored, first_entry)?;
+        self.people = people(stored)?;
+        let appended = entries.len();
+        for entry in entries {
+            self.machine.apply(entry).map_err(LoadError::Replay)?;
+            self.saved_entries = self.machine.log().len();
+        }
+        Ok(appended)
     }
 
     /// The key the competition is stored under.
@@ -203,6 +258,41 @@ impl Session {
         storage.write(&changes).await?;
         self.mark_saved(&changes);
         Ok(())
+    }
+
+    /// The competition as a file, with its name, log and people, see [`crate::file`].
+    pub fn export(&self) -> String {
+        file::to_json(&File {
+            name: Some(self.name.clone()),
+            log: self.machine.log(),
+            people: &self.people,
+        })
+    }
+
+    /// A new competition with what the file `file` holds, e.g. one [`Self::export`] or the CLI
+    /// wrote, named as in the file or else `name`. It is stored under a key of its own, so that
+    /// importing a file twice makes two competitions; nothing of it is saved yet.
+    ///
+    /// # Errors
+    /// Returns an error if `file` is no competition's file, or its log does not replay.
+    pub fn import(file: &str, name: &str) -> Result<Self, ImportError> {
+        let File {
+            name: named,
+            log: machine,
+            people,
+        } = serde_json::from_str::<File<CompetitionStateMachine, People>>(file)
+            .map_err(ImportError)?;
+        Ok(Self {
+            key: CompetitionKey::new(Uuid::new_v4()),
+            name: named.unwrap_or_else(|| name.to_owned()),
+            unsaved_people: people.iter().map(|person| person.id()).collect(),
+            machine,
+            people,
+            history: SessionHistory::new(),
+            undoable: 0,
+            redoable: 0,
+            saved_entries: 0,
+        })
     }
 
     /// What the operator can do now.
@@ -670,6 +760,41 @@ fn rejection(error: StateMachineError) -> TransitionError {
         // the session only appends new entries, each with a new id and targeting one in effect
         error => unreachable!("an action of the session is rejected by a transition: {error}"),
     }
+}
+
+/// What is stored of the competition `key` in `storage`, with the entries from `first_entry` on.
+async fn read<S: Storage>(
+    storage: &S,
+    key: CompetitionKey,
+    first_entry: usize,
+) -> Result<Stored, LoadError<S::Error>> {
+    storage
+        .read(key, first_entry)
+        .await
+        .map_err(LoadError::Storage)?
+        .ok_or(LoadError::NotFound)
+}
+
+/// The entries of `stored`, the first of which is at the position `first_entry` of the log.
+fn entries<E>(
+    stored: &Stored,
+    first_entry: usize,
+) -> Result<Vec<LogEntry<Box<dyn CompetitionTransition>>>, LoadError<E>> {
+    (first_entry..)
+        .zip(&stored.entries)
+        .map(|(position, entry)| {
+            serde_json::from_str(entry).map_err(|source| LoadError::Entry { position, source })
+        })
+        .collect()
+}
+
+/// The people of `stored`.
+fn people<E>(stored: &Stored) -> Result<People, LoadError<E>> {
+    let mut people = People::default();
+    for person in &stored.people {
+        people.add(serde_json::from_str(person).map_err(LoadError::Person)?);
+    }
+    Ok(people)
 }
 
 /// What a person is stored as.

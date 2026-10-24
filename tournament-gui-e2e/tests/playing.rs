@@ -1,4 +1,4 @@
-use tournament_gui_e2e::{Gui, run, thirtyfour::error::WebDriverResult};
+use tournament_gui_e2e::{Gui, run_in_new_competition, thirtyfour::error::WebDriverResult};
 
 /// Enters `names` and starts a round robin of them.
 async fn start_round_robin(gui: &Gui, names: &[&str]) -> WebDriverResult<()> {
@@ -13,7 +13,7 @@ async fn start_round_robin(gui: &Gui, names: &[&str]) -> WebDriverResult<()> {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_reported_result_shows_in_the_match_and_the_standings() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
 
         gui.click("Bob wins").await?;
@@ -27,7 +27,7 @@ async fn a_reported_result_shows_in_the_match_and_the_standings() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_result_is_reopened() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
         gui.click("Bob wins").await?;
 
@@ -43,7 +43,7 @@ async fn a_result_is_reopened() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_takes_back_a_result_and_redo_brings_it_back() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
         gui.click("Alice wins").await?;
 
@@ -58,7 +58,7 @@ async fn undo_takes_back_a_result_and_redo_brings_it_back() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_matches_are_shown_one_round_at_a_time() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob", "Carol", "Dave"]).await?;
         gui.expect_matches(&["1", "2"]).await?;
         gui.page.check_accessibility().await?;

@@ -1,4 +1,4 @@
-use tournament_gui_e2e::{run, thirtyfour::By};
+use tournament_gui_e2e::{run, run_in_new_competition, thirtyfour::By};
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
@@ -13,7 +13,7 @@ async fn the_page_speaks_the_language_the_browser_prefers() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn everything_is_said_in_the_language_chosen() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.click("Add entrant").await?;
         gui.expect_error("an entrant name must not be empty")
             .await?;

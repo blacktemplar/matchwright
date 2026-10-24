@@ -13,6 +13,8 @@ futures-util.workspace = true
 reqwest = { workspace = true, features = ["rustls"] }
 serde_json.workspace = true
 sha2.workspace = true
+# a directory of each test's own for what the browser downloads
+tempfile.workspace = true
 thirtyfour.workspace = true
 tokio = { workspace = true, features = ["fs", "net", "rt", "time"] }
 tower-http = { workspace = true, features = ["fs"] }

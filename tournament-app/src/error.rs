@@ -159,6 +159,12 @@ pub enum LoadError<E> {
     Replay(#[source] StateMachineError),
 }
 
+/// Why a file was not imported: it is no competition's file, or holds a log that does not replay,
+/// e.g. one of a plugin this version does not have.
+#[derive(Debug, Error)]
+#[error("the file is no competition this version can open: {0}")]
+pub struct ImportError(#[source] pub serde_json::Error);
+
 impl Message for AddEntrantError {
     fn text(&self) -> Text {
         match self {
@@ -287,6 +293,12 @@ impl<E: Display> Message for LoadError<E> {
                 Text::new("error-log-does-not-replay").with("reason", error.to_string())
             }
         }
+    }
+}
+
+impl Message for ImportError {
+    fn text(&self) -> Text {
+        Text::new("error-file-unreadable").with("reason", self.0.to_string())
     }
 }
 

@@ -1,0 +1,43 @@
+[package]
+name = "tournament-browser"
+description = "What the GUI for running tournaments needs of the browser: storage in IndexedDB, a lock per competition, messages between tabs, files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+futures-channel.workspace = true
+futures-util.workspace = true
+idb.workspace = true
+js-sys.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tournament-app.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
+    "BroadcastChannel",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "MessageEvent",
+    "Navigator",
+    "StorageManager",
+    "Url",
+    "Window",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# seeds and ids are random, and in the browser randomness comes from JavaScript, which the
+# application picks, so the tests do
+getrandom = { workspace = true, features = ["wasm_js"] }
+tournament-engine.workspace = true
+uuid = { workspace = true, features = ["js", "v4"] }
+wasm-bindgen-test.workspace = true

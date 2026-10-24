@@ -94,7 +94,9 @@ pub struct StandingRow {
 
 /// What the operator can do now. Each is true exactly when doing it would not be refused for the
 /// state the competition is in; it can still fail for what is done, e.g. a duplicate name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// The default is that nothing can be done, as for a competition shown read-only.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Actions {
     pub add_entrant: bool,
     pub remove_entrant: bool,

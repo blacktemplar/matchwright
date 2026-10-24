@@ -1376,6 +1376,7 @@ dependencies = [
  "reqwest 0.13.5",
  "serde_json",
  "sha2",
+ "tempfile",
  "thirtyfour",
  "tokio",
  "tower-http 0.7.1",
@@ -2070,6 +2071,21 @@ dependencies = [
  "zerofrom",
  "zerotrie",
  "zerovec",
+]
+
+[[package]]
+name = "idb"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6554f394e990a1af530a528a7fdcad6e01b29cb1b990f89df3ffd62cf15f7828"
+dependencies = [
+ "indexmap",
+ "js-sys",
+ "num-traits",
+ "thiserror 2.0.21",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -4128,6 +4144,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tournament-browser"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "getrandom 0.4.3",
+ "idb",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tournament-app",
+ "tournament-engine",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
+]
+
+[[package]]
 name = "tournament-cli"
 version = "0.1.0"
 dependencies = [
@@ -4178,8 +4215,10 @@ name = "tournament-gui"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "futures-util",
  "getrandom 0.4.3",
  "tournament-app",
+ "tournament-browser",
  "tournament-engine",
  "uuid",
  "wasm-bindgen-test",

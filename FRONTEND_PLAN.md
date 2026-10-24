@@ -114,7 +114,24 @@ Fluent bundles (English first, plus one more language to prove it), a small help
 keys for plugin labels/descriptions/fields with the code's label as fallback, `<html lang>` set,
 choosing the language. All text of step 2 goes through it.
 
-### 4. Storage in the browser
+### 4. Storage in the browser (done 2026-10-24)
+
+The crate `tournament-browser` (IndexedDB through `idb`, Web Locks, `BroadcastChannel`, persistence,
+download), tested in headless Chrome by the `wasm-test` hook; see DESIGN.md, *Storage*,
+*Implementation*. The page starts with the list of competitions (open, export, new, import); the one
+open is named after the `#` of the URL. A tab without the lock shows the competition read-only,
+catches up with each save of the writer by appending the entries stored after its own log
+(`Session::catch_up`, from a position `Storage::read` now takes, which a server sync will need too)
+and takes over when it leaves. Export and import use the CLI's file plus the
+name (`tournament-app`'s `file`), and a test of the CLI opens what the app exports and vice versa.
+Changed on the way: one `Header` for every screen, since an `h1` replaced by the next screen made
+the e2e tests' elements stale (`Page::expect_texts` now looks again if one is); the harness got tabs
+and a download directory per test; persistence is asked for when a competition is opened, which
+headless Chrome refuses, so its warning is on the page in every e2e test. Not done: export reminders
+or automatic backups (`requirements.md`), a warning before leaving with changes not yet written,
+handling a newer version of the database while another tab has an older one open
+(`versionchange`), renaming and deleting competitions; the "last good snapshot" next to a log that
+no longer replays waits for snapshots.
 
 IndexedDB behind the storage trait (pick the crate here, e.g. `indexed_db_futures` or `rexie`):
 one record per log entry, names apart; the single writer tab via Web Locks, followers via
@@ -138,6 +155,14 @@ standings with the metric columns, stages for elimination formats, "what can be 
 
 PWA: web app manifest, service worker caching the page, release build with `wasm-opt` (trunk's
 default `wasm-opt` was too old for current Rust; check `dx`'s), where to host it.
+
+Rework the warning shown when the browser refuses persistent storage (step 4), which Chrome does
+for a site that is not installed or used much, and Firefox always does in a private window (whose
+storage is deleted with the session, which the page cannot detect). Since no button on the page
+can change the answer, it is a permanent nag now: word it for both cases ("may not keep these
+competitions, e.g. in a private window or when short of space"), give it an Export button, make it
+dismissible, offer installing the app (after which Chrome usually grants it) and ask again after
+an install. Possibly the export reminder of `requirements.md` ("changed since its last export").
 
 ### Later, not planned in detail
 

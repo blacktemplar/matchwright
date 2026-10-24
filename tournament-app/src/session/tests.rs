@@ -690,6 +690,79 @@ fn a_person_changed_after_the_changes_were_taken_stays_unsaved() {
     assert!(session.has_unsaved_changes());
 }
 
+/// Another tab, say, shows what the session changing the competition saved, without replaying the
+/// log each time.
+#[test]
+fn a_session_catches_up_with_what_another_one_saved() {
+    let storage = MemoryStorage::default();
+    let mut changing = Given::new().started();
+    now(changing.save(&storage)).unwrap();
+    let mut following = now(Session::load(&storage, changing.key())).unwrap();
+
+    changing
+        .report(numbered(&changing, 1), MatchResult::AWins)
+        .unwrap();
+    changing
+        .report(numbered(&changing, 2), MatchResult::BWins)
+        .unwrap();
+    // entries that undo an earlier one, which replay the log after it
+    changing.undo_report(numbered(&changing, 1)).unwrap();
+    changing.undo().unwrap();
+    now(changing.save(&storage)).unwrap();
+
+    assert_eq!(now(following.catch_up(&storage)).unwrap(), 4);
+    assert_eq!(matches(&following), matches(&changing));
+    assert_eq!(following.standings(), changing.standings());
+    assert!(!following.has_unsaved_changes());
+    assert!(matches!(following.undo(), Err(NothingToUndo)));
+    assert_eq!(now(following.catch_up(&storage)).unwrap(), 0);
+}
+
+#[test]
+fn catching_up_takes_the_people_as_stored() {
+    let storage = MemoryStorage::default();
+    let mut changing = Session::new("cup");
+    changing.add_entrant("Alice").unwrap();
+    now(changing.save(&storage)).unwrap();
+    let mut following = now(Session::load(&storage, changing.key())).unwrap();
+
+    changing.add_entrant("Bob").unwrap();
+    now(changing.save(&storage)).unwrap();
+    now(following.catch_up(&storage)).unwrap();
+
+    assert_eq!(names(&following.entrants()), ["Alice", "Bob"]);
+}
+
+#[test]
+fn an_entry_stored_that_does_not_apply_is_not_caught_up_with() {
+    let storage = MemoryStorage::default();
+    let mut changing = Session::new("cup");
+    now(changing.save(&storage)).unwrap();
+    let mut following = now(Session::load(&storage, changing.key())).unwrap();
+    changing.add_entrant("Alice").unwrap();
+    let mut changes = changing.unsaved_changes();
+    changes.entries.push(r#"{"unknown": true}"#.to_owned());
+    now(storage.write(&changes)).unwrap();
+
+    assert!(matches!(
+        now(following.catch_up(&storage)),
+        Err(LoadError::Entry { position: 2, .. })
+    ));
+    assert!(following.entrants().is_empty(), "nothing is appended");
+}
+
+#[test]
+#[should_panic = "a session catches up only with nothing unsaved"]
+#[cfg_attr(target_arch = "wasm32", ignore = "WebAssembly aborts on a panic")]
+fn a_session_with_unsaved_changes_does_not_catch_up() {
+    let storage = MemoryStorage::default();
+    let mut session = Session::new("cup");
+    now(session.save(&storage)).unwrap();
+    session.add_entrant("Alice").unwrap();
+
+    _ = now(session.catch_up(&storage));
+}
+
 /// A storage whose writes fail as long as it is told to.
 #[derive(Default)]
 struct Flaky {
@@ -715,8 +788,12 @@ impl Storage for Flaky {
         Ok(now(self.storage.list()).unwrap())
     }
 
-    async fn read(&self, key: CompetitionKey) -> Result<Option<Stored>, WriteFailed> {
-        Ok(now(self.storage.read(key)).unwrap())
+    async fn read(
+        &self,
+        key: CompetitionKey,
+        first_entry: usize,
+    ) -> Result<Option<Stored>, WriteFailed> {
+        Ok(now(self.storage.read(key, first_entry)).unwrap())
     }
 
     async fn write(&self, changes: &Changes) -> Result<(), WriteFailed> {
@@ -756,9 +833,77 @@ fn names_are_stored_apart_from_the_log() {
 
     now(session.save(&storage)).unwrap();
 
-    let stored = now(storage.read(session.key())).unwrap().unwrap();
+    let stored = now(storage.read(session.key(), 0)).unwrap().unwrap();
     assert!(stored.entries.iter().all(|entry| !entry.contains("Alice")));
     assert!(stored.people[0].contains("Alice"));
+}
+
+#[test]
+fn an_exported_competition_is_imported_as_a_new_one_as_it_was() {
+    let storage = MemoryStorage::default();
+    let mut session = Given::new().started();
+    session
+        .report(numbered(&session, 1), MatchResult::AWins)
+        .unwrap();
+
+    let mut imported = Session::import(&session.export(), "other").unwrap();
+
+    assert_eq!(imported.name(), "cup", "the file names the competition");
+    assert_ne!(imported.key(), session.key());
+    assert_eq!(imported.entrants(), session.entrants());
+    assert_eq!(matches(&imported), matches(&session));
+    assert_eq!(imported.standings(), session.standings());
+    assert!(matches!(imported.undo(), Err(NothingToUndo)));
+    assert!(imported.has_unsaved_changes(), "nothing of it is saved yet");
+    now(imported.save(&storage)).unwrap();
+    let loaded = now(Session::load(&storage, imported.key())).unwrap();
+    assert_eq!(loaded.entrants(), session.entrants());
+    assert_eq!(matches(&loaded), matches(&session));
+}
+
+/// The CLI saves the same file without the name.
+#[test]
+fn a_file_without_a_name_is_imported_under_the_name_given() {
+    let session = Given::new().added();
+    let mut file: serde_json::Value = serde_json::from_str(&session.export()).unwrap();
+    file.as_object_mut().unwrap().remove("name");
+
+    let imported = Session::import(&file.to_string(), "cup.json").unwrap();
+
+    assert_eq!(imported.name(), "cup.json");
+    assert_eq!(imported.entrants(), session.entrants());
+}
+
+#[test]
+fn a_file_that_is_no_competition_is_not_imported() {
+    assert!(Session::import("", "cup").is_err());
+    assert!(Session::import(r#"{"people": []}"#, "cup").is_err());
+    assert!(Session::import(r#"{"log": [{}], "people": []}"#, "cup").is_err());
+}
+
+/// A log written by a version with a plugin this one does not have, say, cannot be loaded, but the
+/// operator can still keep a copy of it.
+#[test]
+fn what_is_stored_is_exported_whether_it_replays_or_not() {
+    let storage = MemoryStorage::default();
+    let mut session = Session::new("cup");
+    session.add_entrant("Alice").unwrap();
+    let mut changes = session.unsaved_changes();
+    changes.entries.push(r#"{"unknown": true}"#.to_owned());
+    now(storage.write(&changes)).unwrap();
+    assert!(now(Session::load(&storage, session.key())).is_err());
+
+    let file = now(storage.read(session.key(), 0))
+        .unwrap()
+        .unwrap()
+        .export();
+
+    let exported: serde_json::Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(exported["name"], "cup");
+    assert_eq!(exported["log"].as_array().unwrap().len(), 3);
+    assert_eq!(exported["log"][2], serde_json::json!({ "unknown": true }));
+    assert_eq!(exported["people"][0]["name"], "Alice");
+    assert!(Session::import(&file, "cup").is_err());
 }
 
 #[test]

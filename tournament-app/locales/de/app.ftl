@@ -28,4 +28,5 @@ error-competition-unreadable = das Turnier kann nicht gelesen werden: { $reason 
 error-log-entry-unreadable = Eintrag { $position } des Protokolls kann nicht gelesen werden: { $reason }
 error-person-unreadable = der Name eines Teilnehmers kann nicht gelesen werden: { $reason }
 error-log-does-not-replay = das Protokoll lässt sich nicht nachspielen: { $reason }
+error-file-unreadable = die Datei ist kein Turnier, das diese Version öffnen kann: { $reason }
 error-rejected = abgelehnt: { $reason }

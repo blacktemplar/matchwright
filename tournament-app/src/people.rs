@@ -73,6 +73,11 @@ impl People {
     pub fn name(&self, id: &EntrantId) -> Option<&str> {
         self.get(id).map(Person::name)
     }
+
+    /// Everyone, in the order they were added.
+    pub fn iter(&self) -> impl Iterator<Item = &Person> {
+        self.0.values()
+    }
 }
 
 #[cfg(test)]

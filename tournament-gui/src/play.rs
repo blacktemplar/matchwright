@@ -10,7 +10,7 @@ use tournament_app::{
 };
 use tournament_engine::MatchResult;
 
-use crate::{Ctx, i18n::t, team_name};
+use crate::{competition::Ctx, i18n::t, team_name};
 
 #[component]
 pub fn Rounds() -> Element {
@@ -104,6 +104,8 @@ fn current(rounds: &[RoundSummary]) -> Option<NonZeroU32> {
 fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let id = row.id;
+    // only reported or reopened by the tab that changes the competition
+    let disabled = !ctx.changes();
     let tr = ctx.translator.read();
     let (a, b) = (team_name(&tr, &row.a), team_name(&tr, &row.b));
     let report = move |result| move |_| _ = ctx.act(move |session| session.report(id, result));
@@ -118,11 +120,11 @@ fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
             td {
                 match row.result {
                     None => rsx! {
-                        button { onclick: report(MatchResult::AWins),
+                        button { disabled, onclick: report(MatchResult::AWins),
                             {t!(tr, "wins", team = a.as_str())}
                         }
-                        button { onclick: report(MatchResult::Draw), {tr.get("draw")} }
-                        button { onclick: report(MatchResult::BWins),
+                        button { disabled, onclick: report(MatchResult::Draw), {tr.get("draw")} }
+                        button { disabled, onclick: report(MatchResult::BWins),
                             {t!(tr, "wins", team = b.as_str())}
                         }
                     },
@@ -136,6 +138,7 @@ fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
                         }
                         " "
                         button {
+                            disabled,
                             aria_label: t!(tr, "reopen-match", number = row.number),
                             onclick: move |_| _ = ctx.act(move |session| session.undo_report(id)),
                             {tr.get("reopen")}

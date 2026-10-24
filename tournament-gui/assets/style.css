@@ -23,6 +23,17 @@ header h1 {
   min-height: 1.5em;
 }
 
+.warning,
+.notice {
+  padding: 0.4em 0.6em;
+  border-left: 4px solid #8a5a00;
+  background: #fff6e0;
+}
+
+nav a {
+  margin-right: 0.5em;
+}
+
 table {
   border-collapse: collapse;
 }

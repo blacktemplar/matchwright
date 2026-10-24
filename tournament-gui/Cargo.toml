@@ -8,12 +8,16 @@ publish = false
 
 [dependencies]
 dioxus = { workspace = true, features = ["web"] }
+futures-util.workspace = true
 tournament-app.workspace = true
+tournament-browser.workspace = true
 tournament-engine.workspace = true
-# the languages the browser prefers, the one chosen, and the page's `<html lang>`
+# the languages the browser prefers, the one chosen, the page's `<html lang>`, and the competition
+# open, after the `#` of its URL
 web-sys = { workspace = true, features = [
     "Document",
     "Element",
+    "Location",
     "Navigator",
     "Storage",
     "Window",

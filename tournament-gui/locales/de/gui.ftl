@@ -1,10 +1,34 @@
 # What the GUI says in German.
 
 app-title = Turnier
+competition-title = { $name } – Turnier
 language = Sprache
 undo = Rückgängig
 redo = Wiederherstellen
+not-persisted = Der Browser darf die hier gespeicherten Turniere löschen, wenn ihm der Platz ausgeht. Exportiere sie, um eine Kopie zu behalten.
+error-no-storage = der Browser lässt die Seite keine Turniere speichern: { $reason }
 error-not-saved = die Änderungen konnten nicht gespeichert werden: { $reason }
+error-not-exported = die Datei konnte nicht erstellt werden: { $reason }
+
+## The competitions stored
+
+competitions = Turniere
+no-competitions = In diesem Browser ist noch kein Turnier gespeichert.
+export = Exportieren
+export-competition = { $name } exportieren
+new-competition = Neues Turnier
+create = Erstellen
+import = Aus einer Datei importieren
+error-empty-competition-name = ein Turnier braucht einen Namen
+error-file-not-read = die Datei konnte nicht gelesen werden: { $reason }
+error-competitions-unreadable = die gespeicherten Turniere können nicht gelesen werden: { $reason }
+
+## The competition open
+
+opening = Das Turnier wird geöffnet …
+all-competitions = Alle Turniere
+competition-actions = Turnier
+read-only = Dieses Turnier ist in einem anderen Tab geöffnet und wird hier nur angezeigt. Es folgt dem, was dort getan wird, und kann hier geändert werden, sobald jener Tab es verlässt.
 
 ## Before the start
 

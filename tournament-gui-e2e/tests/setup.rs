@@ -1,9 +1,9 @@
-use tournament_gui_e2e::run;
+use tournament_gui_e2e::run_in_new_competition;
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn entrants_are_listed_in_the_order_they_were_added() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.add_entrant("Alice").await?;
         gui.add_entrant("Bob").await?;
 
@@ -15,7 +15,7 @@ async fn entrants_are_listed_in_the_order_they_were_added() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn an_entrant_is_removed() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.add_entrant("Alice").await?;
         gui.add_entrant("Bob").await?;
 
@@ -29,7 +29,7 @@ async fn an_entrant_is_removed() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn an_entrant_without_a_name_is_refused_with_why() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.click("Add entrant").await?;
 
         gui.expect_error("an entrant name must not be empty")
@@ -42,7 +42,7 @@ async fn an_entrant_without_a_name_is_refused_with_why() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_and_redo_walk_through_the_actions() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.expect_disabled("Undo").await?;
         gui.add_entrant("Alice").await?;
         gui.add_entrant("Bob").await?;
@@ -59,7 +59,7 @@ async fn undo_and_redo_walk_through_the_actions() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn starting_needs_a_phase() {
-    run(async |gui| {
+    run_in_new_competition(async |gui| {
         gui.add_entrant("Alice").await?;
         gui.add_entrant("Bob").await?;
         gui.expect_disabled("Start").await?;

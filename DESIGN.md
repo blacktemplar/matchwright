@@ -1298,7 +1298,8 @@ Rejected:
 ## Frontend
 
 *Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
-screen): the GUI an organizer runs a competition with,
+screen and stores competitions in the browser): the GUI an organizer runs a
+competition with,
 in the browser, offline. `requirements.md` says what it must do;
 `FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
 the browser, stays a text layer; the GUI is a rewrite and does not build on it.
@@ -1345,7 +1346,7 @@ spikes were deleted once the GUI existed; they are in the history (commit
 of `dioxus` in `Cargo.lock`. Its components only lay out what the app crate's
 `Session` hands out; the state they share is the session, the storage and the
 message of the last refused action, as signals. A change is saved after each
-action, take/write/mark as below, to a `MemoryStorage` until IndexedDB.
+action, take/write/mark as below, to IndexedDB (see [Storage](#storage)).
 
 - **Plain CSS** (`assets/style.css`, included through `asset!()`), not
   Tailwind: no extra tool in the build, and the page is small. Revisit if the
@@ -1447,6 +1448,71 @@ person, and a listing (key and name) for the list of competitions to open.
 - **Several writer tabs.** Two tabs appending to the same log from different
   states fork it; merging them is the sync problem (`requirements.md`), not
   something a second tab should start. Rejected.
+
+#### Implementation
+
+Implemented 2026-10-24 in `tournament-browser`, which holds what the GUI needs
+of the browser besides its page, so that it is tested in headless Chrome on its
+own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
+
+- **The crate `idb`** for IndexedDB: a thin async layer over web-sys with few
+  dependencies (js-sys, web-sys, thiserror, tokio's `sync`). `rexie` is a
+  wrapper around it with nothing this needs; `indexed_db_futures` pulls in
+  half a dozen macro and helper crates for typed builders; raw web-sys would
+  mean writing the request futures by hand.
+- **Three object stores**: `competitions` (the listing: key, name, and how
+  many were stored before, which orders the list), `entries` under
+  `[competition, position]` and `people` under `[competition, entrant]`, each
+  record the JSON text the session hands over. A competition's records are a
+  key range (`[key]` to `[key, []]`), and entries come back in the order of
+  their positions.
+- **A write is one transaction** over the three stores, so that it stores all
+  of its changes or none. It refuses changes that start after the end of the
+  stored log, which would leave a gap. A transaction stays active only while
+  the browser hands it a request's result and runs the microtasks queued then,
+  so the writes following its reads must come right after them; the write runs
+  on wasm-bindgen-futures' executor, which continues in such a microtask, not
+  on whatever executor awaits it (e.g. Dioxus's).
+- **The writer lock** is a Web Lock per competition, held by the tab that has
+  it open for as long as it does. Each save under way holds it too, so that a
+  tab leaving a competition right after a change releases it only once the
+  change is written; the save also outlives the screen. A tab that does not
+  get it shows the competition read-only, catches up whenever the writer says
+  on a `BroadcastChannel` that it saved, and waits for the lock, taking over
+  (after catching up once more) when the writer leaves or is closed. web-sys
+  has Web Locks only behind
+  `web_sys_unstable_apis`, which every crate building the page would have to be
+  given, so the crate binds the one call it needs itself.
+- **Catching up appends rather than reloads.** The log is append-only and its
+  positions never change, so a session that has the first N entries reads the
+  stored ones from N on (`Storage::read` takes the position) and appends each
+  with the state machine's `apply`, as replaying would have: an entry that
+  applies a transition costs what it cost the writer, and only one that undoes
+  or replaces an earlier entry replays the log after that one, as it did for
+  the writer. The people are read whole, since they are few and may change.
+  Reading and appending are apart (`next_entry`, the read, `catch_up_with`),
+  like a save, so that a GUI holds no borrow of the session across the read.
+  It refuses a session with unsaved changes, whose log would fork. The same
+  catching up from a position is what syncing with a server will need.
+  Reloading the whole log on every save was rejected: it replays everything
+  each time (seconds for a large event, see [Performance](#performance)).
+- **Persistent storage is asked for when a competition is opened** (created
+  and imported ones are opened too): some browsers ask the operator, so
+  asking on load would ask before the page is used. A refusal shows a warning
+  that suggests exporting.
+- **Export and import use the CLI's file**: `{"log": .., "people": ..}` plus
+  `"name"`, which the CLI ignores and which an import falls back to the file's
+  name without, so a competition moves between the two. Importing makes a new
+  competition under a new key: importing the same file twice makes two, rather
+  than one overwriting the other. Exporting from the list reads the stored
+  records and writes them out as they are, so a competition whose log no
+  longer replays, e.g. after an update without one of its plugins, can still
+  be exported; the requirement's "next to its last good snapshot" waits for
+  snapshots.
+- **The competition open is in the URL**, after the `#`, so that a reload opens
+  it again and going back returns to the list; the list's entries are links.
+- Without the APIs, as on a page served over plain HTTP from elsewhere than
+  `localhost`, every tab writes (no lock) and persistence is not asked for.
 
 ### Translation
 

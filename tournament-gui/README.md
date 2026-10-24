@@ -1,10 +1,14 @@
 # tournament-gui
 
 The GUI for running a tournament, in the browser, on
-[`tournament-app`](../tournament-app). For now one screen: enter the entrants,
-add a phase in a format with its defaults, start, report and reopen results
-round by round, undo and redo, and follow the standings. The competition is
-kept in memory only, and is lost with the page.
+[`tournament-app`](../tournament-app). It lists the competitions stored in the
+browser (IndexedDB, through [`tournament-browser`](../tournament-browser)) to
+open or export, and starts a new one or imports one from a file (also one the
+CLI saved). A competition open, named after the `#` of the URL: enter the
+entrants, add a phase in a format with its defaults, start, report and reopen
+results round by round, undo and redo, and follow the standings. Every change
+is saved at once. One tab at a time changes a competition; another tab shows it
+read-only, follows the changes, and takes over when that tab leaves it.
 
 It speaks English and German: the language chosen last in the browser, or else
 the first the browser prefers. Its messages are in `locales/<lang>/gui.ftl`

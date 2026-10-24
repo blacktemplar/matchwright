@@ -35,5 +35,7 @@ error-log-entry-unreadable = entry { $position } of the log cannot be read: { $r
 error-person-unreadable = an entrant's name cannot be read: { $reason }
 # $reason: in English, from the engine
 error-log-does-not-replay = the log does not replay: { $reason }
+# $reason: in English, from reading JSON or from the engine
+error-file-unreadable = the file is no competition this version can open: { $reason }
 # $reason: in English, why the engine refused an action
 error-rejected = { $reason }

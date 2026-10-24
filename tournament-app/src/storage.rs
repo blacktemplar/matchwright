@@ -50,7 +50,7 @@ pub struct Listing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
     pub name: String,
-    /// The entries of the log, in the order they were appended.
+    /// The entries of the log from the position read from on, in the order they were appended.
     pub entries: Vec<String>,
     /// The people, in any order.
     pub people: Vec<String>,
@@ -105,13 +105,17 @@ pub trait Storage {
     /// Returns an error if the storage cannot be read.
     fn list(&self) -> impl Future<Output = Result<Vec<Listing>, Self::Error>>;
 
-    /// What is stored of the competition `key`, or `None` if nothing is.
+    /// What is stored of the competition `key`, with the entries of its log from the position
+    /// `first_entry` on (none if the log is not as long), or `None` if nothing is stored of it.
+    /// Reading from 0 reads the whole log; reading from the length of a log one has catches up
+    /// with what was appended since.
     ///
     /// # Errors
     /// Returns an error if the storage cannot be read.
     fn read(
         &self,
         key: CompetitionKey,
+        first_entry: usize,
     ) -> impl Future<Output = Result<Option<Stored>, Self::Error>>;
 
     /// Stores `changes`, all of them or, if that fails, none.
@@ -149,10 +153,18 @@ impl Storage for MemoryStorage {
             .collect())
     }
 
-    async fn read(&self, key: CompetitionKey) -> Result<Option<Stored>, Infallible> {
+    async fn read(
+        &self,
+        key: CompetitionKey,
+        first_entry: usize,
+    ) -> Result<Option<Stored>, Infallible> {
         Ok(self.0.borrow().get(&key).map(|competition| Stored {
             name: competition.name.clone(),
-            entries: competition.entries.clone(),
+            entries: competition
+                .entries
+                .get(first_entry..)
+                .unwrap_or_default()
+                .to_vec(),
             people: competition.people.values().cloned().collect(),
         }))
     }

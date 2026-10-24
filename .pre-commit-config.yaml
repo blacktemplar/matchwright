@@ -19,7 +19,7 @@ repos:
       # runner would skip
       - id: cargo-clippy-wasm
         name: cargo clippy (wasm)
-        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine -p tournament-app -p tournament-cli -p tournament-web -p tournament-gui --no-default-features --lib --bins --tests --examples -- -D warnings
+        entry: env CLIPPY_CONF_DIR=clippy-wasm cargo clippy --target wasm32-unknown-unknown -p plugin-factory -p tournament-engine -p tournament-app -p tournament-cli -p tournament-web -p tournament-browser -p tournament-gui --no-default-features --lib --bins --tests --examples -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
@@ -32,12 +32,12 @@ repos:
         pass_filenames: false
 
       # the tests of the crates that also run in the browser, compiled to wasm and run in Node, or in
-      # headless Chrome for tournament-web, which needs a browser (Chrome and chromedriver); doc
-      # tests are compiled for wasm, but only run natively. Too slow for every commit, so it only
-      # runs in CI or on request: `prek run --all-files --stage manual wasm-test`
+      # headless Chrome for tournament-web and tournament-browser, which need a browser (Chrome and
+      # chromedriver); doc tests are compiled for wasm, but only run natively. Too slow for every
+      # commit, so it only runs in CI or on request: `prek run --all-files --stage manual wasm-test`
       - id: wasm-test
         name: wasm test
-        entry: sh -c 'wasm-pack test --node plugin-factory --profile wasm-test && wasm-pack test --node tournament-engine --profile wasm-test && wasm-pack test --node tournament-app --profile wasm-test && wasm-pack test --node tournament-cli --profile wasm-test --no-default-features && wasm-pack test --headless --chrome tournament-web --profile wasm-test'
+        entry: sh -c 'wasm-pack test --node plugin-factory --profile wasm-test && wasm-pack test --node tournament-engine --profile wasm-test && wasm-pack test --node tournament-app --profile wasm-test && wasm-pack test --node tournament-cli --profile wasm-test --no-default-features && wasm-pack test --headless --chrome tournament-web --profile wasm-test && wasm-pack test --headless --chrome tournament-browser --profile wasm-test'
         language: system
         types: [rust]
         pass_filenames: false

@@ -1872,6 +1872,30 @@ mod tests {
         assert_eq!(saved["people"][0]["name"], "Alice");
     }
 
+    /// A competition moves between the CLI and the GUI as a file, which the CLI saves without the
+    /// name the GUI adds.
+    #[test]
+    fn a_file_of_the_gui_is_loaded_and_the_gui_imports_what_is_saved() {
+        let mut storage = MemoryStorage::default();
+        let mut exported = tournament_app::session::Session::new("cup");
+        exported.add_entrant("Alice").unwrap();
+        storage.write("cup", exported.export().as_bytes()).unwrap();
+
+        let mut session = Session::load(storage.clone(), "cup").unwrap();
+        assert_eq!(names(&session), ["Alice"]);
+        output(&mut session, "add Bob");
+        output(&mut session, "save");
+
+        let saved = String::from_utf8(storage.read("cup").unwrap()).unwrap();
+        let imported = tournament_app::session::Session::import(&saved, "cup").unwrap();
+        let entrants = imported.entrants();
+        let names: Vec<_> = entrants
+            .iter()
+            .map(|entrant| entrant.name.as_deref())
+            .collect();
+        assert_eq!(names, [Some("Alice"), Some("Bob")]);
+    }
+
     #[test]
     fn a_session_that_was_never_saved_needs_a_name() {
         let mut session = Session::new(MemoryStorage::default());
