@@ -56,6 +56,10 @@ const AXE_SHA256: &str = "20c09fe157a8a34a30e241aaa1fcdade657734f08ab379ecfbeb7d
 /// The rules of axe-core that are checked: those of WCAG 2.1, levels A and AA.
 const AXE_TAGS: &str = "['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']";
 
+/// The invisible marks that isolate the writing direction of a value in a translated text (U+2068
+/// and U+2069), which a test comparing texts ignores.
+pub const ISOLATION_MARKS: [char; 2] = ['\u{2068}', '\u{2069}'];
+
 /// A page to be tested.
 pub struct Site {
     /// The directory the page is built into, with its `index.html`.
@@ -67,8 +71,8 @@ pub struct Site {
 }
 
 /// Runs `test` on the page of `site` freshly opened in a new Chrome, headless unless `E2E_HEADED`
-/// says otherwise, with nothing saved yet. The chromedriver is the one `E2E_CHROMEDRIVER` names,
-/// if any, see the [crate docs](crate).
+/// says otherwise, with nothing saved yet and preferring English. The chromedriver is the one
+/// `E2E_CHROMEDRIVER` names, if any, see the [crate docs](crate).
 ///
 /// A failing test leaves a screenshot of the page and a report in [`failures`].
 ///
@@ -84,6 +88,15 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
     }
     capabilities
         .set_logging_prefs("browser", LoggingPrefsLogLevel::Severe)
+        .unwrap();
+    // prefers English, whatever the language of the system, so that a page speaking the
+    // browser's language does so in English
+    capabilities.add_arg("--lang=en-US").unwrap();
+    capabilities
+        .add_experimental_option(
+            "prefs",
+            serde_json::json!({ "intl.accept_languages": "en-US,en" }),
+        )
         .unwrap();
     // reports the browser asking whether to leave the page (see `Page::leave`), and leaves the
     // question open rather than accepting it
@@ -473,7 +486,8 @@ impl Page {
             .await
     }
 
-    /// Waits until the elements `by` finds have `texts`, in this order.
+    /// Waits until the elements `by` finds have `texts`, in this order, ignoring the
+    /// [`ISOLATION_MARKS`] in them.
     ///
     /// # Panics
     /// Panics if they do not in time, with the texts they have instead.
@@ -482,7 +496,7 @@ impl Page {
         loop {
             let mut found = Vec::new();
             for element in self.driver.find_all(by.clone()).await? {
-                found.push(element.text().await?);
+                found.push(element.text().await?.replace(ISOLATION_MARKS, ""));
             }
             if found == texts {
                 return Ok(());

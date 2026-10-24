@@ -1,9 +1,9 @@
 //! What is done before the start: entering the entrants, adding the phase, starting.
 
 use dioxus::prelude::*;
-use tournament_app::session::Session;
+use tournament_app::{i18n::PluginText, session::Session};
 
-use crate::{Ctx, team_name};
+use crate::{Ctx, i18n::t, team_name};
 
 #[component]
 pub fn Entrants() -> Element {
@@ -13,38 +13,44 @@ pub fn Entrants() -> Element {
         let session = ctx.session.read();
         (session.entrants(), session.actions())
     };
+    let tr = ctx.translator.read();
+    let entrants: Vec<_> = entrants
+        .into_iter()
+        .map(|entrant| (entrant.id, team_name(&tr, &[entrant])))
+        .collect();
     rsx! {
         section { aria_labelledby: "entrants",
-            h2 { id: "entrants", "Entrants" }
+            h2 { id: "entrants", {tr.get("entrants")} }
             form {
                 onsubmit: move |event| {
                     event.prevent_default();
-                    if ctx.act(|session| session.add_entrant(&name.peek())) {
+                    if ctx.act(|session| session.add_entrant(&name.peek())).is_some() {
                         name.set(String::new());
                     }
                 },
                 label {
-                    "Name "
+                    {tr.get("name")}
+                    " "
                     input {
                         value: "{name}",
                         autocomplete: "off",
                         oninput: move |event| name.set(event.value()),
                     }
                 }
-                button { r#type: "submit", disabled: !actions.add_entrant, "Add entrant" }
+                button { r#type: "submit", disabled: !actions.add_entrant, {tr.get("add-entrant")} }
             }
             ol { id: "entrant-list",
-                for entrant in entrants {
-                    li { key: "{entrant.id:?}",
-                        span { class: "name", {team_name(std::slice::from_ref(&entrant))} }
+                for (id, name) in entrants {
+                    li { key: "{id:?}",
+                        span { class: "name", "{name}" }
                         " "
                         button {
-                            aria_label: "Remove {team_name(std::slice::from_ref(&entrant))}",
+                            aria_label: t!(tr, "remove-entrant", name = name.as_str()),
                             disabled: !actions.remove_entrant,
                             onclick: move |_| {
-                                _ = ctx.act(|session| session.remove_entrant(entrant.id));
+                                _ = ctx.act(|session| session.remove_entrant(id));
                             },
-                            "Remove"
+                            {tr.get("remove")}
                         }
                     }
                 }
@@ -60,41 +66,42 @@ pub fn Phase() -> Element {
     // the id of the format chosen
     let mut format = use_signal(|| formats[0].id.to_owned());
     let actions = ctx.session.read().actions();
+    let tr = ctx.translator.read();
     rsx! {
         section { aria_labelledby: "phase",
-            h2 { id: "phase", "Phase" }
+            h2 { id: "phase", {tr.get("phase")} }
             if actions.add_phase {
                 label {
-                    "Format "
+                    {tr.get("format")}
+                    " "
                     select {
+                        id: "format",
                         onchange: move |event| format.set(event.value()),
                         for option in formats {
                             option {
                                 value: option.id,
                                 selected: option.id == *format.read(),
-                                "{option.label}"
+                                {tr.plugin(option.id, PluginText::Label, option.label)}
                             }
                         }
                     }
                 }
                 button {
                     onclick: move |_| {
-                        _ = ctx.act(|session| {
-                            let draft = session
-                                .phase_draft(&format.peek())
-                                .map_err(|error| error.to_string())?;
-                            session.add_phase(&draft).map_err(|error| error.to_string())
-                        });
+                        let draft = ctx.act(|session| session.phase_draft(&format.peek()));
+                        if let Some(draft) = draft {
+                            _ = ctx.act(|session| session.add_phase(&draft));
+                        }
                     },
-                    "Add phase"
+                    {tr.get("add-phase")}
                 }
             } else {
-                p { "The phase is added, played with the format's defaults." }
+                p { {tr.get("phase-added")} }
             }
             button {
                 disabled: !actions.start,
                 onclick: move |_| _ = ctx.act(Session::start),
-                "Start"
+                {tr.get("start")}
             }
         }
     }

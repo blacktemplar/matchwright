@@ -1,5 +1,6 @@
 //! End-to-end tests of `tournament-gui`: [`run`] opens the page in headless Chrome, and the test
-//! uses it through a [`Gui`], the way an operator does, by typing and clicking.
+//! uses it through a [`Gui`], the way an operator does, by typing and clicking. A [`Gui`] compares
+//! texts without the [`ISOLATION_MARKS`] the translation puts around names and numbers.
 //!
 //! The page is served from where `dx build -p tournament-gui --release` builds it. Everything else,
 //! from the chromedriver to what a failing test leaves and the environment variables that show a
@@ -8,7 +9,7 @@
 use std::path::Path;
 
 use e2e_harness::{
-    Page, Site,
+    ISOLATION_MARKS, Page, Site,
     thirtyfour::{
         By, Key, WebDriver, components::SelectElement, error::WebDriverResult,
         extensions::query::ElementQueryable,
@@ -65,13 +66,26 @@ impl Gui {
 
     /// Chooses the format labelled `label` for the phase.
     pub async fn choose_format(&self, label: &str) -> WebDriverResult<()> {
-        let select = self.driver.query(By::Css("select")).first().await?;
-        SelectElement::new(&select)
-            .await?
-            .select_by_visible_text(label)
-            .await?;
-        Page::pause().await;
-        Ok(())
+        self.choose("format", label).await
+    }
+
+    /// Chooses the language named `name` in itself, e.g. `"Deutsch"`.
+    pub async fn choose_language(&self, name: &str) -> WebDriverResult<()> {
+        self.choose("language", name).await
+    }
+
+    /// Waits until the language of the page, its `<html lang>`, is `tag`.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_page_language(&self, tag: &str) -> WebDriverResult<()> {
+        self.page
+            .expect(
+                By::Css("html"),
+                |query| query.with_attribute("lang", tag.to_owned()),
+                &format!("the language {tag:?}"),
+            )
+            .await
     }
 
     /// Clicks the button whose text is `text`, once it is enabled.
@@ -89,7 +103,10 @@ impl Gui {
     /// Clicks the button whose accessible name, its `aria-label`, is `label`, once it is enabled.
     pub async fn click_labelled(&self, label: &str) -> WebDriverResult<()> {
         self.driver
-            .query(By::Css(format!("button[aria-label='{label}']")))
+            .query(By::XPath(format!(
+                "//button[{}='{label}']",
+                without_isolation_marks("@aria-label")
+            )))
             .and_enabled()
             .first()
             .await?
@@ -114,7 +131,7 @@ impl Gui {
     /// Panics if it does not in time, with what it shows instead.
     pub async fn expect_error(&self, text: &str) -> WebDriverResult<()> {
         self.page
-            .expect_text(By::Css("[role=alert]"), text.to_owned())
+            .expect_texts(By::Css("[role=alert]"), &[text])
             .await
     }
 
@@ -159,8 +176,27 @@ impl Gui {
             .await
     }
 
-    fn button(&self, text: &str) -> e2e_harness::thirtyfour::extensions::query::ElementQuery {
-        self.driver
-            .query(By::XPath(format!("//button[normalize-space()='{text}']")))
+    /// Chooses the option with the text `text` of the select whose id is `id`.
+    async fn choose(&self, id: &str, text: &str) -> WebDriverResult<()> {
+        let select = self.driver.query(By::Id(id)).first().await?;
+        SelectElement::new(&select)
+            .await?
+            .select_by_visible_text(text)
+            .await?;
+        Page::pause().await;
+        Ok(())
     }
+
+    fn button(&self, text: &str) -> e2e_harness::thirtyfour::extensions::query::ElementQuery {
+        self.driver.query(By::XPath(format!(
+            "//button[{}='{text}']",
+            without_isolation_marks("normalize-space()")
+        )))
+    }
+}
+
+/// The XPath of the string `expression` without the [`ISOLATION_MARKS`] in it.
+fn without_isolation_marks(expression: &str) -> String {
+    let marks: String = ISOLATION_MARKS.iter().collect();
+    format!("translate({expression}, '{marks}', '')")
 }

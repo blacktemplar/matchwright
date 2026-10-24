@@ -6,6 +6,11 @@ add a phase in a format with its defaults, start, report and reopen results
 round by round, undo and redo, and follow the standings. The competition is
 kept in memory only, and is lost with the page.
 
+It speaks English and German: the language chosen last in the browser, or else
+the first the browser prefers. Its messages are in `locales/<lang>/gui.ftl`
+([Fluent](https://projectfluent.org)); those of errors and plugins are in
+[`tournament-app`](../tournament-app/locales).
+
 ```text
 dx serve -p tournament-gui              # add --hot-patch to patch Rust code into the running page
 dx build -p tournament-gui --release    # into target/dx/tournament-gui/release/web/public

@@ -4,10 +4,13 @@
 use std::num::NonZeroU32;
 
 use dioxus::prelude::*;
-use tournament_app::view::{MatchRow, RoundSummary};
+use tournament_app::{
+    i18n::PluginText,
+    view::{MatchRow, RoundSummary},
+};
 use tournament_engine::MatchResult;
 
-use crate::{Ctx, team_name};
+use crate::{Ctx, i18n::t, team_name};
 
 #[component]
 pub fn Rounds() -> Element {
@@ -25,19 +28,28 @@ pub fn Rounds() -> Element {
     };
     let round = session.round(shown);
     drop(session);
+    let tr = ctx.translator.read();
     rsx! {
         section { aria_labelledby: "matches",
-            h2 { id: "matches", "Matches" }
-            nav { aria_label: "Rounds",
+            h2 { id: "matches", {tr.get("matches")} }
+            nav { aria_label: tr.get("rounds"),
                 ul { class: "rounds",
                     for summary in rounds {
                         li { key: "{summary.round}",
                             button {
                                 aria_pressed: summary.round == shown,
                                 onclick: move |_| chosen.set(Some(summary.round)),
-                                "Round {summary.round}"
                                 if summary.open > 0 {
-                                    " ({summary.open} open)"
+                                    {
+                                        t!(
+                                            tr,
+                                            "round-with-open",
+                                            round = summary.round,
+                                            open = summary.open,
+                                        )
+                                    }
+                                } else {
+                                    {t!(tr, "round", round = summary.round)}
                                 }
                             }
                         }
@@ -45,18 +57,18 @@ pub fn Rounds() -> Element {
                 }
             }
             if let Some(round) = round {
-                h3 { "Round {round.round}" }
+                h3 { {t!(tr, "round", round = round.round)} }
                 if !round.matches.is_empty() {
                     table { id: "match-list",
                         thead {
                             tr {
-                                th { scope: "col", "#" }
+                                th { scope: "col", {tr.get("match-number")} }
                                 if round.matches.iter().any(|row| row.stage.is_some()) {
-                                    th { scope: "col", "Stage" }
+                                    th { scope: "col", {tr.get("stage")} }
                                 }
-                                th { scope: "col", "Side A" }
-                                th { scope: "col", "Side B" }
-                                th { scope: "col", "Result" }
+                                th { scope: "col", {tr.get("side-a")} }
+                                th { scope: "col", {tr.get("side-b")} }
+                                th { scope: "col", {tr.get("result")} }
                             }
                         }
                         tbody {
@@ -71,7 +83,7 @@ pub fn Rounds() -> Element {
                     }
                 }
                 for bye in round.byes {
-                    p { "Bye: {team_name(&bye.entrants)}" }
+                    p { {t!(tr, "bye", team = team_name(&tr, &bye.entrants))} }
                 }
             }
         }
@@ -92,7 +104,8 @@ fn current(rounds: &[RoundSummary]) -> Option<NonZeroU32> {
 fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let id = row.id;
-    let (a, b) = (team_name(&row.a), team_name(&row.b));
+    let tr = ctx.translator.read();
+    let (a, b) = (team_name(&tr, &row.a), team_name(&tr, &row.b));
     let report = move |result| move |_| _ = ctx.act(move |session| session.report(id, result));
     rsx! {
         tr {
@@ -105,23 +118,27 @@ fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
             td {
                 match row.result {
                     None => rsx! {
-                        button { onclick: report(MatchResult::AWins), "{a} wins" }
-                        button { onclick: report(MatchResult::Draw), "Draw" }
-                        button { onclick: report(MatchResult::BWins), "{b} wins" }
+                        button { onclick: report(MatchResult::AWins),
+                            {t!(tr, "wins", team = a.as_str())}
+                        }
+                        button { onclick: report(MatchResult::Draw), {tr.get("draw")} }
+                        button { onclick: report(MatchResult::BWins),
+                            {t!(tr, "wins", team = b.as_str())}
+                        }
                     },
                     Some(result) => rsx! {
                         span { class: "result",
                             match result {
-                                MatchResult::AWins => format!("{a} won"),
-                                MatchResult::BWins => format!("{b} won"),
-                                MatchResult::Draw => "Draw".to_owned(),
+                                MatchResult::AWins => t!(tr, "won", team = a.as_str()),
+                                MatchResult::BWins => t!(tr, "won", team = b.as_str()),
+                                MatchResult::Draw => tr.get("draw"),
                             }
                         }
                         " "
                         button {
-                            aria_label: "Reopen match {row.number}",
+                            aria_label: t!(tr, "reopen-match", number = row.number),
                             onclick: move |_| _ = ctx.act(move |session| session.undo_report(id)),
-                            "Reopen"
+                            {tr.get("reopen")}
                         }
                     },
                 }
@@ -136,16 +153,19 @@ pub fn Standings() -> Element {
     let Some(standings) = ctx.session.read().standings() else {
         return rsx! {};
     };
+    let tr = ctx.translator.read();
     rsx! {
         section { aria_labelledby: "standings",
-            h2 { id: "standings", "Standings" }
+            h2 { id: "standings", {tr.get("standings")} }
             table { id: "standing-list",
                 thead {
                     tr {
-                        th { scope: "col", "Rank" }
-                        th { scope: "col", "Name" }
-                        for header in standings.columns {
-                            th { scope: "col", "{header}" }
+                        th { scope: "col", {tr.get("rank")} }
+                        th { scope: "col", {tr.get("name")} }
+                        for column in standings.columns {
+                            th { scope: "col",
+                                {tr.plugin(column.calculator, PluginText::Column, column.header)}
+                            }
                         }
                     }
                 }
@@ -153,7 +173,7 @@ pub fn Standings() -> Element {
                     for row in standings.rows {
                         tr {
                             td { "{row.rank}" }
-                            td { {team_name(&row.entrants)} }
+                            td { {team_name(&tr, &row.entrants)} }
                             for cell in row.cells {
                                 td { {cell} }
                             }

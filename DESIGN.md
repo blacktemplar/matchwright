@@ -1456,6 +1456,54 @@ name, with the English label from the code as the fallback, so plugins
 (including third-party ones) need no change and show in English until
 translated.
 
+#### Implementation
+
+Implemented 2026-10-24, in English and German.
+
+- **The machinery is in `tournament-app`** (`i18n`), so that it is tested
+  natively and in wasm: `Language`, a `Translator` of one language, and
+  `check`, which a test of a consumer runs on its resources (they parse, give
+  no key twice, and every language has the messages and attributes English
+  has). The app's own messages (`locales/<lang>/app.ftl`) are what its errors
+  say; the GUI's (`tournament-gui/locales/<lang>/gui.ftl`) are handed to the
+  translator as a `Resources` function with an exhaustive `match` over the
+  languages, so that a new language does not compile until every consumer has
+  its messages.
+- **Errors say a `Text`** (a key and its variables) through the trait
+  `Message`, rather than a translated string. The GUI keeps the `Text` of the
+  error shown, so that choosing another language translates it too. English
+  says what `Display` says.
+- **Plugin keys are attributes of one message per plugin**:
+  `plugin-<id>` (each `::` as `-`) with `.label`, `.description`, `.column`
+  (the header of a calculator's column), `.field-<name>` and
+  `.field-<name>-description`. One message per plugin keeps its texts together
+  in the file, and attribute names cannot collide with another plugin's. English
+  has no plugin messages: the code is the English. A test checks that the
+  German file translates every plugin of the engine and nothing that does not
+  exist. To find a column's key, the standings name each column's calculator,
+  which `plugin_factory::id_of` tells behind a `dyn`.
+- **A message missing in the language is taken from English**, and one
+  missing there too shows its key, rather than failing: the e2e tests run in
+  English and would show the key.
+- **Isolation marks are kept.** Fluent wraps each variable in the invisible
+  marks U+2068 and U+2069, which isolate its writing direction. Names are typed
+  by the operator and may be written right to left whatever the language of
+  the GUI; without the marks, such a name next to a number or punctuation
+  (`Bye: …`, a team joined by `&`) would be reordered on the screen. The cost
+  is that the marks are part of the text: tests compare without them (the
+  harness's `expect_texts`, the GUI e2e crate's buttons by text and
+  `aria-label`), and text copied from the page carries them. Turning them off
+  was rejected: it trades correct names for simpler tests.
+- **The language** is the one chosen last in the browser (local storage), or
+  else the first of the browser's preferred languages the GUI speaks, or else
+  English. The GUI sets `<html lang>` and marks each language's name in the
+  list with its own `lang`.
+- **Not translated yet**: the stages of a match (`PhaseFormat::stage` returns
+  English text; step 6 of `FRONTEND_PLAN.md`), the issues of a draft (step 5),
+  the reasons the engine or the storage give inside an error, which are
+  English text, and numbers, which show as Rust formats them (`1.5`, not
+  `1,5`).
+
 ### Accessibility
 
 **WCAG 2.1 AA.** Widgets that need more than HTML (select, dialog, ...) come

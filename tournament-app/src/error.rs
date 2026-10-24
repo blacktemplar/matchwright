@@ -1,14 +1,16 @@
 //! Why a [`Session`](crate::session::Session) refused to do something. An action that fails leaves
 //! the session unchanged.
 //!
-//! Each variant is something the operator is told; the messages are English, and a GUI may show
-//! its own text for a variant instead.
+//! Each variant is something the operator is told: its `Display` in English, and as a
+//! [`Message`] in the operator's language.
 
 use std::fmt::{self, Display};
 
 use plugin_factory::{config::ConfigError, draft::Issue};
 use thiserror::Error;
 use tournament_engine::undoable_state_machine::{StateMachineError, TransitionError};
+
+use crate::i18n::{Message, Text};
 
 /// Why an entrant was not added.
 #[derive(Debug, Error)]
@@ -155,6 +157,150 @@ pub enum LoadError<E> {
     /// The log does not replay into a competition.
     #[error("the log does not replay: {0}")]
     Replay(#[source] StateMachineError),
+}
+
+impl Message for AddEntrantError {
+    fn text(&self) -> Text {
+        match self {
+            Self::EmptyName => Text::new("error-empty-name"),
+            Self::DuplicateName(name) => {
+                Text::new("error-duplicate-name").with("name", name.as_str())
+            }
+            Self::Started => Text::new("error-entrant-added-after-start"),
+            Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for RemoveEntrantError {
+    fn text(&self) -> Text {
+        match self {
+            Self::UnknownEntrant => Text::new("error-unknown-entrant"),
+            Self::Started => Text::new("error-entrant-removed-after-start"),
+            Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for PhaseDraftError {
+    fn text(&self) -> Text {
+        match self {
+            Self::UnknownFormat(format) => {
+                Text::new("error-unknown-format").with("format", format.as_str())
+            }
+            Self::Configuration(error) => {
+                Text::new("error-format-misconfigured").with("reason", error.to_string())
+            }
+        }
+    }
+}
+
+impl Message for AddPhaseError {
+    fn text(&self) -> Text {
+        match self {
+            Self::Invalid(issues) => invalid_phase(issues),
+            Self::PhaseAlreadyAdded => Text::new("error-phase-already-added"),
+            Self::Started => Text::new("error-phase-added-after-start"),
+            Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for NoPhase {
+    fn text(&self) -> Text {
+        Text::new("error-no-phase")
+    }
+}
+
+impl Message for EditPhaseError {
+    fn text(&self) -> Text {
+        match self {
+            Self::NoPhase(no_phase) => no_phase.text(),
+            Self::Invalid(issues) => invalid_phase(issues),
+            Self::DoesNotFit(error) => {
+                Text::new("error-phase-change-does-not-fit").with("reason", error.to_string())
+            }
+        }
+    }
+}
+
+impl Message for StartError {
+    fn text(&self) -> Text {
+        match self {
+            Self::Started => Text::new("error-started-already"),
+            Self::NoPhase(no_phase) => no_phase.text(),
+            Self::TooFewEntrants => Text::new("error-too-few-entrants"),
+            Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for ReportError {
+    fn text(&self) -> Text {
+        match self {
+            Self::NotStarted => Text::new("error-not-started"),
+            Self::UnknownMatch => Text::new("error-unknown-match"),
+            Self::AlreadyFinished => Text::new("error-match-finished-already"),
+            Self::DrawNotAllowed => Text::new("error-draw-not-allowed"),
+            Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for UndoReportError {
+    fn text(&self) -> Text {
+        match self {
+            Self::NotStarted => Text::new("error-not-started"),
+            Self::UnknownMatch => Text::new("error-unknown-match"),
+            Self::NotReported => Text::new("error-match-not-reported"),
+            Self::DependedOn => Text::new("error-result-depended-on"),
+        }
+    }
+}
+
+impl Message for NothingToUndo {
+    fn text(&self) -> Text {
+        Text::new("error-nothing-to-undo")
+    }
+}
+
+impl Message for NothingToRedo {
+    fn text(&self) -> Text {
+        Text::new("error-nothing-to-redo")
+    }
+}
+
+impl<E: Display> Message for LoadError<E> {
+    fn text(&self) -> Text {
+        match self {
+            Self::NotFound => Text::new("error-competition-not-found"),
+            Self::Storage(error) => {
+                Text::new("error-competition-unreadable").with("reason", error.to_string())
+            }
+            Self::Entry { position, source } => Text::new("error-log-entry-unreadable")
+                .with("position", *position)
+                .with("reason", source.to_string()),
+            Self::Person(error) => {
+                Text::new("error-person-unreadable").with("reason", error.to_string())
+            }
+            Self::Replay(error) => {
+                Text::new("error-log-does-not-replay").with("reason", error.to_string())
+            }
+        }
+    }
+}
+
+// The engine's own errors and the issues of a draft are passed on in English, since what they say
+// is open-ended.
+
+/// The engine refused an action for a reason this crate does not know.
+fn rejected(error: &TransitionError) -> Text {
+    Text::new("error-rejected").with("reason", error.to_string())
+}
+
+/// No phase can be built from a draft.
+fn invalid_phase(issues: &[Issue]) -> Text {
+    Text::new("error-invalid-phase").with("issues", Issues(issues).to_string())
 }
 
 /// Lists issues of a draft in one line.

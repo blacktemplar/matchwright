@@ -458,7 +458,23 @@ fn the_standings_show_the_columns_of_the_metrics() {
 
     let standings = session.standings().unwrap();
 
-    assert_eq!(standings.columns, ["W-D-L", "points", "Sonneborn-Berger"]);
+    assert_eq!(
+        standings.columns,
+        [
+            Column {
+                calculator: "tournament_engine::wins_draws_losses",
+                header: "W-D-L"
+            },
+            Column {
+                calculator: "tournament_engine::points",
+                header: "points"
+            },
+            Column {
+                calculator: "tournament_engine::sonneborn_berger",
+                header: "Sonneborn-Berger"
+            },
+        ]
+    );
     let points: Vec<f64> = standings
         .rows
         .iter()
@@ -530,10 +546,14 @@ fn a_phase_is_edited_starting_out_at_its_configuration() {
     assert!(session.edit_phase(&draft).unwrap());
 
     assert_eq!(matches(&session)[0].result, Some(MatchResult::AWins));
-    assert_eq!(
-        session.standings().unwrap().columns,
-        ["W-D-L", "points", "Sonneborn-Berger"]
-    );
+    let headers: Vec<_> = session
+        .standings()
+        .unwrap()
+        .columns
+        .iter()
+        .map(|column| column.header)
+        .collect();
+    assert_eq!(headers, ["W-D-L", "points", "Sonneborn-Berger"]);
     session.undo().unwrap();
     assert_eq!(
         session.phase_draft_to_edit().unwrap().answers(),

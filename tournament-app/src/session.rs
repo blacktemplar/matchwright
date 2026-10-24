@@ -34,8 +34,8 @@ use crate::{
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Storage},
     view::{
-        Actions, ByeRow, EntrantRow, Format, MatchRow, Reopened, Reported, Round, RoundSummary,
-        StandingRow, Standings,
+        Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
+        RoundSummary, StandingRow, Standings,
     },
 };
 
@@ -543,17 +543,28 @@ impl Session {
         let columns: Vec<_> = phase
             .metrics_calculators()
             .iter()
-            .filter_map(|calculator| calculator.column())
+            .filter_map(|calculator| {
+                Some((plugin_factory::id_of(&**calculator), calculator.column()?))
+            })
             .collect();
         let data = phase.data();
         Some(Standings {
-            columns: columns.iter().map(|column| column.header()).collect(),
+            columns: columns
+                .iter()
+                .map(|(calculator, column)| Column {
+                    calculator,
+                    header: column.header(),
+                })
+                .collect(),
             rows: data
                 .standings()
                 .map(|ranking| StandingRow {
                     rank: ranking.rank(),
                     entrants: self.team(data, &[ranking.id()]),
-                    cells: columns.iter().map(|column| column.cell(ranking)).collect(),
+                    cells: columns
+                        .iter()
+                        .map(|(_, column)| column.cell(ranking))
+                        .collect(),
                 })
                 .collect(),
         })

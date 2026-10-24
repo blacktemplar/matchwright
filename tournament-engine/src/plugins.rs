@@ -34,6 +34,9 @@
 //!   label (no `more points are better` for `more points`).
 //! - **A field offers an answer**, with `#[plugin(default = ..)]`, wherever one value suits most
 //!   phases, e.g. the scoring of chess for points.
+//!
+//! Labels and descriptions are English. A consumer may translate them, finding them by the
+//! plugin's id and the field's name, and shows the English where it has no translation.
 
 use plugin_factory::{
     config::Config,

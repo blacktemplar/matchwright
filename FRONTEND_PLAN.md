@@ -96,7 +96,19 @@ A Dioxus crate (e.g. `tournament-gui`) on the app crate, with in-memory storage 
 
 Done when the screen works, its e2e tests (with axe) pass in CI, and AGENTS.md describes the crate.
 
-### 3. Translation
+### 3. Translation (done 2026-10-24)
+
+English and German, see DESIGN.md, *Translation*. The machinery is in `tournament-app` (`i18n`:
+`Language`, `Translator`, `check` for a consumer's tests); errors are a `Message` saying a `Text`
+(key and variables), so an error shown is translated again when the language changes. The GUI
+has its own messages, `t!` and `tr.get`, a language list in the header (the choice kept in local
+storage, else the browser's languages), and `<html lang>`; Chrome in the e2e tests prefers English.
+Changed on the way: plugin keys are attributes of one message per plugin (`plugin-<id>` with
+`.label`, `.field-<name>`, ...), plus `.column` for the header of a calculator's column, which the
+standings now name by the calculator's id (`plugin_factory::id_of`). Not translated yet: stages
+(still English from `PhaseFormat::stage`; step 6), issues of a draft (step 5), the engine's and
+storage's reasons inside an error, and number formats (`1.5`). The fields of `PhasePlugins` itself
+(format, ranking, metrics) are no plugin, so they need keys of their own in step 5.
 
 Fluent bundles (English first, plus one more language to prove it), a small helper for components,
 keys for plugin labels/descriptions/fields with the code's label as fallback, `<html lang>` set,

@@ -10,8 +10,19 @@ publish = false
 dioxus = { workspace = true, features = ["web"] }
 tournament-app.workspace = true
 tournament-engine.workspace = true
+# the languages the browser prefers, the one chosen, and the page's `<html lang>`
+web-sys = { workspace = true, features = [
+    "Document",
+    "Element",
+    "Navigator",
+    "Storage",
+    "Window",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # seeds and ids are random, and in the browser randomness comes from JavaScript
 getrandom = { workspace = true, features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true

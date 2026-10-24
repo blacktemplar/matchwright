@@ -30,6 +30,9 @@ dioxus = "0.7.10"
 dirs = "7.0.0"
 dyn-clone = "1.0.20"
 e2e-harness = { path = "e2e-harness" }
+fluent-bundle = "0.16.0"
+# of the version fluent-bundle parses with, for reading the messages of its resources
+fluent-syntax = "0.12.0"
 futures-util = "0.3.31"
 getrandom = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
@@ -68,6 +71,8 @@ typetag = "0.2.23"
 undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine", features = [
     "serde",
 ] }
+# of the version fluent-bundle takes languages in
+unic-langid = "0.9.6"
 uuid = { version = "1.28.0", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
 wasm-bindgen = "0.2.129"

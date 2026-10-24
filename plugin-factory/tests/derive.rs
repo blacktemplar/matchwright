@@ -269,6 +269,13 @@ fn a_derived_plugin_is_registered_under_its_id() {
 }
 
 #[test]
+fn a_plugin_behind_a_dyn_tells_its_id() {
+    let plugin: Box<dyn Derived> = Box::new(Unit);
+
+    assert_eq!(plugin_factory::id_of(&*plugin), "derive::unit");
+}
+
+#[test]
 fn a_skipped_field_is_no_part_of_the_schema_but_of_the_plugin() {
     let schema = entry_of::<Counter>().schema();
     let built = PluginConfig::of::<Counter>()

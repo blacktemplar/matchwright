@@ -222,3 +222,8 @@ pub trait PluginType: Plugin + Configurable {
     /// A program reads this declaration from the [catalog] before the plugin is configured.
     fn declare_static(_: &mut Declaration) {}
 }
+
+/// The [`PluginType::ID`] of `plugin`, which may be behind a `dyn` of its axis.
+pub fn id_of<P: Plugin + ?Sized>(plugin: &P) -> &'static str {
+    __private::Erased::id(plugin)
+}

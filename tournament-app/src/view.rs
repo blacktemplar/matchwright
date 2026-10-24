@@ -66,11 +66,20 @@ pub struct ByeRow {
 /// The standings of the phase.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Standings {
-    /// The headers of the metric columns, one per calculator of the phase that offers one, in
-    /// running order.
-    pub columns: Vec<&'static str>,
+    /// The metric columns, one per calculator of the phase that offers one, in running order.
+    pub columns: Vec<Column>,
     /// Best first.
     pub rows: Vec<StandingRow>,
+}
+
+/// A metric column of the standings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Column {
+    /// The id of the calculator whose metric the column shows, which its translated header is
+    /// found by, see [`PluginText::Column`](crate::i18n::PluginText::Column).
+    pub calculator: &'static str,
+    /// The header in English.
+    pub header: &'static str,
 }
 
 /// One line of the standings.
