@@ -33,6 +33,7 @@ use crate::{
         UndoReportError,
     },
     file::{self, File},
+    form::PhaseForm,
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Storage, Stored},
     view::{
@@ -406,6 +407,27 @@ impl Session {
             .phase_draft()
             .with("format", PluginConfig::new(entry.id()))?
             .with_defaults()?)
+    }
+
+    /// A form of a new phase of this competition, with every field answered as offered: in the
+    /// format a phase offers, with what that recommends. Once filled, its
+    /// [draft](PhaseForm::draft) is handed to [`Self::add_phase`].
+    ///
+    /// # Errors
+    /// Returns an error if a plugin offers an answer it does not take.
+    pub fn phase_form(&self) -> Result<PhaseForm, PhaseDraftError> {
+        Ok(PhaseForm::new(
+            self.competition().phase_draft().with_defaults()?,
+        ))
+    }
+
+    /// A form of the phase as it is played, see [`Self::phase_draft_to_edit`]. Once changed, its
+    /// [draft](PhaseForm::draft) is handed to [`Self::edit_phase`].
+    ///
+    /// # Errors
+    /// Returns [`NoPhase`] if the competition has no phase.
+    pub fn phase_form_to_edit(&self) -> Result<PhaseForm, NoPhase> {
+        self.phase_draft_to_edit().map(PhaseForm::new)
     }
 
     /// Adds the phase `draft` configures, which is the only phase the competition is played in.

@@ -138,7 +138,22 @@ one record per log entry, names apart; the single writer tab via Web Locks, foll
 BroadcastChannel; asking for persistent storage and warning if refused; export to and import from
 a file; a list of competitions to open. A log that no longer replays stays exportable.
 
-### 5. Configuring a phase
+### 5. Configuring a phase (done 2026-10-25)
+
+The form is data of `tournament-app` (`form`: `PhaseForm`, its `FormView`, changes by `Path`),
+laid out by `tournament-gui`'s `phase.rs`; see DESIGN.md, *Configuring a phase*. The phase once
+added shows as a summary (which step 2 lacked), edited in a dialog before and after the start.
+Changed on the way: a form shows every field at once, so a field still answered as offered follows
+a change of a field before it in schema order (another format brings its ranking and metrics),
+never one after it (removing a metric would otherwise drop the criterion needing it unnoticed;
+an issue shows it instead); the implied plugins are shown in
+their list, not chosen; issues are translated by kind, with plugin labels as variables
+(`Arg::Plugin`), and the fields of a phase itself by the message `phase` in `plugins.ftl`. The
+components are copied into `src/components/` and changed there (trigger named by its label,
+contrast), since `css_module` hashes their class names. Not done: translating what a plugin or an
+incompatibility says inside an issue (a rejection's reason, a fact's name, which for a ranking
+criterion is a Rust type name, shown only when no plugin provides the fact), choosing a plugin by keyboard is the select component's (not checked beyond axe), and the
+dialog has no visible close button (Escape and Cancel close it).
 
 A form generated from the phase draft's schema, the GUI counterpart of the CLI's questionnaire:
 fields by kind with their ranges, plugin choices per axis, implied plugins, issues shown where they

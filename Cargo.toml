@@ -28,6 +28,10 @@ console_error_panic_hook = "0.1.7"
 criterion = "0.8.2"
 # `dx`, its CLI that builds the GUI, has to be of the same version
 dioxus = "0.7.10"
+# the icons and the primitives of the components `dx components add` copies into tournament-gui;
+# the primitives are unreleased, so `Cargo.lock` pins the commit
+dioxus-icons = { version = "0.1.0", default-features = false }
+dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 dirs = "7.0.0"
 dyn-clone = "1.0.20"
 e2e-harness = { path = "e2e-harness" }

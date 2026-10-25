@@ -60,3 +60,73 @@ button {
 .rounds button[aria-pressed="true"] {
   font-weight: bold;
 }
+
+/* The components (src/components) in the light colours of the page, whatever the system's. */
+:root {
+  --dark: ;
+  --light: initial;
+}
+
+/* The form of a phase */
+
+.field {
+  margin: 0.5em 0;
+}
+
+fieldset.field {
+  border: 1px solid #ddd;
+  border-radius: 0.4em;
+}
+
+.field .label {
+  margin-right: 0.3em;
+}
+
+.description,
+.hint,
+.option-description {
+  color: #555;
+  font-size: 0.9em;
+}
+
+.description {
+  margin: 0.2em 0;
+}
+
+.plugin-fields,
+.plugin-list .field,
+.plugin-set .field {
+  margin-left: 1.5em;
+}
+
+.plugin-list,
+.plugin-set {
+  padding-left: 1.5em;
+}
+
+.plugin-set {
+  list-style: none;
+}
+
+.implied {
+  font-style: italic;
+}
+
+.issues {
+  margin: 0.2em 0;
+  color: #b00020;
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+}
+
+.recommended {
+  font-size: 0.9em;
+}
+
+.dialog-buttons {
+  display: flex;
+  gap: 0.5em;
+}

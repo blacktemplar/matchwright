@@ -27,12 +27,16 @@ use tournament_browser::{
 
 use crate::{
     Notices, Page, download,
+    phase::PhaseSummary,
     play::{Rounds, Standings},
     setup::{Entrants, Phase},
 };
 
 /// The channel on which a tab tells the others that it saved, with the key of the competition.
 pub const SAVED: &str = "tournament-gui.saved";
+
+/// The message telling that the competition is changed in another tab.
+const READ_ONLY: &str = "read-only";
 
 /// The name of the lock of the competition `key`, held by the tab that changes it.
 fn lock_name(key: CompetitionKey) -> String {
@@ -76,18 +80,35 @@ impl Ctx {
         if self.lock.peek().is_none() {
             return None;
         }
-        let result = action(&mut self.session.write());
-        match result {
+        match self.try_act(action) {
             Ok(done) => {
                 self.error.set(None);
-                self.save();
                 Some(done)
             }
             Err(error) => {
-                self.error.set(Some(error.text()));
+                self.error.set(Some(error));
                 None
             }
         }
+    }
+
+    /// Runs `action` on the session and saves what it changed, as [`Self::act`] does, but returns
+    /// why it was refused rather than showing it, e.g. for a dialog to show it.
+    ///
+    /// # Errors
+    /// Returns what the error of `action` says, and [`READ_ONLY`] while another tab changes the
+    /// competition.
+    pub fn try_act<T, E: Message>(
+        self,
+        action: impl FnOnce(&mut Session) -> Result<T, E>,
+    ) -> Result<T, Text> {
+        if self.lock.peek().is_none() {
+            return Err(Text::new(READ_ONLY));
+        }
+        let mut session = self.session;
+        let done = action(&mut session.write()).map_err(|error| error.text())?;
+        self.save();
+        Ok(done)
     }
 
     /// Writes what changed since the last save, without holding the session across the write, and
@@ -240,11 +261,15 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
         main {
             Notices {}
             if !changes {
-                p { class: "notice", role: "status", {tr.get("read-only")} }
+                p { class: "notice", role: "status", {tr.get(READ_ONLY)} }
             }
             if started {
                 Rounds {}
                 Standings {}
+                section { aria_labelledby: "phase",
+                    h2 { id: "phase", {tr.get("phase")} }
+                    PhaseSummary {}
+                }
             } else {
                 Entrants {}
                 Phase {}

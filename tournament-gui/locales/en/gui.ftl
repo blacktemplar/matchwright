@@ -46,10 +46,32 @@ add-entrant = Add entrant
 remove = Remove
 remove-entrant = Remove { $name }
 phase = Phase
-format = Format
 add-phase = Add phase
-phase-added = The phase is added, played with the format's defaults.
 start = Start
+
+## Configuring the phase
+
+# what a choice of a plugin shows while none is chosen
+choose-plugin = Choose…
+# the choice of no plugin, and what the phase shows for a field without one
+no-plugin = (none)
+# next to a plugin the plugins chosen elsewhere recommend
+recommended = (recommended)
+# $field: the label of a list of plugins
+add-to = Add to { $field }
+# $plugin: a plugin in a list
+move-up = Move { $plugin } up
+move-down = Move { $plugin } down
+remove-plugin = Remove { $plugin }
+# $plugin: a plugin added to a list since another one needs it
+implied-plugin = { $plugin }, since another one needs it
+yes = yes
+no = no
+edit-phase = Edit phase
+edit-phase-title = Edit the phase
+edit-phase-description = The phase is played as if it had been added this way. The results reported stay as long as it still schedules their matches.
+save-changes = Save changes
+cancel = Cancel
 
 ## After the start
 

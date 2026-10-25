@@ -1,9 +1,14 @@
 //! What is done before the start: entering the entrants, adding the phase, starting.
 
 use dioxus::prelude::*;
-use tournament_app::{i18n::PluginText, session::Session};
+use tournament_app::session::Session;
 
-use crate::{competition::Ctx, i18n::t, team_name};
+use crate::{
+    competition::Ctx,
+    i18n::t,
+    phase::{NewPhase, PhaseSummary},
+    team_name,
+};
 
 #[component]
 pub fn Entrants() -> Element {
@@ -57,47 +62,20 @@ pub fn Entrants() -> Element {
     }
 }
 
+/// The phase: its form until it is added, then how it is played; and the start.
 #[component]
 pub fn Phase() -> Element {
     let ctx = use_context::<Ctx>();
-    let formats = Session::formats();
-    // the id of the format chosen
-    let mut format = use_signal(|| formats[0].id.to_owned());
     let actions = ctx.actions();
     let has_phase = !ctx.session.read().competition().phases().is_empty();
     let tr = ctx.translator.read();
     rsx! {
         section { aria_labelledby: "phase",
             h2 { id: "phase", {tr.get("phase")} }
-            if !has_phase {
-                label {
-                    {tr.get("format")}
-                    " "
-                    select {
-                        id: "format",
-                        disabled: !actions.add_phase,
-                        onchange: move |event| format.set(event.value()),
-                        for option in formats {
-                            option {
-                                value: option.id,
-                                selected: option.id == *format.read(),
-                                {tr.plugin(option.id, PluginText::Label, option.label)}
-                            }
-                        }
-                    }
-                }
-                button {
-                    disabled: !actions.add_phase,
-                    onclick: move |_| {
-                        let draft = ctx.act(|session| session.phase_draft(&format.peek()));
-                        if let Some(draft) = draft {
-                            _ = ctx.act(|session| session.add_phase(&draft));
-                        }
-                    },
-                    {tr.get("add-phase")}
-                }
+            if has_phase {
+                PhaseSummary {}
             } else {
-                p { {tr.get("phase-added")} }
+                NewPhase {}
             }
             button {
                 disabled: !actions.start,

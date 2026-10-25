@@ -1298,7 +1298,8 @@ Rejected:
 ## Frontend
 
 *Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
-screen and stores competitions in the browser): the GUI an organizer runs a
+screen, stores competitions in the browser and configures a phase through a
+form): the GUI an organizer runs a
 competition with,
 in the browser, offline. `requirements.md` says what it must do;
 `FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
@@ -1514,6 +1515,89 @@ own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
 - Without the APIs, as on a page served over plain HTTP from elsewhere than
   `localhost`, every tab writes (no lock) and persistence is not asked for.
 
+### Configuring a phase
+
+*Implemented* 2026-10-25: a form generated from the schema of the phase's
+draft, the GUI counterpart of the CLI's questionnaire, for adding the phase
+and for editing it at any point (`reconfigure_phase`, see
+[Changing a phase after it was added](#changing-a-phase-after-it-was-added)).
+
+#### Decision
+
+**The form is data of the app crate** (`tournament-app`'s `form`): a
+`PhaseForm` holds the `Draft` and hands out a `FormView` (each field by its
+`Path`, an `Input` by kind with its answer, the plugins a field can take, the
+plugins implied, the issues), and takes the operator's changes by path. The
+GUI only lays it out, so that what the form offers and how it changes is
+tested natively and in wasm, and knows no plugin.
+
+- **All of it at once, not question by question.** The questionnaire walks the
+  schema and asks each field once, so that a later question starts at what the
+  answers before it recommend. A form shows every field and lets the operator
+  change any of them in any order, so it keeps recommendations current
+  instead: **a field still answered as offered follows a change of a field
+  before it** in schema order (each followed by the fields of its plugins)
+  that makes it offer something else, with the plugins answering it as they
+  offer; a field the operator changed stays. Choosing another format brings its
+  ranking and metrics, and so does a field of a plugin whose recommendations
+  depend on it (a single elimination with a match for third place ranks by
+  losses too). Whether a field is "as offered" is decided by answering a copy
+  of the draft as it offers, not by remembering what the operator touched, so
+  that a form of a phase loaded from its config follows in the same way.
+  **A field never follows a change of one after it**, the order the
+  questionnaire asks in: what a field offers also depends on what fits next to
+  the others, so the ranking would silently drop a criterion when the operator
+  removes the metric it needs, and the phase be ranked other than the operator
+  believes. The criterion stays and an issue at the metrics says what it
+  needs. Rejected: following every change (that silent drop), and following no
+  change at all (another format would keep the previous format's ranking).
+- **The plugins implied are shown, not chosen.** The view adds the implied
+  plugins (`Draft::add_implied`) to a copy and shows them after the chosen ones
+  of their list, as needed by another; they are not options to choose, and go
+  when nothing needs them. The draft itself never holds them, so removing the
+  criterion that needed one removes it too, as `Session::add_phase` builds.
+- **Issues where they are fixed.** The issues of the copy with the implied
+  plugins, built with nothing open (`Draft::build`), are put at the deepest
+  field or list item their path is within, and only those within none stay
+  with the form. An unanswered field is an issue, since the form is what the
+  phase is built from.
+- **Options that fit, the recommended first.** A field offers the candidates
+  without conflicts (and the plugin chosen, even if it no longer fits), those
+  recommended first in their order, then the others by label, as the
+  questionnaire orders them.
+- **A number is entered as text** and taken once the operator leaves the field
+  (`onchange`), with a comma as well as a point before the decimals. What is
+  not a number of the field's range leaves the answer as it was; the field
+  shows what was entered with why until the next change, rather than putting
+  an invalid answer into the draft, which takes only numbers of the range.
+- **The phase once added is shown as a summary** read from the same view, and
+  edited in a dialog that starts out at its config (`Phase::config`). A
+  refusal, e.g. an edit a reported result does not fit, is shown in the
+  dialog, which stays open.
+- **The components of the Dioxus team** for the widgets: `select`, since a
+  plugin's option shows its description, which a native `option` cannot, and
+  `dialog`. They are copied into `tournament-gui/src/components/` and changed
+  there: the select's trigger is named by a label of the page together with
+  its value (a `label` around it would take the clicks on its options), and
+  colours too faint for WCAG AA on white are darker. `css_module` hashes their
+  class names, so their styles change in their own files. The language list in
+  the header stays a native `select`.
+
+#### Alternatives
+
+- **The GUI walking the schema itself**, as the questionnaire does. Only
+  testable in a browser, and every frontend would repeat it. Rejected.
+- **The questionnaire in the GUI**, one question at a time. Long for a phase of
+  a dozen fields, and an operator correcting one answer would go through all of
+  them again. Rejected.
+- **Replacing the whole draft by the format's defaults when the format
+  changes.** Throws away the operator's other changes, and does not cover a
+  field of a plugin changing what it recommends. Rejected for following the
+  fields answered as offered.
+- **Native `<select>`s** for the plugins. Accessible and fine on phones, but an
+  option is plain text, so the descriptions of the plugins would be missing
+  where the choice is made.
+
 ### Translation
 
 **Fluent** (`fluent-bundle`) for all UI text from the first screen. Plugin
@@ -1564,11 +1648,18 @@ Implemented 2026-10-24, in English and German.
   else the first of the browser's preferred languages the GUI speaks, or else
   English. The GUI sets `<html lang>` and marks each language's name in the
   list with its own `lang`.
+- **The fields of a phase itself** are no plugin's, so they are translated as
+  the attributes `.field-<name>` and `.field-<name>-description` of the message
+  `phase`, next to the plugins in `plugins.ftl`, and checked by the same test.
+- **A plugin's label can be a variable of a `Text`** (`Arg::Plugin`,
+  `Arg::Plugins`), translated when the text is said, so that an issue of a
+  draft names the plugins in the operator's language. The issues are
+  translated by their kind; what a plugin or an incompatibility says inside
+  one (a rejection's reason, the name of a fact) stays English.
 - **Not translated yet**: the stages of a match (`PhaseFormat::stage` returns
-  English text; step 6 of `FRONTEND_PLAN.md`), the issues of a draft (step 5),
-  the reasons the engine or the storage give inside an error, which are
-  English text, and numbers, which show as Rust formats them (`1.5`, not
-  `1,5`).
+  English text; step 6 of `FRONTEND_PLAN.md`), the reasons the engine or the
+  storage give inside an error, which are English text, and numbers, which
+  show as Rust formats them (`1.5`, not `1,5`; a comma is taken when entered).
 
 ### Accessibility
 
@@ -1578,6 +1669,9 @@ the project, and they build on `dioxus-primitives` from
 `DioxusLabs/dioxus-components`, which is unreleased, so a git dependency pinned
 in `Cargo.lock`. Everything else is semantic HTML. The e2e tests run an
 axe-core check on every page.
+
+The first components (`select`, `dialog`) came with the form of a phase, see
+[Configuring a phase](#configuring-a-phase).
 
 Implemented in `e2e-harness`, which both pages' e2e tests use: every test
 ends with a check of the page by axe-core against the rules of WCAG 2.1 A and

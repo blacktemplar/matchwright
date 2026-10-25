@@ -39,3 +39,37 @@ error-log-does-not-replay = the log does not replay: { $reason }
 error-file-unreadable = the file is no competition this version can open: { $reason }
 # $reason: in English, why the engine refused an action
 error-rejected = { $reason }
+
+## The form of a phase
+
+# the numbers a field takes; $whole: yes or no, $bounds: both, min, max or none, $multiple: 0 for
+# any number
+number-range = { $whole ->
+        [yes] a whole number
+       *[no] a number
+    }{ $bounds ->
+        [both] {" "}from { $min } to { $max }
+        [min] {" "}of at least { $min }
+        [max] {" "}of at most { $max }
+       *[none] {""}
+    }{ $multiple ->
+        [0] {""}
+       *[other] {" "}that is a multiple of { $multiple }
+    }
+# what is wrong with the answer of a field, or with a plugin chosen
+issue-unanswered = this needs an answer
+# the variables of number-range
+issue-out-of-range = this takes { number-range }
+# $entered: what the operator typed
+issue-not-a-number = “{ $entered }” is no number
+issue-duplicate = this is chosen twice
+# $reason: in English, from the plugin
+issue-rejected = this is not taken: { $reason }
+# $reason: in English
+issue-invalid = { $reason }
+# $reason: in English
+issue-incompatible = this does not fit next to the others: { $reason }
+# $plugin: a plugin, $fact: in English, what it needs
+issue-unprovided = { $plugin } needs { $fact }, which nothing provides
+# $plugin: a plugin, $providers: the plugins of which it needs one
+issue-unprovided-by = { $plugin } needs one of these: { $providers }

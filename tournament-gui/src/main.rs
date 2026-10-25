@@ -9,7 +9,9 @@
 
 mod competition;
 mod competitions;
+mod components;
 mod i18n;
+mod phase;
 mod play;
 mod setup;
 
@@ -25,6 +27,8 @@ use tournament_engine::uuid::Uuid;
 
 use crate::{competition::Competition, competitions::Competitions, i18n::t};
 
+/// The variables the styles of the [`components`] are built from.
+const COMPONENTS_THEME: Asset = asset!("/assets/dx-components-theme.css");
 const STYLE: Asset = asset!("/assets/style.css");
 
 /// The database of IndexedDB the competitions are stored in.
@@ -98,6 +102,8 @@ fn App() -> Element {
     });
     let stored = page.storage.read().is_some();
     rsx! {
+        // in this order, so that the page's own style comes last
+        document::Stylesheet { href: COMPONENTS_THEME }
         document::Stylesheet { href: STYLE }
         // the same for every screen, so that its elements stay while the screens change
         Header {}

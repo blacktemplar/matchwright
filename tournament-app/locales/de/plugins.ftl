@@ -1,5 +1,15 @@
 # The plugins of tournament-engine in German, see `PluginText` in `src/i18n.rs` for the keys.
 
+## The fields of a phase itself, which are no plugin's
+
+phase =
+    .field-format = Format
+    .field-format-description = wie die Spiele angesetzt werden
+    .field-ranking = gewertet nach
+    .field-ranking-description = die Besten zuerst; jedes Kriterium entscheidet nur, wo die vor ihm gleich sind
+    .field-metrics = Kennzahlen
+    .field-metrics-description = für jedes Team berechnet
+
 ## Phase formats
 
 plugin-tournament_engine-round_robin =

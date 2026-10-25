@@ -38,10 +38,26 @@ add-entrant = Teilnehmer hinzufügen
 remove = Entfernen
 remove-entrant = { $name } entfernen
 phase = Phase
-format = Format
 add-phase = Phase hinzufügen
-phase-added = Die Phase ist hinzugefügt und wird mit den Vorgaben des Formats gespielt.
 start = Starten
+
+## Configuring the phase
+
+choose-plugin = Auswählen …
+no-plugin = (keines)
+recommended = (empfohlen)
+add-to = Hinzufügen zu { $field }
+move-up = { $plugin } nach oben schieben
+move-down = { $plugin } nach unten schieben
+remove-plugin = { $plugin } entfernen
+implied-plugin = { $plugin }, da ein anderes es braucht
+yes = ja
+no = nein
+edit-phase = Phase bearbeiten
+edit-phase-title = Die Phase bearbeiten
+edit-phase-description = Die Phase wird gespielt, als wäre sie so hinzugefügt worden. Die gemeldeten Ergebnisse bleiben, solange sie deren Spiele noch ansetzt.
+save-changes = Änderungen speichern
+cancel = Abbrechen
 
 ## After the start
 

@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 dioxus = { workspace = true, features = ["web"] }
+dioxus-icons.workspace = true
+dioxus-primitives.workspace = true
 futures-util.workspace = true
 tournament-app.workspace = true
 tournament-browser.workspace = true

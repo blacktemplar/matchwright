@@ -5,8 +5,10 @@ The GUI for running a tournament, in the browser, on
 browser (IndexedDB, through [`tournament-browser`](../tournament-browser)) to
 open or export, and starts a new one or imports one from a file (also one the
 CLI saved). A competition open, named after the `#` of the URL: enter the
-entrants, add a phase in a format with its defaults, start, report and reopen
-results round by round, undo and redo, and follow the standings. Every change
+entrants, configure the phase in a form (its format and the fields of the
+format, the criteria it is ranked by and the metrics calculated, starting with
+what the format recommends), start, report and reopen results round by round,
+edit the phase in a dialog, undo and redo, and follow the standings. Every change
 is saved at once. One tab at a time changes a competition; another tab shows it
 read-only, follows the changes, and takes over when that tab leaves it.
 
@@ -19,6 +21,9 @@ the first the browser prefers. Its messages are in `locales/<lang>/gui.ftl`
 dx serve -p tournament-gui              # add --hot-patch to patch Rust code into the running page
 dx build -p tournament-gui --release    # into target/dx/tournament-gui/release/web/public
 ```
+
+The select and the dialog are the Dioxus team's components, copied into
+`src/components/` by `dx components add` and changed there.
 
 This needs the Dioxus CLI `dx` of the version of `dioxus` in `Cargo.lock`
 (`cargo binstall dioxus-cli@0.7.10`) and the `wasm32-unknown-unknown` target.

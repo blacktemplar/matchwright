@@ -30,3 +30,27 @@ error-person-unreadable = der Name eines Teilnehmers kann nicht gelesen werden: 
 error-log-does-not-replay = das Protokoll lässt sich nicht nachspielen: { $reason }
 error-file-unreadable = die Datei ist kein Turnier, das diese Version öffnen kann: { $reason }
 error-rejected = abgelehnt: { $reason }
+
+## The form of a phase
+
+number-range = { $whole ->
+        [yes] eine ganze Zahl
+       *[no] eine Zahl
+    }{ $bounds ->
+        [both] {" "}von { $min } bis { $max }
+        [min] {" "}ab { $min }
+        [max] {" "}bis { $max }
+       *[none] {""}
+    }{ $multiple ->
+        [0] {""}
+       *[other] , die ein Vielfaches von { $multiple } ist
+    }
+issue-unanswered = das braucht eine Antwort
+issue-out-of-range = das muss { number-range } sein
+issue-not-a-number = „{ $entered }“ ist keine Zahl
+issue-duplicate = das ist doppelt gewählt
+issue-rejected = das wird nicht angenommen: { $reason }
+issue-invalid = { $reason }
+issue-incompatible = das passt nicht zu den anderen: { $reason }
+issue-unprovided = { $plugin } braucht { $fact }, was nichts liefert
+issue-unprovided-by = { $plugin } braucht eines davon: { $providers }

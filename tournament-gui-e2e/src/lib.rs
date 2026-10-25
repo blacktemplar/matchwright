@@ -160,9 +160,133 @@ impl Gui {
         Ok(())
     }
 
-    /// Chooses the format labelled `label` for the phase.
+    /// Chooses the format labelled `label` in the form of the phase shown, which may be that of a
+    /// dialog.
     pub async fn choose_format(&self, label: &str) -> WebDriverResult<()> {
-        self.choose("format", label).await
+        self.choose_plugin("format", label).await
+    }
+
+    /// Chooses the plugin labelled `label` for the field at `path` of the form of the phase, e.g.
+    /// `"format"`, or adds it to the list at `path` if it is one whose order matters, e.g.
+    /// `"ranking"`.
+    pub async fn choose_plugin(&self, path: &str, label: &str) -> WebDriverResult<()> {
+        let id = field_id(path);
+        let trigger = match self.driver.find(By::Id(format!("{id}-add"))).await {
+            Ok(add) => add,
+            Err(_) => self.driver.query(By::Id(id)).first().await?,
+        };
+        trigger.click().await?;
+        self.driver
+            .query(By::XPath(format!(
+                "//*[@role='option'][.//*[@class='option-label'][normalize-space()='{label}']]"
+            )))
+            .and_displayed()
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Enters `text` into the number field at `path` of the form of the phase, e.g.
+    /// `"format.rounds"`, and leaves the field, which takes it.
+    pub async fn enter(&self, path: &str, text: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id(field_id(path))).first().await?;
+        input.clear().await?;
+        input.send_keys(text).await?;
+        Page::pause().await;
+        input.send_keys(Key::Tab).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Checks or unchecks the checkbox labelled `label`, e.g. a plugin of the metrics.
+    pub async fn toggle(&self, label: &str) -> WebDriverResult<()> {
+        self.driver
+            .query(By::XPath(format!(
+                "//label[{}='{label}']/input[@type='checkbox']",
+                without_isolation_marks("normalize-space()")
+            )))
+            .and_enabled()
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until what is wrong with the answers of the form of the phase is `issues`, those of
+    /// every field in the order of the fields.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with what is shown instead.
+    pub async fn expect_issues(&self, issues: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".phase-form .issues li"), issues)
+            .await
+    }
+
+    /// Waits until the plugins of the list at `path` of the form of the phase whose order matters
+    /// are `labels`, in this order, e.g. `"ranking"`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with those shown instead.
+    pub async fn expect_list(&self, path: &str, labels: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(format!("#{} > li > .name", field_id(path))), labels)
+            .await
+    }
+
+    /// Waits until the plugins checked in the set of plugins at `path` of the form of the phase,
+    /// e.g. `"metrics"`, are `labels`, in the order shown, those it implies included. What is
+    /// checked is what the browser shows, not what the page last rendered.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with those checked instead.
+    pub async fn expect_checked(&self, path: &str, labels: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css(format!(
+                    "#{} > li > label:has(> input:checked)",
+                    field_id(path)
+                )),
+                labels,
+            )
+            .await
+    }
+
+    /// Waits until how the phase is played reads `answers`, the answers of its fields in order,
+    /// e.g. `"round robin"`, with the plugins of a list joined by commas.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it reads instead.
+    pub async fn expect_phase(&self, answers: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css("section[aria-labelledby=phase] > dl > dd > .answer"),
+                answers,
+            )
+            .await
+    }
+
+    /// Waits until the dialog open shows why what was done in it was refused, `text`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it shows instead.
+    pub async fn expect_dialog_error(&self, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("[role=dialog] [role=alert]"), &[text])
+            .await
+    }
+
+    /// Waits until no dialog is open.
+    ///
+    /// # Panics
+    /// Panics if one still is in time.
+    pub async fn expect_no_dialog(&self) -> WebDriverResult<()> {
+        self.page.expect_texts(By::Css("[role=dialog]"), &[]).await
     }
 
     /// Chooses the language named `name` in itself, e.g. `"Deutsch"`.
@@ -289,6 +413,13 @@ impl Gui {
             without_isolation_marks("normalize-space()")
         )))
     }
+}
+
+/// The id of the element of the field at `path` of the form of a phase, as the GUI makes it, e.g.
+/// `field-metrics-1-points_for_win` for `metrics[1].points_for_win`.
+fn field_id(path: &str) -> String {
+    let path = path.replace(['.', '[', ']'], "-").replace("--", "-");
+    format!("field-{}", path.trim_end_matches('-'))
 }
 
 /// The XPath of the string `expression` without the [`ISOLATION_MARKS`] in it.

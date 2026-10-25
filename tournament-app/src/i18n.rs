@@ -7,7 +7,8 @@
 //!
 //! Plugins are translated by keys derived from their ids, see [`PluginText`], and are shown with
 //! the English of their code where no translation has them, so that a plugin needs no change to be
-//! shown, and to be translated.
+//! shown, and to be translated. The fields of a phase itself are translated in the same way, see
+//! [`Translator::field_label`].
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -17,6 +18,8 @@ use std::{
 
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use fluent_syntax::{ast, parser};
+
+use crate::form::FormField;
 
 /// A language the app speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -118,6 +121,13 @@ impl Text {
 pub enum Arg {
     String(String),
     Number(f64),
+    /// The label of the plugin `id` in the language, else `english`, see [`Translator::plugin`].
+    Plugin {
+        id: &'static str,
+        english: &'static str,
+    },
+    /// The labels of plugins, each as [`Self::Plugin`] by id and English label, joined by commas.
+    Plugins(Vec<(&'static str, &'static str)>),
 }
 
 impl From<String> for Arg {
@@ -129,6 +139,12 @@ impl From<String> for Arg {
 impl From<&str> for Arg {
     fn from(value: &str) -> Self {
         Self::String(value.to_owned())
+    }
+}
+
+impl From<f64> for Arg {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
     }
 }
 
@@ -203,6 +219,10 @@ impl PluginText<'_> {
     }
 }
 
+/// The message whose attributes translate the fields of a phase itself, as those of a plugin's
+/// message translate its fields, see [`Translator::field_label`].
+const PHASE: &str = "phase";
+
 /// The messages of one language.
 pub struct Translator {
     language: Language,
@@ -239,6 +259,16 @@ impl Translator {
                 match value {
                     Arg::String(string) => FluentValue::from(string.as_str()),
                     Arg::Number(number) => FluentValue::from(*number),
+                    Arg::Plugin { id, english } => {
+                        FluentValue::from(self.plugin(id, PluginText::Label, english))
+                    }
+                    Arg::Plugins(plugins) => FluentValue::from(
+                        plugins
+                            .iter()
+                            .map(|(id, english)| self.plugin(id, PluginText::Label, english))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
                 },
             );
         }
@@ -260,6 +290,29 @@ impl Translator {
     pub fn plugin(&self, id: &str, text: PluginText<'_>, english: &str) -> String {
         self.format(&PluginText::key(id), Some(&text.attribute()), None)
             .unwrap_or_else(|| english.to_owned())
+    }
+
+    /// The label of `field` in the language, or else its English one. A field of a plugin is
+    /// translated as the plugin's [`PluginText::Field`]; a field of the phase itself, which is no
+    /// plugin's, as the attribute `.field-<name>` of the message `phase`.
+    pub fn field_label(&self, field: &FormField) -> String {
+        self.field_text(field, PluginText::Field(field.name), field.label)
+    }
+
+    /// The description of `field`, if it has one, translated as [`Self::field_label`] is with
+    /// [`PluginText::FieldDescription`].
+    pub fn field_description(&self, field: &FormField) -> Option<String> {
+        let english = field.description?;
+        Some(self.field_text(field, PluginText::FieldDescription(field.name), english))
+    }
+
+    fn field_text(&self, field: &FormField, text: PluginText<'_>, english: &str) -> String {
+        match field.plugin {
+            Some(plugin) => self.plugin(plugin, text, english),
+            None => self
+                .format(PHASE, Some(&text.attribute()), None)
+                .unwrap_or_else(|| english.to_owned()),
+        }
     }
 
     /// The message `key`, or its attribute `attribute`, in the language or else in English.

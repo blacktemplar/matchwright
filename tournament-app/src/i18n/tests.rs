@@ -1,8 +1,14 @@
 use std::{collections::BTreeSet, fmt::Display};
 
-use plugin_factory::catalog::{AnyAxis, PluginEntry};
-use tournament_engine::plugins::{
-    metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::SliceRanker,
+use plugin_factory::{
+    catalog::{AnyAxis, PluginEntry},
+    schema::{Configurable as _, Schema},
+};
+use tournament_engine::{
+    PhasePlugins,
+    plugins::{
+        metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::SliceRanker,
+    },
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -190,7 +196,14 @@ fn translatable(entry: &PluginEntry) -> BTreeSet<String> {
     if entry.description().is_some() {
         attributes.insert(PluginText::Description.attribute());
     }
-    for field in entry.schema().fields() {
+    attributes.extend(translatable_fields(&entry.schema()));
+    attributes
+}
+
+/// What is translated of the fields of `schema`, as attributes.
+fn translatable_fields(schema: &Schema) -> BTreeSet<String> {
+    let mut attributes = BTreeSet::new();
+    for field in schema.fields() {
         attributes.insert(PluginText::Field(field.name()).attribute());
         if field.description().is_some() {
             attributes.insert(PluginText::FieldDescription(field.name()).attribute());
@@ -199,6 +212,7 @@ fn translatable(entry: &PluginEntry) -> BTreeSet<String> {
     attributes
 }
 
+/// The fields of a phase itself are translated as well, in the message [`PHASE`].
 #[test]
 fn every_plugin_of_the_engine_is_translated_and_nothing_else() {
     let calculators: Vec<_> = AnyAxis::of::<dyn MetricsCalculator>()
@@ -208,6 +222,10 @@ fn every_plugin_of_the_engine_is_translated_and_nothing_else() {
     let expected: BTreeMap<String, BTreeSet<String>> = engine_plugins()
         .into_iter()
         .map(|entry| (PluginText::key(entry.id()), translatable(entry)))
+        .chain([(
+            PHASE.to_owned(),
+            translatable_fields(&PhasePlugins::schema()),
+        )])
         .collect();
     for language in Language::ALL {
         if language == Language::English {
