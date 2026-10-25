@@ -42,7 +42,14 @@ pub fn NewPhase() -> Element {
                 _ = ctx.act(|session| session.add_phase(form.read().draft()));
             },
             Form { form, disabled: !actions.add_phase }
-            button { r#type: "submit", disabled: !actions.add_phase, {tr.get("add-phase")} }
+            div { class: "form-actions",
+                button {
+                    class: "primary",
+                    r#type: "submit",
+                    disabled: !actions.add_phase,
+                    {tr.get("add-phase")}
+                }
+            }
         }
     }
 }
@@ -108,7 +115,7 @@ fn EditPhase() -> Element {
                         }
                     }
                     div { class: "dialog-buttons",
-                        button { r#type: "submit", {tr.get("save-changes")} }
+                        button { class: "primary", r#type: "submit", {tr.get("save-changes")} }
                         button { r#type: "button", onclick: move |_| editing.set(None),
                             {tr.get("cancel")}
                         }
@@ -461,6 +468,7 @@ fn OrderedItem(
             span { class: "name", "{name}" }
             " "
             button {
+                class: "quiet small",
                 r#type: "button",
                 aria_label: t!(tr, "move-up", plugin = name.as_str()),
                 disabled: disabled || first,
@@ -468,6 +476,7 @@ fn OrderedItem(
                 "↑"
             }
             button {
+                class: "quiet small",
                 r#type: "button",
                 aria_label: t!(tr, "move-down", plugin = name.as_str()),
                 disabled: disabled || last,
@@ -475,6 +484,7 @@ fn OrderedItem(
                 "↓"
             }
             button {
+                class: "quiet small",
                 r#type: "button",
                 aria_label: t!(tr, "remove-plugin", plugin = name.as_str()),
                 disabled,

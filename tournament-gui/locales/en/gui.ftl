@@ -83,6 +83,8 @@ cancel = Cancel
 ## After the start
 
 matches = Matches
+# what a narrow screen shows: the matches or the standings
+view = View
 # the lists of matches to choose from: those playable now, and each round
 rounds = Rounds
 round = Round { $round }
@@ -90,16 +92,18 @@ round-with-open = Round { $round } ({ $open } open)
 # the matches whose entrants have played every round before
 playable-now = Playable now
 playable-now-count = Playable now ({ $count })
+# shows the matches of one round at a time
+by-round = By round
+previous-round = Previous round
+next-round = Next round
 nothing-playable = No match can be played now.
-match-number = #
-# the header of the rounds of the matches
-round-column = Round
-# the header of the stages the format names, e.g. Semifinals
-stage = Stage
-side-a = Side A
-side-b = Side B
-result = Result
+# said by screen readers before the number of a match, and between its sides
+match = Match
+versus = against
+# what a screen reader says for the button reporting that a side won
 wins = { $team } wins
+# what that button shows, below the side's name; it must be a part of `wins`
+wins-short = Wins
 draw = Draw
 won = { $team } won
 reopen = Reopen
@@ -111,10 +115,10 @@ rank = Rank
 # reporting a result by typing it
 enter-result = Enter a result
 # $draws: yes if a match may end in a draw, else no
-enter-result-hint = the number of the match, then 1 if side A won{ $draws ->
+enter-result-hint = the number of the match, then 1 if the side on the left won{ $draws ->
         [yes] , X for a draw,
        *[no] {""}
-    } or 2 if side B won, e.g. “3 1”
+    } or 2 if the side on the right won, e.g. “3 1”
 report = Report
 
 ## What was done, as the page announces it

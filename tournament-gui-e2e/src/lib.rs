@@ -321,7 +321,8 @@ impl Gui {
         Ok(())
     }
 
-    /// Clicks the button whose accessible name, its `aria-label`, is `label`, once it is enabled.
+    /// Clicks the button whose accessible name, its `aria-label`, is `label`, once it is enabled,
+    /// e.g. `"Alice wins"`.
     pub async fn click_labelled(&self, label: &str) -> WebDriverResult<()> {
         self.driver
             .query(By::XPath(format!(
@@ -372,8 +373,24 @@ impl Gui {
     /// Panics if they are not in time, with the numbers shown instead.
     pub async fn expect_matches(&self, numbers: &[&str]) -> WebDriverResult<()> {
         self.page
-            .expect_texts(By::Css("#match-list tbody td:first-child"), numbers)
+            .expect_texts(By::Css("#match-list .number"), numbers)
             .await
+    }
+
+    /// Shows the matches of the round whose option reads `text`, e.g. `"Round 2 (2 open)"`, while
+    /// the matches are shown by round.
+    pub async fn choose_round(&self, text: &str) -> WebDriverResult<()> {
+        self.driver
+            .query(By::XPath(format!(
+                "//select[@id='round']/option[{}='{text}']",
+                without_isolation_marks("normalize-space()")
+            )))
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
     }
 
     /// Waits until the results of the matches of the round shown that have one are `results`, in
@@ -394,10 +411,7 @@ impl Gui {
     /// Panics if they are not in time, with the numbers shown instead.
     pub async fn expect_finished(&self, numbers: &[&str]) -> WebDriverResult<()> {
         self.page
-            .expect_texts(
-                By::Css("#match-list tbody tr:has(.result) td:first-child"),
-                numbers,
-            )
+            .expect_texts(By::Css("#match-list > li:has(.result) .number"), numbers)
             .await
     }
 
@@ -408,7 +422,7 @@ impl Gui {
     /// Panics if they are not in time, with the stages shown instead.
     pub async fn expect_stages(&self, stages: &[&str]) -> WebDriverResult<()> {
         self.page
-            .expect_texts(By::Css("#match-list tbody td:nth-child(2)"), stages)
+            .expect_texts(By::Css("#match-list .stage"), stages)
             .await
     }
 
@@ -447,10 +461,7 @@ impl Gui {
     /// Panics if it is not in time, with the number of the match it is in instead, if any.
     pub async fn expect_focus_in_match(&self, number: &str) -> WebDriverResult<()> {
         self.page
-            .expect_texts(
-                By::Css("#match-list tbody tr:has(:focus) td:first-child"),
-                &[number],
-            )
+            .expect_texts(By::Css("#match-list > li:has(:focus) .number"), &[number])
             .await
     }
 

@@ -28,7 +28,7 @@ async fn everything_is_said_in_the_language_chosen() {
         gui.choose_format("Jeder gegen jeden").await?;
         gui.click("Phase hinzufügen").await?;
         gui.click("Starten").await?;
-        gui.click("Alice gewinnt").await?;
+        gui.click_labelled("Alice gewinnt").await?;
         gui.expect_results(&["Alice hat gewonnen"]).await?;
         gui.page
             .expect_text(By::Css("#standing-list th"), "Punkte")

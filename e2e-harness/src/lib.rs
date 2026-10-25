@@ -94,6 +94,8 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
     // prefers English, whatever the language of the system, so that a page speaking the
     // browser's language does so in English
     capabilities.add_arg("--lang=en-US").unwrap();
+    // the size of a laptop's screen, which a page laid out by its width shows everything on
+    capabilities.add_arg("--window-size=1280,900").unwrap();
     // downloads into a directory of the test's own, without asking where to (see
     // `Page::expect_download`)
     capabilities

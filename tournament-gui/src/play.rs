@@ -14,7 +14,7 @@ use tournament_app::{
 };
 use tournament_engine::{MatchId, MatchResult};
 
-use crate::{announcement::Announcement, competition::Ctx, i18n::t, result_text, team_name};
+use crate::{announcement::Announcement, competition::Ctx, i18n::t, icons, result_text, team_name};
 
 /// The list of matches shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,38 +108,81 @@ pub fn Rounds() -> Element {
         .into_iter()
         .map(|row| (after_report(row.id), row))
         .collect();
+    // the rounds before and after the one shown, for the buttons stepping through them
+    let (previous, next) = match shown {
+        Shown::Playable => (None, None),
+        Shown::Round(round) => {
+            let position = rounds.iter().position(|summary| summary.round == round);
+            let at = |offset: isize| {
+                position
+                    .and_then(|position| position.checked_add_signed(offset))
+                    .and_then(|position| rounds.get(position))
+                    .map(|summary| summary.round)
+            };
+            (at(-1), at(1))
+        }
+    };
     let tr = ctx.translator.read();
     rsx! {
-        section { aria_labelledby: "matches",
+        section { class: "card", aria_labelledby: "matches",
             h2 { id: "matches", {tr.get("matches")} }
             ResultEntry { draws }
-            nav { aria_label: tr.get("rounds"),
-                ul { class: "rounds",
-                    li {
-                        button {
-                            aria_pressed: shown == Shown::Playable,
-                            onclick: move |_| chosen.set(Some(Shown::Playable)),
-                            {t!(tr, "playable-now-count", count = playable.len())}
-                        }
+            nav { class: "toolbar", aria_label: tr.get("rounds"),
+                div { class: "segmented",
+                    button {
+                        aria_pressed: shown == Shown::Playable,
+                        onclick: move |_| chosen.set(Some(Shown::Playable)),
+                        {t!(tr, "playable-now-count", count = playable.len())}
                     }
-                    for summary in rounds {
-                        li { key: "{summary.round}",
-                            button {
-                                aria_pressed: shown == Shown::Round(summary.round),
-                                onclick: move |_| chosen.set(Some(Shown::Round(summary.round))),
-                                if summary.open > 0 {
-                                    {
-                                        t!(
-                                            tr,
-                                            "round-with-open",
-                                            round = summary.round,
-                                            open = summary.open,
-                                        )
+                    button {
+                        aria_pressed: shown != Shown::Playable,
+                        onclick: move |_| chosen.set(Some(Shown::Round(current))),
+                        {tr.get("by-round")}
+                    }
+                }
+                if let Shown::Round(round) = shown {
+                    div { class: "stepper",
+                        button {
+                            class: "small",
+                            aria_label: tr.get("previous-round"),
+                            disabled: previous.is_none(),
+                            onclick: move |_| chosen.set(previous.map(Shown::Round)),
+                            icons::ChevronLeft {}
+                        }
+                        label { r#for: "round", class: "visually-hidden", {tr.get("rounds")} }
+                        select {
+                            id: "round",
+                            onchange: move |event| {
+                                if let Ok(round) = event.value().parse() {
+                                    chosen.set(Some(Shown::Round(round)));
+                                }
+                            },
+                            for summary in rounds {
+                                option {
+                                    key: "{summary.round}",
+                                    value: "{summary.round}",
+                                    selected: summary.round == round,
+                                    if summary.open > 0 {
+                                        {
+                                            t!(
+                                                tr,
+                                                "round-with-open",
+                                                round = summary.round,
+                                                open = summary.open,
+                                            )
+                                        }
+                                    } else {
+                                        {t!(tr, "round", round = summary.round)}
                                     }
-                                } else {
-                                    {t!(tr, "round", round = summary.round)}
                                 }
                             }
+                        }
+                        button {
+                            class: "small",
+                            aria_label: tr.get("next-round"),
+                            disabled: next.is_none(),
+                            onclick: move |_| chosen.set(next.map(Shown::Round)),
+                            icons::ChevronRight {}
                         }
                     }
                 }
@@ -153,41 +196,25 @@ pub fn Rounds() -> Element {
             }
             if rows.is_empty() {
                 if shown == Shown::Playable {
-                    p { {tr.get("nothing-playable")} }
+                    p { class: "empty", {tr.get("nothing-playable")} }
                 }
             } else {
-                table { id: "match-list",
-                    thead {
-                        tr {
-                            th { scope: "col", {tr.get("match-number")} }
-                            if with_round {
-                                th { scope: "col", {tr.get("round-column")} }
-                            }
-                            if with_stage {
-                                th { scope: "col", {tr.get("stage")} }
-                            }
-                            th { scope: "col", {tr.get("side-a")} }
-                            th { scope: "col", {tr.get("side-b")} }
-                            th { scope: "col", {tr.get("result")} }
-                        }
-                    }
-                    tbody {
-                        for (after_report, row) in rows {
-                            MatchLine {
-                                key: "{row.id:?}",
-                                with_round,
-                                with_stage,
-                                draws,
-                                focus,
-                                after_report,
-                                row,
-                            }
+                ol { id: "match-list",
+                    for (after_report, row) in rows {
+                        MatchLine {
+                            key: "{row.id:?}",
+                            with_round,
+                            with_stage,
+                            draws,
+                            focus,
+                            after_report,
+                            row,
                         }
                     }
                 }
             }
             for bye in byes {
-                p {
+                p { class: "bye",
                     {
                         let team = team_name(&tr, &bye.entrants);
                         match bye.stage {
@@ -262,18 +289,36 @@ fn MatchLine(
 ) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
+    let winner = |side| {
+        let won = match side {
+            Side::A => MatchResult::AWins,
+            Side::B => MatchResult::BWins,
+        };
+        if row.result == Some(won) {
+            "winner"
+        } else {
+            ""
+        }
+    };
+    // one card: the pairing around the number, then each side's button below its name
     rsx! {
-        tr {
-            td { "{row.number}" }
-            if with_round {
-                td { "{row.round}" }
+        li { class: "match",
+            span { class: "visually-hidden", {tr.get("match")} }
+            span { class: "number", "{row.number}" }
+            span { class: "side a {winner(Side::A)}", {team_name(&tr, &row.a)} }
+            span { class: "visually-hidden", {tr.get("versus")} }
+            span { class: "side b {winner(Side::B)}", {team_name(&tr, &row.b)} }
+            if with_round || with_stage {
+                span { class: "meta",
+                    if with_round {
+                        span { class: "round", {t!(tr, "round", round = row.round)} }
+                    }
+                    if with_stage {
+                        span { class: "stage", {row.stage.as_ref().map(|stage| tr.stage(stage))} }
+                    }
+                }
             }
-            if with_stage {
-                td { {row.stage.as_ref().map(|stage| tr.stage(stage))} }
-            }
-            td { {team_name(&tr, &row.a)} }
-            td { {team_name(&tr, &row.b)} }
-            td {
+            div { class: "report",
                 if row.result.is_some() {
                     ReportedResult { row: row.clone(), focus }
                 } else {
@@ -287,6 +332,13 @@ fn MatchLine(
             }
         }
     }
+}
+
+/// The side of a match shown on the left, A, or on the right, B.
+#[derive(Clone, Copy)]
+enum Side {
+    A,
+    B,
 }
 
 /// The buttons reporting a result of the match `row`, which has none yet.
@@ -312,18 +364,25 @@ fn ReportButtons(
             }
         }
     };
+    // each below its side's name, so that it names the side only for screen readers
     rsx! {
         button {
+            class: "win a",
             disabled,
+            aria_label: t!(tr, "wins", team = a.as_str()),
             onmounted: on_mounted,
             onclick: report(MatchResult::AWins),
-            {t!(tr, "wins", team = a.as_str())}
+            {tr.get("wins-short")}
         }
         if draws {
-            button { disabled, onclick: report(MatchResult::Draw), {tr.get("draw")} }
+            button { class: "draw", disabled, onclick: report(MatchResult::Draw), {tr.get("draw")} }
         }
-        button { disabled, onclick: report(MatchResult::BWins),
-            {t!(tr, "wins", team = b.as_str())}
+        button {
+            class: "win b",
+            disabled,
+            aria_label: t!(tr, "wins", team = b.as_str()),
+            onclick: report(MatchResult::BWins),
+            {tr.get("wins-short")}
         }
     }
 }
@@ -338,8 +397,8 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     let tr = ctx.translator.read();
     rsx! {
         span { class: "result", {result_text(&tr, &row)} }
-        " "
         button {
+            class: "quiet small",
             disabled,
             aria_label: t!(tr, "reopen-match", number = row.number),
             onclick: move |_| {
@@ -360,28 +419,38 @@ pub fn Standings() -> Element {
         return rsx! {};
     };
     let tr = ctx.translator.read();
+    let headers: Vec<_> = standings
+        .columns
+        .iter()
+        .map(|column| tr.plugin(column.calculator, PluginText::Column, column.header))
+        .collect();
     rsx! {
-        section { aria_labelledby: "standings",
+        section { class: "card", aria_labelledby: "standings",
             h2 { id: "standings", {tr.get("standings")} }
-            table { id: "standing-list",
-                thead {
-                    tr {
-                        th { scope: "col", {tr.get("rank")} }
-                        th { scope: "col", {tr.get("name")} }
-                        for column in standings.columns {
-                            th { scope: "col",
-                                {tr.plugin(column.calculator, PluginText::Column, column.header)}
+            // scrolls sideways if its columns do not fit, the names staying in sight
+            div {
+                class: "scroll",
+                role: "group",
+                tabindex: "0",
+                aria_labelledby: "standings",
+                table { id: "standing-list",
+                    thead {
+                        tr {
+                            th { scope: "col", {tr.get("rank")} }
+                            th { class: "name", scope: "col", {tr.get("name")} }
+                            for header in headers {
+                                th { scope: "col", {header} }
                             }
                         }
                     }
-                }
-                tbody {
-                    for row in standings.rows {
-                        tr {
-                            td { "{row.rank}" }
-                            td { {team_name(&tr, &row.entrants)} }
-                            for cell in row.cells {
-                                td { {cell} }
+                    tbody {
+                        for row in standings.rows {
+                            tr {
+                                td { "{row.rank}" }
+                                td { class: "name", {team_name(&tr, &row.entrants)} }
+                                for cell in row.cells {
+                                    td { {cell} }
+                                }
                             }
                         }
                     }

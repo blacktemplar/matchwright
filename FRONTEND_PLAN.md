@@ -209,6 +209,26 @@ competitions, e.g. in a private window or when short of space"), give it an Expo
 dismissible, offer installing the app (after which Chrome usually grants it) and ask again after
 an install. Possibly the export reminder of `requirements.md` ("changed since its last export").
 
+### 8. Styling before the release
+
+Modern, easy to use and neutral in taste; for laptops and tablets, and a phone alone for small
+events; 20–40 entrants typically. In parts:
+
+1. **Layout** (done 2026-10-25), see DESIGN.md, *Layout*: one bar on top, cards in columns where
+   there is room (buttons choosing the column on a narrow screen), a match as a card of two rows
+   whose buttons say only "Wins" below each name, names never cut, rounds stepped through by a
+   select, the standings scrolling sideways, the language in the footer. The e2e tests run at
+   1280×900. Not done: a status per competition in the list ("Round 3 of 5"), which needs the app
+   crate.
+2. **Palette and details**: design tokens (the custom properties of `style.css` are their start),
+   colours in light and dark following the system (the components' theme already has both), focus
+   and hover states, empty states, motion respecting `prefers-reduced-motion`, a more compact
+   storage warning.
+3. **Finding an entrant**: a field above the matches showing only those of entrants whose name
+   contains what is typed, within the list shown; the filtering in `tournament-app`'s `view`. A
+   match reported while filtered stays shown until the filter changes. The standings are not
+   filtered.
+
 ### Later, not planned in detail
 
 Bracket view (SVG with a text alternative), print layouts, read-only public/TV view, scheduling

@@ -28,7 +28,7 @@ use tournament_browser::{
 use crate::{
     Notices, Page,
     announcement::Announcement,
-    download,
+    download, icons,
     phase::PhaseSummary,
     play::{Rounds, Standings},
     setup::{Entrants, Phase},
@@ -253,28 +253,33 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
         download(page, session.name(), &session.export());
     };
     rsx! {
-        nav { aria_label: tr.get("competition-actions"),
-            a { href: "#", {tr.get("all-competitions")} }
-            " "
-            button { onclick: move |_| export(), {tr.get("export")} }
-            " "
+        // in the bar the header starts
+        nav { class: "bar bar-actions", aria_label: tr.get("competition-actions"),
             button {
+                class: "quiet",
                 disabled: !actions.undo,
                 onclick: move |_| {
                     if let Some(action) = ctx.act(Session::undo) {
                         ctx.announce(Announcement::Undone(action));
                     }
                 },
-                {tr.get("undo")}
+                icons::Undo {}
+                span { class: "bar-label", {tr.get("undo")} }
             }
             button {
+                class: "quiet",
                 disabled: !actions.redo,
                 onclick: move |_| {
                     if let Some(action) = ctx.act(Session::redo) {
                         ctx.announce(Announcement::Redone(action));
                     }
                 },
-                {tr.get("redo")}
+                icons::Redo {}
+                span { class: "bar-label", {tr.get("redo")} }
+            }
+            button { class: "quiet", onclick: move |_| export(),
+                icons::Export {}
+                span { class: "bar-label", {tr.get("export")} }
             }
         }
         main {
@@ -289,15 +294,61 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
                 }
             }
             if started {
-                Rounds {}
+                Play {}
+            } else {
+                div { class: "columns setup",
+                    Entrants {}
+                    Phase {}
+                }
+            }
+        }
+    }
+}
+
+/// Which of the two columns of the screen after the start is shown where there is room for one
+/// only.
+#[derive(Clone, Copy, PartialEq)]
+enum Column {
+    Matches,
+    Standings,
+}
+
+/// The screen after the start: the matches, and next to them the standings and how the phase is
+/// played. Where there is room for one column only, buttons choose which is shown; both stay on
+/// the page.
+#[component]
+fn Play() -> Element {
+    let ctx = use_context::<Ctx>();
+    let mut shown = use_signal(|| Column::Matches);
+    let tr = ctx.translator.read();
+    let column = |column| {
+        if shown() == column {
+            "column"
+        } else {
+            "column hidden-narrow"
+        }
+    };
+    rsx! {
+        div { class: "segmented view-switch", role: "group", aria_label: tr.get("view"),
+            button {
+                aria_pressed: shown() == Column::Matches,
+                onclick: move |_| shown.set(Column::Matches),
+                {tr.get("matches")}
+            }
+            button {
+                aria_pressed: shown() == Column::Standings,
+                onclick: move |_| shown.set(Column::Standings),
+                {tr.get("standings")}
+            }
+        }
+        div { class: "columns play",
+            div { class: column(Column::Matches), Rounds {} }
+            div { class: column(Column::Standings),
                 Standings {}
-                section { aria_labelledby: "phase",
+                section { class: "card", aria_labelledby: "phase",
                     h2 { id: "phase", {tr.get("phase")} }
                     PhaseSummary {}
                 }
-            } else {
-                Entrants {}
-                Phase {}
             }
         }
     }

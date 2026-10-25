@@ -16,7 +16,7 @@ async fn a_reported_result_shows_in_the_match_and_the_standings() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
 
-        gui.click("Bob wins").await?;
+        gui.click_labelled("Bob wins").await?;
 
         gui.expect_results(&["Bob won"]).await?;
         gui.expect_standings(&["Bob", "Alice"]).await
@@ -29,12 +29,12 @@ async fn a_reported_result_shows_in_the_match_and_the_standings() {
 async fn a_result_is_reopened() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
-        gui.click("Bob wins").await?;
+        gui.click_labelled("Bob wins").await?;
 
         gui.click_labelled("Reopen match 1").await?;
 
         gui.expect_results(&[]).await?;
-        gui.click("Alice wins").await?;
+        gui.click_labelled("Alice wins").await?;
         gui.expect_results(&["Alice won"]).await
     })
     .await;
@@ -45,7 +45,7 @@ async fn a_result_is_reopened() {
 async fn undo_takes_back_a_result_and_redo_brings_it_back() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
-        gui.click("Alice wins").await?;
+        gui.click_labelled("Alice wins").await?;
 
         gui.click("Undo").await?;
         gui.expect_results(&[]).await?;
@@ -63,7 +63,7 @@ async fn the_matches_are_shown_one_round_at_a_time() {
         gui.expect_matches(&["1", "2"]).await?;
         gui.page.check_accessibility().await?;
 
-        gui.click("Round 2 (2 open)").await?;
+        gui.choose_round("Round 2 (2 open)").await?;
 
         gui.expect_matches(&["3", "4"]).await
     })

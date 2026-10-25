@@ -16,6 +16,7 @@ mod competition;
 mod competitions;
 mod components;
 mod i18n;
+mod icons;
 mod install;
 mod notices;
 mod phase;
@@ -152,6 +153,7 @@ fn App() -> Element {
         } else {
             Competitions {}
         }
+        Footer {}
     }
 }
 
@@ -173,20 +175,42 @@ fn open(key: Option<CompetitionKey>) {
 }
 
 /// The top of every screen: its heading, the name of the competition shown or else the
-/// application's, and the choice of the language.
+/// application's, and while a competition is shown the way back to all of them. The screen of a
+/// competition follows it with its actions, in the same bar.
 #[component]
 fn Header() -> Element {
     let page = use_context::<Page>();
     let tr = page.translator.read();
-    let language = tr.language();
-    let (title, heading) = match page.shown.read().clone() {
-        Some(name) => (t!(tr, "competition-title", name = name.as_str()), name),
+    let shown = page.shown.read().clone();
+    let (title, heading) = match &shown {
+        Some(name) => (
+            t!(tr, "competition-title", name = name.as_str()),
+            name.clone(),
+        ),
         None => (tr.get("app-title"), tr.get("app-title")),
     };
     rsx! {
         document::Title { "{title}" }
-        header {
+        header { class: "bar",
+            if shown.is_some() {
+                a { class: "back", href: "#",
+                    icons::ChevronLeft {}
+                    span { class: "bar-label", {tr.get("all-competitions")} }
+                }
+            }
             h1 { "{heading}" }
+        }
+    }
+}
+
+/// The bottom of every screen: the choice of the language.
+#[component]
+fn Footer() -> Element {
+    let page = use_context::<Page>();
+    let tr = page.translator.read();
+    let language = tr.language();
+    rsx! {
+        footer {
             label {
                 {tr.get("language")}
                 " "

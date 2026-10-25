@@ -1,130 +1,523 @@
+/* The page's own style. Its colours are neutral greys for now; the palette comes with the next
+ * step of the styling. */
+
+:root {
+  --text: #1a1a1a;
+  --text-muted: #555;
+  --surface: #fff;
+  --background: #f4f4f5;
+  --bar: #fafafa;
+  --border: #d4d4d8;
+  --border-strong: #8a8a8f;
+  --primary: #333;
+  --on-primary: #fff;
+  --focus: #2b7fff;
+  --error: #b00020;
+  --warning-border: #8a5a00;
+  --warning-background: #fff6e0;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --radius: 0.4rem;
+  --radius-card: 0.6rem;
+  /* the height of a control, big enough to be tapped */
+  --control: 2.75rem;
+
+  /* The components (src/components) in the light colours of the page, whatever the system's. */
+  --dark: ;
+  --light: initial;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
   font: 16px/1.5 system-ui, sans-serif;
-  max-width: 60em;
+}
+
+/* the page: the bar on top (the header, and after it the competition's actions), then the screen,
+ * then the footer */
+#main {
+  display: grid;
+  min-height: 100vh;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr auto;
+}
+
+#main > :not(.bar),
+#main > header.bar {
+  grid-column: 1 / -1;
+}
+
+#main > header.bar:has(+ .bar-actions) {
+  grid-column: 1;
+}
+
+main {
+  width: 100%;
+  max-width: 90rem;
   margin: 0 auto;
-  padding: 1em;
-  color: #1a1a1a;
-  background: #fff;
+  padding: var(--space-4);
 }
 
-header {
-  display: flex;
-  gap: 0.5em;
+main.narrow {
+  max-width: 48rem;
+}
+
+h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 1.2rem;
+}
+
+h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: 1rem;
+}
+
+/* hidden from the eye, but read by screen readers */
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Controls */
+
+button,
+.button,
+input,
+select {
+  font: inherit;
+}
+
+button,
+.button {
+  display: inline-flex;
+  min-height: var(--control);
   align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  gap: var(--space-2);
 }
 
-header h1 {
-  flex: 1;
-  font-size: 1.4em;
+button:hover:not(:disabled),
+.button:hover {
+  background: var(--background);
 }
+
+button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #000;
+}
+
+button.quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+button.small,
+.button.small {
+  min-height: 2.25rem;
+  padding: 0 var(--space-3);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+input:not([type="checkbox"], [type="radio"]),
+select {
+  min-width: 0;
+  min-height: var(--control);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+input::placeholder {
+  color: var(--text-muted);
+}
+
+:focus-visible,
+.file-button:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+}
+
+/* a line of controls, the input taking what the buttons leave */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.row input {
+  flex: 1 1 8rem;
+}
+
+/* buttons that belong together, joined */
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  border-radius: 0;
+}
+
+.segmented button + button {
+  margin-left: -1px;
+}
+
+.segmented button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.segmented button:last-child {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+/* The bar */
+
+.bar {
+  display: flex;
+  min-height: 3.5rem;
+  align-items: center;
+  padding: var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  gap: var(--space-2);
+}
+
+header.bar {
+  min-width: 0;
+}
+
+.bar-actions {
+  padding-left: 0;
+}
+
+.bar h1 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.back {
+  display: inline-flex;
+  min-height: var(--control);
+  align-items: center;
+  padding-right: var(--space-2);
+  color: inherit;
+  gap: var(--space-1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.back:hover {
+  text-decoration: underline;
+}
+
+/* only the icons where the bar is narrow; the texts stay for screen readers */
+@media (width < 40rem) {
+  .bar-label {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .bar-actions button {
+    padding: 0 var(--space-2);
+  }
+}
+
+footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+  color: var(--text-muted);
+}
+
+footer select {
+  margin-left: var(--space-2);
+}
+
+/* Notices */
 
 .error {
-  color: #b00020;
-  min-height: 1.5em;
+  color: var(--error);
+}
+
+/* the alert stays on the page while it says nothing, without taking room */
+.error[role="alert"]:not(:empty) {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--error);
+  background: var(--surface);
+}
+
+.error[role="alert"]:empty {
+  margin: 0;
 }
 
 .warning,
 .notice {
-  padding: 0.4em 0.6em;
-  border-left: 4px solid #8a5a00;
-  background: #fff6e0;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--warning-border);
+  background: var(--warning-background);
 }
 
 .warning p {
-  margin: 0.2em 0;
+  margin: var(--space-1) 0;
 }
 
 .warning-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25em;
-}
-
-nav a {
-  margin-right: 0.5em;
-}
-
-table {
-  border-collapse: collapse;
-}
-
-th,
-td {
-  padding: 0.2em 0.6em;
-  border-bottom: 1px solid #ddd;
-  text-align: left;
-}
-
-button {
-  margin: 0.1em;
-}
-
-.rounds {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25em;
-  padding: 0;
-  list-style: none;
-}
-
-.rounds button[aria-pressed="true"] {
-  font-weight: bold;
+  margin-top: var(--space-2);
+  gap: var(--space-2);
 }
 
 /* kept in place while empty, so that the page does not move when something is announced */
 .announcement {
   min-height: 1.5em;
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
 }
 
-.result-entry .hint {
-  margin: 0.2em 0;
+/* Cards and columns */
+
+.card {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
 }
 
-/* The components (src/components) in the light colours of the page, whatever the system's. */
-:root {
-  --dark: ;
-  --light: initial;
+.card + .card {
+  margin-top: var(--space-4);
+}
+
+.empty,
+.count {
+  color: var(--text-muted);
+}
+
+.count {
+  font-weight: normal;
+}
+
+.columns {
+  display: grid;
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.columns > .card + .card {
+  margin-top: 0;
+}
+
+@media (width >= 48rem) {
+  .columns.setup {
+    grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr);
+  }
+}
+
+/* the matches, or the standings, where there is room for one column only */
+.view-switch {
+  display: flex;
+  margin-bottom: var(--space-4);
+}
+
+.view-switch button {
+  flex: 1;
+}
+
+@media (width < 60rem) {
+  .hidden-narrow {
+    display: none;
+  }
+}
+
+@media (width >= 60rem) {
+  .view-switch {
+    display: none;
+  }
+
+  .columns.play {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* Names are never cut: they wrap, even within a word. */
+.name,
+.side {
+  overflow-wrap: anywhere;
+}
+
+/* The competitions */
+
+#competition-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+#competition-list li {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+}
+
+#competition-list li:last-child {
+  border-bottom: 0;
+}
+
+#competition-list .name {
+  display: flex;
+  min-height: var(--control);
+  flex: 1;
+  align-items: center;
+  color: inherit;
+  font-weight: 600;
+}
+
+.file-button {
+  margin-top: var(--space-3);
+}
+
+/* Entrants */
+
+#entrant-list {
+  overflow: auto;
+  max-height: 32rem;
+  padding: 0;
+  margin: var(--space-3) 0 0;
+  counter-reset: entrant;
+  list-style: none;
+}
+
+#entrant-list li {
+  display: flex;
+  align-items: center;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  counter-increment: entrant;
+  gap: var(--space-2);
+}
+
+#entrant-list li::before {
+  width: 2em;
+  flex: none;
+  color: var(--text-muted);
+  content: counter(entrant);
+  text-align: right;
+}
+
+#entrant-list .name {
+  flex: 1;
+}
+
+.start {
+  margin-top: var(--space-4);
 }
 
 /* The form of a phase */
 
 .field {
-  margin: 0.5em 0;
+  margin: var(--space-3) 0;
 }
 
 fieldset.field {
-  border: 1px solid #ddd;
-  border-radius: 0.4em;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.field input[type="number"] {
+  width: 8rem;
 }
 
 .field .label {
-  margin-right: 0.3em;
+  margin-right: var(--space-2);
+  font-weight: 600;
 }
 
 .description,
 .hint,
 .option-description {
-  color: #555;
+  color: var(--text-muted);
   font-size: 0.9em;
 }
 
 .description {
-  margin: 0.2em 0;
+  margin: var(--space-1) 0;
 }
 
 .plugin-fields,
 .plugin-list .field,
 .plugin-set .field {
-  margin-left: 1.5em;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--border);
+  margin-left: var(--space-1);
 }
 
 .plugin-list,
 .plugin-set {
-  padding-left: 1.5em;
+  padding-left: var(--space-6);
 }
 
 .plugin-set {
+  padding-left: 0;
   list-style: none;
+}
+
+.plugin-list li,
+.plugin-set li {
+  margin: var(--space-1) 0;
 }
 
 .implied {
@@ -132,8 +525,8 @@ fieldset.field {
 }
 
 .issues {
-  margin: 0.2em 0;
-  color: #b00020;
+  margin: var(--space-1) 0;
+  color: var(--error);
 }
 
 .option {
@@ -145,7 +538,221 @@ fieldset.field {
   font-size: 0.9em;
 }
 
+/* the button adding the phase; not sticky, which would hide the field with the focus behind it */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-4);
+  background: var(--surface);
+  gap: var(--space-2);
+}
+
 .dialog-buttons {
   display: flex;
-  gap: 0.5em;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+dl.summary {
+  display: grid;
+  margin: 0 0 var(--space-3);
+  gap: var(--space-1) var(--space-4);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+dl.summary dt {
+  color: var(--text-muted);
+}
+
+dl.summary dd {
+  margin: 0;
+}
+
+dl.summary dl.summary {
+  margin: var(--space-1) 0 0;
+}
+
+/* The matches */
+
+.result-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.result-entry label {
+  width: 100%;
+  font-weight: 600;
+}
+
+.result-entry input {
+  flex: 1 1 8rem;
+}
+
+.result-entry .hint {
+  width: 100%;
+  margin: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: var(--space-4);
+  gap: var(--space-2);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.stepper button {
+  padding: 0 var(--space-2);
+}
+
+#match-list {
+  display: grid;
+  padding: 0;
+  margin: 0;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+/* A card: the pairing around the number, then each side's button below its name. The columns
+ * are the same in every card, whether or not a match may end in a draw. */
+.match {
+  position: relative;
+  display: grid;
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+/* the pairing on the first line, whatever the order of its elements */
+.match .side,
+.match .number {
+  grid-row: 1;
+}
+
+.match .side {
+  font-weight: 600;
+}
+
+.match .side.a {
+  grid-column: 1;
+  text-align: right;
+}
+
+.match .number {
+  min-width: 2.5rem;
+  grid-column: 2;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.match .side.b {
+  grid-column: 3;
+}
+
+.match .winner::before {
+  content: "✓ ";
+}
+
+.match .meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.9em;
+  gap: 0 var(--space-3);
+  grid-column: 1 / -1;
+}
+
+.match .report {
+  display: grid;
+  align-items: center;
+  gap: var(--space-2);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+
+.match .win {
+  width: min(100%, 12rem);
+}
+
+.match .win.a {
+  grid-column: 1;
+  justify-self: end;
+}
+
+.match .draw {
+  grid-column: 2;
+}
+
+.match .win.b {
+  grid-column: 3;
+  justify-self: start;
+}
+
+/* the result and the button reopening the match, in the middle */
+.match .result {
+  grid-column: 1 / 3;
+  justify-self: end;
+  color: var(--text-muted);
+}
+
+.match .result + button {
+  grid-column: 3;
+  justify-self: start;
+}
+
+.bye {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+}
+
+/* The standings */
+
+.scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+/* the names wrap, and stay in sight while the other columns scroll */
+th.name,
+td.name {
+  position: sticky;
+  left: 0;
+  min-width: 8rem;
+  max-width: 16rem;
+  background: var(--surface);
+  text-align: left;
+  white-space: normal;
 }

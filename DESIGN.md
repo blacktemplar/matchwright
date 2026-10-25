@@ -1612,7 +1612,7 @@ tested natively and in wasm, and knows no plugin.
 #### Decision
 
 - **One list of matches at a time**: a round, or the matches that can be
-  played now, chosen in a row of buttons above it. A round is shown until
+  played now, chosen above it (see [Layout](#layout) for how). A round is shown until
   the operator chooses one, the first with a match without a result. **What
   can be played now** (`Session::playable`) are the matches without a result
   none of whose entrants still has a match of an earlier round to play: a
@@ -1622,8 +1622,8 @@ tested natively and in wasm, and knows no plugin.
 - **Results by keyboard, two ways.** A field takes a result typed as the
   number of its match and `1`, `X` or `2` (`Session::report_entered`, e.g.
   `3 1`), the notation of football pools, which needs no word of a language
-  and no knowledge of which entrant is which side beyond the columns of the
-  list. A refused entry stays in the field to be corrected. And the result
+  and no knowledge of which entrant is which side beyond the left and the
+  right of the match shown. A refused entry stays in the field to be corrected. And the result
   buttons of a match move the focus on once one is pressed, which removes
   them: to the first button of the next match of the list without a result
   (after it, or else before it), or to the heading of the list if there is
@@ -1652,6 +1652,67 @@ tested natively and in wasm, and knows no plugin.
 - **Auto-advancing to the next round only while nothing was chosen** stays as
   it was; pinning the round after each result was rejected, since the round
   that follows is where the next results are entered.
+
+### Layout
+
+*Implemented* 2026-10-25: where the screens of `tournament-gui` put what they
+show, in `assets/style.css` (plain CSS, neutral greys until a palette is
+chosen). The page is used on laptops and tablets, and for small events on a
+phone alone; events have 20–40 entrants typically, but any number, in any
+format.
+
+#### Decision
+
+- **One bar on top** of every screen: the way back to all competitions and the
+  competition's name (the `Header`), followed by the competition's actions
+  (undo, redo, export), which the screen of the competition renders as a
+  sibling that the page's grid puts into the same row. On a narrow screen the
+  actions show icons only, their texts kept for screen readers. The language
+  is chosen in the footer, being chosen rarely.
+- **Cards in columns where there is room**: before the start the entrants
+  beside the phase, after the start the matches beside the standings (and how
+  the phase is played), half and half. Where there is room for one column only
+  (below 60rem), two buttons choose which is shown; both stay on the page, the
+  other hidden by CSS only.
+- **A match is a card of two rows at every width**: the two sides around its
+  number, then each side's button below its name, the draw in the middle.
+  The columns are the same in every card (a CSS grid with a subgrid), so a
+  format without draws leaves the middle empty. One card per line: a list is
+  read to find who plays whom, not only to report.
+- **Names are never cut and never shrunk**: they wrap, even within a word. A
+  name cut short may tell two entrants apart no longer
+  ("Maximilian-Alexander Müller" and "…Meier"), and a result reported for the
+  wrong one is the worst mistake the screen allows; a smaller font fails users
+  who enlarge text. So the result buttons show only "Wins", which their place
+  below the name makes unambiguous, and are named "Alice wins" by their
+  `aria-label` (which holds the text shown, WCAG 2.5.3). Only the competition's
+  name in the bar is cut with "…", since it is shown in full in the list.
+- **Rounds are stepped through, not listed**: "Playable now" or "By round",
+  and for the round a select (with how many matches are open) between buttons
+  to the previous and the next one. A round robin of 40 has 39 rounds, too
+  many for a button each.
+- **The standings scroll sideways** where their columns do not fit, the names
+  staying in sight (a sticky column).
+- **Matches are a list, not a table.** CSS laying out the cells of a table as
+  cards takes the table's semantics from screen readers in some browsers; each
+  card says its number and its sides itself, the words a table's headers said
+  being visually hidden ("Match", "against").
+- **The e2e tests run at a laptop's size** (`--window-size=1280,900` in
+  `e2e-harness`), where every column is shown.
+
+#### Alternatives
+
+- **A match on one line** (`Alice [Wins] [Draw] [Wins] Bob`) on wide screens:
+  cramped, and harder to read for who plays whom.
+- **Several cards per line**: leaves less room for long names, and the order
+  of the numbers runs across and down.
+- **A split between the columns the operator drags**: rare on web pages, so
+  rarely found, and accessible only with a keyboard-operated separator. A
+  button showing one column on the full width is the option kept for later
+  (also for a projector).
+- **Buttons adding the phase kept in sight at the bottom** (`position:
+  sticky`): they covered the field with the focus, which browsers do not
+  scroll out from under them, since it is within the window.
 
 ### Offline and installing
 

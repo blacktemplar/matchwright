@@ -10,7 +10,7 @@ use tournament_app::{
 };
 use tournament_browser::channel::Broadcast;
 
-use crate::{Notices, Page, competition::SAVED, download, i18n::t, open};
+use crate::{Notices, Page, competition::SAVED, download, i18n::t, icons, open};
 
 #[component]
 pub fn Competitions() -> Element {
@@ -43,32 +43,12 @@ pub fn Competitions() -> Element {
         None => (Vec::new(), None),
     };
     rsx! {
-        main {
+        main { class: "narrow",
             Notices {}
-            section { aria_labelledby: "competitions",
-                h2 { id: "competitions", {tr.get("competitions")} }
-                if let Some(why) = unreadable {
-                    p { class: "error", "{why}" }
-                } else if listings.is_empty() {
-                    p { {tr.get("no-competitions")} }
-                }
-                ul { id: "competition-list",
-                    for listing in listings {
-                        li { key: "{listing.key}",
-                            a { href: "#{listing.key}", "{listing.name}" }
-                            " "
-                            button {
-                                aria_label: t!(tr, "export-competition", name = &*listing.name),
-                                onclick: move |_| export(page, listing.key, listing.name.clone()),
-                                {tr.get("export")}
-                            }
-                        }
-                    }
-                }
-            }
-            section { aria_labelledby: "new-competition",
+            section { class: "card", aria_labelledby: "new-competition",
                 h2 { id: "new-competition", {tr.get("new-competition")} }
                 form {
+                    class: "row",
                     onsubmit: move |event| {
                         event.prevent_default();
                         let chosen = name.peek().trim().to_owned();
@@ -79,22 +59,22 @@ pub fn Competitions() -> Element {
                             store(page, Session::new(chosen));
                         }
                     },
-                    label {
-                        {tr.get("name")}
-                        " "
-                        input {
-                            value: "{name}",
-                            autocomplete: "off",
-                            oninput: move |event| name.set(event.value()),
-                        }
+                    label { r#for: "competition-name", class: "visually-hidden", {tr.get("name")} }
+                    input {
+                        id: "competition-name",
+                        value: "{name}",
+                        autocomplete: "off",
+                        placeholder: tr.get("name"),
+                        oninput: move |event| name.set(event.value()),
                     }
-                    button { r#type: "submit", {tr.get("create")} }
+                    button { class: "primary", r#type: "submit", {tr.get("create")} }
                 }
-                label {
+                // looks like a button; the input in it takes the focus and the file
+                label { class: "button file-button",
                     {tr.get("import")}
-                    " "
                     input {
                         id: "import",
+                        class: "visually-hidden",
                         r#type: "file",
                         accept: ".json,application/json",
                         onchange: move |event| {
@@ -102,6 +82,28 @@ pub fn Competitions() -> Element {
                                 spawn(async move { import(page, file).await });
                             }
                         },
+                    }
+                }
+            }
+            section { class: "card", aria_labelledby: "competitions",
+                h2 { id: "competitions", {tr.get("competitions")} }
+                if let Some(why) = unreadable {
+                    p { class: "error", "{why}" }
+                } else if listings.is_empty() {
+                    p { class: "empty", {tr.get("no-competitions")} }
+                }
+                ul { id: "competition-list",
+                    for listing in listings {
+                        li { key: "{listing.key}",
+                            a { class: "name", href: "#{listing.key}", "{listing.name}" }
+                            button {
+                                class: "small",
+                                aria_label: t!(tr, "export-competition", name = &*listing.name),
+                                onclick: move |_| export(page, listing.key, listing.name.clone()),
+                                icons::Export {}
+                                {tr.get("export")}
+                            }
+                        }
                     }
                 }
             }

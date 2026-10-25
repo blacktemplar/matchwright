@@ -21,33 +21,45 @@ pub fn Entrants() -> Element {
         .into_iter()
         .map(|entrant| (entrant.id, team_name(&tr, &[entrant])))
         .collect();
+    let count = entrants.len();
     rsx! {
-        section { aria_labelledby: "entrants",
-            h2 { id: "entrants", {tr.get("entrants")} }
+        section { class: "card", aria_labelledby: "entrants",
+            h2 { id: "entrants",
+                {tr.get("entrants")}
+                if count > 0 {
+                    " "
+                    span { class: "count", "({count})" }
+                }
+            }
             form {
+                class: "row",
                 onsubmit: move |event| {
                     event.prevent_default();
                     if ctx.act(|session| session.add_entrant(&name.peek())).is_some() {
                         name.set(String::new());
                     }
                 },
-                label {
-                    {tr.get("name")}
-                    " "
-                    input {
-                        value: "{name}",
-                        autocomplete: "off",
-                        oninput: move |event| name.set(event.value()),
-                    }
+                label { r#for: "entrant-name", class: "visually-hidden", {tr.get("name")} }
+                input {
+                    id: "entrant-name",
+                    value: "{name}",
+                    autocomplete: "off",
+                    placeholder: tr.get("name"),
+                    oninput: move |event| name.set(event.value()),
                 }
-                button { r#type: "submit", disabled: !actions.add_entrant, {tr.get("add-entrant")} }
+                button {
+                    class: "primary",
+                    r#type: "submit",
+                    disabled: !actions.add_entrant,
+                    {tr.get("add-entrant")}
+                }
             }
             ol { id: "entrant-list",
                 for (id, name) in entrants {
                     li { key: "{id:?}",
                         span { class: "name", "{name}" }
-                        " "
                         button {
+                            class: "quiet small",
                             aria_label: t!(tr, "remove-entrant", name = name.as_str()),
                             disabled: !actions.remove_entrant,
                             onclick: move |_| {
@@ -70,7 +82,7 @@ pub fn Phase() -> Element {
     let has_phase = !ctx.session.read().competition().phases().is_empty();
     let tr = ctx.translator.read();
     rsx! {
-        section { aria_labelledby: "phase",
+        section { class: "card", aria_labelledby: "phase",
             h2 { id: "phase", {tr.get("phase")} }
             if has_phase {
                 PhaseSummary {}
@@ -78,6 +90,7 @@ pub fn Phase() -> Element {
                 NewPhase {}
             }
             button {
+                class: "primary start",
                 disabled: !actions.start,
                 onclick: move |_| _ = ctx.act(Session::start),
                 {tr.get("start")}

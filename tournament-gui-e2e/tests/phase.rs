@@ -120,7 +120,7 @@ async fn the_criteria_of_the_ranking_are_added_and_moved() {
 async fn the_phase_is_edited_after_the_start_in_a_dialog() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui).await?;
-        gui.click("Alice wins").await?;
+        gui.click_labelled("Alice wins").await?;
 
         gui.click("Edit phase").await?;
         gui.click_labelled("Move more Sonneborn-Berger up").await?;
@@ -153,7 +153,7 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
 async fn an_edit_a_result_does_not_fit_is_refused_in_the_dialog() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui).await?;
-        gui.click("Alice wins").await?;
+        gui.click_labelled("Alice wins").await?;
         gui.click("Edit phase").await?;
 
         gui.choose_format("Monster DYP").await?;

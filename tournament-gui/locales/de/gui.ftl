@@ -66,19 +66,20 @@ cancel = Abbrechen
 ## After the start
 
 matches = Spiele
+view = Ansicht
 rounds = Runden
 round = Runde { $round }
 round-with-open = Runde { $round } ({ $open } offen)
 playable-now = Jetzt spielbar
 playable-now-count = Jetzt spielbar ({ $count })
+by-round = Nach Runde
+previous-round = Vorige Runde
+next-round = Nächste Runde
 nothing-playable = Gerade kann kein Spiel gespielt werden.
-match-number = Nr.
-round-column = Runde
-stage = Stufe
-side-a = Seite A
-side-b = Seite B
-result = Ergebnis
+match = Spiel
+versus = gegen
 wins = { $team } gewinnt
+wins-short = Gewinnt
 draw = Unentschieden
 won = { $team } hat gewonnen
 reopen = Wieder öffnen
@@ -88,10 +89,10 @@ bye-in-stage = Freilos: { $team } ({ $stage })
 standings = Tabelle
 rank = Platz
 enter-result = Ergebnis eingeben
-enter-result-hint = die Nummer des Spiels, dann 1, wenn Seite A gewonnen hat{ $draws ->
+enter-result-hint = die Nummer des Spiels, dann 1, wenn die linke Seite gewonnen hat{ $draws ->
         [yes] , X für ein Unentschieden
        *[no] {""}
-    } oder 2, wenn Seite B gewonnen hat, z. B. „3 1“
+    } oder 2, wenn die rechte Seite gewonnen hat, z. B. „3 1“
 report = Melden
 
 ## What was done, as the page announces it
