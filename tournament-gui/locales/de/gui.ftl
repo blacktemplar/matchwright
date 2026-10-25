@@ -76,6 +76,7 @@ won = { $team } hat gewonnen
 reopen = Wieder öffnen
 reopen-match = Spiel { $number } wieder öffnen
 bye = Freilos: { $team }
+bye-in-stage = Freilos: { $team } ({ $stage })
 standings = Tabelle
 rank = Platz
 

@@ -91,6 +91,7 @@ won = { $team } won
 reopen = Reopen
 reopen-match = Reopen match { $number }
 bye = Bye: { $team }
+bye-in-stage = Bye: { $team } ({ $stage })
 standings = Standings
 rank = Rank
 

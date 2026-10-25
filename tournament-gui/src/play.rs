@@ -83,7 +83,15 @@ pub fn Rounds() -> Element {
                     }
                 }
                 for bye in round.byes {
-                    p { {t!(tr, "bye", team = team_name(&tr, &bye.entrants))} }
+                    p {
+                        {
+                            let team = team_name(&tr, &bye.entrants);
+                            match bye.stage {
+                                Some(stage) => t!(tr, "bye-in-stage", team = team, stage = stage),
+                                None => t!(tr, "bye", team = team),
+                            }
+                        }
+                    }
                 }
             }
         }

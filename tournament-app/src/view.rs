@@ -61,6 +61,9 @@ pub struct MatchRow {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ByeRow {
     pub entrants: Vec<EntrantRow>,
+    /// The stage the format names the bye by, only if the matches and byes of its round belong to
+    /// more than one stage, e.g. a bye of the loser bracket in a round of the winner bracket.
+    pub stage: Option<String>,
 }
 
 /// The standings of the phase.

@@ -6,15 +6,18 @@
 //! last save. What can be undone and redone is what the session did itself, which is not saved: a
 //! loaded competition starts with nothing to undo.
 
-use std::{collections::BTreeMap, num::NonZeroU32};
+use std::{
+    collections::{BTreeMap, HashSet},
+    num::NonZeroU32,
+};
 
 use indexmap::IndexSet;
 use plugin_factory::{catalog::AnyAxis, config::PluginConfig, draft::Draft};
 use tournament_engine::{
-    AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt as _,
-    CompetitionTransition, Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData,
-    PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed,
-    StartCompetition,
+    AddEntrant, AddPhase, Annotated as _, Competition, CompetitionStateMachine,
+    CompetitionStateMachineExt as _, CompetitionTransition, Entrant, EntrantId, Match, MatchId,
+    MatchResult, Phase, PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant,
+    ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
     map::IdAble as _,
     plugins::phase_format::PhaseFormat,
     transitions::{
@@ -563,18 +566,29 @@ impl Session {
                 id: r#match.id(),
                 number: index + 1,
                 round,
-                stage: phase.format().stage(r#match),
+                stage: phase.format().stage(r#match.annotations()),
                 a: self.team(data, r#match.team_a()),
                 b: self.team(data, r#match.team_b()),
                 result: r#match.result(),
             })
             .collect();
-        let byes: Vec<_> = data
+        let byes_of_round: Vec<_> = data
             .byes()
             .values()
             .filter(|bye| bye.round() == round)
-            .map(|bye| ByeRow {
+            .map(|bye| (bye, phase.format().stage(bye.annotations())))
+            .collect();
+        let stages: HashSet<_> = matches
+            .iter()
+            .map(|row| &row.stage)
+            .chain(byes_of_round.iter().map(|(_, stage)| stage))
+            .collect();
+        let several_stages = stages.len() > 1;
+        let byes: Vec<_> = byes_of_round
+            .into_iter()
+            .map(|(bye, stage)| ByeRow {
                 entrants: self.team(data, &[bye.ranking()]),
+                stage: stage.filter(|_| several_stages),
             })
             .collect();
         (!matches.is_empty() || !byes.is_empty()).then_some(Round {

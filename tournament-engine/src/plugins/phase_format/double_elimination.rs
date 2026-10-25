@@ -7,7 +7,7 @@ use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, r
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Annotated, Match, PhaseData, Team},
+    entities::competition::{PhaseData, Team},
     plugins::{
         facts::MatchAnnotation,
         metrics_calculator::{
@@ -182,9 +182,9 @@ impl PhaseFormat for DoubleElimination {
         false
     }
 
-    fn stage(&self, r#match: &Match) -> Option<String> {
-        r#match
-            .annotation::<DoubleEliminationRound>()
+    fn stage(&self, annotations: &TypeMap) -> Option<String> {
+        annotations
+            .get::<DoubleEliminationRound>()
             .map(ToString::to_string)
     }
 }
@@ -277,7 +277,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        entities::competition::{MatchId, MatchResult, Phase, PhaseBuilder, RankingId},
+        entities::competition::{
+            Annotated, Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId,
+        },
         plugins::metrics_calculator::{
             round_of_elimination::{
                 LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,

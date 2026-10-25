@@ -1,7 +1,10 @@
 use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
-use crate::entities::competition::{Bye, Match, PhaseData};
+use crate::{
+    entities::competition::{Bye, Match, PhaseData},
+    type_map::TypeMap,
+};
 
 /// How the matches of a phase are scheduled.
 ///
@@ -42,10 +45,13 @@ pub trait PhaseFormat: Plugin + DynClone {
         true
     }
 
-    /// The name of the stage of the phase `match` belongs to, e.g. "Semifinals", or `None` if
-    /// this format names no stages. Read from the annotations the format wrote on `match`.
-    fn stage(&self, r#match: &Match) -> Option<String> {
-        let _ = r#match;
+    /// The name of the stage of the phase a match or a bye with `annotations` belongs to, e.g.
+    /// "Semifinals", or `None` if this format names no stages. Read from the annotations the
+    /// format wrote on the match or the bye, see [`Annotated::annotations`].
+    ///
+    /// [`Annotated::annotations`]: crate::entities::competition::Annotated::annotations
+    fn stage(&self, annotations: &TypeMap) -> Option<String> {
+        let _ = annotations;
         None
     }
 }

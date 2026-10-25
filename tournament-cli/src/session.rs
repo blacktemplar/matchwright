@@ -7,7 +7,7 @@
 //! competition starts with nothing to undo.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Write as _,
     io,
     num::{NonZeroU32, NonZeroUsize},
@@ -21,9 +21,10 @@ use plugin_factory::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tournament_engine::{
-    AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt as _,
-    Entrant, EntrantId, Match, MatchId, MatchResult, Phase, PhaseData, PhaseId, PhasePlugins,
-    RankingId, RemoveEntrant, ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    AddEntrant, AddPhase, Annotated as _, Competition, CompetitionStateMachine,
+    CompetitionStateMachineExt as _, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
+    PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant, ReportMatchResult, Seed,
+    SetCompetitionSeed, StartCompetition, TypeMap,
     plugins::{metrics_calculator::MetricColumn, phase_format::PhaseFormat, ranker::SliceRanker},
     transitions::{ReconfigurePhaseError, UndoMatchResultError},
     undoable_state_machine::{
@@ -453,13 +454,13 @@ impl Session {
     /// the filters applied, followed by the byes unless only open matches are asked for.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let format = self.phase()?.format();
-        let stage_of = |r#match| format.stage(r#match);
+        let stage_of = |entity: &TypeMap| format.stage(entity);
         let phase = self.phase()?.data();
         // only a format that names its stages gets a column for them
         let has_stages = phase
             .matches()
             .values()
-            .any(|r#match| stage_of(r#match).is_some());
+            .any(|r#match| stage_of(r#match.annotations()).is_some());
         let rows: Vec<_> = phase
             .matches()
             .values()
@@ -469,7 +470,7 @@ impl Session {
             .map(|(index, r#match)| {
                 [(index + 1).to_string(), r#match.round().to_string()]
                     .into_iter()
-                    .chain(has_stages.then(|| stage_of(r#match).unwrap_or_default()))
+                    .chain(has_stages.then(|| stage_of(r#match.annotations()).unwrap_or_default()))
                     .chain([
                         self.team_name(phase, r#match.team_a()),
                         "vs".to_owned(),
@@ -479,19 +480,44 @@ impl Session {
                     .collect()
             })
             .collect();
+        // a bye is named by its stage only if its round has several, e.g. one of the loser
+        // bracket in a round of the winner bracket
+        let mut stages_of_round: HashMap<NonZeroU32, HashSet<Option<String>>> = HashMap::new();
+        let all_stages = (phase.matches().values())
+            .map(|r#match| (r#match.round(), stage_of(r#match.annotations())))
+            .chain((phase.byes().values()).map(|bye| (bye.round(), stage_of(bye.annotations()))));
+        for (round, stage) in all_stages {
+            stages_of_round.entry(round).or_default().insert(stage);
+        }
         // a bye is never open, it is decided when it is scheduled
-        let bye_rows: Vec<_> = phase
+        let byes: Vec<_> = phase
             .byes()
             .values()
             .filter(|_| !only_open)
             .filter(|bye| only_round.is_none_or(|round| bye.round() == round))
             .map(|bye| {
-                vec![
-                    bye.round().to_string(),
-                    self.team_name(phase, &[bye.ranking()]),
-                ]
+                let stage = (stages_of_round[&bye.round()].len() > 1)
+                    .then(|| stage_of(bye.annotations()))
+                    .flatten();
+                (bye, stage)
             })
             .collect();
+        let byes_have_stages = byes.iter().any(|(_, stage)| stage.is_some());
+        let bye_rows: Vec<_> = byes
+            .into_iter()
+            .map(|(bye, stage)| {
+                [bye.round().to_string()]
+                    .into_iter()
+                    .chain(byes_have_stages.then(|| stage.unwrap_or_default()))
+                    .chain([self.team_name(phase, &[bye.ranking()])])
+                    .collect()
+            })
+            .collect();
+        let bye_header = ["round"]
+            .into_iter()
+            .chain(byes_have_stages.then_some("stage"))
+            .chain(["bye"])
+            .collect::<Vec<_>>();
         if rows.is_empty() && bye_rows.is_empty() {
             let open = if only_open { " open" } else { "" };
             return Ok(match only_round {
@@ -507,7 +533,7 @@ impl Session {
             .collect::<Vec<_>>();
         let tables = [
             (!rows.is_empty()).then(|| table(&header, &rows)),
-            (!bye_rows.is_empty()).then(|| table(&["round", "bye"], &bye_rows)),
+            (!bye_rows.is_empty()).then(|| table(&bye_header, &bye_rows)),
         ];
         Ok(tables
             .into_iter()
@@ -1527,6 +1553,50 @@ mod tests {
         assert!(
             !output(&mut session, "matches --open").contains("bye"),
             "a bye is never open"
+        );
+    }
+
+    /// Of six entrants in a double elimination, the two that lose in the first round of the
+    /// winner bracket sit out the first round of the loser bracket, in the round of the second
+    /// round of the winner bracket.
+    #[test]
+    fn a_bye_is_listed_with_its_stage_where_its_round_has_several() {
+        let mut session = Session::new(MemoryStorage::default());
+        output(&mut session, "add A B C D E F");
+        output(&mut session, "add-phase double-elimination");
+        output(&mut session, "start");
+        let bye_header = |session: &mut Session, round| {
+            let listing = output(session, &format!("matches --round {round}"));
+            let (_, byes) = listing.split_once("\n\n").expect("two tables");
+            byes.lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(
+            bye_header(&mut session, 1),
+            "round bye",
+            "every match and bye of the first round is of the winner bracket"
+        );
+
+        output(&mut session, "report 1 a");
+        output(&mut session, "report 2 a");
+
+        let listing = output(&mut session, "matches --round 2");
+        let (_, byes) = listing.split_once("\n\n").expect("two tables");
+        let byes: Vec<String> = byes
+            .lines()
+            .map(|row| row.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(byes[0], "round stage bye", "{listing}");
+        assert_eq!(byes.len(), HEADER_LINES + 2, "{listing}");
+        assert!(
+            byes[HEADER_LINES..]
+                .iter()
+                .all(|row| row.starts_with("2 Losers round 1 ")),
+            "{listing}"
         );
     }
 

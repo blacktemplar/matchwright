@@ -4,7 +4,7 @@ use plugin_factory::{Plugin, compatibility::Declaration, config::PluginConfig, r
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    entities::competition::{Annotated, Match, PhaseData},
+    entities::competition::PhaseData,
     plugins::{
         facts::MatchAnnotation,
         metrics_calculator::{
@@ -184,10 +184,8 @@ impl PhaseFormat for SingleElimination {
         false
     }
 
-    fn stage(&self, r#match: &Match) -> Option<String> {
-        r#match
-            .annotation::<KnockoutRound>()
-            .map(ToString::to_string)
+    fn stage(&self, annotations: &TypeMap) -> Option<String> {
+        annotations.get::<KnockoutRound>().map(ToString::to_string)
     }
 }
 
@@ -219,7 +217,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
-    use crate::entities::competition::{MatchResult, Phase, PhaseBuilder, RankingId};
+    use crate::entities::competition::{
+        Annotated, Match, MatchResult, Phase, PhaseBuilder, RankingId,
+    };
 
     #[test]
     fn knockout_rounds_are_named_by_their_fraction_of_the_final() {

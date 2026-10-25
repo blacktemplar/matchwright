@@ -11,7 +11,7 @@ use plugin_factory::{
 };
 use tournament_engine::plugins::{
     metrics_calculator::MoreWins,
-    phase_format::{MonsterDyp, RoundRobin, SingleElimination},
+    phase_format::{DoubleElimination, MonsterDyp, RoundRobin, SingleElimination},
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -317,6 +317,36 @@ fn a_round_lists_its_byes() {
     assert_eq!(second.matches.len(), 1);
     assert_eq!(second.byes.len(), 1);
     assert_eq!(second.byes[0].entrants.len(), 1);
+    assert_eq!(second.byes[0].stage, None, "a round robin names no stages");
+}
+
+/// Of six entrants in a double elimination, the best two sit out the first round of the winner
+/// bracket, so the two that lose in it sit out the first round of the loser bracket, which is
+/// played in the round of the second round of the winner bracket.
+#[test]
+fn a_bye_is_named_by_its_stage_where_its_round_has_several() {
+    let mut session = Given::new()
+        .entrants(&["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"])
+        .format(DoubleElimination::ID)
+        .started();
+    let bye_stages = |session: &Session, number| -> Vec<Option<String>> {
+        let round = session.round(round(number)).unwrap();
+        round.byes.into_iter().map(|bye| bye.stage).collect()
+    };
+    assert_eq!(
+        bye_stages(&session, 1),
+        [None, None],
+        "every match and bye of the first round is of the winner bracket"
+    );
+
+    for number in 1..=2 {
+        session
+            .report(numbered(&session, number), MatchResult::AWins)
+            .unwrap();
+    }
+
+    let losers = Some("Losers round 1".to_owned());
+    assert_eq!(bye_stages(&session, 2), [losers.clone(), losers]);
 }
 
 #[test]
