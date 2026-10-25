@@ -179,7 +179,24 @@ The organizer's main screen: matches one round at a time (or paginated), fast re
 keyboard, reopening a result, undo/redo with an announcement of what happened (`aria-live`),
 standings with the metric columns, stages for elimination formats, "what can be played now".
 
-### 7. Offline and release
+### 7. Offline and release (done 2026-10-25, not released)
+
+See DESIGN.md, *Offline and installing*. The page is a PWA: `tournament-gui/public/` holds the
+manifest, icons (SVG, and PNGs rendered from it), the service worker `sw.js` (assets from the cache
+once kept, everything else from the network and from the cache when that fails; a changed page
+drops the old assets) and `pwa.js`, which registers it, hands it what the first visit loaded before
+it took over, and keeps Chromium's install offer. `dx` already runs a current `wasm-opt`; the
+release build is `dx build -p tournament-gui --release --debug-symbols false` (2.4 MB instead of
+4.4 MB), on which the e2e tests run too. The warning of a refused persistent storage says both
+causes, offers Export (on a competition's screen), Install (while the browser offers it, asking for
+persistence again once installed) and "Don't show again" (local storage). The harness can take the
+server away (`Page::go_offline`), check what is kept (`expect_kept_offline`) and ask Chrome's
+DevTools whether the page is installable (`expect_installable`; headless Chrome makes the offer
+too). Changed on the way: hosting is recommended (GitHub Pages, built by CI with `--base-path`,
+since the wasm holds local paths of the assets) but not set up, as nothing is released yet. Not
+done: the export reminder ("changed since its last export"), a timeout for the network on a bad
+connection (the page waits for it before falling back to the cache), telling the operator that a
+new version is loaded, a test of a version replacing another, and translating the manifest's name.
 
 PWA: web app manifest, service worker caching the page, release build with `wasm-opt` (trunk's
 default `wasm-opt` was too old for current Rust; check `dx`'s), where to host it.
@@ -205,4 +222,5 @@ large events, the CLI on top of the app crate, and what becomes of `tournament-w
 - ~~One e2e crate for both pages, or one per page? (step 2)~~ One per page, on a shared
   `e2e-harness`.
 - ~~CSS: plain CSS files, or something like Tailwind (an extra tool)? (step 2)~~ Plain CSS.
-- Hosting of the page. (step 7)
+- Hosting of the page. (step 7) Any static host with HTTPS; GitHub Pages deployed by CI is
+  recommended (DESIGN.md, *Hosting*), to be decided when it is released.

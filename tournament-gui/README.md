@@ -20,10 +20,23 @@ the first the browser prefers. Its messages are in `locales/<lang>/gui.ftl`
 ([Fluent](https://projectfluent.org)); those of errors and plugins are in
 [`tournament-app`](../tournament-app/locales).
 
+It works offline once opened and can be installed as an app: `public/` holds
+its manifest, icons and service worker (`sw.js`, registered by `pwa.js`), which
+`dx` copies next to `index.html`. If the browser refuses to keep what is
+stored, as in a private window, the page warns and offers to export the
+competition and to install the app, after which browsers usually keep it.
+
 ```text
 dx serve -p tournament-gui              # add --hot-patch to patch Rust code into the running page
-dx build -p tournament-gui --release    # into target/dx/tournament-gui/release/web/public
+# into target/dx/tournament-gui/release/web/public, optimized by wasm-opt, which dx runs itself;
+# add --base-path <path> for a page served under a path, e.g. tournament-engine on GitHub Pages
+dx build -p tournament-gui --release --debug-symbols false
 ```
+
+The page needs HTTPS (or `localhost`) for its service worker and storage. Host
+a build made by CI: the wasm holds the absolute paths of the source files of
+its assets. The icons `icon-192.png` and `icon-512.png` are rendered from
+`icon.svg`, e.g. with `rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png`.
 
 The select and the dialog are the Dioxus team's components, copied into
 `src/components/` by `dx components add` and changed there.
@@ -40,5 +53,5 @@ the end of every test. They run on the release build, since a debug build tries
 to reach the server of `dx serve`:
 
 ```text
-dx build -p tournament-gui --release && cargo test -p tournament-gui-e2e -- --ignored
+dx build -p tournament-gui --release --debug-symbols false && cargo test -p tournament-gui-e2e -- --ignored
 ```

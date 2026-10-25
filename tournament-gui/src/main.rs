@@ -6,12 +6,18 @@
 //! starts with the list of them ([`competitions`]); the one open is named after the `#` of the URL
 //! and saved after each change ([`competition`]). Everything the page says goes through a
 //! [`Translator`] of the language chosen, see [`i18n`].
+//!
+//! The page is an app that works offline and can be installed: `public/` holds its manifest, the
+//! service worker `sw.js` that keeps it, and `pwa.js`, which registers the worker and keeps the
+//! browser's offer to install it (see [`install`]).
 
 mod announcement;
 mod competition;
 mod competitions;
 mod components;
 mod i18n;
+mod install;
+mod notices;
 mod phase;
 mod play;
 mod setup;
@@ -26,7 +32,7 @@ use tournament_app::{
 use tournament_browser::{channel::Events, indexed_db::IndexedDb, persistence};
 use tournament_engine::{MatchResult, uuid::Uuid};
 
-use crate::{competition::Competition, competitions::Competitions, i18n::t};
+use crate::{competition::Competition, competitions::Competitions, i18n::t, notices::Notices};
 
 /// The variables the styles of the [`components`] are built from.
 const COMPONENTS_THEME: Asset = asset!("/assets/dx-components-theme.css");
@@ -50,6 +56,11 @@ struct Page {
     error: Signal<Option<Text>>,
     /// Whether the browser keeps what is stored even when short of space; `None` until asked.
     persisted: Signal<Option<bool>>,
+    /// Whether the operator chose not to see the warning that the browser may not keep what is
+    /// stored.
+    warning_dismissed: Signal<bool>,
+    /// Whether the browser offers to install the page as an app.
+    installable: Signal<bool>,
     /// The name of the competition shown, which the page is headed with.
     shown: Signal<Option<String>>,
 }
@@ -63,10 +74,16 @@ impl Page {
     }
 
     /// Asks the browser to keep what is stored, unless it was asked already.
-    fn ask_to_persist(mut self) {
+    fn ask_to_persist(self) {
         if self.persisted.peek().is_none() {
-            spawn(async move { self.persisted.set(Some(persistence::persist().await)) });
+            self.ask_again_to_persist();
         }
+    }
+
+    /// Asks the browser to keep what is stored, e.g. once the page is installed, after which it
+    /// usually does.
+    fn ask_again_to_persist(mut self) {
+        spawn(async move { self.persisted.set(Some(persistence::persist().await)) });
     }
 }
 
@@ -80,6 +97,8 @@ fn App() -> Element {
         )),
         error: Signal::new(None),
         persisted: Signal::new(None),
+        warning_dismissed: Signal::new(notices::warning_dismissed()),
+        installable: Signal::new(install::offered()),
         shown: Signal::new(None),
     });
     let mut open = use_signal(opened_in_url);
@@ -99,6 +118,23 @@ fn App() -> Element {
         while changes.next().await.is_some() {
             page.error.set(None);
             open.set(opened_in_url());
+        }
+    });
+    use_future(move || async move {
+        let window = web_sys::window().expect("the page runs in a window");
+        let mut offers = Events::new(&window, install::OFFERED);
+        while offers.next().await.is_some() {
+            page.installable.set(true);
+        }
+    });
+    use_future(move || async move {
+        let window = web_sys::window().expect("the page runs in a window");
+        let mut installed = Events::new(&window, install::INSTALLED);
+        while installed.next().await.is_some() {
+            page.installable.set(false);
+            if page.persisted.peek().is_some() {
+                page.ask_again_to_persist();
+            }
         }
     });
     let stored = page.storage.read().is_some();
@@ -170,24 +206,6 @@ fn Header() -> Element {
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-/// What every screen tells first: why the last action was refused, and whether the browser may
-/// delete what is stored.
-#[component]
-fn Notices() -> Element {
-    let page = use_context::<Page>();
-    let tr = page.translator.read();
-    rsx! {
-        if *page.persisted.read() == Some(false) {
-            p { class: "warning", role: "status", {tr.get("not-persisted")} }
-        }
-        p { class: "error", role: "alert",
-            if let Some(error) = page.error.read().as_ref() {
-                {tr.text(error)}
             }
         }
     }

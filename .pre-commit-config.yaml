@@ -56,12 +56,13 @@ repos:
 
       # the end-to-end tests of the GUI, like web-e2e, on the page built by dx (which has to be of
       # the version of dioxus in Cargo.lock); the release build, since the debug build tries to
-      # reach the server of `dx serve`: `prek run --all-files --stage manual gui-e2e`
+      # reach the server of `dx serve`, without debug symbols, as it is hosted:
+      # `prek run --all-files --stage manual gui-e2e`
       - id: gui-e2e
         name: gui end-to-end test
-        entry: sh -c 'dx build -p tournament-gui --release && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
+        entry: sh -c 'dx build -p tournament-gui --release --debug-symbols false && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
         language: system
-        types_or: [rust, html, css]
+        types_or: [rust, html, css, javascript, json]
         pass_filenames: false
         stages: [manual]
 

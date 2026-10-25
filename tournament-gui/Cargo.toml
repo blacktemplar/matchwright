@@ -11,9 +11,12 @@ dioxus = { workspace = true, features = ["web"] }
 dioxus-icons.workspace = true
 dioxus-primitives.workspace = true
 futures-util.workspace = true
+# the browser's offer to install the page, which `public/pwa.js` keeps
+js-sys.workspace = true
 tournament-app.workspace = true
 tournament-browser.workspace = true
 tournament-engine.workspace = true
+wasm-bindgen.workspace = true
 # the languages the browser prefers, the one chosen, the page's `<html lang>`, and the competition
 # open, after the `#` of its URL
 web-sys = { workspace = true, features = [

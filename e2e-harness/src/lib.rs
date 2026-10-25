@@ -19,7 +19,7 @@ use std::{
     fs, io,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -41,7 +41,7 @@ use thirtyfour::{
         run_browser_test,
     },
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower_http::services::ServeDir;
 
 /// How long a query waits for what it looks for, and how often it looks.
@@ -82,7 +82,7 @@ pub struct Site {
 /// the WebAssembly, or throws one, or if it is not accessible when `test` has passed, see
 /// [`Page::check_accessibility`].
 pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>) {
-    let url = serve(&site).await;
+    let (url, server) = serve(&site).await;
     let downloads = Arc::new(tempfile::tempdir().expect("a directory for the downloads"));
     let mut capabilities = DesiredCapabilities::chrome();
     if !headed() {
@@ -138,6 +138,7 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
             url,
             ready: site.ready,
             downloads,
+            server: Arc::new(Mutex::new(Some(server))),
         };
         // a failing expectation panics, after which the page is worth seeing all the more
         let tested = AssertUnwindSafe(async {
@@ -274,8 +275,9 @@ fn watching_for(name: &str) -> Option<Duration> {
 }
 
 /// Serves the built page of `site` on a port of its own, so that each test has its own storage,
-/// and returns its URL. The server runs as long as the test's runtime.
-async fn serve(site: &Site) -> String {
+/// and returns its URL and the server. The server runs as long as the test's runtime, unless it is
+/// stopped.
+async fn serve(site: &Site) -> (String, Server) {
     assert!(
         site.dist.join("index.html").is_file(),
         "the page must be built first: `{}`",
@@ -284,8 +286,21 @@ async fn serve(site: &Site) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let app = Router::new().fallback_service(ServeDir::new(&site.dist));
-    tokio::spawn(async move { axum::serve(listener, app).await });
-    format!("http://{address}/")
+    let (stop, stopped) = oneshot::channel();
+    let running = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                _ = stopped.await;
+            })
+            .await
+    });
+    (format!("http://{address}/"), Server { stop, running })
+}
+
+/// The server of the page, see [`serve`].
+struct Server {
+    stop: oneshot::Sender<()>,
+    running: JoinHandle<io::Result<()>>,
 }
 
 /// The source of axe-core, downloaded once and cached in the user's cache directory.
@@ -356,6 +371,8 @@ pub struct Page {
     ready: By,
     /// Where the browser downloads files to, removed with the last clone.
     downloads: Arc<TempDir>,
+    /// The server of the page, `None` once [`Page::go_offline`] stopped it.
+    server: Arc<Mutex<Option<Server>>>,
 }
 
 impl Page {
@@ -455,6 +472,86 @@ impl Page {
     pub async fn close_tab(&self, then: &WindowHandle) -> WebDriverResult<()> {
         self.driver.close_window().await?;
         self.switch_to(then).await
+    }
+
+    /// Stops serving the page, as if the network were gone: from now on the browser cannot connect
+    /// to where the page was served, and gets only what it kept of it.
+    ///
+    /// # Panics
+    /// Panics if the server does not stop in time, or was stopped before.
+    pub async fn go_offline(&self) {
+        let Server { stop, running } = self
+            .server
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the page is served until it goes offline");
+        _ = stop.send(());
+        // waits for the connections still open to close
+        tokio::time::timeout(TIMEOUT, running)
+            .await
+            .expect("the server must stop in time")
+            .expect("the server does not panic")
+            .expect("the server serves until stopped");
+        Self::pause().await;
+    }
+
+    /// Waits until everything the page loaded from where it is served, the page itself included,
+    /// is in the browser's cache storage, where a service worker keeps it for [offline
+    /// use](Page::go_offline).
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with what is missing.
+    pub async fn expect_kept_offline(&self) -> WebDriverResult<()> {
+        let start = Instant::now();
+        loop {
+            let missing = self
+                .driver
+                .execute_async(
+                    r##"
+                    const done = arguments[arguments.length - 1];
+                    const urls = [location.href.split("#")[0]]
+                        .concat(performance.getEntriesByType("resource").map((entry) => entry.name))
+                        .filter((url) => new URL(url).origin === location.origin);
+                    Promise.all(urls.map((url) => caches.match(url)))
+                        .then((kept) => done(urls.filter((url, i) => !kept[i])));
+                    "##,
+                    Vec::new(),
+                )
+                .await?
+                .json()
+                .clone();
+            if missing.as_array().is_some_and(Vec::is_empty) {
+                return Ok(());
+            }
+            if start.elapsed() > TIMEOUT {
+                panic!("the page must be kept for offline use, but misses {missing:#}");
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+    }
+
+    /// Waits until the browser can install the page as an app, as Chrome's DevTools tell.
+    ///
+    /// # Panics
+    /// Panics if it cannot in time, with why not.
+    pub async fn expect_installable(&self) -> WebDriverResult<()> {
+        let start = Instant::now();
+        loop {
+            let errors = self
+                .driver
+                .cdp()
+                .send_raw("Page.getInstallabilityErrors", serde_json::json!({}))
+                .await?["installabilityErrors"]
+                .clone();
+            if errors.as_array().is_some_and(Vec::is_empty) {
+                return Ok(());
+            }
+            if start.elapsed() > TIMEOUT {
+                panic!("the page must be installable, but is not: {errors:#}");
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
     }
 
     /// Waits until the browser has downloaded the file `name`, and returns where it is.

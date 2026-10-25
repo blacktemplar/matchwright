@@ -1299,7 +1299,8 @@ Rejected:
 
 *Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
 screen, stores competitions in the browser, configures a phase through a
-form and runs a competition by keyboard): the GUI an organizer runs a
+form, runs a competition by keyboard, and works offline as an installable
+app, not hosted yet): the GUI an organizer runs a
 competition with,
 in the browser, offline. `requirements.md` says what it must do;
 `FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
@@ -1504,7 +1505,8 @@ own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
 - **Persistent storage is asked for when a competition is opened** (created
   and imported ones are opened too): some browsers ask the operator, so
   asking on load would ask before the page is used. A refusal shows a warning
-  that suggests exporting.
+  that offers exporting and installing, see
+  [Offline and installing](#offline-and-installing).
 - **Export and import use the CLI's file**: `{"log": .., "people": ..}` plus
   `"name"`, which the CLI ignores and which an import falls back to the file's
   name without, so a competition moves between the two. Importing makes a new
@@ -1650,6 +1652,71 @@ tested natively and in wasm, and knows no plugin.
 - **Auto-advancing to the next round only while nothing was chosen** stays as
   it was; pinning the round after each result was rejected, since the round
   that follows is where the next results are entered.
+
+### Offline and installing
+
+*Implemented* 2026-10-25, not hosted yet: the page is a PWA, which works
+offline once opened and can be installed as an app. Its files are in
+`tournament-gui/public/`, which `dx` copies next to `index.html`.
+
+#### Decision
+
+- **A service worker of its own** (`sw.js`, plain JavaScript) keeps
+  everything the page loads in one cache, as it loads it. The files under
+  `assets/` are named by `dx` after their content, so once kept they come from
+  the cache; everything else (the page, its manifest and icons) comes from the
+  network and is kept as it comes, and comes from the cache only when the
+  network fails or answers with an error. A page that differs from the one
+  kept is another version: the assets kept are dropped before it is answered,
+  so that the new version's are kept and the old ones do not pile up.
+- **The first visit is handed over.** The page loads before the worker takes
+  it over, so `pwa.js` watches what the page loads (a `PerformanceObserver`,
+  which also reports what was still loading) and hands the URLs to the worker
+  once it is active, which keeps what it lacks. So a page opened once, even
+  only briefly, opens at a venue without a network.
+- **Relative URLs** for everything of the page's own (manifest, worker,
+  icons), so that it works under any path; `dx build --base-path <path>`
+  makes the assets' URLs follow.
+- **The warning that the browser may not keep the competitions**, shown once
+  persistent storage is refused, words both causes, which the page cannot tell
+  apart: a browser short of space or deciding by how much a site is used
+  (Chrome refuses a site that is neither installed nor used much), and a
+  private window, whose storage goes with it (Firefox refuses there). No
+  button on the page changes the browser's answer, so it offers what helps:
+  exporting the competition open, installing the page while the browser
+  offers to (Chromium's `beforeinstallprompt`, kept by `pwa.js` since it may
+  come before the WebAssembly runs), after which persistence is asked for
+  again and usually granted, and not showing it again in this browser (in
+  local storage, which a private window drops with the rest).
+- **The release build is `dx build --release --debug-symbols false`**. `dx`
+  runs `wasm-opt -Oz` itself (binaryen 129, downloaded by `dx`), but keeps the
+  debug symbols by default even in release, and a setting in `Dioxus.toml`
+  does not change that: 4.4 MB of wasm with them, 2.4 MB (640 kB with brotli)
+  without. The e2e tests run on the same build.
+
+#### Alternatives
+
+- **Precaching a list of files made at build time** (what Workbox does). `dx`
+  makes no such list, and the names of the styles are only in the wasm, so it
+  would need a build step of its own after `dx`. Rejected for keeping what the
+  page loads.
+- **Network first for the assets too.** Waits for the network on every load,
+  which at a venue with a bad connection is worse than having none; their
+  names change with their content, so the cache is never stale.
+- **LTO or `opt-level = "s"`** for the build: with LTO the wasm grew to
+  3.1 MB and took twice as long to build; `opt-level = "s"` built the same
+  bytes as `dx`'s own profile.
+- **Dismissing the warning for the session only.** It would come back in every
+  new tab of a browser that refuses for good, the nag the rework was for.
+
+#### Hosting
+
+Not hosted yet. The page is static files that need HTTPS (for the service
+worker and the storage APIs) and nothing else of a server, so any static host
+does; GitHub Pages, built and deployed by a workflow of CI, is the likely one
+(under `/<repository>/`, hence `--base-path`). Build what is hosted in CI: the
+wasm holds the absolute paths of the source files of its assets, which a local
+build would publish.
 
 ### Translation
 

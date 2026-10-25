@@ -15,6 +15,7 @@ serde_json.workspace = true
 sha2.workspace = true
 # a directory of each test's own for what the browser downloads
 tempfile.workspace = true
-thirtyfour.workspace = true
-tokio = { workspace = true, features = ["fs", "net", "rt", "time"] }
+# Chrome's DevTools, which tell whether the page can be installed
+thirtyfour = { workspace = true, features = ["cdp"] }
+tokio = { workspace = true, features = ["fs", "net", "rt", "sync", "time"] }
 tower-http = { workspace = true, features = ["fs"] }

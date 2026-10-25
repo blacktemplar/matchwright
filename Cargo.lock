@@ -4358,10 +4358,12 @@ dependencies = [
  "dioxus-primitives",
  "futures-util",
  "getrandom 0.4.3",
+ "js-sys",
  "tournament-app",
  "tournament-browser",
  "tournament-engine",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
 ]

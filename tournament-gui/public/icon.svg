@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- a bracket of four entrants; everything drawn stays within the circle a maskable icon keeps -->
+  <rect width="512" height="512" fill="#1f4e79"/>
+  <path d="M128 160H208V224H128M208 192H288M128 288H208V352H128M208 320H288M288 192V320M288 256H368"
+        fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="380" cy="256" r="28" fill="#f2b705"/>
+</svg>

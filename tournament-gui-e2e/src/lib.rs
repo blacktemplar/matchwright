@@ -3,7 +3,8 @@
 //! single competition starts in a new one with [`run_in_new_competition`]. A [`Gui`] compares
 //! texts without the [`ISOLATION_MARKS`] the translation puts around names and numbers.
 //!
-//! The page is served from where `dx build -p tournament-gui --release` builds it. Everything else,
+//! The page is served from where `dx build -p tournament-gui --release --debug-symbols false`
+//! builds it, as it is hosted. Everything else,
 //! from the chromedriver to what a failing test leaves and the environment variables that show a
 //! test in a window, is that of [`e2e_harness`].
 
@@ -44,7 +45,7 @@ pub async fn run(test: impl AsyncFnOnce(Gui) -> WebDriverResult<()>) {
         // where dx builds the page; the debug build would try to reach `dx serve`
         dist: Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/dx/tournament-gui/release/web/public"),
-        build: "dx build -p tournament-gui --release",
+        build: "dx build -p tournament-gui --release --debug-symbols false",
         // rendered by the WebAssembly
         ready: By::Css("h1"),
     };
@@ -471,6 +472,15 @@ impl Gui {
         self.page
             .expect_texts(By::Css("#standing-list tbody td:nth-child(2)"), names)
             .await
+    }
+
+    /// Waits until the warning that the browser may not keep the competitions says `texts`, one
+    /// per paragraph, or until it is not shown for none.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_storage_warning(&self, texts: &[&str]) -> WebDriverResult<()> {
+        self.page.expect_texts(By::Css(".warning p"), texts).await
     }
 
     /// Chooses the option with the text `text` of the select whose id is `id`.

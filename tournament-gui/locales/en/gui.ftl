@@ -7,7 +7,14 @@ competition-title = { $name } – Tournament
 language = Language
 undo = Undo
 redo = Redo
-not-persisted = The browser may delete the competitions stored here when it runs short of space. Export them to keep a copy.
+# the browser refused to keep what is stored, which a private window does as well
+not-persisted = This browser may not keep the competitions stored here, e.g. in a private window or when it runs short of space. Export them to keep a copy.
+# shown while the browser offers to install the page
+not-persisted-install = Installed as an app, the page is usually allowed to keep them.
+export-this-competition = Export this competition
+install = Install the app
+# hides the warning for good
+dont-show-again = Don’t show again
 # $reason: in English, from the browser
 error-no-storage = the browser does not let the page store competitions: { $reason }
 # $reason: in English, from the storage

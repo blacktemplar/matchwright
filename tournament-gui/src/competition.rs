@@ -248,17 +248,15 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
     let actions = ctx.actions();
     let started = ctx.session.read().competition().is_started();
     let tr = ctx.translator.read();
+    let export = move || {
+        let session = ctx.session.peek();
+        download(page, session.name(), &session.export());
+    };
     rsx! {
         nav { aria_label: tr.get("competition-actions"),
             a { href: "#", {tr.get("all-competitions")} }
             " "
-            button {
-                onclick: move |_| {
-                    let session = ctx.session.peek();
-                    download(page, session.name(), &session.export());
-                },
-                {tr.get("export")}
-            }
+            button { onclick: move |_| export(), {tr.get("export")} }
             " "
             button {
                 disabled: !actions.undo,
@@ -280,7 +278,7 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
             }
         }
         main {
-            Notices {}
+            Notices { export: move |()| export() }
             if !changes {
                 p { class: "notice", role: "status", {tr.get(READ_ONLY)} }
             }
