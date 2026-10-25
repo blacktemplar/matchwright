@@ -15,7 +15,7 @@ use crate::{
             wins_draws_losses::{FewerLosses, WinsDrawsLossesCalculator},
         },
         phase_format::{
-            PhaseFormat, Schedule,
+            PhaseFormat, Schedule, Stage,
             bracket::{Bracket, Source, phase_round},
         },
     },
@@ -168,6 +168,31 @@ impl Display for DoubleEliminationRound {
     }
 }
 
+/// The stage named as [`Display`] shows it, with the keys `winners-round` and `losers-round`, each
+/// with the number `round`, `winners-final`, `losers-final`, `grand-final` and
+/// `grand-final-reset`.
+impl From<DoubleEliminationRound> for Stage {
+    fn from(round: DoubleEliminationRound) -> Self {
+        let english = round.to_string();
+        match round {
+            DoubleEliminationRound::Winners { round, rounds } if round == rounds => {
+                Self::new("winners-final", english)
+            }
+            DoubleEliminationRound::Winners { round, .. } => {
+                Self::new("winners-round", english).with("round", round)
+            }
+            DoubleEliminationRound::Losers { round, rounds } if round == rounds => {
+                Self::new("losers-final", english)
+            }
+            DoubleEliminationRound::Losers { round, .. } => {
+                Self::new("losers-round", english).with("round", round)
+            }
+            DoubleEliminationRound::GrandFinal => Self::new("grand-final", english),
+            DoubleEliminationRound::GrandFinalReset => Self::new("grand-final-reset", english),
+        }
+    }
+}
+
 #[register]
 impl PhaseFormat for DoubleElimination {
     fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
@@ -182,10 +207,11 @@ impl PhaseFormat for DoubleElimination {
         false
     }
 
-    fn stage(&self, annotations: &TypeMap) -> Option<String> {
+    fn stage(&self, annotations: &TypeMap) -> Option<Stage> {
         annotations
             .get::<DoubleEliminationRound>()
-            .map(ToString::to_string)
+            .copied()
+            .map(Stage::from)
     }
 }
 
@@ -323,6 +349,46 @@ mod tests {
                 "Grand final reset"
             ]
         );
+    }
+
+    #[test]
+    fn a_stage_is_keyed_by_its_bracket_and_whether_it_is_the_final() {
+        let stages = [
+            Winners {
+                round: 1,
+                rounds: 3,
+            },
+            Winners {
+                round: 3,
+                rounds: 3,
+            },
+            Losers {
+                round: 2,
+                rounds: 4,
+            },
+            Losers {
+                round: 4,
+                rounds: 4,
+            },
+            GrandFinal,
+            GrandFinalReset,
+        ]
+        .map(Stage::from);
+
+        assert_eq!(
+            stages
+                .each_ref()
+                .map(|stage| (stage.key(), stage.numbers())),
+            [
+                ("winners-round", &[("round", 1)][..]),
+                ("winners-final", &[]),
+                ("losers-round", &[("round", 2)]),
+                ("losers-final", &[]),
+                ("grand-final", &[]),
+                ("grand-final-reset", &[]),
+            ]
+        );
+        assert_eq!(stages[0].to_string(), "Winners round 1");
     }
 
     /// A double elimination between `num_players` entrants with its first matches scheduled,

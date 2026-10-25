@@ -26,7 +26,9 @@ use tournament_browser::{
 };
 
 use crate::{
-    Notices, Page, download,
+    Notices, Page,
+    announcement::Announcement,
+    download,
     phase::PhaseSummary,
     play::{Rounds, Standings},
     setup::{Entrants, Phase},
@@ -53,6 +55,8 @@ pub struct Ctx {
     storage: Signal<Option<IndexedDb>>,
     pub translator: Signal<Translator>,
     error: Signal<Option<Text>>,
+    /// What the last action did, shown until the next one.
+    announcement: Signal<Option<Announcement>>,
 }
 
 impl Ctx {
@@ -72,7 +76,7 @@ impl Ctx {
 
     /// Runs `action` on the session and saves what it changed; shows why if it is refused. Returns
     /// what it returned if it was done, and `None` as well while another tab changes the
-    /// competition.
+    /// competition. Either way the announcement of the action before is gone.
     pub fn act<T, E: Message>(
         mut self,
         action: impl FnOnce(&mut Session) -> Result<T, E>,
@@ -86,6 +90,7 @@ impl Ctx {
                 Some(done)
             }
             Err(error) => {
+                self.announcement.set(None);
                 self.error.set(Some(error));
                 None
             }
@@ -93,13 +98,14 @@ impl Ctx {
     }
 
     /// Runs `action` on the session and saves what it changed, as [`Self::act`] does, but returns
-    /// why it was refused rather than showing it, e.g. for a dialog to show it.
+    /// why it was refused rather than showing it, e.g. for a dialog to show it. If it was done,
+    /// the announcement of the action before is gone.
     ///
     /// # Errors
     /// Returns what the error of `action` says, and [`READ_ONLY`] while another tab changes the
     /// competition.
     pub fn try_act<T, E: Message>(
-        self,
+        mut self,
         action: impl FnOnce(&mut Session) -> Result<T, E>,
     ) -> Result<T, Text> {
         if self.lock.peek().is_none() {
@@ -107,8 +113,14 @@ impl Ctx {
         }
         let mut session = self.session;
         let done = action(&mut session.write()).map_err(|error| error.text())?;
+        self.announcement.set(None);
         self.save();
         Ok(done)
+    }
+
+    /// Tells the operator what the action just done did, until the next action.
+    pub fn announce(mut self, announcement: Announcement) {
+        self.announcement.set(Some(announcement));
     }
 
     /// Writes what changed since the last save, without holding the session across the write, and
@@ -220,6 +232,7 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
             storage: page.storage,
             translator: page.translator,
             error: page.error,
+            announcement: Signal::new(None),
         }
     });
     use_future(move || follow(ctx, competition));
@@ -249,12 +262,20 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
             " "
             button {
                 disabled: !actions.undo,
-                onclick: move |_| _ = ctx.act(Session::undo),
+                onclick: move |_| {
+                    if let Some(action) = ctx.act(Session::undo) {
+                        ctx.announce(Announcement::Undone(action));
+                    }
+                },
                 {tr.get("undo")}
             }
             button {
                 disabled: !actions.redo,
-                onclick: move |_| _ = ctx.act(Session::redo),
+                onclick: move |_| {
+                    if let Some(action) = ctx.act(Session::redo) {
+                        ctx.announce(Announcement::Redone(action));
+                    }
+                },
                 {tr.get("redo")}
             }
         }
@@ -262,6 +283,12 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
             Notices {}
             if !changes {
                 p { class: "notice", role: "status", {tr.get(READ_ONLY)} }
+            }
+            // always on the page, so that a screen reader notices when its text changes
+            p { class: "announcement", role: "status",
+                if let Some(announcement) = ctx.announcement.read().as_ref() {
+                    {announcement.text(&tr)}
+                }
             }
             if started {
                 Rounds {}

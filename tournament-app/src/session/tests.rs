@@ -101,6 +101,11 @@ fn round(number: u32) -> NonZeroU32 {
     NonZeroU32::new(number).unwrap()
 }
 
+/// What `stage` is named in English.
+fn english(stage: Option<StageName>) -> Option<String> {
+    stage.map(|stage| stage.stage.to_string())
+}
+
 #[test]
 fn entrants_are_listed_by_name_in_the_order_they_were_added() {
     let mut session = Session::new("cup");
@@ -332,7 +337,11 @@ fn a_bye_is_named_by_its_stage_where_its_round_has_several() {
         .started();
     let bye_stages = |session: &Session, number| -> Vec<Option<String>> {
         let round = session.round(round(number)).unwrap();
-        round.byes.into_iter().map(|bye| bye.stage).collect()
+        round
+            .byes
+            .into_iter()
+            .map(|bye| english(bye.stage))
+            .collect()
     };
     assert_eq!(
         bye_stages(&session, 1),
@@ -354,11 +363,19 @@ fn a_bye_is_named_by_its_stage_where_its_round_has_several() {
 fn a_knockout_names_the_stage_of_every_match() {
     let mut session = Given::new().format(SingleElimination::ID).started();
     let stages = |session: &Session| -> Vec<Option<String>> {
-        matches(session).into_iter().map(|row| row.stage).collect()
+        matches(session)
+            .into_iter()
+            .map(|row| english(row.stage))
+            .collect()
     };
     assert_eq!(
         stages(&session),
         [Some("Semifinals".to_owned()), Some("Semifinals".to_owned())]
+    );
+    assert_eq!(
+        matches(&session)[0].stage.as_ref().unwrap().format,
+        SingleElimination::ID,
+        "a stage is translated by its format"
     );
 
     let first = session
@@ -368,19 +385,10 @@ fn a_knockout_names_the_stage_of_every_match() {
         .report(numbered(&session, 2), MatchResult::AWins)
         .unwrap();
 
+    assert_eq!((first.new_matches, first.all_finished), (0, false));
     assert_eq!(
-        first,
-        Reported {
-            new_matches: 0,
-            all_finished: false
-        }
-    );
-    assert_eq!(
-        second,
-        Reported {
-            new_matches: 2,
-            all_finished: false
-        },
+        (second.new_matches, second.all_finished),
+        (2, false),
         "the final and the match for third place"
     );
     assert_eq!(
@@ -393,11 +401,21 @@ fn a_knockout_names_the_stage_of_every_match() {
     let last = session
         .report(numbered(&session, 4), MatchResult::BWins)
         .unwrap();
+    assert_eq!((last.new_matches, last.all_finished), (0, true));
+}
+
+#[test]
+fn a_reported_result_comes_with_its_match() {
+    let mut session = Given::new().started();
+    let first = matches(&session).remove(0);
+
+    let reported = session.report(first.id, MatchResult::BWins).unwrap();
+
     assert_eq!(
-        last,
-        Reported {
-            new_matches: 0,
-            all_finished: true
+        reported.row,
+        MatchRow {
+            result: Some(MatchResult::BWins),
+            ..first
         }
     );
 }
@@ -441,7 +459,12 @@ fn a_result_is_undone_by_its_match() {
 
     let reopened = session.undo_report(numbered(&session, 1)).unwrap();
 
-    assert_eq!(reopened, Reopened { unscheduled: 0 });
+    assert_eq!(reopened.unscheduled, 0);
+    assert_eq!(
+        (reopened.row.number, reopened.row.result),
+        (1, Some(MatchResult::AWins)),
+        "the match with the result it had"
+    );
     let results: Vec<_> = matches(&session).iter().map(|row| row.result).collect();
     assert_eq!(
         results[..3],
@@ -473,8 +496,7 @@ fn a_result_a_later_one_depends_on_is_undone_after_it() {
     let reopened = session.undo_report(semifinal).unwrap();
 
     assert_eq!(
-        reopened,
-        Reopened { unscheduled: 2 },
+        reopened.unscheduled, 2,
         "the final and the match for third place go with it"
     );
 }
@@ -543,6 +565,103 @@ fn undo_and_redo_walk_back_and_forth_through_the_actions() {
         "a new action discards what could be redone"
     );
     assert_eq!(names(&session.entrants()), ["Alice", "Carol"]);
+}
+
+#[test]
+fn undo_and_redo_tell_the_action_they_walked_through() {
+    let mut session = Given::new().started();
+    let first = matches(&session).remove(0);
+    session.report(first.id, MatchResult::AWins).unwrap();
+    session.undo_report(first.id).unwrap();
+    let reported = MatchRow {
+        result: Some(MatchResult::AWins),
+        ..first
+    };
+
+    assert_eq!(session.undo().unwrap(), Action::Reopen(reported.clone()));
+    assert_eq!(session.undo().unwrap(), Action::Report(reported.clone()));
+    assert_eq!(session.undo().unwrap(), Action::Start);
+    assert_eq!(session.redo().unwrap(), Action::Start);
+    assert_eq!(session.redo().unwrap(), Action::Report(reported));
+
+    let mut session = Session::new("cup");
+    let alice = session.add_entrant("Alice").unwrap();
+    session.remove_entrant(alice).unwrap();
+    let alice = EntrantRow {
+        id: alice,
+        name: Some("Alice".to_owned()),
+    };
+    assert_eq!(
+        session.undo().unwrap(),
+        Action::RemoveEntrant(alice.clone())
+    );
+    assert_eq!(session.undo().unwrap(), Action::AddEntrant(alice));
+}
+
+/// In a round robin of four, every match of the second round has an entrant of each match of the
+/// first, so it can only be played once both of those have.
+#[test]
+fn a_match_can_be_played_once_its_entrants_played_the_rounds_before() {
+    let mut session = Given::new().started();
+    let numbers = |session: &Session| -> Vec<usize> {
+        session.playable().iter().map(|row| row.number).collect()
+    };
+    assert_eq!(numbers(&session), [1, 2]);
+
+    session
+        .report(numbered(&session, 1), MatchResult::AWins)
+        .unwrap();
+    assert_eq!(numbers(&session), [2]);
+    session
+        .report(numbered(&session, 2), MatchResult::AWins)
+        .unwrap();
+
+    assert_eq!(numbers(&session), [3, 4]);
+    assert!(Given::new().added().playable().is_empty());
+}
+
+#[test]
+fn a_result_is_entered_as_the_number_of_its_match_and_1_x_or_2() {
+    let mut session = Given::new().started();
+
+    session.report_entered("1 2").unwrap();
+    let reported = session.report_entered("  2  x ").unwrap();
+
+    let results: Vec<_> = matches(&session).iter().map(|row| row.result).collect();
+    assert_eq!(
+        results[..3],
+        [Some(MatchResult::BWins), Some(MatchResult::Draw), None]
+    );
+    assert_eq!(reported.row.number, 2);
+}
+
+#[test]
+fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
+    let mut session = Given::new().format(SingleElimination::ID).started();
+
+    for entry in ["", "1", "1 3", "one 1", "1 1 1", "-1 1"] {
+        assert!(
+            matches!(
+                session.report_entered(entry),
+                Err(ReportEnteredError::Unreadable)
+            ),
+            "{entry:?}"
+        );
+    }
+    for (entry, number) in [("0 1", 0), ("9 1", 9)] {
+        assert!(
+            matches!(
+                session.report_entered(entry),
+                Err(ReportEnteredError::NoMatch(n)) if n == number
+            ),
+            "{entry:?}"
+        );
+    }
+    assert!(matches!(
+        session.report_entered("1 X"),
+        Err(ReportEnteredError::Report(ReportError::DrawNotAllowed))
+    ));
+    assert!(matches(&session).iter().all(|row| row.result.is_none()));
 }
 
 /// `undo_report` is an action like any other, so `undo` brings the result back rather than undoing

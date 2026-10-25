@@ -1298,8 +1298,8 @@ Rejected:
 ## Frontend
 
 *Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
-screen, stores competitions in the browser and configures a phase through a
-form): the GUI an organizer runs a
+screen, stores competitions in the browser, configures a phase through a
+form and runs a competition by keyboard): the GUI an organizer runs a
 competition with,
 in the browser, offline. `requirements.md` says what it must do;
 `FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
@@ -1397,9 +1397,13 @@ but takes its `People` from it.
   engine later, is `Rejected` with the engine's message instead of a panic.
 - **Names are `Option`s** in the rows: an entrant of a log written elsewhere
   may have none, and what to show for it is the GUI's (translated) text.
-- **What can be undone and redone** is counted by the session, since
-  `SessionHistory` does not tell. Moving that into `undoable-state-machine`
-  would remove the counting.
+- **What can be undone and redone** is kept by the session as two stacks of
+  the actions it did (`view::Action`, with the rows and names as they were
+  then), next to the `SessionHistory`, which does not tell; `undo` and `redo`
+  return the action they walked through, so that a GUI can say what it was.
+  Reading it back from the log instead (the entry an undo entry targets,
+  downcast to its transition) would need the rows and names rebuilt from a
+  state that has changed since.
 
 ### Storage
 
@@ -1598,6 +1602,55 @@ tested natively and in wasm, and knows no plugin.
   option is plain text, so the descriptions of the plugins would be missing
   where the choice is made.
 
+### Running a competition
+
+*Implemented* 2026-10-25: the organizer's screen after the start, in
+`tournament-gui`'s `play.rs` on data of `tournament-app`.
+
+#### Decision
+
+- **One list of matches at a time**: a round, or the matches that can be
+  played now, chosen in a row of buttons above it. A round is shown until
+  the operator chooses one, the first with a match without a result. **What
+  can be played now** (`Session::playable`) are the matches without a result
+  none of whose entrants still has a match of an earlier round to play: a
+  format may schedule several rounds at once (a round robin schedules all),
+  and an entrant plays one match at a time. Entrants rather than rankings, so
+  that a member of a team drawn anew each round (Monster DYP) counts too.
+- **Results by keyboard, two ways.** A field takes a result typed as the
+  number of its match and `1`, `X` or `2` (`Session::report_entered`, e.g.
+  `3 1`), the notation of football pools, which needs no word of a language
+  and no knowledge of which entrant is which side beyond the columns of the
+  list. A refused entry stays in the field to be corrected. And the result
+  buttons of a match move the focus on once one is pressed, which removes
+  them: to the first button of the next match of the list without a result
+  (after it, or else before it), or to the heading of the list if there is
+  none, which then names the round shown next; reopening a match focuses its
+  first result button. Without that, the focus would fall back to the start
+  of the page after each result. The buttons are focused through the handle
+  `onmounted` hands over, in components that exist only as long as their
+  buttons do, so that no handle of a button that is gone is kept.
+- **What an action did is announced** in a live region (`role="status"`,
+  always on the page so that a screen reader notices the change), and shown
+  to everyone: a result reported with what it led to (matches scheduled, every
+  match finished), a match reopened with the matches gone with it, and what an
+  undo or redo walked through (`Session::undo`/`redo` return the `Action`,
+  see [The app crate](#the-app-crate)). The announcement is kept as data
+  and said when shown, so that it follows a change of the language, like an
+  error. It goes with the next action.
+- **The rows carry what the announcements say**: `Reported` and `Reopened`
+  hold the row of the match, with the result reported or the one it had.
+
+#### Alternatives
+
+- **Single-key shortcuts on the page** (e.g. `A`, `B`, `D` for the match
+  selected). Keys a screen reader uses itself, letters that differ by
+  language, and a hidden mode the operator has to know. The field says what
+  it takes next to it.
+- **Auto-advancing to the next round only while nothing was chosen** stays as
+  it was; pinning the round after each result was rejected, since the round
+  that follows is where the next results are entered.
+
 ### Translation
 
 **Fluent** (`fluent-bundle`) for all UI text from the first screen. Plugin
@@ -1656,10 +1709,21 @@ Implemented 2026-10-24, in English and German.
   draft names the plugins in the operator's language. The issues are
   translated by their kind; what a plugin or an incompatibility says inside
   one (a rejection's reason, the name of a fact) stays English.
-- **Not translated yet**: the stages of a match (`PhaseFormat::stage` returns
-  English text; step 6 of `FRONTEND_PLAN.md`), the reasons the engine or the
-  storage give inside an error, which are English text, and numbers, which
-  show as Rust formats them (`1.5`, not `1,5`; a comma is taken when entered).
+- **The stages a format names** (`PhaseFormat::stage`) are a `Stage`: a key
+  naming the stage among the format's, the numbers its name has (e.g. the
+  round of the loser bracket) and its English name, which is its `Display`.
+  They are translated as the attribute `.stage-<key>` of the format's message,
+  with the numbers as variables, so that a language can word them as it needs
+  (German has a word of its own for each fraction of the final, `Achtelfinale`,
+  where English says `8th-finals`). A format that names stages its message
+  does not translate shows them in English, as every plugin. The test of the
+  plugin messages lists the stages of the engine's formats itself, since a
+  format does not tell which stages it can name. Rejected: the GUI translating
+  the engine's annotations (`KnockoutRound`, ...), which would make it a table
+  of plugins.
+- **Not translated yet**: the reasons the engine or the storage give inside an
+  error, which are English text, and numbers, which show as Rust formats them
+  (`1.5`, not `1,5`; a comma is taken when entered).
 
 ### Accessibility
 

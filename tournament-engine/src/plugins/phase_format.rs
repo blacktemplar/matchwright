@@ -1,3 +1,5 @@
+use std::fmt::{self, Display, Formatter};
+
 use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
@@ -45,18 +47,72 @@ pub trait PhaseFormat: Plugin + DynClone {
         true
     }
 
-    /// The name of the stage of the phase a match or a bye with `annotations` belongs to, e.g.
-    /// "Semifinals", or `None` if this format names no stages. Read from the annotations the
-    /// format wrote on the match or the bye, see [`Annotated::annotations`].
+    /// The stage of the phase a match or a bye with `annotations` belongs to, e.g. the semifinals,
+    /// or `None` if this format names no stages. Read from the annotations the format wrote on the
+    /// match or the bye, see [`Annotated::annotations`].
     ///
     /// [`Annotated::annotations`]: crate::entities::competition::Annotated::annotations
-    fn stage(&self, annotations: &TypeMap) -> Option<String> {
+    fn stage(&self, annotations: &TypeMap) -> Option<Stage> {
         let _ = annotations;
         None
     }
 }
 
 dyn_clone::clone_trait_object!(PhaseFormat);
+
+/// The name of a stage of a phase, as a [`PhaseFormat`] names a match or a bye by, see
+/// [`PhaseFormat::stage`]. Shows as its name in English.
+///
+/// A translation finds it by the format's id, its [key](Self::key), and the numbers it has.
+///
+/// # Examples
+/// ```
+/// # use tournament_engine::plugins::phase_format::Stage;
+/// let stage = Stage::new("winners-round", "Winners round 2").with("round", 2);
+/// assert_eq!(stage.to_string(), "Winners round 2");
+/// assert_eq!(stage.numbers(), [("round", 2)]);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Stage {
+    key: &'static str,
+    numbers: Vec<(&'static str, u32)>,
+    english: String,
+}
+
+impl Stage {
+    /// The stage `key`, which names it among the stages of its format whatever its numbers, e.g.
+    /// `"final"`, and is named `english` in English.
+    pub fn new(key: &'static str, english: impl Into<String>) -> Self {
+        Self {
+            key,
+            numbers: Vec::new(),
+            english: english.into(),
+        }
+    }
+
+    /// This stage with the number `name`, which its name says, set to `value`.
+    #[must_use]
+    pub fn with(mut self, name: &'static str, value: u32) -> Self {
+        self.numbers.push((name, value));
+        self
+    }
+
+    /// What names it among the stages of its format, whatever its numbers.
+    pub fn key(&self) -> &'static str {
+        self.key
+    }
+
+    /// The numbers its name says, each by its name, in the order they were set.
+    pub fn numbers(&self) -> &[(&'static str, u32)] {
+        &self.numbers
+    }
+}
+
+impl Display for Stage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.english)
+    }
+}
 
 /// What a [`PhaseFormat`] schedules at once, see [`PhaseFormat::create_new_matches`].
 #[derive(Debug, Default)]

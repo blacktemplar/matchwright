@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU32;
 
-use tournament_engine::{EntrantId, MatchId, MatchResult};
+use tournament_engine::{EntrantId, MatchId, MatchResult, plugins::phase_format::Stage};
 
 /// An entrant as a screen shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,8 +51,8 @@ pub struct MatchRow {
     /// The position of the match among all matches of the phase, from 1, which never changes.
     pub number: usize,
     pub round: NonZeroU32,
-    /// The stage the format names the match by, e.g. "Final".
-    pub stage: Option<String>,
+    /// The stage the format names the match by, e.g. the final.
+    pub stage: Option<StageName>,
     /// The entrants of the side a [`MatchResult::AWins`] is a win of.
     pub a: Vec<EntrantRow>,
     pub b: Vec<EntrantRow>,
@@ -65,7 +65,17 @@ pub struct ByeRow {
     pub entrants: Vec<EntrantRow>,
     /// The stage the format names the bye by, only if the matches and byes of its round belong to
     /// more than one stage, e.g. a bye of the loser bracket in a round of the winner bracket.
-    pub stage: Option<String>,
+    pub stage: Option<StageName>,
+}
+
+/// The stage of the phase a match or a bye belongs to, as its format names it, which is said in
+/// the operator's language by [`Translator::stage`](crate::i18n::Translator::stage).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StageName {
+    /// The id of the format, whose message translates the stage.
+    pub format: &'static str,
+    /// Shows as its name in English.
+    pub stage: Stage,
 }
 
 /// The standings of the phase.
@@ -115,8 +125,10 @@ pub struct Actions {
 }
 
 /// What reporting a result led to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Reported {
+    /// The match, with the result reported.
+    pub row: MatchRow,
     /// The matches the result made the format schedule.
     pub new_matches: usize,
     /// Every match of the phase has a result now.
@@ -124,8 +136,25 @@ pub struct Reported {
 }
 
 /// What undoing a result led to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Reopened {
+    /// The match, with the result it had.
+    pub row: MatchRow,
     /// The matches that were only scheduled because of the result, and are gone with it.
     pub unscheduled: usize,
+}
+
+/// An action of the operator that undo and redo walk through, as it was when it was done, e.g. so
+/// that a GUI can tell what an undo undid.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Action {
+    AddEntrant(EntrantRow),
+    RemoveEntrant(EntrantRow),
+    AddPhase,
+    EditPhase,
+    Start,
+    /// A result reported, see [`Reported::row`].
+    Report(MatchRow),
+    /// A result undone by its match, see [`Reopened::row`].
+    Reopen(MatchRow),
 }

@@ -1,20 +1,28 @@
 use std::{collections::BTreeSet, fmt::Display};
 
 use plugin_factory::{
+    PluginType as _,
     catalog::{AnyAxis, PluginEntry},
     schema::{Configurable as _, Schema},
 };
 use tournament_engine::{
     PhasePlugins,
     plugins::{
-        metrics_calculator::MetricsCalculator, phase_format::PhaseFormat, ranker::SliceRanker,
+        metrics_calculator::MetricsCalculator,
+        phase_format::{
+            DoubleElimination, DoubleEliminationRound, KnockoutRound, PhaseFormat,
+            SingleElimination, Stage,
+        },
+        ranker::SliceRanker,
     },
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use super::*;
-use crate::error::{AddEntrantError, NoPhase, NothingToUndo, ReportError, UndoReportError};
+use crate::error::{
+    AddEntrantError, NoPhase, NothingToUndo, ReportEnteredError, ReportError, UndoReportError,
+};
 
 #[test]
 fn a_language_is_found_by_its_tag_whatever_the_region() {
@@ -111,6 +119,8 @@ fn an_error_says_in_english_what_its_display_says() {
         both(AddEntrantError::DuplicateName("Alice".to_owned())),
         both(NoPhase),
         both(ReportError::NotStarted),
+        both(ReportEnteredError::Unreadable),
+        both(ReportEnteredError::NoMatch(3)),
         both(UndoReportError::DependedOn),
         both(NothingToUndo),
     ] {
@@ -175,6 +185,42 @@ fn a_plugin_is_said_in_the_language_or_else_as_its_code_says() {
     );
 }
 
+#[test]
+fn a_stage_is_said_in_the_language_with_its_numbers_or_else_as_its_code_says() {
+    let german = Translator::new(Language::German, &[]);
+    let stage = |format, stage| StageName { format, stage };
+
+    assert_eq!(
+        german.stage(&stage(
+            SingleElimination::ID,
+            KnockoutRound::RoundOf(16).into()
+        )),
+        "Achtelfinale"
+    );
+    assert_eq!(
+        german.stage(&stage(
+            DoubleElimination::ID,
+            DoubleEliminationRound::Losers {
+                round: 3,
+                rounds: 4
+            }
+            .into()
+        )),
+        "Verliererrunde \u{2068}3\u{2069}"
+    );
+    assert_eq!(
+        german.stage(&stage("my_crate::swiss", Stage::new("playoff", "Playoff"))),
+        "Playoff"
+    );
+    assert_eq!(
+        Translator::new(Language::English, &[]).stage(&stage(
+            SingleElimination::ID,
+            KnockoutRound::RoundOf(16).into()
+        )),
+        "8th-finals"
+    );
+}
+
 /// The plugins of the engine, of every axis, except those only its tests use.
 fn engine_plugins() -> Vec<&'static PluginEntry> {
     [
@@ -197,7 +243,53 @@ fn translatable(entry: &PluginEntry) -> BTreeSet<String> {
         attributes.insert(PluginText::Description.attribute());
     }
     attributes.extend(translatable_fields(&entry.schema()));
+    attributes.extend(
+        stages(entry.id())
+            .iter()
+            .map(|stage| PluginText::Stage(stage.key()).attribute()),
+    );
     attributes
+}
+
+/// A stage of every key the format `id` names, none for a plugin that is no such format. The
+/// stages cannot be found from the plugin, so the formats naming them are listed here.
+fn stages(id: &str) -> Vec<Stage> {
+    if id == SingleElimination::ID {
+        [
+            KnockoutRound::RoundOf(2),
+            KnockoutRound::RoundOf(4),
+            KnockoutRound::RoundOf(8),
+            KnockoutRound::RoundOf(16),
+            KnockoutRound::ThirdPlace,
+        ]
+        .map(Stage::from)
+        .into()
+    } else if id == DoubleElimination::ID {
+        [
+            DoubleEliminationRound::Winners {
+                round: 1,
+                rounds: 2,
+            },
+            DoubleEliminationRound::Winners {
+                round: 2,
+                rounds: 2,
+            },
+            DoubleEliminationRound::Losers {
+                round: 1,
+                rounds: 2,
+            },
+            DoubleEliminationRound::Losers {
+                round: 2,
+                rounds: 2,
+            },
+            DoubleEliminationRound::GrandFinal,
+            DoubleEliminationRound::GrandFinalReset,
+        ]
+        .map(Stage::from)
+        .into()
+    } else {
+        Vec::new()
+    }
 }
 
 /// What is translated of the fields of `schema`, as attributes.

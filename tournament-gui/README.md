@@ -7,8 +7,11 @@ open or export, and starts a new one or imports one from a file (also one the
 CLI saved). A competition open, named after the `#` of the URL: enter the
 entrants, configure the phase in a form (its format and the fields of the
 format, the criteria it is ranked by and the metrics calculated, starting with
-what the format recommends), start, report and reopen results round by round,
-edit the phase in a dialog, undo and redo, and follow the standings. Every change
+what the format recommends), start, report and reopen results round by round
+or among the matches playable now (by keyboard too: type a match's number and
+`1`, `X` or `2`, e.g. `3 1`, or move from one result button to the next), edit
+the phase in a dialog, undo and redo (each announced), and follow the
+standings. Every change
 is saved at once. One tab at a time changes a competition; another tab shows it
 read-only, follows the changes, and takes over when that tab leaves it.
 

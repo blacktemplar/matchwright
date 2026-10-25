@@ -12,11 +12,11 @@ use std::path::Path;
 use e2e_harness::{
     ISOLATION_MARKS, Page, Site,
     thirtyfour::{
-        By, Key, WebDriver, components::SelectElement, error::WebDriverResult,
+        By, WebDriver, components::SelectElement, error::WebDriverResult,
         extensions::query::ElementQueryable,
     },
 };
-pub use e2e_harness::{failures, thirtyfour};
+pub use e2e_harness::{failures, thirtyfour, thirtyfour::Key};
 
 /// The name of the competition [`run_in_new_competition`] creates.
 pub const COMPETITION: &str = "Cup";
@@ -383,6 +383,83 @@ impl Gui {
     pub async fn expect_results(&self, results: &[&str]) -> WebDriverResult<()> {
         self.page
             .expect_texts(By::Css("#match-list .result"), results)
+            .await
+    }
+
+    /// Waits until the matches of the list shown that have a result are those numbered `numbers`,
+    /// in this order, whoever won them.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the numbers shown instead.
+    pub async fn expect_finished(&self, numbers: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css("#match-list tbody tr:has(.result) td:first-child"),
+                numbers,
+            )
+            .await
+    }
+
+    /// Waits until the stages of the matches of the round shown are `stages`, in the order of the
+    /// matches, e.g. `"Semifinals"`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the stages shown instead.
+    pub async fn expect_stages(&self, stages: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("#match-list tbody td:nth-child(2)"), stages)
+            .await
+    }
+
+    /// Reports the result `entry` says by typing it, e.g. `"3 1"`, in place of what was typed
+    /// before, and pressing Enter.
+    pub async fn enter_result(&self, entry: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id("result-entry")).first().await?;
+        // selected, so that typing replaces it, as an operator would
+        input.send_keys(Key::Control + "a").await?;
+        input.send_keys(entry).await?;
+        Page::pause().await;
+        input.send_keys(Key::Enter).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Presses `key` where the focus is, e.g. [`Key::Enter`] on a button.
+    pub async fn press(&self, key: Key) -> WebDriverResult<()> {
+        self.driver.active_element().await?.send_keys(key).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the element with the focus shows `text`, e.g. a button.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what the element with the focus shows instead.
+    pub async fn expect_focus(&self, text: &str) -> WebDriverResult<()> {
+        self.page.expect_texts(By::Css(":focus"), &[text]).await
+    }
+
+    /// Waits until the focus is in the line of the match numbered `number` of the list shown, e.g.
+    /// on a button reporting its result.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the number of the match it is in instead, if any.
+    pub async fn expect_focus_in_match(&self, number: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css("#match-list tbody tr:has(:focus) td:first-child"),
+                &[number],
+            )
+            .await
+    }
+
+    /// Waits until the page announces that the last action did `text`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it announces instead.
+    pub async fn expect_announcement(&self, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".announcement"), &[text])
             .await
     }
 

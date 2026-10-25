@@ -12,7 +12,7 @@ use crate::{
             wins_draws_losses::{FewerLosses, WinsDrawsLossesCalculator},
         },
         phase_format::{
-            PhaseFormat, Schedule,
+            PhaseFormat, Schedule, Stage,
             bracket::{Bracket, Source, phase_round},
         },
     },
@@ -159,6 +159,22 @@ impl Display for KnockoutRound {
     }
 }
 
+/// The stage named as [`Display`] shows it, with the keys `third-place`, `final`, `semifinals`,
+/// `quarterfinals`, and `fraction-finals` with the number `fraction` for the others, e.g. 8 for the
+/// eighth-finals.
+impl From<KnockoutRound> for Stage {
+    fn from(round: KnockoutRound) -> Self {
+        let english = round.to_string();
+        match round.fraction_of_final() {
+            None => Self::new("third-place", english),
+            Some(1) => Self::new("final", english),
+            Some(2) => Self::new("semifinals", english),
+            Some(4) => Self::new("quarterfinals", english),
+            Some(fraction) => Self::new("fraction-finals", english).with("fraction", fraction),
+        }
+    }
+}
+
 /// The English ordinal suffix of `n`, e.g. "nd" for 32.
 fn ordinal_suffix(n: u32) -> &'static str {
     match (n % 10, n % 100) {
@@ -184,8 +200,8 @@ impl PhaseFormat for SingleElimination {
         false
     }
 
-    fn stage(&self, annotations: &TypeMap) -> Option<String> {
-        annotations.get::<KnockoutRound>().map(ToString::to_string)
+    fn stage(&self, annotations: &TypeMap) -> Option<Stage> {
+        annotations.get::<KnockoutRound>().copied().map(Stage::from)
     }
 }
 
@@ -240,6 +256,32 @@ mod tests {
             ]
         );
         assert_eq!(KnockoutRound::ThirdPlace.to_string(), "Third place");
+    }
+
+    #[test]
+    fn a_stage_is_keyed_by_its_fraction_of_the_final() {
+        let stages = [
+            KnockoutRound::RoundOf(2),
+            KnockoutRound::RoundOf(4),
+            KnockoutRound::RoundOf(8),
+            KnockoutRound::RoundOf(16),
+            KnockoutRound::ThirdPlace,
+        ]
+        .map(Stage::from);
+
+        assert_eq!(
+            stages
+                .each_ref()
+                .map(|stage| (stage.key(), stage.numbers())),
+            [
+                ("final", &[][..]),
+                ("semifinals", &[]),
+                ("quarterfinals", &[]),
+                ("fraction-finals", &[("fraction", 8)]),
+                ("third-place", &[]),
+            ]
+        );
+        assert_eq!(stages[3].to_string(), "8th-finals");
     }
 
     #[test]

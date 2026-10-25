@@ -61,6 +61,15 @@ button {
   font-weight: bold;
 }
 
+/* kept in place while empty, so that the page does not move when something is announced */
+.announcement {
+  min-height: 1.5em;
+}
+
+.result-entry .hint {
+  margin: 0.2em 0;
+}
+
 /* The components (src/components) in the light colours of the page, whatever the system's. */
 :root {
   --dark: ;

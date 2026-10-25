@@ -25,11 +25,28 @@ plugin-tournament_engine-single_elimination =
     .description = wer ein Spiel verliert, scheidet aus; Unentschieden sind nicht erlaubt
     .field-third_place_match = Spiel um Platz drei
     .field-third_place_match-description = die beiden Verlierer der Halbfinale spielen es neben dem Finale; ohne es sind beide gemeinsam Dritte
+    .stage-final = Finale
+    .stage-semifinals = Halbfinale
+    .stage-quarterfinals = Viertelfinale
+    .stage-fraction-finals = { $fraction ->
+        [8] Achtelfinale
+        [16] Sechzehntelfinale
+        [32] Zweiunddreißigstelfinale
+        [64] Vierundsechzigstelfinale
+       *[other] { $fraction }tel-Finale
+    }
+    .stage-third-place = Spiel um Platz drei
 plugin-tournament_engine-double_elimination =
     .label = Doppel-K.-o.-System
     .description = wer zum zweiten Mal verliert, scheidet aus; Unentschieden sind nicht erlaubt
     .field-grand_final_reset = Wiederholung des großen Finales
     .field-grand_final_reset-description = verliert der Sieger der Gewinnerrunde das große Finale, spielen die beiden es noch einmal; ohne sie scheidet aus, wer das große Finale verliert
+    .stage-winners-round = Gewinnerrunde { $round }
+    .stage-winners-final = Finale der Gewinnerrunde
+    .stage-losers-round = Verliererrunde { $round }
+    .stage-losers-final = Finale der Verliererrunde
+    .stage-grand-final = Großes Finale
+    .stage-grand-final-reset = Wiederholung des großen Finales
 plugin-tournament_engine-monster_dyp =
     .label = Monster-DYP
     .description = jede Runde werden die Teilnehmer zu Zweierteams gelost, die gegeneinander spielen

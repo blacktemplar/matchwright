@@ -7,7 +7,7 @@
 //! loaded competition starts with nothing to undo.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroU32,
 };
 
@@ -17,7 +17,7 @@ use tournament_engine::{
     AddEntrant, AddPhase, Annotated as _, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt as _, CompetitionTransition, Entrant, EntrantId, Match, MatchId,
     MatchResult, Phase, PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant,
-    ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition,
+    ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition, TypeMap,
     map::IdAble as _,
     plugins::phase_format::PhaseFormat,
     transitions::{
@@ -32,16 +32,16 @@ use tournament_engine::{
 use crate::{
     error::{
         AddEntrantError, AddPhaseError, EditPhaseError, ImportError, LoadError, NoPhase,
-        NothingToRedo, NothingToUndo, PhaseDraftError, RemoveEntrantError, ReportError, StartError,
-        UndoReportError,
+        NothingToRedo, NothingToUndo, PhaseDraftError, RemoveEntrantError, ReportEnteredError,
+        ReportError, StartError, UndoReportError,
     },
     file::{self, File},
     form::PhaseForm,
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Storage, Stored},
     view::{
-        Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
-        RoundSummary, StandingRow, Standings,
+        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
+        RoundSummary, StageName, StandingRow, Standings,
     },
 };
 
@@ -58,9 +58,10 @@ pub struct Session {
     people: People,
     /// What this session did, which `undo` and `redo` walk through.
     history: SessionHistory,
-    /// How many actions of `history` can be undone, and how many redone, which it does not tell.
-    undoable: usize,
-    redoable: usize,
+    /// The actions of `history` that can be undone, the latest last, and those that can be
+    /// redone, the one undone last at the end, which it does not tell.
+    done: Vec<Action>,
+    undone: Vec<Action>,
     /// The length of the log when it was last saved or loaded. The log is append-only, so every
     /// change since makes it longer, undo and redo included.
     saved_entries: usize,
@@ -86,8 +87,8 @@ impl Session {
             machine,
             people: People::default(),
             history: SessionHistory::new(),
-            undoable: 0,
-            redoable: 0,
+            done: Vec::new(),
+            undone: Vec::new(),
             saved_entries: 0,
             unsaved_people: IndexSet::new(),
         }
@@ -114,8 +115,8 @@ impl Session {
             machine,
             people,
             history: SessionHistory::new(),
-            undoable: 0,
-            redoable: 0,
+            done: Vec::new(),
+            undone: Vec::new(),
             unsaved_people: IndexSet::new(),
         })
     }
@@ -293,8 +294,8 @@ impl Session {
             machine,
             people,
             history: SessionHistory::new(),
-            undoable: 0,
-            redoable: 0,
+            done: Vec::new(),
+            undone: Vec::new(),
             saved_entries: 0,
         })
     }
@@ -317,8 +318,8 @@ impl Session {
                     .values()
                     .any(|r#match| !r#match.is_finished())
             }),
-            undo: self.undoable > 0,
-            redo: self.redoable > 0,
+            undo: !self.done.is_empty(),
+            redo: !self.undone.is_empty(),
         }
     }
 
@@ -349,15 +350,21 @@ impl Session {
             return Err(AddEntrantError::DuplicateName(name.to_owned()));
         }
         let id = EntrantId::new(Uuid::new_v4());
-        self.act(|machine, history| machine.apply_in(history, AddEntrant::new(Entrant::new(id))))
-            .map_err(|error| {
-                let error = rejection(error);
-                if error.is::<CompetitionAlreadyStarted>() {
-                    AddEntrantError::Started
-                } else {
-                    AddEntrantError::Rejected(error)
-                }
-            })?;
+        let action = Action::AddEntrant(EntrantRow {
+            id,
+            name: Some(name.to_owned()),
+        });
+        self.act(action, |machine, history| {
+            machine.apply_in(history, AddEntrant::new(Entrant::new(id)))
+        })
+        .map_err(|error| {
+            let error = rejection(error);
+            if error.is::<CompetitionAlreadyStarted>() {
+                AddEntrantError::Started
+            } else {
+                AddEntrantError::Rejected(error)
+            }
+        })?;
         self.people.add(Person::new(id, name));
         self.unsaved_people.insert(id);
         Ok(id)
@@ -368,17 +375,20 @@ impl Session {
     /// # Errors
     /// Returns an error if there is no such entrant, or the competition has started.
     pub fn remove_entrant(&mut self, id: EntrantId) -> Result<(), RemoveEntrantError> {
-        self.act(|machine, history| machine.apply_in(history, RemoveEntrant::new(id)))
-            .map_err(|error| {
-                let error = rejection(error);
-                if error.is::<CompetitionAlreadyStarted>() {
-                    RemoveEntrantError::Started
-                } else if error.is::<engine::RemoveEntrantError>() {
-                    RemoveEntrantError::UnknownEntrant
-                } else {
-                    RemoveEntrantError::Rejected(error)
-                }
-            })?;
+        let action = Action::RemoveEntrant(self.entrant_row(&id));
+        self.act(action, |machine, history| {
+            machine.apply_in(history, RemoveEntrant::new(id))
+        })
+        .map_err(|error| {
+            let error = rejection(error);
+            if error.is::<CompetitionAlreadyStarted>() {
+                RemoveEntrantError::Started
+            } else if error.is::<engine::RemoveEntrantError>() {
+                RemoveEntrantError::UnknownEntrant
+            } else {
+                RemoveEntrantError::Rejected(error)
+            }
+        })?;
         Ok(())
     }
 
@@ -444,7 +454,7 @@ impl Session {
     /// a phase already, or it has started.
     pub fn add_phase(&mut self, draft: &Draft<PhasePlugins>) -> Result<(), AddPhaseError> {
         let plugins = completed(draft).map_err(AddPhaseError::Invalid)?;
-        self.act(|machine, history| {
+        self.act(Action::AddPhase, |machine, history| {
             machine.apply_in(
                 history,
                 AddPhase::new(PhaseId::new(Uuid::new_v4()), plugins),
@@ -491,7 +501,9 @@ impl Session {
         let phase_id = self.phase().ok_or(NoPhase)?.id();
         let plugins = completed(draft).map_err(EditPhaseError::Invalid)?;
         let edited = self
-            .act(|machine, history| machine.reconfigure_phase(history, phase_id, plugins))
+            .act(Action::EditPhase, |machine, history| {
+                machine.reconfigure_phase(history, phase_id, plugins)
+            })
             .map_err(|error| match error {
                 ReconfigurePhaseError::Rejected(error) => {
                     EditPhaseError::DoesNotFit(rejection(error))
@@ -509,20 +521,20 @@ impl Session {
     /// Returns an error if the competition has started already, has no phase, or fewer than two
     /// entrants.
     pub fn start(&mut self) -> Result<(), StartError> {
-        self.act(|machine, history| machine.apply_in(history, StartCompetition))
-            .map_err(|error| {
-                let error = rejection(error);
-                if error.is::<CompetitionAlreadyStarted>() {
-                    return StartError::Started;
-                }
-                match error.downcast_ref() {
-                    Some(engine::StartCompetitionError::NoPhases) => NoPhase.into(),
-                    Some(engine::StartCompetitionError::TooFewEntrants) => {
-                        StartError::TooFewEntrants
-                    }
-                    None => StartError::Rejected(error),
-                }
-            })?;
+        self.act(Action::Start, |machine, history| {
+            machine.apply_in(history, StartCompetition)
+        })
+        .map_err(|error| {
+            let error = rejection(error);
+            if error.is::<CompetitionAlreadyStarted>() {
+                return StartError::Started;
+            }
+            match error.downcast_ref() {
+                Some(engine::StartCompetitionError::NoPhases) => NoPhase.into(),
+                Some(engine::StartCompetitionError::TooFewEntrants) => StartError::TooFewEntrants,
+                None => StartError::Rejected(error),
+            }
+        })?;
         Ok(())
     }
 
@@ -562,21 +574,13 @@ impl Session {
             .values()
             .enumerate()
             .filter(|(_, r#match)| r#match.round() == round)
-            .map(|(index, r#match)| MatchRow {
-                id: r#match.id(),
-                number: index + 1,
-                round,
-                stage: phase.format().stage(r#match.annotations()),
-                a: self.team(data, r#match.team_a()),
-                b: self.team(data, r#match.team_b()),
-                result: r#match.result(),
-            })
+            .map(|(index, r#match)| self.match_row(phase, index, r#match))
             .collect();
         let byes_of_round: Vec<_> = data
             .byes()
             .values()
             .filter(|bye| bye.round() == round)
-            .map(|bye| (bye, phase.format().stage(bye.annotations())))
+            .map(|bye| (bye, stage(phase, bye.annotations())))
             .collect();
         let stages: HashSet<_> = matches
             .iter()
@@ -599,6 +603,74 @@ impl Session {
         })
     }
 
+    /// The matches that can be played now, in the order they were scheduled: those without a
+    /// result none of whose entrants still has to play a match of an earlier round. None before
+    /// the start.
+    pub fn playable(&self) -> Vec<MatchRow> {
+        let Some(phase) = self.started_phase() else {
+            return Vec::new();
+        };
+        let data = phase.data();
+        let open = || {
+            data.matches()
+                .values()
+                .enumerate()
+                .filter(|(_, r#match)| !r#match.is_finished())
+        };
+        let entrants = |r#match: &Match| -> Vec<EntrantId> {
+            r#match
+                .team_a()
+                .iter()
+                .chain(r#match.team_b())
+                .flat_map(|ranking| data.rankings()[ranking].entrants())
+                .copied()
+                .collect()
+        };
+        // the earliest round each entrant still has to play a match in
+        let mut next_round = HashMap::new();
+        for (_, r#match) in open() {
+            for entrant in entrants(r#match) {
+                let round = next_round.entry(entrant).or_insert(r#match.round());
+                *round = (*round).min(r#match.round());
+            }
+        }
+        open()
+            .filter(|(_, r#match)| {
+                entrants(r#match)
+                    .iter()
+                    .all(|entrant| next_round[entrant] == r#match.round())
+            })
+            .map(|(index, r#match)| self.match_row(phase, index, r#match))
+            .collect()
+    }
+
+    /// Reports the result `entry` says: the number of a match, as [`MatchRow::number`], and its
+    /// result, separated by whitespace. The result is `1` for a win of side A, `2` for one of side
+    /// B, and `X` (or `x`) for a draw, e.g. `"3 1"` or `"12 X"`.
+    ///
+    /// # Errors
+    /// Returns an error if `entry` does not read as a number and a result, there is no match of
+    /// that number, or the result is not reported, see [`Self::report`].
+    pub fn report_entered(&mut self, entry: &str) -> Result<Reported, ReportEnteredError> {
+        let mut parts = entry.split_whitespace();
+        let (Some(number), Some(result), None) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(ReportEnteredError::Unreadable);
+        };
+        let number: usize = number.parse().map_err(|_| ReportEnteredError::Unreadable)?;
+        let result = match result {
+            "1" => MatchResult::AWins,
+            "2" => MatchResult::BWins,
+            "X" | "x" => MatchResult::Draw,
+            _ => return Err(ReportEnteredError::Unreadable),
+        };
+        let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
+        let (id, _) = number
+            .checked_sub(1)
+            .and_then(|index| phase.data().matches().get_index(index))
+            .ok_or(ReportEnteredError::NoMatch(number))?;
+        Ok(self.report(*id, result)?)
+    }
+
     /// Reports `result` for the match `id`.
     ///
     /// # Errors
@@ -606,12 +678,16 @@ impl Session {
     /// result already, or its format does not take the result.
     pub fn report(&mut self, id: MatchId, result: MatchResult) -> Result<Reported, ReportError> {
         let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
-        if !phase.data().matches().contains_key(&id) {
+        let Some((index, _, r#match)) = phase.data().matches().get_full(&id) else {
             return Err(ReportError::UnknownMatch);
-        }
+        };
+        let row = MatchRow {
+            result: Some(result),
+            ..self.match_row(phase, index, r#match)
+        };
         let phase_id = phase.id();
         let matches_before = phase.data().matches().len();
-        self.act(|machine, history| {
+        self.act(Action::Report(row.clone()), |machine, history| {
             machine.apply_in(history, ReportMatchResult::new(phase_id, id, result))
         })
         .map_err(|error| {
@@ -630,6 +706,7 @@ impl Session {
             .data()
             .matches();
         Ok(Reported {
+            row,
             new_matches: matches.len() - matches_before,
             all_finished: matches.values().all(Match::is_finished),
         })
@@ -643,22 +720,26 @@ impl Session {
     /// result, or a later result depends on it.
     pub fn undo_report(&mut self, id: MatchId) -> Result<Reopened, UndoReportError> {
         let phase = self.started_phase().ok_or(UndoReportError::NotStarted)?;
-        if !phase.data().matches().contains_key(&id) {
+        let Some((index, _, r#match)) = phase.data().matches().get_full(&id) else {
             return Err(UndoReportError::UnknownMatch);
-        }
+        };
+        let row = self.match_row(phase, index, r#match);
         let phase_id = phase.id();
         let matches_before = phase.data().matches().len();
-        self.act(|machine, history| machine.undo_match_result(history, phase_id, id))
-            .map_err(|error| match error {
-                UndoMatchResultError::NotReported => UndoReportError::NotReported,
-                UndoMatchResultError::Rejected(_) => UndoReportError::DependedOn,
-            })?;
+        self.act(Action::Reopen(row.clone()), |machine, history| {
+            machine.undo_match_result(history, phase_id, id)
+        })
+        .map_err(|error| match error {
+            UndoMatchResultError::NotReported => UndoReportError::NotReported,
+            UndoMatchResultError::Rejected(_) => UndoReportError::DependedOn,
+        })?;
         let matches = self
             .started_phase()
             .expect("still started")
             .data()
             .matches();
         Ok(Reopened {
+            row,
             unscheduled: matches_before - matches.len(),
         })
     }
@@ -698,16 +779,16 @@ impl Session {
     }
 
     /// Undoes the latest action of this session that is still in effect, which may be an
-    /// [`Self::undo_report`], bringing the result back.
+    /// [`Self::undo_report`], bringing the result back. Returns the action undone.
     ///
     /// # Errors
     /// Returns [`NothingToUndo`] if every action of the session is undone.
-    pub fn undo(&mut self) -> Result<(), NothingToUndo> {
+    pub fn undo(&mut self) -> Result<Action, NothingToUndo> {
         match self.history.undo_last(&mut self.machine) {
             Ok(_) => {
-                self.undoable -= 1;
-                self.redoable += 1;
-                Ok(())
+                let action = self.done.pop().expect("an action was undone");
+                self.undone.push(action.clone());
+                Ok(action)
             }
             Err(UndoLastError::NothingToUndo) => Err(NothingToUndo),
             Err(error) => unreachable!(
@@ -717,15 +798,16 @@ impl Session {
     }
 
     /// Redoes the action this session undid last, as long as it took no other action since.
+    /// Returns the action redone.
     ///
     /// # Errors
     /// Returns [`NothingToRedo`] if there is no such action.
-    pub fn redo(&mut self) -> Result<(), NothingToRedo> {
+    pub fn redo(&mut self) -> Result<Action, NothingToRedo> {
         match self.history.redo_last(&mut self.machine) {
             Ok(_) => {
-                self.redoable -= 1;
-                self.undoable += 1;
-                Ok(())
+                let action = self.undone.pop().expect("an action was redone");
+                self.done.push(action.clone());
+                Ok(action)
             }
             Err(RedoLastError::NothingToRedo) => Err(NothingToRedo),
             Err(error) => unreachable!(
@@ -734,16 +816,17 @@ impl Session {
         }
     }
 
-    /// Runs `action`, which appends to the log as an action of the session, if anything.
+    /// Runs `run`, which appends to the log as the action `action` of the session, if anything.
     fn act<T, E>(
         &mut self,
-        action: impl FnOnce(&mut CompetitionStateMachine, &mut SessionHistory) -> Result<T, E>,
+        action: Action,
+        run: impl FnOnce(&mut CompetitionStateMachine, &mut SessionHistory) -> Result<T, E>,
     ) -> Result<T, E> {
         let log_len = self.machine.log().len();
-        let done = action(&mut self.machine, &mut self.history)?;
+        let done = run(&mut self.machine, &mut self.history)?;
         if self.machine.log().len() > log_len {
-            self.undoable += 1;
-            self.redoable = 0;
+            self.done.push(action);
+            self.undone.clear();
         }
         Ok(done)
     }
@@ -778,6 +861,29 @@ impl Session {
             .map(|id| self.entrant_row(id))
             .collect()
     }
+
+    /// The row of `r#match`, the match at `index` of `phase`.
+    fn match_row(&self, phase: &Phase, index: usize, r#match: &Match) -> MatchRow {
+        let data = phase.data();
+        MatchRow {
+            id: r#match.id(),
+            number: index + 1,
+            round: r#match.round(),
+            stage: stage(phase, r#match.annotations()),
+            a: self.team(data, r#match.team_a()),
+            b: self.team(data, r#match.team_b()),
+            result: r#match.result(),
+        }
+    }
+}
+
+/// The stage the format of `phase` names a match or a bye with `annotations` by.
+fn stage(phase: &Phase, annotations: &TypeMap) -> Option<StageName> {
+    let format = phase.format();
+    Some(StageName {
+        format: plugin_factory::id_of(format),
+        stage: format.stage(annotations)?,
+    })
 }
 
 /// The plugins `draft`, a phase draft, configures, with the plugins its answers imply added, see

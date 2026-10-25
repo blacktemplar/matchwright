@@ -8,7 +8,7 @@
 //! Plugins are translated by keys derived from their ids, see [`PluginText`], and are shown with
 //! the English of their code where no translation has them, so that a plugin needs no change to be
 //! shown, and to be translated. The fields of a phase itself are translated in the same way, see
-//! [`Translator::field_label`].
+//! [`Translator::field_label`], and so are the stages a format names, see [`Translator::stage`].
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,7 +19,7 @@ use std::{
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use fluent_syntax::{ast, parser};
 
-use crate::form::FormField;
+use crate::{form::FormField, view::StageName};
 
 /// A language the app speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -199,6 +199,10 @@ pub enum PluginText<'a> {
     Field(&'a str),
     /// The description of its field of this name, `.field-<name>-description`.
     FieldDescription(&'a str),
+    /// The name of a format's stage of this key, `.stage-<key>`, with the stage's numbers as its
+    /// variables, see [`Translator::stage`] and
+    /// [`Stage::key`](tournament_engine::plugins::phase_format::Stage::key).
+    Stage(&'a str),
 }
 
 impl PluginText<'_> {
@@ -215,6 +219,7 @@ impl PluginText<'_> {
             Self::Column => "column".to_owned(),
             Self::Field(name) => format!("field-{name}"),
             Self::FieldDescription(name) => format!("field-{name}-description"),
+            Self::Stage(key) => format!("stage-{key}"),
         }
     }
 }
@@ -290,6 +295,21 @@ impl Translator {
     pub fn plugin(&self, id: &str, text: PluginText<'_>, english: &str) -> String {
         self.format(&PluginText::key(id), Some(&text.attribute()), None)
             .unwrap_or_else(|| english.to_owned())
+    }
+
+    /// The name of `stage` in the language, as the [`PluginText::Stage`] of its format with its
+    /// numbers set, or else in English, as the format's code names it.
+    pub fn stage(&self, stage: &StageName) -> String {
+        let mut args = FluentArgs::new();
+        for (name, value) in stage.stage.numbers() {
+            args.set(*name, *value);
+        }
+        self.format(
+            &PluginText::key(stage.format),
+            Some(&PluginText::Stage(stage.stage.key()).attribute()),
+            Some(&args),
+        )
+        .unwrap_or_else(|| stage.stage.to_string())
     }
 
     /// The label of `field` in the language, or else its English one. A field of a plugin is

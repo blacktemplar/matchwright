@@ -454,7 +454,7 @@ impl Session {
     /// the filters applied, followed by the byes unless only open matches are asked for.
     fn matches(&self, only_open: bool, only_round: Option<NonZeroU32>) -> Result<String, Error> {
         let format = self.phase()?.format();
-        let stage_of = |entity: &TypeMap| format.stage(entity);
+        let stage_of = |entity: &TypeMap| format.stage(entity).map(|stage| stage.to_string());
         let phase = self.phase()?.data();
         // only a format that names its stages gets a column for them
         let has_stages = phase

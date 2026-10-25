@@ -65,7 +65,11 @@ matches = Spiele
 rounds = Runden
 round = Runde { $round }
 round-with-open = Runde { $round } ({ $open } offen)
+playable-now = Jetzt spielbar
+playable-now-count = Jetzt spielbar ({ $count })
+nothing-playable = Gerade kann kein Spiel gespielt werden.
 match-number = Nr.
+round-column = Runde
 stage = Stufe
 side-a = Seite A
 side-b = Seite B
@@ -79,6 +83,35 @@ bye = Freilos: { $team }
 bye-in-stage = Freilos: { $team } ({ $stage })
 standings = Tabelle
 rank = Platz
+enter-result = Ergebnis eingeben
+enter-result-hint = die Nummer des Spiels, dann 1, wenn Seite A gewonnen hat{ $draws ->
+        [yes] , X für ein Unentschieden
+       *[no] {""}
+    } oder 2, wenn Seite B gewonnen hat, z. B. „3 1“
+report = Melden
+
+## What was done, as the page announces it
+
+announce-reported = Spiel { $number }: { $result }.
+announce-new-matches = { $count ->
+        [one] Ein weiteres Spiel ist angesetzt.
+       *[other] { $count } weitere Spiele sind angesetzt.
+    }
+announce-all-finished = Jedes Spiel hat ein Ergebnis.
+announce-reopened = Spiel { $number } ist wieder offen.
+announce-unscheduled = { $count ->
+        [one] Das wegen seines Ergebnisses angesetzte Spiel entfällt.
+       *[other] Die { $count } wegen seines Ergebnisses angesetzten Spiele entfallen.
+    }
+announce-undone = Rückgängig gemacht: { $action }.
+announce-redone = Wiederhergestellt: { $action }.
+action-add-entrant = Hinzufügen von { $name }
+action-remove-entrant = Entfernen von { $name }
+action-add-phase = Hinzufügen der Phase
+action-edit-phase = Bearbeiten der Phase
+action-start = Start
+action-report = Ergebnis von Spiel { $number } ({ $result })
+action-reopen = Wiederöffnen von Spiel { $number }
 
 ## Names
 

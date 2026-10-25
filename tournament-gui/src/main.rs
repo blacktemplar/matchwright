@@ -7,6 +7,7 @@
 //! and saved after each change ([`competition`]). Everything the page says goes through a
 //! [`Translator`] of the language chosen, see [`i18n`].
 
+mod announcement;
 mod competition;
 mod competitions;
 mod components;
@@ -20,10 +21,10 @@ use futures_util::StreamExt as _;
 use tournament_app::{
     i18n::{Language, Text, Translator},
     storage::CompetitionKey,
-    view::EntrantRow,
+    view::{EntrantRow, MatchRow},
 };
 use tournament_browser::{channel::Events, indexed_db::IndexedDb, persistence};
-use tournament_engine::uuid::Uuid;
+use tournament_engine::{MatchResult, uuid::Uuid};
 
 use crate::{competition::Competition, competitions::Competitions, i18n::t};
 
@@ -199,6 +200,16 @@ fn team_name(tr: &Translator, entrants: &[EntrantRow]) -> String {
         .map(|entrant| entrant.name.clone().unwrap_or_else(|| tr.get("no-name")))
         .collect();
     names.join(&tr.get("team-separator"))
+}
+
+/// What a screen shows for the result of the match `row`, e.g. "Alice won"; `None` while it has
+/// none.
+fn result_text(tr: &Translator, row: &MatchRow) -> Option<String> {
+    Some(match row.result? {
+        MatchResult::AWins => t!(tr, "won", team = team_name(tr, &row.a)),
+        MatchResult::BWins => t!(tr, "won", team = team_name(tr, &row.b)),
+        MatchResult::Draw => tr.get("draw"),
+    })
 }
 
 /// Has the browser download `file`, a competition's [file](tournament_app::file), named after the

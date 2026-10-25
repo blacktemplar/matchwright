@@ -114,6 +114,18 @@ pub enum ReportError {
     Rejected(TransitionError),
 }
 
+/// Why a result entered as text was not reported, see
+/// [`Session::report_entered`](crate::session::Session::report_entered).
+#[derive(Debug, Error)]
+pub enum ReportEnteredError {
+    #[error("enter the number of a match and its result, 1, X or 2, e.g. \"3 1\"")]
+    Unreadable,
+    #[error("there is no match {0}")]
+    NoMatch(usize),
+    #[error(transparent)]
+    Report(#[from] ReportError),
+}
+
 /// Why a result was not undone.
 #[derive(Debug, Error)]
 pub enum UndoReportError {
@@ -249,6 +261,16 @@ impl Message for ReportError {
             Self::AlreadyFinished => Text::new("error-match-finished-already"),
             Self::DrawNotAllowed => Text::new("error-draw-not-allowed"),
             Self::Rejected(error) => rejected(error),
+        }
+    }
+}
+
+impl Message for ReportEnteredError {
+    fn text(&self) -> Text {
+        match self {
+            Self::Unreadable => Text::new("error-result-unreadable"),
+            Self::NoMatch(number) => Text::new("error-no-match-numbered").with("number", *number),
+            Self::Report(error) => error.text(),
         }
     }
 }

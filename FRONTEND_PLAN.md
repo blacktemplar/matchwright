@@ -160,7 +160,20 @@ fields by kind with their ranges, plugin choices per axis, implied plugins, issu
 arise; editing the phase after the start (`reconfigure_phase`). First uses of Dioxus components
 (select, dialog).
 
-### 6. Running a competition
+### 6. Running a competition (done 2026-10-25)
+
+See DESIGN.md, *Running a competition*. Most of the screen existed since step 2 (rounds, reopening,
+undo/redo, standings, stages); added: the matches playable now (`Session::playable`) as a list next
+to the rounds, a result typed in as the match's number and `1`/`X`/`2` (`Session::report_entered`),
+the focus moving on after a result button, and announcements in a live region of what was reported,
+reopened, undone or redone (`Session::undo`/`redo` return the `Action`, the session keeping stacks
+of them instead of counts; `Reported`/`Reopened` carry the match's row). Changed on the way: stages
+are translated, since `PhaseFormat::stage` returns a `Stage` (key, numbers, English) translated as
+`.stage-<key>` of the format's message. Not done: pagination of a long round (one round at a time
+is the only limit, fine for the first use cases), filtering the lists by entrant, a result entry
+that adapts to a match structure (best of N, scores), which waits for match structures
+(`requirements.md`), and `SessionHistory::can_undo`/`can_redo` in `undoable-state-machine` (the
+session's stacks of actions are needed anyway).
 
 The organizer's main screen: matches one round at a time (or paginated), fast result entry by
 keyboard, reopening a result, undo/redo with an announcement of what happened (`aria-live`),

@@ -76,11 +76,18 @@ cancel = Cancel
 ## After the start
 
 matches = Matches
+# the lists of matches to choose from: those playable now, and each round
 rounds = Rounds
 round = Round { $round }
 round-with-open = Round { $round } ({ $open } open)
+# the matches whose entrants have played every round before
+playable-now = Playable now
+playable-now-count = Playable now ({ $count })
+nothing-playable = No match can be played now.
 match-number = #
-# the header of the stages, which are in English, as the format names them
+# the header of the rounds of the matches
+round-column = Round
+# the header of the stages the format names, e.g. Semifinals
 stage = Stage
 side-a = Side A
 side-b = Side B
@@ -94,6 +101,40 @@ bye = Bye: { $team }
 bye-in-stage = Bye: { $team } ({ $stage })
 standings = Standings
 rank = Rank
+# reporting a result by typing it
+enter-result = Enter a result
+# $draws: yes if a match may end in a draw, else no
+enter-result-hint = the number of the match, then 1 if side A won{ $draws ->
+        [yes] , X for a draw,
+       *[no] {""}
+    } or 2 if side B won, e.g. “3 1”
+report = Report
+
+## What was done, as the page announces it
+
+# $result: as `won` or `draw` say it
+announce-reported = Match { $number }: { $result }.
+announce-new-matches = { $count ->
+        [one] One more match is scheduled.
+       *[other] { $count } more matches are scheduled.
+    }
+announce-all-finished = Every match has a result.
+announce-reopened = Match { $number } is open again.
+announce-unscheduled = { $count ->
+        [one] The match scheduled because of its result is gone.
+       *[other] The { $count } matches scheduled because of its result are gone.
+    }
+# $action: one of the action-… messages
+announce-undone = Undone: { $action }.
+announce-redone = Redone: { $action }.
+action-add-entrant = adding { $name }
+action-remove-entrant = removing { $name }
+action-add-phase = adding the phase
+action-edit-phase = editing the phase
+action-start = the start
+# $result: as `won` or `draw` say it
+action-report = the result of match { $number } ({ $result })
+action-reopen = reopening match { $number }
 
 ## Names
 
