@@ -595,6 +595,7 @@ impl Session {
             round,
             matches,
             byes,
+            draws: phase.format().allows_draws(),
         })
     }
 

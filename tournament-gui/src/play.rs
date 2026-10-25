@@ -76,6 +76,7 @@ pub fn Rounds() -> Element {
                                 MatchLine {
                                     key: "{row.id:?}",
                                     with_stage: round.matches.iter().any(|row| row.stage.is_some()),
+                                    draws: round.draws,
                                     row,
                                 }
                             }
@@ -109,7 +110,7 @@ fn current(rounds: &[RoundSummary]) -> Option<NonZeroU32> {
 }
 
 #[component]
-fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
+fn MatchLine(row: MatchRow, with_stage: bool, draws: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let id = row.id;
     // only reported or reopened by the tab that changes the competition
@@ -131,7 +132,11 @@ fn MatchLine(row: MatchRow, with_stage: bool) -> Element {
                         button { disabled, onclick: report(MatchResult::AWins),
                             {t!(tr, "wins", team = a.as_str())}
                         }
-                        button { disabled, onclick: report(MatchResult::Draw), {tr.get("draw")} }
+                        if draws {
+                            button { disabled, onclick: report(MatchResult::Draw),
+                                {tr.get("draw")}
+                            }
+                        }
                         button { disabled, onclick: report(MatchResult::BWins),
                             {t!(tr, "wins", team = b.as_str())}
                         }

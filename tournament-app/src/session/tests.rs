@@ -295,6 +295,7 @@ fn the_matches_are_listed_by_round_with_the_names_of_their_entrants() {
     assert_eq!(entrants, ["Alice", "Bob", "Carol", "Dave"]);
     assert!(first.matches.iter().all(|row| row.stage.is_none()));
     assert!(first.byes.is_empty());
+    assert!(first.draws, "a round robin takes draws");
     assert_eq!(session.round(round(4)), None);
 }
 
@@ -407,6 +408,7 @@ fn a_result_the_match_does_not_take_is_refused() {
     let first = numbered(&session, 1);
     let elsewhere = numbered(&Given::new().started(), 1);
 
+    assert!(!session.round(round(1)).unwrap().draws);
     assert!(matches!(
         session.report(first, MatchResult::Draw),
         Err(ReportError::DrawNotAllowed)

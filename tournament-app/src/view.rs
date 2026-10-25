@@ -40,6 +40,8 @@ pub struct Round {
     /// In the order they were scheduled.
     pub matches: Vec<MatchRow>,
     pub byes: Vec<ByeRow>,
+    /// Whether a match of the round may end in a [`MatchResult::Draw`].
+    pub draws: bool,
 }
 
 /// A match as a screen lists it.
