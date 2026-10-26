@@ -430,7 +430,9 @@ impl Gui {
     /// Clicks the button whose accessible name, its `aria-label`, is `label`, once it is enabled,
     /// e.g. `"Alice wins"`.
     pub async fn click_labelled(&self, label: &str) -> WebDriverResult<()> {
+        // e.g. a result button of the matches and one of the bracket, only one of them shown
         self.labelled(label)
+            .and_displayed()
             .and_enabled()
             .first()
             .await?
@@ -622,6 +624,37 @@ impl Gui {
     pub async fn expect_bracket_waiting(&self, sides: &[&str]) -> WebDriverResult<()> {
         self.page
             .expect_texts(By::Css(".bracket .side.pending"), sides)
+            .await
+    }
+
+    /// Reports that the side drawn on top of the match numbered `number` in the bracket won, by a
+    /// click on its name.
+    pub async fn win_in_bracket(&self, number: &str) -> WebDriverResult<()> {
+        // the number's own text, after the hidden word "Match"
+        let number = format!("span[@class = 'number'][normalize-space(text()) = '{number}']");
+        let pairing = format!("//div[contains(@class, 'pairing')][{number}]");
+        self.driver
+            .query(By::XPath(format!("({pairing}//button)[1]")))
+            .and_displayed()
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the focus is on a side of the match numbered `number` in the bracket.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the number of the match it is on instead, if any.
+    pub async fn expect_focus_in_bracket(&self, number: &str) -> WebDriverResult<()> {
+        // the number follows the hidden word "Match", which is a block of its own
+        self.page
+            .expect_texts(
+                By::Css(".pairing:has(:focus) > .number"),
+                &[&format!("Match\n{number}")],
+            )
             .await
     }
 

@@ -1717,8 +1717,14 @@ bracket, every pairing in it from the start.
   view switch is shown at every width, choosing between "Matches & standings"
   and "Bracket" where there is room for two columns, and between the matches,
   the standings and the bracket where there is not. What is not shown stays on
-  the page, `hidden`, so that the round chosen and the search are kept. It
-  shows, reporting stays in the list of matches.
+  the page, `hidden`, so that the round chosen and the search are kept.
+- **A result is reported in the bracket by a click on the side that won.**
+  While a match has no result, the names of its sides are buttons ("Alice
+  wins", said under the pointer too) that look like the names, tinted only
+  under the pointer, so that the bracket keeps its look and size; a knockout
+  has no draws. The focus then moves on to the next match without a result in
+  the order of the bracket, as in the list of matches. Reopening a match and
+  typing a result stay in the list of matches.
 
 #### Alternatives
 
@@ -1736,6 +1742,9 @@ bracket, every pairing in it from the start.
 - **The bracket below both columns**, always shown. With many entrants it is
   far down the page, below the standings, and nothing on top tells that it is
   there.
+- **Result buttons in the bracket as in the list of matches**, "Wins" below
+  each name. Every open pairing would grow, and with it the slots of every
+  column. Reporting only in the list was the first version.
 - **The bracket as a tab of a column** (beside the playable matches and the
   rounds, or beside the standings). Half the width, so a large bracket
   scrolls sideways more.

@@ -1173,6 +1173,23 @@ ul.summary-items {
   grid-column: 2;
 }
 
+/* the side of a match without a result, a button reporting that it won: the name as it is, tinted
+ * under the pointer, its padding taken from the pairing's so that the pairing keeps its size */
+.pairing button.side {
+  min-height: 0;
+  justify-content: flex-start;
+  padding: 0 var(--space-1);
+  border: 0;
+  margin: 0 calc(-1 * var(--space-1));
+  background: transparent;
+  justify-self: stretch;
+  text-align: left;
+}
+
+.pairing button.side:hover {
+  background: var(--hover);
+}
+
 .pairing .side.pending {
   color: var(--text-muted);
   font-style: italic;

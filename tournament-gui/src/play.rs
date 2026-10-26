@@ -39,7 +39,10 @@ enum Focus {
 
 /// Focuses the element mounted with the handler it returns whenever `focus` asks for `target`,
 /// and then asks for nothing.
-fn use_focus(mut focus: Signal<Option<Focus>>, target: Focus) -> impl FnMut(MountedEvent) {
+pub fn use_focus<T: Copy + PartialEq + 'static>(
+    mut focus: Signal<Option<T>>,
+    target: T,
+) -> impl FnMut(MountedEvent) {
     let mut element = use_signal(|| None::<Rc<MountedData>>);
     use_effect(move || {
         if focus() == Some(target)
@@ -56,7 +59,7 @@ fn use_focus(mut focus: Signal<Option<Focus>>, target: Focus) -> impl FnMut(Moun
 }
 
 /// Asks for `target` to get the focus, see [`use_focus`].
-fn move_focus(mut focus: Signal<Option<Focus>>, target: Focus) {
+pub fn move_focus<T: 'static>(mut focus: Signal<Option<T>>, target: T) {
     focus.set(Some(target));
 }
 

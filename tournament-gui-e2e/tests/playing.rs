@@ -236,6 +236,35 @@ async fn the_bracket_shows_who_meets_whom() {
     .await;
 }
 
+/// A click on a side's name in the bracket reports that it won, and the focus moves on to the
+/// next match without a result, the final once both semifinals have one.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn results_are_reported_in_the_bracket() {
+    run_in_new_competition(async |gui| {
+        for name in ["Alice", "Bob", "Carol", "Dave"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("single elimination").await?;
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+        gui.click("Bracket").await?;
+
+        gui.win_in_bracket("1").await?;
+
+        gui.expect_bracket_waiting(&["Winner of 2", "Loser of 2"])
+            .await?;
+        gui.expect_focus_in_bracket("2").await?;
+
+        gui.win_in_bracket("2").await?;
+
+        gui.expect_bracket_waiting(&[]).await?;
+        gui.expect_focus_in_bracket("3").await?;
+        gui.page.check_accessibility().await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_and_redo_announce_what_they_did() {
