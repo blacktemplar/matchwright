@@ -1708,18 +1708,23 @@ format.
   being visually hidden ("Match", "against").
 - **The e2e tests run at a laptop's size** (`--window-size=1280,900` in
   `e2e-harness`), where every column is shown.
-- **Colours are tokens, light and dark as the system prefers**: custom
-  properties named by their role (`--text`, `--surface`, `--accent`,
-  `--accent-subtle`, `--error`, …) at the top of `style.css`, redefined under
-  `prefers-color-scheme: dark`; no rule names a colour itself. Neutral greys
+- **Colours are tokens, light and dark as the system prefers, or as chosen**:
+  custom properties named by their role (`--text`, `--surface`, `--accent`,
+  `--accent-subtle`, `--error`, …) at the top of `style.css`, each one
+  `light-dark(light, dark)`, which follows `color-scheme`: the system's, unless
+  the operator chose light or dark in the footer (`theme.rs`, kept in local
+  storage like the language, applied as `<html data-theme>`, which sets
+  `color-scheme`; an inline script in `index.html` applies it before the page
+  is drawn, so that it does not flash in the system's colours). One value per
+  token, so no block of colours repeated for a media query and a choice. No
+  rule names a colour itself. Neutral greys
   and one accent, the navy of the icon (lighter in dark, where navy would not
   contrast). The theme variables of the copied components are mapped onto the
   tokens, so they follow too, and `color-scheme` lets native controls follow.
   Every pair meets WCAG AA (text 4.5:1, borders of controls and the focus ring
   3:1). What is chosen (`aria-pressed`) is tinted and bold, not coloured only;
   a match with a result recedes (dashed, on the background). Animations end at
-  once under `prefers-reduced-motion`. There is no switch of the scheme on the
-  page: the system's choice is the operator's.
+  once under `prefers-reduced-motion`.
 
 #### Alternatives
 

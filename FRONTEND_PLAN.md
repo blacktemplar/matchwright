@@ -221,7 +221,7 @@ events; 20–40 entrants typically. In parts:
    1280×900. Not done: a status per competition in the list ("Round 3 of 5"), which needs the app
    crate.
 2. **Palette and details** (done 2026-10-26), see DESIGN.md, *Layout*: colour tokens in light and
-   dark following the system, the accent the navy of the icon, the components' theme mapped onto
+   dark following the system or chosen in the footer, the accent the navy of the icon, the components' theme mapped onto
    them, hover and chosen states, a finished match receding, an empty list of entrants saying so,
    motion respecting `prefers-reduced-motion`, a more compact storage warning. Checked by axe-core
    in both schemes once, by hand; the e2e tests run in light only.

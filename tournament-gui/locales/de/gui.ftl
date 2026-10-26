@@ -3,6 +3,10 @@
 app-title = Turnier
 competition-title = { $name } – Turnier
 language = Sprache
+theme = Farben
+theme-system = Wie das System
+theme-light = Hell
+theme-dark = Dunkel
 undo = Rückgängig
 redo = Wiederherstellen
 not-persisted = Dieser Browser behält die hier gespeicherten Turniere womöglich nicht, z. B. in einem privaten Fenster oder wenn ihm der Platz ausgeht. Exportiere sie, um eine Kopie zu behalten.

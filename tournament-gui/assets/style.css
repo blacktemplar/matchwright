@@ -1,30 +1,32 @@
-/* The page's own style. Every colour is one of the tokens below, light or dark as the system
- * prefers; the accent is the navy of the icon. The pairs meet WCAG AA: text 4.5:1 against what it
- * is on, borders of controls and the focus ring 3:1. */
+/* The page's own style. Every colour is one of the tokens below, each light and dark
+ * (`light-dark()`), whichever `color-scheme` says: the system's, unless the operator chose one
+ * (`data-theme` of `<html>`, see theme.rs). The accent is the navy of the icon. The pairs meet
+ * WCAG AA in both: text 4.5:1 against what it is on, borders of controls and the focus ring 3:1. */
 
 :root {
   color-scheme: light dark;
 
-  --text: #1b1f24;
-  --text-muted: #57606a;
-  --surface: #fff;
-  --background: #f3f5f7;
-  --bar: #fff;
+  --text: light-dark(#1b1f24, #e6e8eb);
+  --text-muted: light-dark(#57606a, #9aa4ae);
+  --surface: light-dark(#fff, #1a1e23);
+  --background: light-dark(#f3f5f7, #111418);
+  --bar: light-dark(#fff, #161a1f);
   /* under what the pointer is on, and what is chosen without being the accent */
-  --hover: #eef1f4;
-  --border: #d8dee4;
-  --border-strong: #848d97;
-  --accent: #1f4e79;
-  --accent-hover: #173b5c;
-  --on-accent: #fff;
-  /* a tint of the accent, e.g. under the winner of a match */
-  --accent-subtle: #e7eff7;
-  --focus: #2f73d0;
-  --error: #b42318;
-  --error-subtle: #fef3f2;
-  --warning: #b54708;
-  --warning-subtle: #fffaeb;
-  --shadow: 0 1px 2px rgb(16 24 40 / 6%);
+  --hover: light-dark(#eef1f4, #252b32);
+  --border: light-dark(#d8dee4, #2f363d);
+  --border-strong: light-dark(#848d97, #6b7681);
+  /* navy would not stand out from the dark, so lighter there */
+  --accent: light-dark(#1f4e79, #79b0e6);
+  --accent-hover: light-dark(#173b5c, #9cc5ee);
+  --on-accent: light-dark(#fff, #0b1a2a);
+  /* a tint of the accent, e.g. under what is chosen */
+  --accent-subtle: light-dark(#e7eff7, #1c2b3b);
+  --focus: light-dark(#2f73d0, #58a6ff);
+  --error: light-dark(#b42318, #ff8a80);
+  --error-subtle: light-dark(#fef3f2, #2d1a1a);
+  --warning: light-dark(#b54708, #e3a13b);
+  --warning-subtle: light-dark(#fffaeb, #2a2113);
+  --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 6%), transparent);
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -57,27 +59,13 @@
   --focused-border-color: var(--focus);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #e6e8eb;
-    --text-muted: #9aa4ae;
-    --surface: #1a1e23;
-    --background: #111418;
-    --bar: #161a1f;
-    --hover: #252b32;
-    --border: #2f363d;
-    --border-strong: #6b7681;
-    --accent: #79b0e6;
-    --accent-hover: #9cc5ee;
-    --on-accent: #0b1a2a;
-    --accent-subtle: #1c2b3b;
-    --focus: #58a6ff;
-    --error: #ff8a80;
-    --error-subtle: #2d1a1a;
-    --warning: #e3a13b;
-    --warning-subtle: #2a2113;
-    --shadow: none;
-  }
+/* the colours the operator chose, whatever the system's */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 /* what moves, e.g. the components opening, does not where the system asks for less motion */
@@ -342,9 +330,11 @@ header.bar {
 
 footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   padding: var(--space-4);
   color: var(--text-muted);
+  gap: var(--space-2) var(--space-6);
 }
 
 footer select {

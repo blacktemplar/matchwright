@@ -295,6 +295,30 @@ impl Gui {
         self.choose("language", name).await
     }
 
+    /// Chooses the colours named `name`, e.g. `"Dark"`.
+    pub async fn choose_theme(&self, name: &str) -> WebDriverResult<()> {
+        self.choose("theme", name).await
+    }
+
+    /// Waits until the colours chosen, `<html data-theme>`, are `tag` (`"light"` or `"dark"`), or
+    /// the system's for `None`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time.
+    pub async fn expect_theme(&self, tag: Option<&str>) -> WebDriverResult<()> {
+        let selector = match tag {
+            Some(tag) => format!("html[data-theme='{tag}']"),
+            None => "html:not([data-theme])".to_owned(),
+        };
+        self.page
+            .expect(
+                By::Css(selector),
+                |query| query,
+                &format!("the theme {tag:?}"),
+            )
+            .await
+    }
+
     /// Waits until the language of the page, its `<html lang>`, is `tag`.
     ///
     /// # Panics

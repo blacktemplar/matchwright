@@ -5,6 +5,11 @@ app-title = Tournament
 # the title of the page while a competition is open
 competition-title = { $name } – Tournament
 language = Language
+# whether the page is light or dark
+theme = Colours
+theme-system = Like the system
+theme-light = Light
+theme-dark = Dark
 undo = Undo
 redo = Redo
 # the browser refused to keep what is stored, which a private window does as well

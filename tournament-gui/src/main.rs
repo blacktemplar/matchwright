@@ -22,6 +22,7 @@ mod notices;
 mod phase;
 mod play;
 mod setup;
+mod theme;
 
 use dioxus::prelude::*;
 use futures_util::StreamExt as _;
@@ -33,7 +34,9 @@ use tournament_app::{
 use tournament_browser::{channel::Events, indexed_db::IndexedDb, persistence};
 use tournament_engine::{MatchResult, uuid::Uuid};
 
-use crate::{competition::Competition, competitions::Competitions, i18n::t, notices::Notices};
+use crate::{
+    competition::Competition, competitions::Competitions, i18n::t, notices::Notices, theme::Theme,
+};
 
 /// The variables the styles of the [`components`] are built from.
 const COMPONENTS_THEME: Asset = asset!("/assets/dx-components-theme.css");
@@ -53,6 +56,8 @@ struct Page {
     storage: Signal<Option<IndexedDb>>,
     /// What the page says in the language chosen.
     translator: Signal<Translator>,
+    /// Whether the page is light or dark.
+    theme: Signal<Theme>,
     /// Why the last action was refused, shown until the next one.
     error: Signal<Option<Text>>,
     /// Whether the browser keeps what is stored even when short of space; `None` until asked.
@@ -72,6 +77,12 @@ impl Page {
         self.translator
             .set(Translator::new(language, &[i18n::resources]));
         i18n::remember(language);
+    }
+
+    /// Shows the page in the colours of `theme` from now on, and remembers it as the one chosen.
+    fn choose_theme(mut self, theme: Theme) {
+        self.theme.set(theme);
+        theme::remember(theme);
     }
 
     /// Asks the browser to keep what is stored, unless it was asked already.
@@ -96,6 +107,7 @@ fn App() -> Element {
             i18n::initial_language(),
             &[i18n::resources],
         )),
+        theme: Signal::new(theme::initial()),
         error: Signal::new(None),
         persisted: Signal::new(None),
         warning_dismissed: Signal::new(notices::warning_dismissed()),
@@ -105,6 +117,8 @@ fn App() -> Element {
     let mut open = use_signal(opened_in_url);
     // runs again whenever the language changes
     use_effect(move || i18n::set_page_language(page.translator.read().language()));
+    // and whenever the theme does
+    use_effect(move || theme::apply(*page.theme.read()));
     use_future(move || async move {
         match IndexedDb::open(DATABASE).await {
             Ok(storage) => page.storage.set(Some(storage)),
@@ -203,7 +217,7 @@ fn Header() -> Element {
     }
 }
 
-/// The bottom of every screen: the choice of the language.
+/// The bottom of every screen: the choice of the language and of the colours.
 #[component]
 fn Footer() -> Element {
     let page = use_context::<Page>();
@@ -227,6 +241,25 @@ fn Footer() -> Element {
                             lang: option.tag(),
                             selected: option == language,
                             {option.name()}
+                        }
+                    }
+                }
+            }
+            label {
+                {tr.get("theme")}
+                " "
+                select {
+                    id: "theme",
+                    onchange: move |event| {
+                        if let Some(chosen) = Theme::from_tag(&event.value()) {
+                            page.choose_theme(chosen);
+                        }
+                    },
+                    for option in Theme::ALL {
+                        option {
+                            value: option.tag(),
+                            selected: option == *page.theme.read(),
+                            {tr.get(option.message())}
                         }
                     }
                 }
