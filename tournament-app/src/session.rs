@@ -12,14 +12,18 @@ use std::{
 };
 
 use indexmap::IndexSet;
-use plugin_factory::{catalog::AnyAxis, config::PluginConfig, draft::Draft};
+use plugin_factory::{
+    catalog::{AnyAxis, PluginEntry},
+    config::PluginConfig,
+    draft::Draft,
+};
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated as _, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt as _, CompetitionTransition, Entrant, EntrantId, Match, MatchId,
     MatchResult, Phase, PhaseData, PhaseId, PhasePlugins, RankingId, RemoveEntrant,
     ReportMatchResult, Seed, SetCompetitionSeed, StartCompetition, TypeMap,
     map::IdAble as _,
-    plugins::phase_format::PhaseFormat,
+    plugins::{metrics_calculator::MetricsCalculator, phase_format::PhaseFormat},
     transitions::{
         self as engine, CompetitionAlreadyStarted, ReconfigurePhaseError, UndoMatchResultError,
     },
@@ -779,6 +783,9 @@ impl Session {
                 .map(|(calculator, column)| Column {
                     calculator,
                     header: column.header(),
+                    description: AnyAxis::of::<dyn MetricsCalculator>()
+                        .entry(calculator)
+                        .and_then(PluginEntry::description),
                 })
                 .collect(),
             rows: data

@@ -132,6 +132,22 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
     .await;
 }
 
+/// A column of the standings says what its metric is.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_column_of_the_standings_says_what_it_shows() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+
+        gui.click_labelled("About W-D-L").await?;
+
+        gui.expect_toggletip(Some("how many matches were won, drawn and lost"))
+            .await?;
+        gui.page.check_accessibility().await
+    })
+    .await;
+}
+
 /// The entry of results typed in is closed until opened, and stays as the operator left it.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]

@@ -14,7 +14,10 @@ use tournament_app::{
 };
 use tournament_engine::{MatchId, MatchResult};
 
-use crate::{announcement::Announcement, competition::Ctx, i18n::t, icons, result_text, team_name};
+use crate::{
+    announcement::Announcement, competition::Ctx, i18n::t, icons, result_text, team_name,
+    toggletip::Toggletip,
+};
 
 /// The list of matches shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -485,7 +488,15 @@ pub fn Standings() -> Element {
     let headers: Vec<_> = standings
         .columns
         .iter()
-        .map(|column| tr.plugin(column.calculator, PluginText::Column, column.header))
+        .map(|column| {
+            let header = tr.plugin(column.calculator, PluginText::Column, column.header);
+            let about = column
+                .description
+                .map(|english| tr.plugin(column.calculator, PluginText::Description, english));
+            // ids of plugins are namespaced by `::`
+            let id = format!("standings-about-{}", column.calculator.replace("::", "-"));
+            (header, about, id)
+        })
         .collect();
     rsx! {
         section { class: "card", aria_labelledby: "standings",
@@ -501,8 +512,16 @@ pub fn Standings() -> Element {
                         tr {
                             th { scope: "col", {tr.get("rank")} }
                             th { class: "name", scope: "col", {tr.get("name")} }
-                            for header in headers {
-                                th { scope: "col", {header} }
+                            // named by the header alone, which the cells are read with, rather
+                            // than with the toggletip's button too
+                            for (header, about, id) in headers {
+                                th { scope: "col", aria_label: "{header}",
+                                    "{header}"
+                                    if let Some(text) = about {
+                                        " "
+                                        Toggletip { id, subject: header.clone(), text }
+                                    }
+                                }
                             }
                         }
                     }

@@ -157,6 +157,9 @@ pub struct Column {
     pub calculator: &'static str,
     /// The header in English.
     pub header: &'static str,
+    /// What the calculator says about its metric in English, translated as its
+    /// [`PluginText::Description`](crate::i18n::PluginText::Description).
+    pub description: Option<&'static str>,
 }
 
 /// One line of the standings.

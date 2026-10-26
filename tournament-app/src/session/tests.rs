@@ -520,15 +520,20 @@ fn the_standings_show_the_columns_of_the_metrics() {
         [
             Column {
                 calculator: "tournament_engine::wins_draws_losses",
-                header: "W-D-L"
+                header: "W-D-L",
+                description: Some("how many matches were won, drawn and lost"),
             },
             Column {
                 calculator: "tournament_engine::points",
-                header: "points"
+                header: "points",
+                description: Some("scored for every win, every draw and every bye"),
             },
             Column {
                 calculator: "tournament_engine::sonneborn_berger",
-                header: "Sonneborn-Berger"
+                header: "Sonneborn-Berger",
+                description: Some(
+                    "the points of the opponents that were beaten or played to a draw"
+                ),
             },
         ]
     );

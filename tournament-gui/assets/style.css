@@ -642,6 +642,8 @@ footer select {
   font-size: 0.9rem;
   font-style: normal;
   font-weight: normal;
+  text-align: left;
+  white-space: normal;
 }
 
 .toggletip[data-opened] > .toggletip-text,
@@ -962,6 +964,23 @@ th {
   color: var(--text-muted);
   font-size: 0.9em;
   font-weight: 600;
+}
+
+/* the toggletip of a header: small, so that the header row stays low, and its text aligned with
+ * the column's right edge, so that the last column's does not run out of the table */
+th .toggletip > button.small {
+  min-height: 1.75rem;
+  padding: 0 var(--space-1);
+}
+
+/* where it is not across the bottom of a narrow screen; narrow, since the table, which scrolls,
+ * cuts off what reaches out of it, and the columns of metrics follow the rank and the name */
+@media not (max-width: 40rem) {
+  th .toggletip-text {
+    right: 0;
+    left: auto;
+    max-width: 14rem;
+  }
 }
 
 /* the names wrap, and stay in sight while the other columns scroll */
