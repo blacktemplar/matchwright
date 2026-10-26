@@ -13,6 +13,7 @@ use tournament_app::{
     view::{MatchRow, NameSearch, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
+use wasm_bindgen::JsCast as _;
 
 use crate::{
     announcement::Announcement, competition::Ctx, i18n::t, icons, result_text, team_name,
@@ -49,13 +50,28 @@ pub fn use_focus<T: Copy + PartialEq + 'static>(
             && let Some(element) = element()
         {
             focus.set(None);
-            spawn(async move {
-                // fails only if the element is gone already
-                _ = element.set_focus(true).await;
-            });
+            if let Some(element) = element
+                .downcast::<web_sys::Element>()
+                .and_then(|element| element.dyn_ref::<web_sys::HtmlElement>())
+            {
+                focus_in_sight(element);
+            }
         }
     });
     move |event: MountedEvent| element.set(Some(event.data()))
+}
+
+/// Focuses `element`, scrolling only as far as it takes to show it, in either direction, e.g. not
+/// sideways in a bracket whose next match is in sight already.
+fn focus_in_sight(element: &web_sys::HtmlElement) {
+    let options = web_sys::FocusOptions::new();
+    options.set_prevent_scroll(true);
+    // fails only if the element cannot take the focus
+    _ = element.focus_with_options(&options);
+    let options = web_sys::ScrollIntoViewOptions::new();
+    options.set_block(web_sys::ScrollLogicalPosition::Nearest);
+    options.set_inline(web_sys::ScrollLogicalPosition::Nearest);
+    element.scroll_into_view_with_scroll_into_view_options(&options);
 }
 
 /// Asks for `target` to get the focus, see [`use_focus`].

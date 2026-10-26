@@ -27,6 +27,8 @@
   --warning: light-dark(#b54708, #e3a13b);
   --warning-subtle: light-dark(#fffaeb, #2a2113);
   --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 6%), transparent);
+  /* at the edge where more of what scrolls sideways is out of sight */
+  --scroll-shadow: light-dark(rgb(16 24 40 / 18%), rgb(0 0 0 / 70%));
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -1075,12 +1077,14 @@ ul.summary-items {
   flex-direction: column;
 }
 
+/* rows of equal height whatever their content, e.g. a name of two lines: as high as the highest
+ * where the column sets the height of the bracket, else its share of that */
 .bracket-slots ol {
-  display: flex;
+  display: grid;
   flex: 1;
-  flex-direction: column;
   padding: 0;
   margin: 0;
+  grid-auto-rows: 1fr;
   list-style: none;
 }
 
@@ -1096,7 +1100,6 @@ ul.summary-items {
 }
 
 .below .slot {
-  flex: none;
   padding: 0;
 }
 
@@ -1111,7 +1114,6 @@ ul.summary-items {
 .slot {
   position: relative;
   display: flex;
-  flex: 1;
   align-items: center;
   padding: var(--space-1) 0;
 }
@@ -1157,9 +1159,11 @@ ul.summary-items {
   border-top-width: 1px;
 }
 
+/* as wide as its column, so that the lines, drawn at the column's edges, reach it */
 .pairing {
   display: grid;
   min-width: 10rem;
+  flex: 1;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1173,19 +1177,25 @@ ul.summary-items {
   background: var(--background);
 }
 
+/* as wide as two digits, so that the names of a column line up */
 .pairing .number {
+  min-width: 2ch;
   color: var(--text-muted);
+  text-align: right;
   font-size: 0.9em;
   grid-row: 1 / 3;
   align-self: center;
 }
 
+/* a long name wraps rather than widening its column */
 .pairing .side {
+  max-width: 14rem;
   grid-column: 2;
 }
 
-/* the side of a match without a result, a button reporting that it won: the name as it is, tinted
- * under the pointer, its padding taken from the pairing's so that the pairing keeps its size */
+/* the side of a match without a result, a button reporting that it won: the name in the accent,
+ * underlined like a link, tinted under the pointer, its padding taken from the pairing's so that
+ * the pairing keeps its size */
 .pairing button.side {
   min-height: 0;
   justify-content: flex-start;
@@ -1193,8 +1203,12 @@ ul.summary-items {
   border: 0;
   margin: 0 calc(-1 * var(--space-1));
   background: transparent;
+  color: var(--accent);
   justify-self: stretch;
   text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
 }
 
 .pairing button.side:hover {
@@ -1204,6 +1218,10 @@ ul.summary-items {
 .pairing .side.pending {
   color: var(--text-muted);
   font-style: italic;
+}
+
+.pairing .side.nobody {
+  color: var(--text-muted);
 }
 
 .pairing .winner {
@@ -1223,8 +1241,17 @@ ul.summary-items {
 
 /* The standings */
 
+/* A shadow at each edge where more is out of sight: the shadows stay at the edges, and a cover in
+ * the colour of the card scrolls with the content, hiding the shadow at an edge reached. */
 .scroll {
   overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--scroll-shadow), transparent) left / 0.75rem 100%
+      no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-shadow), transparent) right / 0.75rem
+      100% no-repeat scroll;
 }
 
 table {

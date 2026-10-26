@@ -1720,10 +1720,15 @@ bracket, every pairing in it from the start.
   source by the number of its match, or else by its stage and, where the
   stage has several pairings, its place from the top.
 - **The GUI draws it as columns of equal slots.** Each column is a list of
-  slots of equal height, so a column of half as many pairings has slots
-  twice as high and each pairing is level with the middle of the two it
-  follows from, at every size and without measuring. The lines are borders of
-  the slots' pseudo-elements, halfway across the gap between columns. Read
+  slots of equal height (a grid of `1fr` rows, so a name of two lines makes
+  every slot of its column as high, and the columns stretch alike), so a
+  column of half as many pairings has slots twice as high and each pairing is
+  level with the middle of the two it follows from, at every size and without
+  measuring. The lines are borders of the slots' pseudo-elements, halfway
+  across the gap between columns, and each pairing is as wide as its column,
+  so that they reach it; a long name wraps within its pairing rather than
+  widening the column. All sections scroll sideways together, in one
+  scroller with a shadow at the edge where more is out of sight. Read
   in order, it is the list of the matches of each stage, which is what a
   screen reader gets, with the result said in words; no separate text
   alternative is needed. The match for third place is in the final's column,
@@ -1738,9 +1743,10 @@ bracket, every pairing in it from the start.
   the page, `hidden`, so that the round chosen and the search are kept.
 - **A result is reported in the bracket by a click on the side that won.**
   While a match has no result, the names of its sides are buttons ("Alice
-  wins", said under the pointer too) that look like the names, tinted only
-  under the pointer, so that the bracket keeps its look and size; a knockout
-  has no draws. The focus then moves on to the next match without a result in
+  wins", said under the pointer too) shaped like the names, so that the
+  bracket keeps its size, but in the accent and underlined like links, since
+  a touch screen has no pointer to tint them under, with a line above the
+  bracket saying what a click does; a knockout has no draws. The focus then moves on to the next match without a result in
   the order of the bracket, as in the list of matches. Reopening a match and
   typing a result stay in the list of matches.
 

@@ -142,6 +142,8 @@ bracket = Bracket
 bracket-winners = Winner bracket
 bracket-losers = Loser bracket
 bracket-grand-final = Grand final
+# above the bracket, while a match in it has no result: the names of its sides are buttons
+bracket-report-hint = Click or tap the name of the side that won.
 # a side of a match in the bracket that nobody takes
 bracket-bye = Bye
 # a side of a match in the bracket not decided yet, by the match or else the stage it comes from

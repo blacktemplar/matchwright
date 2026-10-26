@@ -1,6 +1,51 @@
-use tournament_gui_e2e::{run, run_in_new_competition};
+use tournament_gui_e2e::{Gui, run, run_in_new_competition, thirtyfour::error::WebDriverResult};
 
 const LONG_NAME: &str = "Maximilian-Alexander Müller-Lüdenscheidt";
+
+/// Enters `names`, starts a knockout of them in `format`, and shows its bracket.
+async fn show_bracket(gui: &Gui, format: &str, names: &[&str]) -> WebDriverResult<()> {
+    for name in names {
+        gui.add_entrant(name).await?;
+    }
+    gui.choose_format(format).await?;
+    gui.click("Add phase").await?;
+    gui.click("Start").await?;
+    gui.click("Bracket").await
+}
+
+/// Long names wrap within their pairing, which keeps its column's width, so the lines meet.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_lines_of_the_bracket_meet_whatever_the_names() {
+    run_in_new_competition(async |gui| {
+        let names = [
+            LONG_NAME, "Bo", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi",
+        ];
+        show_bracket(&gui, "single elimination", &names).await?;
+        gui.win_in_bracket("1").await?;
+
+        gui.expect_bracket_lines_meet().await?;
+        gui.page.resize(390, 844).await?;
+        gui.expect_bracket_lines_meet().await?;
+        gui.page.expect_room_for_words(".pairing .side").await?;
+        gui.page.expect_no_sideways_scroll().await
+    })
+    .await;
+}
+
+/// A double elimination of 6 has byes, and a loser bracket whose rounds alternate between
+/// dropping losers in and halving.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_lines_of_a_double_elimination_meet() {
+    run_in_new_competition(async |gui| {
+        let names = ["Alice", "Bob", "Carol", "Dave", "Erin", LONG_NAME];
+        show_bracket(&gui, "double elimination", &names).await?;
+
+        gui.expect_bracket_lines_meet().await
+    })
+    .await;
+}
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]

@@ -658,6 +658,64 @@ impl Gui {
             .await
     }
 
+    /// Checks that the lines of the bracket shown meet its pairings: each pairing is as wide as its
+    /// slot, whose edges the lines start and end at; the slots of a column are equally high; and a
+    /// line goes straight on to the middle of the pairing it leads to, or meets the line of its
+    /// neighbour at that middle.
+    ///
+    /// # Panics
+    /// Panics with what is off, by section, column and slot, each counted from 0.
+    pub async fn expect_bracket_lines_meet(&self) -> WebDriverResult<()> {
+        let problems = self
+            .driver
+            .execute(
+                r#"
+                const problems = [];
+                const middle = (slot) => {
+                    const box = slot.querySelector(".pairing").getBoundingClientRect();
+                    return (box.top + box.bottom) / 2;
+                };
+                const off = (a, b) => Math.abs(a - b) > 1;
+                document.querySelectorAll(".bracket").forEach((bracket, section) => {
+                    const columns = [...bracket.querySelectorAll(":scope > .bracket-column")]
+                        .map((column) =>
+                            [...column.querySelectorAll(":scope > .bracket-slots > ol > li")]);
+                    columns.forEach((slots, c) => slots.forEach((slot, s) => {
+                        const at = `section ${section}, column ${c}, slot ${s}`;
+                        const box = slot.getBoundingClientRect();
+                        const pairing = slot.querySelector(".pairing").getBoundingClientRect();
+                        if (off(pairing.left, box.left) || off(pairing.right, box.right)) {
+                            problems.push(`${at}: the pairing is narrower than its slot`);
+                        }
+                        if (off(box.height, slots[0].getBoundingClientRect().height)) {
+                            problems.push(`${at}: the slot is not as high as the column's first`);
+                        }
+                        const next = columns[c + 1];
+                        if (slot.classList.contains("line-straight")
+                            && off(middle(slot), middle(next[s]))) {
+                            problems.push(`${at}: the line misses the pairing it leads to`);
+                        }
+                        if (slot.classList.contains("line-down")
+                            && off((middle(slot) + middle(slots[s + 1])) / 2,
+                                middle(next[Math.floor(s / 2)]))) {
+                            problems.push(`${at}: the lines miss the pairing they lead to`);
+                        }
+                    }));
+                });
+                return problems;
+                "#,
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert!(
+            problems.as_array().is_some_and(Vec::is_empty),
+            "the lines of the bracket must meet its pairings, but {problems:#}"
+        );
+        Ok(())
+    }
+
     /// Waits until the sides of the bracket not decided yet are `sides`, in the order of the
     /// bracket, e.g. `"Winner of 1"`.
     ///

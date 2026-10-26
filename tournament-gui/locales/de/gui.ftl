@@ -110,6 +110,7 @@ bracket = Turnierbaum
 bracket-winners = Gewinnerseite
 bracket-losers = Verliererseite
 bracket-grand-final = Großes Finale
+bracket-report-hint = Ein Klick oder Tippen auf den Namen der Seite, die gewonnen hat, trägt das Ergebnis ein.
 bracket-bye = Freilos
 winner-of-match = Sieger von { $number }
 loser-of-match = Verlierer von { $number }

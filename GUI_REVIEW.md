@@ -185,7 +185,21 @@ The original plan of this step:
 - Tests: app unit test for the translated incompatibility; e2e: Add phase disabled with an issue,
   Enter in Rounds doesn't add the phase, the typed entry's error is in the entry.
 
-### 4. Bracket geometry and affordance (B1, B2, B3, B4, B7, B8)
+### 4. Bracket geometry and affordance (B1, B2, B3, B4, B8) — done
+
+- B1/B2: pairings fill their column; names wrap within 14rem; the slots of a column are a grid of
+  `1fr` rows. Pairings without a match get an empty number cell, so that names line up.
+- B3: open names in the accent, underlined, and a hint above the bracket.
+- B4: a pairing decided by a bye recedes like a finished one; "Bye" is muted, not italic.
+- B8: one scroller for every section, a shadow at the edge with more out of sight (on every
+  `.scroll`, so the standings have it too), and the focus moving after a result scrolls only as
+  far as it needs to (`focus_in_sight` in `play.rs`, the list of matches included).
+- Tests: `expect_bracket_lines_meet` (measuring), in `layout.rs` for a single elimination with
+  long names at laptop and phone size, and a double elimination of 6.
+- B7 (16 entrants at 820px) moved to step 7: what widens the columns is the long placeholders
+  ("Winner of Quarterfinals (1)"), which numbering every pairing shortens.
+
+The original plan of this step:
 
 - B1: `.slot > .pairing { flex: 1 }` (or `width: 100%`) so every pairing fills its column and the
   lines start at its edge.
@@ -202,7 +216,7 @@ The original plan of this step:
 - Tests: an e2e test with long names that compares each line's end with the middle of the pairing it
   leads to (the bracket tester's measuring script, as a `Gui` helper), at laptop and phone size.
 
-### 5. The phase form follows the operator (F2, F3, F5, F6, F9, L8)
+### 5. The phase form follows the operator (F2, F3, F5, F6, F7, F9, L8)
 
 - F2: when an undo removes the phase, rebuild the form from the undone phase's `Phase::config`
   (the session knows the action it walked through) instead of `Session::phase_form()`.
@@ -226,7 +240,7 @@ The original plan of this step:
   "Edit phase" moved out of the way, the winner in the list of competitions.
 - Tests: app unit test; e2e.
 
-### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6)
+### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6, B7)
 
 - E3: name the blocking match in the refusal (the engine knows which later result depends on it;
   the app maps it to a match number); in the app's match rows, mark a result that can't be reopened

@@ -41,18 +41,31 @@ pub fn Bracket() -> Element {
     let Some(bracket) = ctx.session.read().bracket() else {
         return rsx! {};
     };
+    let tr = ctx.translator.read();
+    // said only to the tab that reports, while there is something to report
+    let reports = ctx.actions().report;
     rsx! {
         section { class: "card", aria_labelledby: "bracket",
             // focused once no match is left without a result, so that the focus is not lost
             h2 { id: "bracket", tabindex: "-1", onmounted: on_heading_mounted,
-                {ctx.translator.read().get("bracket")}
+                {tr.get("bracket")}
             }
-            for (index , section) in bracket.sections.into_iter().enumerate() {
-                Section {
-                    key: "{index}",
-                    index,
-                    section,
-                    focus,
+            if reports {
+                p { class: "hint", {tr.get("bracket-report-hint")} }
+            }
+            // every section in one, scrolling sideways together if its columns do not fit
+            div {
+                class: "scroll",
+                role: "group",
+                tabindex: "0",
+                aria_labelledby: "bracket",
+                for (index , section) in bracket.sections.into_iter().enumerate() {
+                    Section {
+                        key: "{index}",
+                        index,
+                        section,
+                        focus,
+                    }
                 }
             }
         }
@@ -91,32 +104,19 @@ fn Section(index: usize, section: BracketSection, focus: Signal<Option<Focus>>) 
         BracketPart::Losers => Some(tr.get("bracket-losers")),
         BracketPart::GrandFinal => Some(tr.get("bracket-grand-final")),
     };
-    let id = format!("bracket-{index}");
-    let labelled_by = if heading.is_some() {
-        id.clone()
-    } else {
-        "bracket".to_owned()
-    };
     let nested = heading.is_some();
     rsx! {
         div { class: "bracket-section",
             if let Some(heading) = heading {
-                h3 { id, {heading} }
+                h3 { id: "bracket-{index}", {heading} }
             }
-            // scrolls sideways if its columns do not fit
-            div {
-                class: "scroll",
-                role: "group",
-                tabindex: "0",
-                aria_labelledby: labelled_by,
-                div { class: "bracket",
-                    for (index , column) in section.columns.into_iter().enumerate() {
-                        Column {
-                            key: "{index}",
-                            column,
-                            nested,
-                            focus,
-                        }
+            div { class: "bracket",
+                for (index , column) in section.columns.into_iter().enumerate() {
+                    Column {
+                        key: "{index}",
+                        column,
+                        nested,
+                        focus,
                     }
                 }
             }
@@ -180,8 +180,14 @@ fn Pairing(pairing: BracketPairing, focus: Signal<Option<Focus>>) -> Element {
     };
     let line_in = if pairing.line_in { "line-in" } else { "" };
     let result = pairing.r#match.as_ref().and_then(|row| row.result);
-    // a match with a result recedes, as in the list of matches
-    let finished = if result.is_some() { "finished" } else { "" };
+    // a match with a result recedes, as in the list of matches, and so does a pairing decided by a
+    // bye, which has nothing to play
+    let bye = pairing.r#match.is_none() && pairing.sides.contains(&BracketEntry::Bye);
+    let finished = if result.is_some() || bye {
+        "finished"
+    } else {
+        ""
+    };
     // only reported by the tab that changes the competition
     let to_report = (result.is_none() && ctx.changes())
         .then(|| pairing.r#match.clone())
@@ -190,10 +196,13 @@ fn Pairing(pairing: BracketPairing, focus: Signal<Option<Focus>>) -> Element {
         let entry = &pairing.sides[side];
         let class = if result == Some([MatchResult::AWins, MatchResult::BWins][side]) {
             "winner"
-        } else if matches!(entry, BracketEntry::Team(_)) {
-            ""
         } else {
-            "pending"
+            match entry {
+                BracketEntry::Team(_) => "",
+                // nobody, rather than somebody to come
+                BracketEntry::Bye => "nobody",
+                BracketEntry::WinnerOf(_) | BracketEntry::LoserOf(_) => "pending",
+            }
         };
         rsx! {
             span { class: "side {class}", {entry_text(&tr, entry)} }
@@ -207,6 +216,9 @@ fn Pairing(pairing: BracketPairing, focus: Signal<Option<Focus>>) -> Element {
                         span { class: "visually-hidden", {tr.get("match")} }
                         " {row.number}"
                     }
+                } else {
+                    // empty, so that the names line up with those of the numbered pairings
+                    span { class: "number", aria_hidden: "true" }
                 }
                 if let Some(row) = to_report {
                     WinButtons { row, focus }
