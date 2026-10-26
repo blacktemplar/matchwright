@@ -807,20 +807,45 @@ dl.summary dl.summary {
 
 /* The matches */
 
-/* closed, one quiet line, since most results are reported by the buttons of the matches */
-.result-entry summary {
-  display: inline-flex;
-  min-height: var(--control);
-  align-items: center;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.result-entry form {
+/* the heading of a card with a control on its right, e.g. the one showing the entry of results */
+.card-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: var(--space-3);
+  gap: var(--space-2);
+}
+
+.card-heading h2 {
+  margin: 0;
+}
+
+/* quiet while the entry of results is hidden, since most results are reported by the buttons of
+ * the matches; while it is shown, tinted and bold as what is chosen, its chevron turned up */
+#result-entry-toggle {
+  color: var(--text-muted);
+}
+
+#result-entry-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#result-entry-toggle .icon {
+  transition: transform 100ms ease-out;
+}
+
+#result-entry-toggle[aria-expanded="true"] .icon {
+  transform: rotate(180deg);
+}
+
+.result-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
 }
 

@@ -68,6 +68,8 @@ pub fn Rounds() -> Element {
     let mut chosen = use_signal(|| None::<Shown>);
     let focus = use_signal(|| None::<Focus>);
     let on_heading_mounted = use_focus(focus, Focus::Heading);
+    // whether the entry of results typed in is shown
+    let typing = use_signal(result_entry_open);
     // what the operator typed to find entrants, kept while the list shown changes
     let mut searched = use_signal(String::new);
     let search = NameSearch::new(&searched.read());
@@ -140,8 +142,13 @@ pub fn Rounds() -> Element {
     let tr = ctx.translator.read();
     rsx! {
         section { class: "card", aria_labelledby: "matches",
-            h2 { id: "matches", {tr.get("matches")} }
-            ResultEntry { draws }
+            div { class: "card-heading",
+                h2 { id: "matches", {tr.get("matches")} }
+                ResultEntryToggle { open: typing }
+            }
+            if typing() {
+                ResultEntry { draws }
+            }
             nav { class: "toolbar", aria_label: tr.get("rounds"),
                 div { class: "segmented",
                     button {
@@ -268,51 +275,61 @@ fn current(rounds: &[RoundSummary]) -> Option<NonZeroU32> {
         .map(|summary| summary.round)
 }
 
-/// Reports a result typed in as the number of its match and the result, e.g. "3 1", in a section
-/// that is closed until the operator opens it, as the browser remembers.
+/// The button in the heading of the matches showing the entry of results typed in, or hiding it
+/// again, which shows whether it is open; the browser remembers what the operator left it at.
+#[component]
+fn ResultEntryToggle(open: Signal<bool>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let tr = ctx.translator.read();
+    rsx! {
+        button {
+            id: "result-entry-toggle",
+            class: "quiet small",
+            r#type: "button",
+            aria_expanded: open(),
+            onclick: move |_| {
+                let opened = !open();
+                open.set(opened);
+                remember_result_entry_open(opened);
+            },
+            {tr.get("type-results")}
+            icons::ChevronDown {}
+        }
+    }
+}
+
+/// Reports a result typed in as the number of its match and the result, e.g. "3 1".
 #[component]
 fn ResultEntry(draws: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let mut entry = use_signal(String::new);
-    let mut open = use_signal(result_entry_open);
     // only reported by the tab that changes the competition
     let disabled = !ctx.changes();
     let tr = ctx.translator.read();
     rsx! {
-        details { class: "result-entry", open: open(),
-            // opened and closed by the page rather than the browser, so that it stays as rendered
-            summary {
-                onclick: move |event| {
-                    event.prevent_default();
-                    let opened = !open();
-                    open.set(opened);
-                    remember_result_entry_open(opened);
-                },
-                {tr.get("type-results")}
+        form {
+            class: "result-entry",
+            onsubmit: move |event| {
+                event.prevent_default();
+                let entered = entry.peek().clone();
+                if let Some(reported) = ctx.act(|session| session.report_entered(&entered)) {
+                    ctx.announce(Announcement::Reported(reported));
+                    entry.set(String::new());
+                }
+            },
+            label { r#for: "result-entry", class: "visually-hidden", {tr.get("enter-result")} }
+            input {
+                id: "result-entry",
+                value: "{entry}",
+                autocomplete: "off",
+                aria_describedby: "result-entry-hint",
+                disabled,
+                oninput: move |event| entry.set(event.value()),
             }
-            form {
-                onsubmit: move |event| {
-                    event.prevent_default();
-                    let entered = entry.peek().clone();
-                    if let Some(reported) = ctx.act(|session| session.report_entered(&entered)) {
-                        ctx.announce(Announcement::Reported(reported));
-                        entry.set(String::new());
-                    }
-                },
-                label { r#for: "result-entry", class: "visually-hidden", {tr.get("enter-result")} }
-                input {
-                    id: "result-entry",
-                    value: "{entry}",
-                    autocomplete: "off",
-                    aria_describedby: "result-entry-hint",
-                    disabled,
-                    oninput: move |event| entry.set(event.value()),
-                }
-                " "
-                button { r#type: "submit", disabled, {tr.get("report")} }
-                p { id: "result-entry-hint", class: "hint",
-                    {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
-                }
+            " "
+            button { r#type: "submit", disabled, {tr.get("report")} }
+            p { id: "result-entry-hint", class: "hint",
+                {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
             }
         }
     }

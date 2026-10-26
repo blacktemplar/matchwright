@@ -11,6 +11,14 @@ pub fn ChevronLeft() -> Element {
     }
 }
 
+/// What opens below, or closes again.
+#[component]
+pub fn ChevronDown() -> Element {
+    rsx! {
+        Icon { path { d: "m6 9 6 6 6-6" } }
+    }
+}
+
 /// The one after.
 #[component]
 pub fn ChevronRight() -> Element {
