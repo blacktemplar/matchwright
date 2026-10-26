@@ -10,7 +10,7 @@ use std::{num::NonZeroU32, rc::Rc};
 use dioxus::prelude::*;
 use tournament_app::{
     i18n::PluginText,
-    view::{MatchRow, RoundSummary},
+    view::{MatchRow, NameSearch, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
 
@@ -65,6 +65,9 @@ pub fn Rounds() -> Element {
     let mut chosen = use_signal(|| None::<Shown>);
     let focus = use_signal(|| None::<Focus>);
     let on_heading_mounted = use_focus(focus, Focus::Heading);
+    // what the operator typed to find entrants, kept while the list shown changes
+    let mut searched = use_signal(String::new);
+    let search = NameSearch::new(&searched.read());
     let session = ctx.session.read();
     let rounds = session.rounds();
     let Some(current) = current(&rounds) else {
@@ -86,6 +89,15 @@ pub fn Rounds() -> Element {
             .unwrap_or_default(),
     };
     drop(session);
+    let listed = matches.len();
+    let matches: Vec<_> = matches
+        .into_iter()
+        .filter(|row| search.finds_in(row))
+        .collect();
+    let byes: Vec<_> = byes
+        .into_iter()
+        .filter(|bye| bye.entrants.iter().any(|entrant| search.finds(entrant)))
+        .collect();
     let with_round = shown == Shown::Playable;
     let with_stage = matches.iter().any(|row| row.stage.is_some());
     // after the result of a match is reported by its buttons, the focus moves on to the next match
@@ -187,6 +199,17 @@ pub fn Rounds() -> Element {
                     }
                 }
             }
+            div { class: "row search",
+                label { r#for: "find-entrant", class: "visually-hidden", {tr.get("find-entrant")} }
+                input {
+                    id: "find-entrant",
+                    r#type: "search",
+                    value: "{searched}",
+                    autocomplete: "off",
+                    placeholder: tr.get("find-entrant"),
+                    oninput: move |event| searched.set(event.value()),
+                }
+            }
             // focused once no match shown is left without a result, so that the focus is not lost
             h3 { tabindex: "-1", onmounted: on_heading_mounted,
                 match shown {
@@ -195,7 +218,9 @@ pub fn Rounds() -> Element {
                 }
             }
             if rows.is_empty() {
-                if shown == Shown::Playable {
+                if listed > 0 {
+                    p { class: "empty", {t!(tr, "nothing-found", text = searched.read().trim())} }
+                } else if shown == Shown::Playable {
                     p { class: "empty", {tr.get("nothing-playable")} }
                 }
             } else {

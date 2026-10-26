@@ -17,7 +17,10 @@ use tournament_engine::plugins::{
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use super::*;
-use crate::storage::{MemoryStorage, Stored};
+use crate::{
+    storage::{MemoryStorage, Stored},
+    view::NameSearch,
+};
 
 /// The output of `future`, which a [`MemoryStorage`] finishes right away.
 #[track_caller]
@@ -618,6 +621,46 @@ fn a_match_can_be_played_once_its_entrants_played_the_rounds_before() {
 
     assert_eq!(numbers(&session), [3, 4]);
     assert!(Given::new().added().playable().is_empty());
+}
+
+#[test]
+fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_in_any_case() {
+    let session = Given::new()
+        .entrants(&["Alice", "Bob", "Carol", "Maximilian Müller"])
+        .started();
+    let found = |text: &str| -> Vec<usize> {
+        let search = NameSearch::new(text);
+        matches(&session)
+            .iter()
+            .filter(|row| search.finds_in(row))
+            .map(|row| row.number)
+            .collect()
+    };
+    let of_max: Vec<usize> = matches(&session)
+        .iter()
+        .filter(|row| {
+            [&row.a, &row.b]
+                .iter()
+                .any(|side| names(side).contains(&"Maximilian Müller"))
+        })
+        .map(|row| row.number)
+        .collect();
+
+    assert_eq!(of_max.len(), 3);
+    assert_eq!(found("MÜLL"), of_max);
+    assert_eq!(found(" "), [1, 2, 3, 4, 5, 6]);
+    assert!(found("zed").is_empty());
+}
+
+#[test]
+fn a_search_finds_an_entrant_without_a_name_only_when_nothing_is_typed() {
+    let nameless = EntrantRow {
+        id: EntrantId::new(Uuid::nil()),
+        name: None,
+    };
+
+    assert!(NameSearch::new("").finds(&nameless));
+    assert!(!NameSearch::new("a").finds(&nameless));
 }
 
 #[test]

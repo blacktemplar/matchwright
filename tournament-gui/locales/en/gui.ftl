@@ -98,6 +98,9 @@ by-round = By round
 previous-round = Previous round
 next-round = Next round
 nothing-playable = No match can be played now.
+# a field showing only the matches of entrants whose name contains what is typed
+find-entrant = Find an entrant
+nothing-found = No match here has an entrant whose name contains “{ $text }”.
 # said by screen readers before the number of a match, and between its sides
 match = Match
 versus = against

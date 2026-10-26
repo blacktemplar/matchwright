@@ -377,6 +377,17 @@ impl Gui {
             .await
     }
 
+    /// Types `text` into the field finding entrants, in place of what was typed before, which shows
+    /// only the matches of those whose name contains it.
+    pub async fn find_entrant(&self, text: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id("find-entrant")).first().await?;
+        input.send_keys(Key::Control + "a").await?;
+        input.send_keys(Key::Backspace).await?;
+        input.send_keys(text).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
     /// Shows the matches of the round whose option reads `text`, e.g. `"Round 2 (2 open)"`, while
     /// the matches are shown by round.
     pub async fn choose_round(&self, text: &str) -> WebDriverResult<()> {

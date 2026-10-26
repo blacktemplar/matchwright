@@ -1642,6 +1642,14 @@ tested natively and in wasm, and knows no plugin.
   error. It goes with the next action.
 - **The rows carry what the announcements say**: `Reported` and `Reopened`
   hold the row of the match, with the result reported or the one it had.
+- **Finding an entrant** (2026-10-26): a field above the list shows only the
+  matches (and byes) of entrants whose name contains what is typed, whatever
+  the case (`view::NameSearch`), within the list shown, kept while another is
+  chosen. It answers "whom does Carol play, and can she now?" among 10–20
+  matches. A reported match stays shown, since its names still match. The
+  standings are not filtered: they are read by rank, and a filtered table
+  hides the rows around the entrant. Accents count (`muller` does not find
+  `Müller`) until folding them is worth a dependency.
 
 #### Alternatives
 

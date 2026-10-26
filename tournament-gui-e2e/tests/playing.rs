@@ -1,4 +1,7 @@
-use tournament_gui_e2e::{Gui, Key, run_in_new_competition, thirtyfour::error::WebDriverResult};
+use tournament_gui_e2e::{
+    Gui, Key, run_in_new_competition,
+    thirtyfour::{By, error::WebDriverResult},
+};
 
 /// Enters `names` and starts a round robin of them.
 async fn start_round_robin(gui: &Gui, names: &[&str]) -> WebDriverResult<()> {
@@ -86,6 +89,28 @@ async fn the_matches_that_can_be_played_now_are_listed() {
 
         gui.expect_matches(&["3", "4"]).await?;
         gui.page.check_accessibility().await
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_matches_shown_are_those_of_the_entrants_found() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+
+        gui.find_entrant("carol").await?;
+
+        gui.expect_matches(&[]).await?;
+        gui.page
+            .expect_texts(
+                By::Css(".empty"),
+                &["No match here has an entrant whose name contains “carol”."],
+            )
+            .await?;
+        gui.page.check_accessibility().await?;
+        gui.find_entrant("ALI").await?;
+        gui.expect_matches(&["1"]).await
     })
     .await;
 }

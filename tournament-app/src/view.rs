@@ -59,6 +59,56 @@ pub struct MatchRow {
     pub result: Option<MatchResult>,
 }
 
+/// What an operator typed to find entrants by their name: it finds those whose name contains it,
+/// whatever the case of either. Nothing typed, or only spaces, finds every entrant, and so does
+/// every match.
+///
+/// ```
+/// use tournament_app::view::NameSearch;
+///
+/// assert!(NameSearch::new(" ali").finds_name("Alice"));
+/// assert!(!NameSearch::new("bob").finds_name("Alice"));
+/// assert!(NameSearch::new("").finds_name("Alice"));
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct NameSearch {
+    /// Trimmed and lower case.
+    text: String,
+}
+
+impl NameSearch {
+    pub fn new(text: &str) -> Self {
+        Self {
+            text: text.trim().to_lowercase(),
+        }
+    }
+
+    /// Whether nothing was typed but spaces, which finds everything.
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    pub fn finds_name(&self, name: &str) -> bool {
+        name.to_lowercase().contains(&self.text)
+    }
+
+    /// Whether it finds `entrant`; one without a name only when nothing was typed.
+    pub fn finds(&self, entrant: &EntrantRow) -> bool {
+        match &entrant.name {
+            Some(name) => self.finds_name(name),
+            None => self.is_empty(),
+        }
+    }
+
+    /// Whether it finds an entrant of either side of the match `row`.
+    pub fn finds_in(&self, row: &MatchRow) -> bool {
+        row.a
+            .iter()
+            .chain(&row.b)
+            .any(|entrant| self.finds(entrant))
+    }
+}
+
 /// A team that sits out a round.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ByeRow {
