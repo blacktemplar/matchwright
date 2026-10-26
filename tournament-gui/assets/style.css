@@ -577,14 +577,9 @@ footer select {
   font-weight: 600;
 }
 
-.description,
 .hint {
   color: var(--text-muted);
   font-size: 0.9em;
-}
-
-.description {
-  margin: var(--space-1) 0;
 }
 
 .plugin-fields,

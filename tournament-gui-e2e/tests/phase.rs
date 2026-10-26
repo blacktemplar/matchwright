@@ -135,6 +135,9 @@ async fn what_is_said_about_a_plugin_shows_on_hover_and_after_a_click() {
         // a criterion has the description of its metric
         gui.hover_labelled("About more points").await?;
         gui.expect_toggletip(Some(POINTS)).await?;
+        gui.hover_labelled("About format").await?;
+        gui.expect_toggletip(Some("how the matches are scheduled"))
+            .await?;
         gui.click_labelled("About points").await?;
         gui.expect_toggletip(Some(POINTS)).await?;
         gui.page.check_accessibility().await?;

@@ -163,9 +163,11 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
     let issues = rsx! {
         Issues { id: "{id}-issues", issues: field.issues.clone() }
     };
-    let description = rsx! {
-        if let Some(description) = description {
-            p { class: "description", id: "{id}-description", "{description}" }
+    // what is said about the field, next to its label
+    let about = rsx! {
+        if let Some(text) = description {
+            " "
+            Toggletip { id: "{id}-description", subject: tr.field_label(&field), text }
         }
     };
     match field.input.clone() {
@@ -182,7 +184,7 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                     }
                     " {label}"
                 }
-                {description}
+                {about}
                 {issues}
             }
         },
@@ -201,7 +203,7 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                     max: range.max().to_string(),
                     step: range.multiple_of().to_string(),
                     hint: tr.text(&hint),
-                    {description}
+                    about,
                     {issues}
                 }
             }
@@ -223,14 +225,16 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                     min: range.min().map(|min| min.to_string()).unwrap_or_default(),
                     max: range.max().map(|max| max.to_string()).unwrap_or_default(),
                     hint: tr.text(&hint),
-                    {description}
+                    about,
                     {issues}
                 }
             }
         }
         Input::Optional { answered, inner } => {
+            // described once, here
             let inner = FormField {
                 input: *inner,
+                description: None,
                 issues: Vec::new(),
                 ..field.clone()
             };
@@ -247,17 +251,16 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                         }
                         " {label}"
                     }
+                    {about}
                     if answered {
                         Field { form, field: inner, disabled }
                     }
-                    {description}
                     {issues}
                 }
             }
         }
         Input::Plugin(plugin) => rsx! {
-            PluginField { form, path, id, label, plugin, disabled,
-                {description}
+            PluginField { form, path, id, label, plugin, disabled, about,
                 {issues}
             }
         },
@@ -271,13 +274,7 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                 aria_describedby: "{described_by}",
                 div { class: "list-heading",
                     span { class: "label", id: "{id}-label", "{label}" }
-                    if let Some(text) = tr.field_description(&field) {
-                        Toggletip {
-                            id: "{id}-description",
-                            subject: tr.field_label(&field),
-                            text,
-                        }
-                    }
+                    {about}
                 }
                 if list.ordered {
                     OrderedList { form, path, id: id.clone(), list, disabled }
@@ -290,7 +287,8 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
     }
 }
 
-/// A field taking a number, entered as text and taken once the operator leaves the field.
+/// A field taking a number, entered as text and taken once the operator leaves the field, with
+/// what is said about it, `about`, next to its label.
 #[component]
 fn NumberField(
     form: Signal<PhaseForm>,
@@ -303,11 +301,13 @@ fn NumberField(
     step: String,
     hint: String,
     disabled: bool,
+    about: Element,
     children: Element,
 ) -> Element {
     rsx! {
         div { class: "field",
             label { r#for: "{id}", "{label}" }
+            {about}
             " "
             input {
                 r#type: "number",
@@ -328,7 +328,8 @@ fn NumberField(
     }
 }
 
-/// A field taking one plugin, chosen from its options, followed by the fields of the plugin.
+/// A field taking one plugin, chosen from its options, followed by the fields of the plugin, with
+/// what is said about it, `about`, next to its label.
 #[component]
 fn PluginField(
     form: Signal<PhaseForm>,
@@ -337,6 +338,7 @@ fn PluginField(
     label: String,
     plugin: PluginInput,
     disabled: bool,
+    about: Element,
     children: Element,
 ) -> Element {
     let ctx = use_context::<Ctx>();
@@ -350,6 +352,7 @@ fn PluginField(
     rsx! {
         div { class: "field",
             span { class: "label", id: "{id}-label", "{label}" }
+            {about}
             " "
             Select {
                 id: "{id}",
