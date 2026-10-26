@@ -22,6 +22,15 @@ error-not-exported = die Datei konnte nicht erstellt werden: { $reason }
 
 competitions = Turniere
 no-competitions = In diesem Browser ist noch kein Turnier gespeichert.
+progress-setup = Nicht gestartet · { $entrants ->
+        [one] ein Teilnehmer
+       *[other] { $entrants } Teilnehmer
+    }
+progress-playing = Runde { $round } · { $open ->
+        [one] ein Spiel offen
+       *[other] { $open } Spiele offen
+    }
+progress-finished = Alle Spiele gespielt
 export = Exportieren
 export-competition = { $name } exportieren
 new-competition = Neues Turnier

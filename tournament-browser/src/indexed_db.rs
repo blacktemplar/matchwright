@@ -16,7 +16,7 @@ use idb::{
 use js_sys::Array;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tournament_app::storage::{Changes, CompetitionKey, Listing, Storage, Stored};
+use tournament_app::storage::{Changes, CompetitionKey, Listing, Progress, Storage, Stored};
 use wasm_bindgen::JsValue;
 
 /// The version of the layout of the database, raised with every change of its object stores.
@@ -53,6 +53,9 @@ struct ListingRecord {
     name: String,
     /// How many competitions were stored before this one.
     number: u32,
+    /// Absent in the records stored before it was.
+    #[serde(default)]
+    progress: Option<Progress>,
 }
 
 impl IndexedDb {
@@ -95,6 +98,7 @@ impl Storage for IndexedDb {
             .map(|listing| Listing {
                 key: listing.key,
                 name: listing.name,
+                progress: listing.progress,
             })
             .collect())
     }
@@ -177,15 +181,23 @@ async fn write(database: &Database, changes: &Changes) -> Result<(), IndexedDbEr
             stored,
         });
     }
-    if listing.is_none() {
+    let listing = match listing {
+        None => Some(ListingRecord {
+            key,
+            name: changes.listing().name.clone(),
+            number,
+            progress: changes.listing().progress,
+        }),
+        Some(stored_listing) if changes.reach_end(stored) => Some(ListingRecord {
+            progress: changes.listing().progress,
+            ..parse(&stored_listing)?
+        }),
+        Some(_) => None,
+    };
+    if let Some(listing) = listing {
         put(
             &competitions,
-            &serde_json::to_string(&ListingRecord {
-                key,
-                name: changes.listing().name.clone(),
-                number,
-            })
-            .expect("a listing serializes as JSON"),
+            &serde_json::to_string(&listing).expect("a listing serializes as JSON"),
             &competition(key),
         )?;
     }

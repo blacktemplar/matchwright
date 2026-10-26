@@ -91,6 +91,8 @@ async fn competitions_are_listed_in_the_order_they_were_first_saved() {
         .map(|session| Listing {
             key: session.key(),
             name: session.name().to_owned(),
+            // that of league updated by its second save
+            progress: Some(session.progress()),
         })
         .collect();
     assert_eq!(listed, expected);
@@ -111,6 +113,8 @@ async fn changes_written_out_of_order_are_all_saved() {
 
     let loaded = Session::load(&storage, session.key()).await.unwrap();
     assert_eq!(names(&loaded), names(&session));
+    let listed = storage.list().await.unwrap();
+    assert_eq!(listed[0].progress, Some(session.progress()));
 }
 
 #[wasm_bindgen_test]

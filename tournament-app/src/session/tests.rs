@@ -18,7 +18,7 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use super::*;
 use crate::{
-    storage::{MemoryStorage, Stored},
+    storage::{MemoryStorage, Progress, Stored},
     view::NameSearch,
 };
 
@@ -652,6 +652,57 @@ fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_whatever_the_cas
     assert!(found("zed").is_empty());
 }
 
+/// A round robin of four plays three rounds of two matches.
+#[test]
+fn the_progress_is_the_first_round_with_a_match_to_play() {
+    let mut session = Given::new().added();
+    assert_eq!(session.progress(), Progress::Setup { entrants: 4 });
+    session.start().unwrap();
+    assert_eq!(
+        session.progress(),
+        Progress::Playing {
+            round: round(1),
+            open: 2
+        }
+    );
+
+    for number in 1..=2 {
+        session
+            .report(numbered(&session, number), MatchResult::Draw)
+            .unwrap();
+    }
+    assert_eq!(
+        session.progress(),
+        Progress::Playing {
+            round: round(2),
+            open: 2
+        }
+    );
+    for number in 3..=6 {
+        session
+            .report(numbered(&session, number), MatchResult::Draw)
+            .unwrap();
+    }
+
+    assert_eq!(session.progress(), Progress::Finished);
+}
+
+#[test]
+fn the_listing_keeps_the_progress_of_the_latest_changes_written_out_of_order() {
+    let storage = MemoryStorage::default();
+    let mut session = Session::new("cup");
+    session.add_entrant("Alice").unwrap();
+    let older = session.unsaved_changes();
+    session.add_entrant("Bob").unwrap();
+    let newer = session.unsaved_changes();
+
+    now(storage.write(&newer)).unwrap();
+    now(storage.write(&older)).unwrap();
+
+    let listed = now(storage.list()).unwrap();
+    assert_eq!(listed[0].progress, Some(Progress::Setup { entrants: 2 }));
+}
+
 #[test]
 fn a_search_finds_an_entrant_without_a_name_only_when_nothing_is_typed() {
     let nameless = EntrantRow {
@@ -824,6 +875,7 @@ fn a_saved_competition_loads_as_it_was_saved_without_anything_to_undo() {
         [Listing {
             key: session.key(),
             name: "cup".to_owned(),
+            progress: Some(session.progress()),
         }]
     );
 }
@@ -1109,6 +1161,7 @@ fn what_does_not_replay_into_a_competition_is_not_loaded() {
             listing: Listing {
                 key,
                 name: "cup".to_owned(),
+                progress: None,
             },
             first_entry: 0,
             entries: entries.iter().map(|entry| (*entry).to_owned()).collect(),

@@ -38,7 +38,7 @@ use crate::{
     file::{self, File},
     form::PhaseForm,
     people::{People, Person},
-    storage::{Changes, CompetitionKey, Listing, Storage, Stored},
+    storage::{Changes, CompetitionKey, Listing, Progress, Storage, Stored},
     view::{
         Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
         RoundSummary, StageName, StandingRow, Standings,
@@ -218,6 +218,7 @@ impl Session {
             listing: Listing {
                 key: self.key,
                 name: self.name.clone(),
+                progress: Some(self.progress()),
             },
             first_entry: self.saved_entries,
             entries: self.machine.log()[self.saved_entries..]
@@ -536,6 +537,22 @@ impl Session {
             }
         })?;
         Ok(())
+    }
+
+    /// How far the competition is, as its [`Listing`] keeps it.
+    pub fn progress(&self) -> Progress {
+        if !self.competition().is_started() {
+            return Progress::Setup {
+                entrants: self.competition().entrants().len(),
+            };
+        }
+        self.rounds()
+            .into_iter()
+            .find(|summary| summary.open > 0)
+            .map_or(Progress::Finished, |summary| Progress::Playing {
+                round: summary.round,
+                open: summary.open,
+            })
     }
 
     /// The rounds the phase has scheduled matches or byes in, in order; none before the start.

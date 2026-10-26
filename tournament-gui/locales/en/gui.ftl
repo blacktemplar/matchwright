@@ -31,6 +31,17 @@ error-not-exported = the file could not be made: { $reason }
 
 competitions = Competitions
 no-competitions = No competition is stored in this browser yet.
+# how far a competition of the list is
+progress-setup = Not started · { $entrants ->
+        [one] one entrant
+       *[other] { $entrants } entrants
+    }
+# $round: the first round with a match to play; $open: its matches to play
+progress-playing = Round { $round } · { $open ->
+        [one] one match to play
+       *[other] { $open } matches to play
+    }
+progress-finished = Every match played
 export = Export
 export-competition = Export { $name }
 new-competition = New competition

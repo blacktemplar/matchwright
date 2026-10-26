@@ -10,6 +10,7 @@ use std::{
     convert::Infallible,
     error::Error,
     fmt::{self, Display},
+    num::NonZeroU32,
     rc::Rc,
 };
 
@@ -44,6 +45,24 @@ pub struct Listing {
     pub key: CompetitionKey,
     /// The name the operator gave the competition.
     pub name: String,
+    /// How far it is, as of its last save; `None` if it was stored before the progress was.
+    pub progress: Option<Progress>,
+}
+
+/// How far a competition is, as a list of competitions shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Progress {
+    /// Not started yet.
+    Setup { entrants: usize },
+    /// Started, with matches without a result.
+    Playing {
+        /// The first round with a match without a result.
+        round: NonZeroU32,
+        /// The matches of that round without a result.
+        open: usize,
+    },
+    /// Started, and every match scheduled has a result.
+    Finished,
 }
 
 /// What is stored of a competition, as [`Storage::read`] returns it.
@@ -69,9 +88,18 @@ pub struct Changes {
 }
 
 impl Changes {
-    /// The competition the changes are of. Writing them creates its listing if there is none yet.
+    /// The competition the changes are of. Writing them creates its listing if there is none yet,
+    /// and otherwise updates its [progress](Listing::progress) if they [reach the end of the
+    /// log](Self::reach_end).
     pub fn listing(&self) -> &Listing {
         &self.listing
+    }
+
+    /// Whether these are the latest changes of a log of which `stored` entries are stored, i.e.
+    /// their entries reach at least as far, so that the progress of their listing is not older than
+    /// what is stored. Changes written out of order must not leave the progress of older ones.
+    pub fn reach_end(&self, stored: usize) -> bool {
+        self.first_entry + self.entries.len() >= stored
     }
 
     /// The position in the log of the first of [`Self::entries`], which is at most the number of
@@ -134,6 +162,7 @@ pub struct MemoryStorage(Rc<RefCell<IndexMap<CompetitionKey, Competition>>>);
 #[derive(Debug)]
 struct Competition {
     name: String,
+    progress: Option<Progress>,
     entries: Vec<String>,
     people: IndexMap<EntrantId, String>,
 }
@@ -149,6 +178,7 @@ impl Storage for MemoryStorage {
             .map(|(key, competition)| Listing {
                 key: *key,
                 name: competition.name.clone(),
+                progress: competition.progress,
             })
             .collect())
     }
@@ -177,6 +207,7 @@ impl Storage for MemoryStorage {
             .entry(changes.listing.key)
             .or_insert_with(|| Competition {
                 name: changes.listing.name.clone(),
+                progress: None,
                 entries: Vec::new(),
                 people: IndexMap::new(),
             });
@@ -184,6 +215,9 @@ impl Storage for MemoryStorage {
             changes.first_entry <= competition.entries.len(),
             "the changes must continue the stored log"
         );
+        if changes.reach_end(competition.entries.len()) {
+            competition.progress = changes.listing.progress;
+        }
         // older changes written after newer ones must not cut the log short
         for (position, entry) in (changes.first_entry..).zip(&changes.entries) {
             match competition.entries.get_mut(position) {

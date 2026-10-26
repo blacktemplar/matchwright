@@ -495,13 +495,25 @@ footer select {
   border-bottom: 0;
 }
 
+/* the name, and below it how far the competition is */
+#competition-list .listing {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 #competition-list .name {
   display: flex;
-  min-height: var(--control);
-  flex: 1;
+  min-height: 2rem;
   align-items: center;
   color: inherit;
   font-weight: 600;
+}
+
+#competition-list .progress {
+  color: var(--text-muted);
+  font-size: 0.9em;
 }
 
 .file-button {

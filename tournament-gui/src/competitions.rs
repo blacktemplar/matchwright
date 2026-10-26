@@ -4,9 +4,9 @@
 use dioxus::{html::FileData, prelude::*};
 use futures_util::StreamExt as _;
 use tournament_app::{
-    i18n::{Message as _, Text},
+    i18n::{Message as _, Text, Translator},
     session::Session,
-    storage::{CompetitionKey, Storage as _},
+    storage::{CompetitionKey, Progress, Storage as _},
 };
 use tournament_browser::channel::Broadcast;
 
@@ -95,7 +95,12 @@ pub fn Competitions() -> Element {
                 ul { id: "competition-list",
                     for listing in listings {
                         li { key: "{listing.key}",
-                            a { class: "name", href: "#{listing.key}", "{listing.name}" }
+                            div { class: "listing",
+                                a { class: "name", href: "#{listing.key}", "{listing.name}" }
+                                if let Some(progress) = listing.progress {
+                                    span { class: "progress", {progress_text(&tr, progress)} }
+                                }
+                            }
                             button {
                                 class: "small",
                                 aria_label: t!(tr, "export-competition", name = &*listing.name),
@@ -108,6 +113,17 @@ pub fn Competitions() -> Element {
                 }
             }
         }
+    }
+}
+
+/// What the list says of how far a competition is, e.g. "Round 3 · 2 matches open".
+fn progress_text(tr: &Translator, progress: Progress) -> String {
+    match progress {
+        Progress::Setup { entrants } => t!(tr, "progress-setup", entrants = entrants),
+        Progress::Playing { round, open } => {
+            t!(tr, "progress-playing", round = round.get(), open = open)
+        }
+        Progress::Finished => tr.get("progress-finished"),
     }
 }
 

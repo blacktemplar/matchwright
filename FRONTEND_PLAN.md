@@ -218,8 +218,9 @@ events; 20–40 entrants typically. In parts:
    there is room (buttons choosing the column on a narrow screen), a match as a card of two rows
    whose buttons say only "Wins" below each name, names never cut, rounds stepped through by a
    select, the standings scrolling sideways, the language in the footer. The e2e tests run at
-   1280×900. Not done: a status per competition in the list ("Round 3 of 5"), which needs the app
-   crate.
+   1280×900. The list of competitions says how far each is (added 2026-10-26: not started, the
+   round being played and its matches to play, or every match played), kept by the storage with
+   the listing.
 2. **Palette and details** (done 2026-10-26), see DESIGN.md, *Layout*: colour tokens in light and
    dark following the system or chosen in the footer, the accent the navy of the icon, the components' theme mapped onto
    them, hover and chosen states, a finished match receding, an empty list of entrants saying so,

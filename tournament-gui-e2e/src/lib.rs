@@ -117,6 +117,17 @@ impl Gui {
             .await
     }
 
+    /// Waits until the list of competitions says how far each is as `progress`, in the order of
+    /// the list, e.g. `"Round 2 · one match to play"`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_progress(&self, progress: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("#competition-list .progress"), progress)
+            .await
+    }
+
     /// Waits until the competition `name` is open.
     ///
     /// # Panics

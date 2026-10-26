@@ -1421,7 +1421,17 @@ IndexedDB is. Its methods return `impl Future` without `Send`, as the
 browser's futures are not; the trait is therefore not dyn-compatible, and the
 session is not generic over it but takes the storage where it loads or saves.
 It knows records, not competitions: the JSON of each log entry and each
-person, and a listing (key and name) for the list of competitions to open.
+person, and a listing (key, name, and progress) for the list of competitions
+to open.
+
+- **The listing carries the progress** (2026-10-26): not started with how many
+  entrants, the first round with a match to play and how many it has, or every
+  match played (`storage::Progress`, `Session::progress`). The session sets it
+  in the changes of each save, and the storage keeps that of the latest
+  changes: those whose entries reach the end of the stored log
+  (`Changes::reach_end`), so that a write finishing after a later one leaves
+  the newer progress. Listing it otherwise would mean loading and replaying
+  every competition. A listing stored before it has none, until its next save.
 
 - **The session changes in memory first, and storage catches up.** A
   transition is only known to be accepted once applied, and the append-only
@@ -1466,8 +1476,8 @@ own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
   wrapper around it with nothing this needs; `indexed_db_futures` pulls in
   half a dozen macro and helper crates for typed builders; raw web-sys would
   mean writing the request futures by hand.
-- **Three object stores**: `competitions` (the listing: key, name, and how
-  many were stored before, which orders the list), `entries` under
+- **Three object stores**: `competitions` (the listing: key, name, progress,
+  and how many were stored before, which orders the list), `entries` under
   `[competition, position]` and `people` under `[competition, entrant]`, each
   record the JSON text the session hands over. A competition's records are a
   key range (`[key]` to `[key, []]`), and entries come back in the order of

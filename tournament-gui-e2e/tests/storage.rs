@@ -29,6 +29,8 @@ async fn the_competitions_stored_are_listed_to_open() {
         gui.follow("All competitions").await?;
 
         gui.expect_competitions(&["Cup", "League"]).await?;
+        gui.expect_progress(&["Not started · one entrant", "Not started · 0 entrants"])
+            .await?;
         gui.open_competition("Cup").await?;
         gui.expect_entrants(&["Alice"]).await
     })
