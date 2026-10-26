@@ -9,7 +9,7 @@ use std::{num::NonZeroU32, rc::Rc};
 
 use dioxus::prelude::*;
 use tournament_app::{
-    i18n::PluginText,
+    i18n::{PluginText, Text},
     view::{MatchRow, NameSearch, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
@@ -306,6 +306,8 @@ fn ResultEntryToggle(open: Signal<bool>) -> Element {
 fn ResultEntry(draws: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let mut entry = use_signal(String::new);
+    // why what was entered last was not reported, until it is changed
+    let mut error = use_signal(|| None::<Text>);
     // only reported by the tab that changes the competition
     let disabled = !ctx.changes();
     let tr = ctx.translator.read();
@@ -315,9 +317,13 @@ fn ResultEntry(draws: bool) -> Element {
             onsubmit: move |event| {
                 event.prevent_default();
                 let entered = entry.peek().clone();
-                if let Some(reported) = ctx.act(|session| session.report_entered(&entered)) {
-                    ctx.announce(Announcement::Reported(reported));
-                    entry.set(String::new());
+                match ctx.try_act(|session| session.report_entered(&entered)) {
+                    Ok(reported) => {
+                        ctx.announce(Announcement::Reported(reported));
+                        entry.set(String::new());
+                        error.set(None);
+                    }
+                    Err(refused) => error.set(Some(refused)),
                 }
             },
             label { r#for: "result-entry", class: "visually-hidden", {tr.get("enter-result")} }
@@ -325,12 +331,21 @@ fn ResultEntry(draws: bool) -> Element {
                 id: "result-entry",
                 value: "{entry}",
                 autocomplete: "off",
-                aria_describedby: "result-entry-hint",
+                aria_invalid: error.read().is_some(),
+                aria_describedby: "result-entry-error result-entry-hint",
                 disabled,
-                oninput: move |event| entry.set(event.value()),
+                oninput: move |event| {
+                    entry.set(event.value());
+                    error.set(None);
+                },
             }
             " "
             button { r#type: "submit", disabled, {tr.get("report")} }
+            p { id: "result-entry-error", class: "error", role: "alert",
+                if let Some(error) = error() {
+                    {tr.text(&error)}
+                }
+            }
             p { id: "result-entry-hint", class: "hint",
                 {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
             }

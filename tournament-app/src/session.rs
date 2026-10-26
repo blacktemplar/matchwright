@@ -315,7 +315,7 @@ impl Session {
             remove_entrant: !started && !competition.entrants().is_empty(),
             add_phase: !started && !has_phase,
             edit_phase: has_phase,
-            start: !started && has_phase && competition.entrants().len() >= 2,
+            start: self.start_refusal().is_none(),
             report: self.started_phase().is_some_and(|phase| {
                 phase
                     .data()
@@ -325,6 +325,21 @@ impl Session {
             }),
             undo: !self.done.is_empty(),
             redo: !self.undone.is_empty(),
+        }
+    }
+
+    /// Why [`Self::start`] would refuse to start the competition now, or `None` if it would start
+    /// it.
+    pub fn start_refusal(&self) -> Option<StartError> {
+        let competition = self.competition();
+        if competition.is_started() {
+            Some(StartError::Started)
+        } else if competition.phases().is_empty() {
+            Some(NoPhase.into())
+        } else if competition.entrants().len() < 2 {
+            Some(StartError::TooFewEntrants)
+        } else {
+            None
         }
     }
 

@@ -39,8 +39,13 @@ pub fn NewPhase() -> Element {
     };
     rsx! {
         form {
+            id: "new-phase",
             onsubmit: move |event| {
                 event.prevent_default();
+                if !form.read().view().complete {
+                    focus_first_issue("new-phase");
+                    return;
+                }
                 _ = ctx.act(|session| session.add_phase(form.read().draft()));
             },
             Form { form, disabled: !actions.add_phase }
@@ -102,9 +107,15 @@ fn EditPhase() -> Element {
             DialogDescription { {tr.get("edit-phase-description")} }
             if let Some(form) = editing() {
                 form {
+                    id: "edit-phase",
                     class: "dialog-form",
                     onsubmit: move |event| {
                         event.prevent_default();
+                        if !form.read().view().complete {
+                            error.set(None);
+                            focus_first_issue("edit-phase");
+                            return;
+                        }
                         match ctx.try_act(|session| session.edit_phase(form.read().draft())) {
                             Ok(_) => editing.set(None),
                             Err(refused) => error.set(Some(refused)),
@@ -304,6 +315,9 @@ fn NumberField(
     about: Element,
     children: Element,
 ) -> Element {
+    // what is typed, if anything, taken on Enter as well, which does not submit the form
+    let mut typed = use_signal(|| None::<String>);
+    let take = path.clone();
     rsx! {
         div { class: "field",
             label { r#for: "{id}", "{label}" }
@@ -319,6 +333,15 @@ fn NumberField(
                 step,
                 disabled,
                 aria_describedby: "{id}-hint {id}-description {id}-issues",
+                oninput: move |event| typed.set(Some(event.value())),
+                onkeydown: move |event| {
+                    if event.key() == Key::Enter {
+                        event.prevent_default();
+                        if let Some(typed) = typed.take() {
+                            _ = form.write().enter(&take, &typed);
+                        }
+                    }
+                },
                 onchange: move |event| _ = form.write().enter(&path, &event.value()),
             }
             " "
@@ -672,20 +695,33 @@ fn UnorderedList(
 }
 
 /// What is wrong, as a list with the id `id`, which the inputs it is about name as their
-/// description; nothing if nothing is.
+/// description; nothing if nothing is. The list takes the focus from [`focus_first_issue`].
 #[component]
 fn Issues(id: String, issues: Vec<Text>) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
     rsx! {
         if !issues.is_empty() {
-            ul { class: "issues", id: "{id}",
+            ul { class: "issues", id: "{id}", tabindex: "-1",
                 for issue in issues {
                     li { {tr.text(&issue)} }
                 }
             }
         }
     }
+}
+
+/// Moves the focus to the first list of issues in the form whose element has the id `form`,
+/// scrolled into the middle of the screen, so that the operator sees and hears what keeps the
+/// phase from being played.
+fn focus_first_issue(form: &str) {
+    _ = document::eval(&format!(
+        r##"
+        const issue = document.querySelector("#{form} .issues");
+        issue?.scrollIntoView({{ block: "center" }});
+        issue?.focus({{ preventScroll: true }});
+        "##
+    ));
 }
 
 /// How the phase is played, read from the fields of its form.

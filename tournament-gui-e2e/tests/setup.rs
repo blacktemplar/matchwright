@@ -41,6 +41,24 @@ async fn an_entrant_without_a_name_is_refused_with_why() {
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_start_says_why_it_is_not_possible_yet() {
+    run_in_new_competition(async |gui| {
+        gui.add_entrant("Alice").await?;
+        gui.expect_start_refusal(Some("the competition has no phase yet"))
+            .await?;
+        gui.click("Add phase").await?;
+
+        gui.expect_start_refusal(Some("a competition needs at least two entrants"))
+            .await?;
+        gui.expect_disabled("Start").await?;
+        gui.add_entrant("Bob").await?;
+        gui.expect_start_refusal(None).await
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_and_redo_walk_through_the_actions() {
     run_in_new_competition(async |gui| {
         gui.expect_disabled("Undo").await?;

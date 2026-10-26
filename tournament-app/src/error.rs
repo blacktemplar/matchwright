@@ -4,7 +4,7 @@
 //! Each variant is something the operator is told: its `Display` in English, and as a
 //! [`Message`] in the operator's language.
 
-use std::fmt::{self, Display};
+use std::fmt::Display;
 
 use plugin_factory::{config::ConfigError, draft::Issue};
 use thiserror::Error;
@@ -53,8 +53,9 @@ pub enum PhaseDraftError {
 #[derive(Debug, Error)]
 pub enum AddPhaseError {
     /// No phase can be built from the draft: its plugins do not fit together, or miss something no
-    /// implied plugin provides.
-    #[error("the phase cannot be played this way: {}", Issues(.0))]
+    /// implied plugin provides. What is wrong is what the [`FormView`](crate::form::FormView) of
+    /// the draft shows at its fields, in the operator's language.
+    #[error("the phase cannot be played this way; the form shows what to change")]
     Invalid(Vec<Issue>),
     #[error("the competition already has a phase, and only one is supported")]
     PhaseAlreadyAdded,
@@ -76,7 +77,7 @@ pub enum EditPhaseError {
     #[error(transparent)]
     NoPhase(#[from] NoPhase),
     /// No phase can be built from the draft, see [`AddPhaseError::Invalid`].
-    #[error("the phase cannot be played this way: {}", Issues(.0))]
+    #[error("the phase cannot be played this way; the form shows what to change")]
     Invalid(Vec<Issue>),
     /// The edited phase does not fit a change made after the phase was added, e.g. a result
     /// reported for a match the edited format does not schedule.
@@ -216,7 +217,7 @@ impl Message for PhaseDraftError {
 impl Message for AddPhaseError {
     fn text(&self) -> Text {
         match self {
-            Self::Invalid(issues) => invalid_phase(issues),
+            Self::Invalid(_) => Text::new("error-invalid-phase"),
             Self::PhaseAlreadyAdded => Text::new("error-phase-already-added"),
             Self::Started => Text::new("error-phase-added-after-start"),
             Self::Rejected(error) => rejected(error),
@@ -234,7 +235,7 @@ impl Message for EditPhaseError {
     fn text(&self) -> Text {
         match self {
             Self::NoPhase(no_phase) => no_phase.text(),
-            Self::Invalid(issues) => invalid_phase(issues),
+            Self::Invalid(_) => Text::new("error-invalid-phase"),
             Self::DoesNotFit(error) => {
                 Text::new("error-phase-change-does-not-fit").with("reason", error.to_string())
             }
@@ -324,30 +325,9 @@ impl Message for ImportError {
     }
 }
 
-// The engine's own errors and the issues of a draft are passed on in English, since what they say
-// is open-ended.
+// The engine's own errors are passed on in English, since what they say is open-ended.
 
 /// The engine refused an action for a reason this crate does not know.
 fn rejected(error: &TransitionError) -> Text {
     Text::new("error-rejected").with("reason", error.to_string())
-}
-
-/// No phase can be built from a draft.
-fn invalid_phase(issues: &[Issue]) -> Text {
-    Text::new("error-invalid-phase").with("issues", Issues(issues).to_string())
-}
-
-/// Lists issues of a draft in one line.
-struct Issues<'a>(&'a [Issue]);
-
-impl Display for Issues<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, issue) in self.0.iter().enumerate() {
-            if index > 0 {
-                f.write_str("; ")?;
-            }
-            issue.fmt(f)?;
-        }
-        Ok(())
-    }
 }

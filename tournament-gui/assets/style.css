@@ -887,9 +887,15 @@ ul.summary-items {
   flex: 1 1 8rem;
 }
 
-.result-entry .hint {
+.result-entry .hint,
+.result-entry .error[role="alert"] {
   width: 100%;
   margin: 0;
+}
+
+/* no room, and no gap, while it says nothing */
+.result-entry .error[role="alert"]:empty {
+  display: contents;
 }
 
 .toolbar {

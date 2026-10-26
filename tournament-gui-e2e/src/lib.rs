@@ -280,6 +280,16 @@ impl Gui {
         Ok(())
     }
 
+    /// Types `text` into the field at `path` of the form of the phase in place of what it shows,
+    /// and stays there, e.g. to press Enter next.
+    pub async fn type_into(&self, path: &str, text: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id(field_id(path))).first().await?;
+        input.clear().await?;
+        input.send_keys(text).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
     /// Checks or unchecks the checkbox labelled `label`, e.g. a plugin of the metrics.
     pub async fn toggle(&self, label: &str) -> WebDriverResult<()> {
         self.driver
@@ -522,7 +532,39 @@ impl Gui {
     /// Panics if it does not in time, with what it shows instead.
     pub async fn expect_error(&self, text: &str) -> WebDriverResult<()> {
         self.page
-            .expect_texts(By::Css("[role=alert]"), &[text])
+            .expect_texts(By::Css("[role=alert]:not(:empty)"), &[text])
+            .await
+    }
+
+    /// Waits until the screen shows no refusal.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it shows instead.
+    pub async fn expect_no_error(&self) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("[role=alert]:not(:empty)"), &[])
+            .await
+    }
+
+    /// Waits until the entry of results shows why what was typed in was not reported, `text`,
+    /// below its field.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it shows instead.
+    pub async fn expect_result_entry_error(&self, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".result-entry [role=alert]"), &[text])
+            .await
+    }
+
+    /// Waits until the start says why the competition cannot start, `text`, or says nothing for
+    /// `None`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_start_refusal(&self, text: Option<&str>) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Id("start-refusal"), text.as_slice())
             .await
     }
 

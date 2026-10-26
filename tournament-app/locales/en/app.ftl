@@ -9,8 +9,7 @@ error-entrant-removed-after-start = the competition has started, so no entrant c
 error-unknown-format = there is no format "{ $format }"
 # $reason: in English, from the format's code
 error-format-misconfigured = { $reason }
-# $issues: in English
-error-invalid-phase = the phase cannot be played this way: { $issues }
+error-invalid-phase = the phase cannot be played this way; the form shows what to change
 error-phase-already-added = the competition already has a phase, and only one is supported
 error-phase-added-after-start = the competition has started, so no phase can be added anymore
 error-no-phase = the competition has no phase yet

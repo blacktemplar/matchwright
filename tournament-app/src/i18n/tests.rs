@@ -21,7 +21,8 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use super::*;
 use crate::error::{
-    AddEntrantError, NoPhase, NothingToUndo, ReportEnteredError, ReportError, UndoReportError,
+    AddEntrantError, AddPhaseError, NoPhase, NothingToUndo, ReportEnteredError, ReportError,
+    StartError, UndoReportError,
 };
 
 #[test]
@@ -118,6 +119,8 @@ fn an_error_says_in_english_what_its_display_says() {
         both(AddEntrantError::EmptyName),
         both(AddEntrantError::DuplicateName("Alice".to_owned())),
         both(NoPhase),
+        both(AddPhaseError::Invalid(Vec::new())),
+        both(StartError::TooFewEntrants),
         both(ReportError::NotStarted),
         both(ReportEnteredError::Unreadable),
         both(ReportEnteredError::NoMatch(3)),

@@ -122,9 +122,10 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
 
         gui.enter_result("2 1").await?;
-        gui.expect_error("there is no match 2").await?;
+        gui.expect_result_entry_error("there is no match 2").await?;
         gui.enter_result("1 x").await?;
 
+        gui.expect_no_error().await?;
         gui.expect_results(&["Draw"]).await?;
         gui.expect_announcement("Match 1: Draw. Every match has a result.")
             .await

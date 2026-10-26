@@ -1,7 +1,7 @@
 //! What is done before the start: entering the entrants, adding the phase, starting.
 
 use dioxus::prelude::*;
-use tournament_app::session::Session;
+use tournament_app::{i18n::Message as _, session::Session};
 
 use crate::{
     competition::Ctx,
@@ -83,6 +83,12 @@ pub fn Phase() -> Element {
     let ctx = use_context::<Ctx>();
     let actions = ctx.actions();
     let has_phase = !ctx.session.read().competition().phases().is_empty();
+    // what keeps the competition from starting, said only to the tab that could start it
+    let refusal = ctx
+        .changes()
+        .then(|| ctx.session.read().start_refusal())
+        .flatten()
+        .map(|refusal| refusal.text());
     let tr = ctx.translator.read();
     rsx! {
         section { class: "card", aria_labelledby: "phase",
@@ -92,11 +98,18 @@ pub fn Phase() -> Element {
             } else {
                 NewPhase {}
             }
-            button {
-                class: "primary start",
-                disabled: !actions.start,
-                onclick: move |_| _ = ctx.act(Session::start),
-                {tr.get("start")}
+            div { class: "start",
+                button {
+                    class: "primary",
+                    disabled: !actions.start,
+                    aria_describedby: refusal.is_some().then_some("start-refusal"),
+                    onclick: move |_| _ = ctx.act(Session::start),
+                    {tr.get("start")}
+                }
+                if let Some(refusal) = &refusal {
+                    " "
+                    span { id: "start-refusal", class: "hint", {tr.text(refusal)} }
+                }
             }
         }
     }

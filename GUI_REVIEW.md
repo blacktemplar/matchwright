@@ -155,7 +155,20 @@ due check in `Competition` (`competition.rs` around the bye loop), adjust the do
 the bye's point arrives after the ranking's earlier matches; the existing bye tests keep passing;
 the benchmark doesn't regress.
 
-### 3. The phase form's errors and submit (F1, F4, F7, F8, P1)
+### 3. The phase form's errors and submit (F1, F4, F8, P1) — done
+
+- F1: submitting a form with issues (new phase or the dialog) moves the focus to the first list of
+  issues, scrolled into view, instead of trying; rather than a disabled button, which would say
+  nothing about why. `AddPhaseError::Invalid`/`EditPhaseError::Invalid` say "the form shows what
+  to change" instead of the issues' raw English.
+- F4: Enter in a number field takes the number without submitting.
+- F8: `Session::start_refusal` (which `actions().start` uses) is shown next to Start.
+- P1: the typed entry's error is under its field (`aria-invalid`, cleared when typing). The other
+  errors' placement and the empty slot of the page's alert are left for step 9.
+- F7 (warning on an empty ranking) moved to step 5: warnings that don't block are a new kind of
+  issue in the form.
+
+The original plan of this step:
 
 - F1: in `tournament-app/src/error.rs`, recognise the incompatibility (downcast the
   `TransitionError` of `AddPhase`/`Replace` to the engine's incompatibility) and say it as a

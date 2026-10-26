@@ -31,6 +31,53 @@ async fn a_format_brings_what_it_recommends() {
     .await;
 }
 
+/// Enter takes the number typed, as leaving the field does, rather than adding the phase.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn enter_in_a_number_takes_it_without_adding_the_phase() {
+    run_in_new_competition(async |gui| {
+        gui.choose_format("Monster DYP").await?;
+
+        gui.type_into("format.rounds", "0").await?;
+        gui.press(Key::Enter).await?;
+
+        gui.expect_issues(&["this takes a whole number of at least 1"])
+            .await?;
+        gui.type_into("format.rounds", "7").await?;
+        gui.press(Key::Enter).await?;
+        gui.expect_issues(&[]).await?;
+        gui.expect_phase(&[]).await?;
+        gui.click("Add phase").await?;
+        gui.expect_phase(&[
+            "Monster DYP",
+            "more points",
+            "win-draw-loss record",
+            "points",
+        ])
+        .await
+    })
+    .await;
+}
+
+/// Adding a phase that cannot be played shows what to change rather than refusing it.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn adding_a_phase_with_issues_moves_the_focus_to_them() {
+    run_in_new_competition(async |gui| {
+        gui.toggle("points").await?;
+
+        gui.click("Add phase").await?;
+
+        gui.expect_focus(
+            "more points needs one of these: points\nSonneborn-Berger needs one of these: points",
+        )
+        .await?;
+        gui.expect_no_error().await?;
+        gui.expect_phase(&[]).await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_number_not_taken_is_shown_with_why() {

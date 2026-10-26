@@ -227,17 +227,30 @@ fn only_one_phase_is_added() {
     ));
 }
 
+/// The start says why it would be refused before it is tried, as it is refused.
 #[test]
 fn the_start_needs_a_phase_and_two_entrants() {
     let mut session = Session::new("cup");
     session.add_entrant("Alice").unwrap();
     session.add_entrant("Bob").unwrap();
+    assert!(matches!(
+        session.start_refusal(),
+        Some(StartError::NoPhase(_))
+    ));
     assert!(matches!(session.start(), Err(StartError::NoPhase(_))));
 
     let mut session = Given::new().entrants(&["Alice"]).added();
+    assert!(matches!(
+        session.start_refusal(),
+        Some(StartError::TooFewEntrants)
+    ));
     assert!(matches!(session.start(), Err(StartError::TooFewEntrants)));
 
-    let mut session = Given::new().started();
+    let mut session = Given::new().added();
+    assert!(session.start_refusal().is_none());
+    session.start().unwrap();
+
+    assert!(matches!(session.start_refusal(), Some(StartError::Started)));
     assert!(matches!(session.start(), Err(StartError::Started)));
 }
 
