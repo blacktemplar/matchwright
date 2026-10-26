@@ -6,7 +6,9 @@
 //! whether it shows or not.
 //!
 //! What shows on hover and focus is the style's (`.toggletip` in `style.css`); the page keeps only
-//! which toggletip a click opened, and whether Escape hid the one shown.
+//! which toggletip a click opened, and whether Escape hid the one shown. Each toggletip places its
+//! text before it shows: below or above its button, extending to the right or to the left,
+//! wherever there is more room.
 
 use dioxus::prelude::*;
 use futures_util::StreamExt as _;
@@ -89,14 +91,34 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
     let opened = toggletips.opened.read().as_deref() == Some(id.as_str());
     let hidden = *toggletips.hidden.read();
     let (opening, closing) = (id.clone(), id.clone());
+    let mut element = use_signal(|| None::<web_sys::Element>);
+    let mut placement = use_signal(Placement::default);
+    // placed when about to show, since what is around it may have scrolled or changed since
+    let mut place = move || {
+        if let Some(element) = element.peek().as_ref() {
+            let placed = Placement::of(element);
+            if *placement.peek() != placed {
+                placement.set(placed);
+            }
+        }
+    };
+    let Placement { end, above } = placement();
     rsx! {
         span {
             class: "toggletip",
             "data-opened": opened.then_some("true"),
             "data-hidden": hidden.then_some("true"),
+            "data-align": end.then_some("end"),
+            "data-side": above.then_some("above"),
+            onmounted: move |event| {
+                element.set(event.data().downcast::<web_sys::Element>().cloned());
+            },
             // Escape hides what shows when it is pressed, not one the pointer or the focus reaches
             // after it
-            onmouseenter: move |_| toggletips.unhide(),
+            onmouseenter: move |_| {
+                place();
+                toggletips.unhide();
+            },
             onmouseleave: move |_| toggletips.unhide(),
             button {
                 r#type: "button",
@@ -109,11 +131,15 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
                         toggletips.close();
                         toggletips.hidden.set(true);
                     } else {
+                        place();
                         toggletips.opened.set(Some(opening.clone()));
                         toggletips.unhide();
                     }
                 },
-                onfocus: move |_| toggletips.unhide(),
+                onfocus: move |_| {
+                    place();
+                    toggletips.unhide();
+                },
                 onblur: move |_| {
                     if toggletips.opened.peek().as_deref() == Some(closing.as_str()) {
                         toggletips.close();
@@ -123,6 +149,53 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
                 icons::Info {}
             }
             span { class: "toggletip-text", id: "{id}", role: "tooltip", "{text}" }
+        }
+    }
+}
+
+/// Where the text of a toggletip shows, so that it is not cut off: towards the middle of where it
+/// can show, i.e. of the nearest ancestor that cuts off what reaches out of it (e.g. a dialog that
+/// scrolls), or else of the window.
+#[derive(Clone, Copy, Default, PartialEq)]
+struct Placement {
+    /// Extending to the left of the button, which is in the right half.
+    end: bool,
+    /// Above the button, which is in the lower half.
+    above: bool,
+}
+
+impl Placement {
+    /// The placement of the text of the toggletip `element`.
+    fn of(element: &web_sys::Element) -> Self {
+        let window = web_sys::window().expect("the page runs in a window");
+        let rect = element.get_bounding_client_rect();
+        let (x, y) = (
+            rect.left() + rect.width() / 2.0,
+            rect.top() + rect.height() / 2.0,
+        );
+        let mut ancestor = element.parent_element();
+        while let Some(current) = ancestor {
+            let cuts_off = window
+                .get_computed_style(&current)
+                .ok()
+                .flatten()
+                .and_then(|style| style.get_property_value("overflow-x").ok())
+                .is_some_and(|overflow| overflow != "visible");
+            if cuts_off {
+                let bounds = current.get_bounding_client_rect();
+                return Self {
+                    end: x > bounds.left() + bounds.width() / 2.0,
+                    above: y > bounds.top() + bounds.height() / 2.0,
+                };
+            }
+            ancestor = current.parent_element();
+        }
+        let size = |size: Result<wasm_bindgen::JsValue, _>| {
+            size.ok().and_then(|size| size.as_f64()).unwrap_or_default()
+        };
+        Self {
+            end: x > size(window.inner_width()) / 2.0,
+            above: y > size(window.inner_height()) / 2.0,
         }
     }
 }

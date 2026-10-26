@@ -20,7 +20,9 @@ wasm-bindgen.workspace = true
 # the languages the browser prefers, the one chosen, the page's `<html lang>`, the competition
 # open, after the `#` of its URL, and the keys and pointers closing the toggletips
 web-sys = { workspace = true, features = [
+    "CssStyleDeclaration",
     "Document",
+    "DomRect",
     "Element",
     "Event",
     "EventTarget",

@@ -205,6 +205,24 @@ async fn a_tap_on_the_info_of_an_option_shows_its_description_without_choosing_i
     .await;
 }
 
+/// The dialog cuts off what reaches out of it, so what is said about a field at its right and
+/// bottom edges shows to the left of its button and above it.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn what_is_said_about_a_field_at_the_right_of_the_dialog_shows_whole() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui).await?;
+        gui.click("Edit phase").await?;
+
+        gui.hover_labelled("About weight of an opponent played to a draw")
+            .await?;
+
+        gui.expect_toggletip(Some("the points of that opponent are multiplied by this"))
+            .await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_phase_is_edited_after_the_start_in_a_dialog() {

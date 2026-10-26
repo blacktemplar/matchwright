@@ -456,18 +456,43 @@ impl Gui {
     /// Waits until the toggletip shown says `text`, or until none is shown for `None`.
     ///
     /// # Panics
-    /// Panics if it does not in time.
+    /// Panics if it does not in time, or if what it says is cut off or out of the window.
     pub async fn expect_toggletip(&self, text: Option<&str>) -> WebDriverResult<()> {
         let shown = By::Css(".toggletip-text");
         match text {
             Some(text) => {
                 self.page
                     .expect(
-                        shown,
+                        shown.clone(),
                         |query| query.and_displayed().with_text(text.to_owned()),
                         &format!("a toggletip shown saying {text:?}"),
                     )
-                    .await
+                    .await?;
+                let element = self
+                    .driver
+                    .query(shown)
+                    .and_displayed()
+                    .with_text(text.to_owned())
+                    .first()
+                    .await?;
+                // the middle of each edge (its corners are round) shows the text, not something
+                // in front of it or nothing, as where an element scrolling cuts it off or out of
+                // the window
+                let whole = self
+                    .driver
+                    .execute(
+                        "const text = arguments[0];
+                        const box = text.getBoundingClientRect();
+                        const [x, y] = [(box.left + box.right) / 2, (box.top + box.bottom) / 2];
+                        return [[box.left + 1, y], [box.right - 1, y],
+                                [x, box.top + 1], [x, box.bottom - 1]]
+                            .every(([x, y]) => text.contains(document.elementFromPoint(x, y)));",
+                        vec![element.to_json()?],
+                    )
+                    .await?
+                    .convert::<bool>()?;
+                assert!(whole, "the toggletip saying {text:?} must show whole");
+                Ok(())
             }
             None => {
                 let gone = self.driver.query(shown).and_displayed();

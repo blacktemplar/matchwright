@@ -652,6 +652,20 @@ footer select {
   display: block;
 }
 
+/* extending to the left of a button in the right half of where it can show, above one in the
+ * lower half (toggletip.rs) */
+@media not (max-width: 40rem) {
+  .toggletip[data-align="end"] > .toggletip-text {
+    right: 0;
+    left: auto;
+  }
+
+  .toggletip[data-side="above"] > .toggletip-text {
+    top: auto;
+    bottom: 100%;
+  }
+}
+
 /* across the bottom of a narrow screen, where it fits wherever its button is */
 @media (max-width: 40rem) {
   .toggletip-text {
