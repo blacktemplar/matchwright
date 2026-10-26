@@ -221,7 +221,9 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
         gui.expect_phase(&[
             "round robin",
             "more Sonneborn-Berger, more points",
-            "win-draw-loss record, points, Sonneborn-Berger",
+            "win-draw-loss record",
+            "points",
+            "Sonneborn-Berger",
         ])
         .await?;
         gui.expect_results(&["Alice won"]).await?;
@@ -229,7 +231,9 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
         gui.expect_phase(&[
             "round robin",
             "more points, more Sonneborn-Berger",
-            "win-draw-loss record, points, Sonneborn-Berger",
+            "win-draw-loss record",
+            "points",
+            "Sonneborn-Berger",
         ])
         .await
     })
@@ -259,7 +263,9 @@ async fn an_edit_a_result_does_not_fit_is_refused_in_the_dialog() {
         gui.expect_phase(&[
             "round robin",
             "more points, more Sonneborn-Berger",
-            "win-draw-loss record, points, Sonneborn-Berger",
+            "win-draw-loss record",
+            "points",
+            "Sonneborn-Berger",
         ])
         .await
     })

@@ -337,14 +337,18 @@ impl Gui {
     }
 
     /// Waits until how the phase is played reads `answers`, the answers of its fields in order,
-    /// e.g. `"round robin"`, with the plugins of a list joined by commas.
+    /// e.g. `"round robin"`, with the plugins of a list joined by commas, or each an answer of its
+    /// own if any of them has fields.
     ///
     /// # Panics
     /// Panics if it does not in time, with what it reads instead.
     pub async fn expect_phase(&self, answers: &[&str]) -> WebDriverResult<()> {
         self.page
             .expect_texts(
-                By::Css("section[aria-labelledby=phase] > dl > dd > .answer"),
+                By::Css(
+                    "section[aria-labelledby=phase] > dl > dd > .answer, \
+                     section[aria-labelledby=phase] > dl > dd > ul > li > .answer",
+                ),
                 answers,
             )
             .await

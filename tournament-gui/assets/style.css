@@ -790,7 +790,8 @@ dl.summary {
   display: grid;
   margin: 0 0 var(--space-3);
   gap: var(--space-1) var(--space-4);
-  grid-template-columns: auto minmax(0, 1fr);
+  /* a value never narrower than its longest word, so that a long label wraps instead */
+  grid-template-columns: auto minmax(min-content, 1fr);
 }
 
 dl.summary dt {
@@ -801,8 +802,19 @@ dl.summary dd {
   margin: 0;
 }
 
+/* the fields of a plugin, set off below it */
 dl.summary dl.summary {
   margin: var(--space-1) 0 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border);
+}
+
+ul.summary-items {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: var(--space-1);
+  list-style: none;
 }
 
 /* The matches */

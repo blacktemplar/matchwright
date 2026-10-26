@@ -698,9 +698,33 @@ fn Summary(fields: Vec<FormField>) -> Element {
             for field in fields {
                 dt { key: "{field.path}", {capitalized(&tr.field_label(&field))} }
                 dd {
-                    span { class: "answer", {answer(&tr, &field.input)} }
-                    for fields in nested(&field.input) {
-                        Summary { fields }
+                    match &field.input {
+                        // each item of a list on a line of its own, with its fields below it
+                        Input::List(list) if has_fields(list) => rsx! {
+                            ul { class: "summary-items",
+                                for item in list.items.clone() {
+                                    li {
+                                        span { class: "answer", {plugin_label(&tr, &item.plugin)} }
+                                        if !item.fields.is_empty() {
+                                            Summary { fields: item.fields }
+                                        }
+                                    }
+                                }
+                                for option in list.implied.clone() {
+                                    li {
+                                        span { class: "answer", {plugin_label(&tr, &option)} }
+                                    }
+                                }
+                            }
+                        },
+                        input => rsx! {
+                            span { class: "answer", {answer(&tr, input)} }
+                            if let Input::Plugin(PluginInput { chosen: Some(chosen), .. }) = input
+                                && !chosen.fields.is_empty()
+                            {
+                                Summary { fields: chosen.fields.clone() }
+                            }
+                        },
                     }
                 }
             }
@@ -708,20 +732,9 @@ fn Summary(fields: Vec<FormField>) -> Element {
     }
 }
 
-/// The fields of each plugin answering `input` that has any.
-fn nested(input: &Input) -> Vec<Vec<FormField>> {
-    let fields = match input {
-        Input::Plugin(PluginInput {
-            chosen: Some(chosen),
-            ..
-        }) => vec![chosen.fields.clone()],
-        Input::List(list) => list.items.iter().map(|item| item.fields.clone()).collect(),
-        _ => Vec::new(),
-    };
-    fields
-        .into_iter()
-        .filter(|fields| !fields.is_empty())
-        .collect()
+/// Whether any plugin of `list` has fields.
+fn has_fields(list: &ListInput) -> bool {
+    list.items.iter().any(|item| !item.fields.is_empty())
 }
 
 /// `input`'s answer as the summary reads it, without the fields of the plugins in it.
