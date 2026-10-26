@@ -427,15 +427,18 @@ fn the_label_of_a_field_is_said_in_the_language() {
     let view = form.view();
     let german = Translator::new(Language::German, &[]);
 
-    assert_eq!(german.field_label(field(&view, "ranking")), "gewertet nach");
+    assert_eq!(
+        german.field_label(field(&view, "ranking")),
+        "Reihenfolge der Tabelle"
+    );
     assert_eq!(
         german.field_description(field(&view, "metrics")).as_deref(),
         Some("für jedes Team berechnet")
     );
     assert_eq!(german.field_label(field(&view, "format.rounds")), "Runden");
     assert_eq!(
-        Translator::new(Language::English, &[]).field_label(field(&view, "ranking")),
-        "ranked by"
+        Translator::new(Language::English, &[]).field_label(field(&view, "metrics")),
+        "metrics"
     );
 }
 

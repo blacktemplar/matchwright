@@ -5,7 +5,7 @@
 phase =
     .field-format = Format
     .field-format-description = wie die Spiele angesetzt werden
-    .field-ranking = gewertet nach
+    .field-ranking = Reihenfolge der Tabelle
     .field-ranking-description = die Besten zuerst; jedes Kriterium entscheidet nur, wo die vor ihm gleich sind
     .field-metrics = Kennzahlen
     .field-metrics-description = für jedes Team berechnet

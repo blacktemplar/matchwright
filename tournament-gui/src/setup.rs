@@ -86,7 +86,7 @@ pub fn Phase() -> Element {
     let tr = ctx.translator.read();
     rsx! {
         section { class: "card", aria_labelledby: "phase",
-            h2 { id: "phase", {tr.get("phase")} }
+            h2 { id: "phase", {tr.get("phase-heading")} }
             if has_phase {
                 PhaseSummary {}
             } else {

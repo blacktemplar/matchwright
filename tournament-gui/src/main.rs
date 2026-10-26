@@ -23,6 +23,7 @@ mod phase;
 mod play;
 mod setup;
 mod theme;
+mod toggletip;
 
 use dioxus::prelude::*;
 use futures_util::StreamExt as _;
@@ -114,6 +115,7 @@ fn App() -> Element {
         installable: Signal::new(install::offered()),
         shown: Signal::new(None),
     });
+    toggletip::use_toggletips();
     let mut open = use_signal(opened_in_url);
     // runs again whenever the language changes
     use_effect(move || i18n::set_page_language(page.translator.read().language()));

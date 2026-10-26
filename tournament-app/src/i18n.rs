@@ -349,50 +349,45 @@ impl Translator {
 }
 
 /// Checks the messages of a consumer for a test: each language's have to parse, give no key twice,
-/// and have the same messages with the same attributes as English.
+/// none of the app's own keys, and have the same messages with the same attributes as English.
 ///
 /// # Errors
 /// Returns what is wrong, one line each.
 pub fn check(resources: Resources) -> Result<(), Vec<String>> {
-    /// The keys of the messages of `resources` in `language`, each with its attributes.
-    fn messages(
-        resources: Resources,
-        language: Language,
-        problems: &mut Vec<String>,
-    ) -> BTreeMap<&'static str, BTreeSet<&'static str>> {
+    let mut problems = check_languages(resources).err().unwrap_or_default();
+    // the bundle keeps the first message of a key, so the app's would hide the consumer's
+    for language in Language::ALL {
         let tag = language.tag();
-        let resource = parser::parse(resources(language)).unwrap_or_else(|(resource, errors)| {
-            for error in errors {
-                problems.push(format!("{tag}: does not parse: {error:?}"));
-            }
-            resource
-        });
-        let mut messages = BTreeMap::new();
-        for entry in resource.body {
-            let (key, attributes) = match entry {
-                ast::Entry::Message(message) => (message.id.name, message.attributes),
-                ast::Entry::Term(term) => (term.id.name, term.attributes),
-                _ => continue,
-            };
-            let attributes = attributes
-                .iter()
-                .map(|attribute| attribute.id.name)
-                .collect();
-            if messages.insert(key, attributes).is_some() {
-                problems.push(format!("{tag}: {key} is given twice"));
+        let own = messages(resources(language), tag, &mut Vec::new());
+        for source in language.resources() {
+            let apps = messages(source, tag, &mut Vec::new());
+            for key in own.keys().filter(|key| apps.contains_key(*key)) {
+                problems.push(format!("{tag}: {key} is a message of the app"));
             }
         }
-        messages
     }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems)
+    }
+}
 
+/// Checks `resources` as [`check`] does, but for whether they give keys of the app's, e.g. the
+/// app's own.
+fn check_languages(resources: Resources) -> Result<(), Vec<String>> {
     let mut problems = Vec::new();
-    let english = messages(resources, Language::English, &mut problems);
+    let english = messages(
+        resources(Language::English),
+        Language::English.tag(),
+        &mut problems,
+    );
     for language in Language::ALL {
         if language == Language::English {
             continue;
         }
         let tag = language.tag();
-        let translated = messages(resources, language, &mut problems);
+        let translated = messages(resources(language), tag, &mut problems);
         for (key, attributes) in &english {
             match translated.get(key) {
                 None => problems.push(format!("{tag}: {key} is missing")),
@@ -411,6 +406,36 @@ pub fn check(resources: Resources) -> Result<(), Vec<String>> {
     } else {
         Err(problems)
     }
+}
+
+/// The keys of the messages of `source`, in the language `tag`, each with its attributes.
+fn messages(
+    source: &'static str,
+    tag: &str,
+    problems: &mut Vec<String>,
+) -> BTreeMap<&'static str, BTreeSet<&'static str>> {
+    let resource = parser::parse(source).unwrap_or_else(|(resource, errors)| {
+        for error in errors {
+            problems.push(format!("{tag}: does not parse: {error:?}"));
+        }
+        resource
+    });
+    let mut messages = BTreeMap::new();
+    for entry in resource.body {
+        let (key, attributes) = match entry {
+            ast::Entry::Message(message) => (message.id.name, message.attributes),
+            ast::Entry::Term(term) => (term.id.name, term.attributes),
+            _ => continue,
+        };
+        let attributes = attributes
+            .iter()
+            .map(|attribute| attribute.id.name)
+            .collect();
+        if messages.insert(key, attributes).is_some() {
+            problems.push(format!("{tag}: {key} is given twice"));
+        }
+    }
+    messages
 }
 
 /// The messages of this crate and of `resources` in `language`.

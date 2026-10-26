@@ -346,7 +346,7 @@ fn Play() -> Element {
             div { class: column(Column::Standings),
                 Standings {}
                 section { class: "card", aria_labelledby: "phase",
-                    h2 { id: "phase", {tr.get("phase")} }
+                    h2 { id: "phase", {tr.get("phase-heading")} }
                     PhaseSummary {}
                 }
             }

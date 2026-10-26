@@ -1,4 +1,4 @@
-use tournament_gui_e2e::{Gui, run_in_new_competition, thirtyfour::error::WebDriverResult};
+use tournament_gui_e2e::{Gui, Key, run_in_new_competition, thirtyfour::error::WebDriverResult};
 
 /// Enters Alice and Bob, adds a round robin with what it recommends, and starts.
 async fn start_round_robin(gui: &Gui) -> WebDriverResult<()> {
@@ -110,6 +110,56 @@ async fn the_criteria_of_the_ranking_are_added_and_moved() {
         .await?;
         gui.click_labelled("Remove more points").await?;
         gui.expect_list("ranking", &["more wins", "more Sonneborn-Berger"])
+            .await
+    })
+    .await;
+}
+
+/// What is said about a list or a plugin in it shows while the pointer is on its button, and from a
+/// click on it until the next; Escape hides it.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn what_is_said_about_a_plugin_shows_on_hover_and_after_a_click() {
+    const POINTS: &str = "scored for every win, every draw and every bye";
+    run_in_new_competition(async |gui| {
+        gui.expect_toggletip(None).await?;
+
+        gui.hover_labelled("About order of the standings").await?;
+
+        gui.expect_toggletip(Some(
+            "best first, every criterion only breaks the ties of the ones before it",
+        ))
+        .await?;
+        gui.press(Key::Escape).await?;
+        gui.expect_toggletip(None).await?;
+        gui.click_labelled("About points").await?;
+        gui.expect_toggletip(Some(POINTS)).await?;
+        gui.page.check_accessibility().await?;
+        gui.click_labelled("About points").await?;
+        gui.expect_toggletip(None).await?;
+        gui.click_labelled("About points").await?;
+        gui.expect_toggletip(Some(POINTS)).await?;
+        gui.press(Key::Escape).await?;
+        gui.expect_toggletip(None).await
+    })
+    .await;
+}
+
+/// The options of a plugin show their labels only, and the description of the one under the
+/// pointer below them.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_description_of_an_option_shows_while_the_pointer_is_on_it() {
+    run_in_new_competition(async |gui| {
+        gui.open_choice("ranking").await?;
+
+        gui.hover_option("fewer matches played").await?;
+
+        gui.expect_option_description("the same result out of fewer matches ranks higher")
+            .await?;
+        gui.page.check_accessibility().await?;
+        gui.hover_option("later first loss").await?;
+        gui.expect_option_description("by the round of the first loss; never having lost is best")
             .await
     })
     .await;

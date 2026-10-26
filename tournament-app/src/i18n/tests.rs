@@ -130,7 +130,21 @@ fn an_error_says_in_english_what_its_display_says() {
 
 #[test]
 fn the_messages_of_the_app_are_in_every_language() {
-    check(|language| language.resources()[0]).unwrap();
+    check_languages(|language| language.resources()[0]).unwrap();
+}
+
+/// The app's messages come first, and a key given twice keeps its first message.
+#[test]
+fn a_check_finds_messages_of_the_app() {
+    let resources: Resources = |_| "phase = Phase\n";
+
+    assert_eq!(
+        check(resources).unwrap_err(),
+        [
+            "en: phase is a message of the app",
+            "de: phase is a message of the app"
+        ]
+    );
 }
 
 #[test]

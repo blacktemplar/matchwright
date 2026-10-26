@@ -69,7 +69,8 @@ name = Name
 add-entrant = Add entrant
 remove = Remove
 remove-entrant = Remove { $name }
-phase = Phase
+# not `phase`, which is the app's message of the fields of a phase
+phase-heading = Phase
 add-phase = Add phase
 start = Start
 
@@ -81,8 +82,10 @@ choose-plugin = Choose…
 no-plugin = (none)
 # next to a plugin the plugins chosen elsewhere recommend
 recommended = (recommended)
-# $field: the label of a list of plugins
-add-to = Add to { $field }
+# next to the choice of a plugin added to a list
+add-plugin = Add
+# the button showing what is said about $subject, a plugin or a field
+about = About { $subject }
 # $plugin: a plugin in a list
 move-up = Move { $plugin } up
 move-down = Move { $plugin } down

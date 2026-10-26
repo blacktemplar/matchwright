@@ -182,23 +182,49 @@ impl Gui {
     /// `"format"`, or adds it to the list at `path` if it is one whose order matters, e.g.
     /// `"ranking"`.
     pub async fn choose_plugin(&self, path: &str, label: &str) -> WebDriverResult<()> {
+        self.open_choice(path).await?;
+        self.option(label).first().await?.click().await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Opens the list of the plugins the field at `path` of the form of the phase can take, or
+    /// those that can be added to the list at `path`, as [`Self::choose_plugin`] does.
+    pub async fn open_choice(&self, path: &str) -> WebDriverResult<()> {
         let id = field_id(path);
         let trigger = match self.driver.find(By::Id(format!("{id}-add"))).await {
             Ok(add) => add,
             Err(_) => self.driver.query(By::Id(id)).first().await?,
         };
         trigger.click().await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Moves the pointer onto the option labelled `label` of the list of plugins open.
+    pub async fn hover_option(&self, label: &str) -> WebDriverResult<()> {
+        let option = self.option(label).first().await?;
         self.driver
-            .query(By::XPath(format!(
-                "//*[@role='option'][.//*[@class='option-label'][normalize-space()='{label}']]"
-            )))
-            .and_displayed()
-            .first()
-            .await?
-            .click()
+            .action_chain()
+            .move_to_element_center(&option)
+            .perform()
             .await?;
         Page::pause().await;
         Ok(())
+    }
+
+    /// Waits until the description shown of an option of the list of plugins open is `text`.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_option_description(&self, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect(
+                By::Css(".option-description"),
+                |query| query.and_displayed().with_text(text.to_owned()),
+                &format!("an option's description shown saying {text:?}"),
+            )
+            .await
     }
 
     /// Enters `text` into the number field at `path` of the form of the phase, e.g.
@@ -359,11 +385,7 @@ impl Gui {
     /// Clicks the button whose accessible name, its `aria-label`, is `label`, once it is enabled,
     /// e.g. `"Alice wins"`.
     pub async fn click_labelled(&self, label: &str) -> WebDriverResult<()> {
-        self.driver
-            .query(By::XPath(format!(
-                "//button[{}='{label}']",
-                without_isolation_marks("@aria-label")
-            )))
+        self.labelled(label)
             .and_enabled()
             .first()
             .await?
@@ -371,6 +393,46 @@ impl Gui {
             .await?;
         Page::pause().await;
         Ok(())
+    }
+
+    /// Moves the pointer onto the button whose accessible name, its `aria-label`, is `label`, e.g.
+    /// `"About points"`.
+    pub async fn hover_labelled(&self, label: &str) -> WebDriverResult<()> {
+        let button = self.labelled(label).first().await?;
+        self.driver
+            .action_chain()
+            .move_to_element_center(&button)
+            .perform()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the toggletip shown says `text`, or until none is shown for `None`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time.
+    pub async fn expect_toggletip(&self, text: Option<&str>) -> WebDriverResult<()> {
+        let shown = By::Css(".toggletip-text");
+        match text {
+            Some(text) => {
+                self.page
+                    .expect(
+                        shown,
+                        |query| query.and_displayed().with_text(text.to_owned()),
+                        &format!("a toggletip shown saying {text:?}"),
+                    )
+                    .await
+            }
+            None => {
+                let gone = self.driver.query(shown).and_displayed();
+                assert!(
+                    gone.wait_until_gone().await.is_ok(),
+                    "a toggletip must not be shown"
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Waits until the button whose text is `text` is disabled.
@@ -555,6 +617,23 @@ impl Gui {
         self.driver.query(By::XPath(format!(
             "//button[{}='{text}']",
             without_isolation_marks("normalize-space()")
+        )))
+    }
+
+    /// The option labelled `label` of the list of plugins open.
+    fn option(&self, label: &str) -> e2e_harness::thirtyfour::extensions::query::ElementQuery {
+        self.driver
+            .query(By::XPath(format!(
+                "//*[@role='option'][.//*[@class='option-label'][normalize-space()='{label}']]"
+            )))
+            .and_displayed()
+    }
+
+    /// The button whose accessible name, its `aria-label`, is `label`.
+    fn labelled(&self, label: &str) -> e2e_harness::thirtyfour::extensions::query::ElementQuery {
+        self.driver.query(By::XPath(format!(
+            "//button[{}='{label}']",
+            without_isolation_marks("@aria-label")
         )))
     }
 }

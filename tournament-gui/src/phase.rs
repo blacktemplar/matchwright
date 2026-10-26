@@ -16,6 +16,8 @@ use crate::{
         select::{Select, SelectOption},
     },
     i18n::t,
+    icons,
+    toggletip::Toggletip,
 };
 
 /// The form of a new phase, and the button adding it.
@@ -259,14 +261,28 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                 {issues}
             }
         },
+        // a group rather than a fieldset, whose legend would take the toggletip's button into its
+        // name
         Input::List(list) => rsx! {
-            fieldset { class: "field", aria_describedby: "{described_by}",
-                legend { "{label}" }
-                {description}
+            div {
+                class: "field list",
+                role: "group",
+                aria_labelledby: "{id}-label",
+                aria_describedby: "{described_by}",
+                div { class: "list-heading",
+                    span { class: "label", id: "{id}-label", "{label}" }
+                    if let Some(text) = tr.field_description(&field) {
+                        Toggletip {
+                            id: "{id}-description",
+                            subject: tr.field_label(&field),
+                            text,
+                        }
+                    }
+                }
                 if list.ordered {
-                    OrderedList { form, path, id, label, list, disabled }
+                    OrderedList { form, path, id: id.clone(), list, disabled }
                 } else {
-                    UnorderedList { form, path, list_id: id, list, disabled }
+                    UnorderedList { form, path, list_id: id.clone(), list, disabled }
                 }
                 {issues}
             }
@@ -347,7 +363,12 @@ fn PluginField(
                     _ = form.write().choose(&choose, chosen);
                 },
                 for (index, option) in plugin.options.iter().enumerate() {
-                    PluginChoice { key: "{option.id}", index, option: *option }
+                    PluginChoice {
+                        key: "{option.id}",
+                        select: id.clone(),
+                        index,
+                        option: *option,
+                    }
                 }
                 if let Some(none) = none {
                     SelectOption {
@@ -357,6 +378,10 @@ fn PluginField(
                         span { class: "option-label", "{none}" }
                     }
                 }
+            }
+            if let Some(chosen) = &plugin.chosen {
+                " "
+                About { list: id.clone(), option: chosen.plugin }
             }
             {children}
             if let Some(chosen) = plugin.chosen {
@@ -368,20 +393,24 @@ fn PluginField(
     }
 }
 
-/// `option` as an option of a [`Select`], at `index`.
+/// `option` as an option of the [`Select`] whose id is `select`, at `index`. Its description
+/// shows next to the list while the option is under the pointer or has the focus, which the
+/// keyboard moves through the options, rather than behind a toggletip: a button of its own in the
+/// option would choose it.
 #[component]
-fn PluginChoice(index: usize, option: PluginOption) -> Element {
+fn PluginChoice(select: String, index: usize, option: PluginOption) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
     let label = plugin_label(&tr, &option);
-    let description = option
-        .description
-        .map(|english| tr.plugin(option.id, PluginText::Description, english));
+    let description = plugin_description(&tr, &option);
+    // ids of plugins are namespaced by `::`
+    let described_by = format!("{select}-option-{}", option.id.replace("::", "-"));
     rsx! {
         SelectOption {
             index,
             value: option.id.to_owned(),
             text_value: label.clone(),
+            aria_describedby: description.is_some().then(|| described_by.clone()),
             span { class: "option",
                 span { class: "option-label", "{label}" }
                 if option.recommended {
@@ -389,7 +418,10 @@ fn PluginChoice(index: usize, option: PluginOption) -> Element {
                     span { class: "recommended", {tr.get("recommended")} }
                 }
                 if let Some(description) = description {
-                    span { class: "option-description", "{description}" }
+                    span { class: "option-info", icons::Info {} }
+                    span { class: "option-description", id: "{described_by}",
+                        span { class: "option-description-text", "{description}" }
+                    }
                 }
             }
         }
@@ -403,7 +435,6 @@ fn OrderedList(
     form: Signal<PhaseForm>,
     path: Path,
     id: String,
-    label: String,
     list: ListInput,
     disabled: bool,
 ) -> Element {
@@ -411,13 +442,13 @@ fn OrderedList(
     let tr = ctx.translator.read();
     let last = list.items.len().saturating_sub(1);
     let implied = implied(&tr, &list.implied);
-    let add = t!(tr, "add-to", field = label.as_str());
     rsx! {
         ol { class: "plugin-list", id: "{id}",
             // keyed by the plugin, so that one moved keeps its element, and the focus
             for (index, item) in list.items.into_iter().enumerate() {
                 OrderedItem {
                     key: "{item.plugin.id}",
+                    list: id.clone(),
                     form,
                     item,
                     first: index == 0,
@@ -425,13 +456,16 @@ fn OrderedList(
                     disabled,
                 }
             }
-            for (key, implied) in implied {
-                li { key: "{key}", class: "implied", "{implied}" }
+            for implied in implied {
+                li { key: "{implied.option.id}", class: "implied",
+                    "{implied.text} "
+                    About { list: id.clone(), option: implied.option }
+                }
             }
         }
         if !list.options.is_empty() {
             div { class: "add",
-                span { class: "label", id: "{id}-add-label", "{add}" }
+                span { class: "label", id: "{id}-add-label", {tr.get("add-plugin")} }
                 " "
                 Select {
                     id: "{id}-add",
@@ -441,7 +475,12 @@ fn OrderedList(
                     disabled,
                     on_change: move |chosen: String| _ = form.write().add(&path, &chosen),
                     for (index, option) in list.options.iter().enumerate() {
-                        PluginChoice { key: "{option.id}", index, option: *option }
+                        PluginChoice {
+                            key: "{option.id}",
+                            select: "{id}-add",
+                            index,
+                            option: *option,
+                        }
                     }
                 }
             }
@@ -454,6 +493,7 @@ fn OrderedList(
 #[component]
 fn OrderedItem(
     form: Signal<PhaseForm>,
+    list: String,
     item: Item,
     first: bool,
     last: bool,
@@ -467,6 +507,7 @@ fn OrderedItem(
         li {
             span { class: "name", "{name}" }
             " "
+            About { list, option: item.plugin }
             button {
                 class: "quiet small",
                 r#type: "button",
@@ -497,18 +538,41 @@ fn OrderedItem(
     }
 }
 
-/// What a list shows for the plugins of `implied`, each by its id.
-fn implied(tr: &Translator, implied: &[PluginOption]) -> Vec<(&'static str, String)> {
+/// A plugin added to a list since another one needs it.
+struct Implied {
+    option: PluginOption,
+    /// What the list shows for it.
+    text: String,
+}
+
+/// What a list shows for the plugins of `implied`.
+fn implied(tr: &Translator, implied: &[PluginOption]) -> Vec<Implied> {
     implied
         .iter()
         .map(|option| {
             let plugin = plugin_label(tr, option);
-            (
-                option.id,
-                t!(tr, "implied-plugin", plugin = plugin.as_str()),
-            )
+            Implied {
+                option: *option,
+                text: t!(tr, "implied-plugin", plugin = plugin.as_str()),
+            }
         })
         .collect()
+}
+
+/// The toggletip saying the description of `option`, a plugin of the list whose id is `list`;
+/// nothing if it has none.
+#[component]
+fn About(list: String, option: PluginOption) -> Element {
+    let ctx = use_context::<Ctx>();
+    let tr = ctx.translator.read();
+    let Some(text) = plugin_description(&tr, &option) else {
+        return rsx! {};
+    };
+    // ids of plugins are namespaced by `::`
+    let id = format!("{list}-about-{}", option.id.replace("::", "-"));
+    rsx! {
+        Toggletip { id, subject: plugin_label(&tr, &option), text }
+    }
 }
 
 /// A set of plugins, each chosen or not by a checkbox, and configured once chosen.
@@ -545,16 +609,20 @@ fn UnorderedList(
                             }
                         }
                     }
+                    " "
+                    About { list: list_id.clone(), option: item.plugin }
                     Fields { form, fields: item.fields, disabled }
                     Issues { id: "{id(&item.path)}-issues", issues: item.issues }
                 }
             }
-            for (key, implied) in implied {
-                li { key: "{key}",
+            for implied in implied {
+                li { key: "{implied.option.id}",
                     label {
                         input { r#type: "checkbox", checked: true, disabled: true }
-                        " {implied}"
+                        " {implied.text}"
                     }
+                    " "
+                    About { list: list_id.clone(), option: implied.option }
                 }
             }
             for option in list.options {
@@ -573,6 +641,8 @@ fn UnorderedList(
                             }
                         }
                     }
+                    " "
+                    About { list: list_id.clone(), option }
                 }
             }
         }
@@ -670,6 +740,12 @@ fn answer(tr: &Translator, input: &Input) -> String {
 
 fn plugin_label(tr: &Translator, option: &PluginOption) -> String {
     tr.plugin(option.id, PluginText::Label, option.label)
+}
+
+fn plugin_description(tr: &Translator, option: &PluginOption) -> Option<String> {
+    option
+        .description
+        .map(|english| tr.plugin(option.id, PluginText::Description, english))
 }
 
 /// The id of the element of the field at `path`, e.g. `field-metrics-1-points_for_win`.

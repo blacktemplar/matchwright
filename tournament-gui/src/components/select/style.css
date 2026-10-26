@@ -49,7 +49,10 @@
   z-index: 1000;
   top: 100%;
   left: 0;
+  /* changed: as wide as its options, rather than wrapping them at the width of the trigger */
+  width: max-content;
   min-width: 100%;
+  max-width: calc(100vw - 2rem);
   box-sizing: border-box;
   padding: 0.25rem;
   border-radius: 0.5rem;
