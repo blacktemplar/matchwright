@@ -312,8 +312,9 @@ header.bar {
   text-decoration: underline;
 }
 
-/* only the icons where the bar is narrow; the texts stay for screen readers */
-@media (width < 40rem) {
+/* only the icons where the bar is narrow, so that the competition's name keeps room in longer
+ * languages too; the texts stay for screen readers */
+@media (width < 60rem) {
   .bar-label {
     position: absolute;
     overflow: hidden;
@@ -427,17 +428,21 @@ footer select {
   font-weight: normal;
 }
 
+/* one column unless there is room for two; never wider than the screen, so that what is wider
+ * (e.g. the standings) scrolls inside its card instead of the page */
 .columns {
   display: grid;
   align-items: start;
   gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .columns > .card + .card {
   margin-top: 0;
 }
 
-@media (width >= 48rem) {
+/* the entrants beside the phase only where their third leaves room for a name next to its button */
+@media (width >= 64rem) {
   .columns.setup {
     grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr);
   }

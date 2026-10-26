@@ -579,6 +579,87 @@ impl Page {
         Ok(path)
     }
 
+    /// Shows the page in a window of `width` × `height` CSS pixels, e.g. a phone's 360 × 740.
+    pub async fn resize(&self, width: u32, height: u32) -> WebDriverResult<()> {
+        self.driver.set_window_rect(0, 0, width, height).await?;
+        Self::pause().await;
+        Ok(())
+    }
+
+    /// Checks that the page is no wider than its window, so that it does not scroll sideways: what
+    /// is wider has to scroll inside an element of its own.
+    ///
+    /// # Panics
+    /// Panics if it is wider, with the widths and the elements reaching beyond the window.
+    pub async fn expect_no_sideways_scroll(&self) -> WebDriverResult<()> {
+        let found = self
+            .driver
+            .execute(
+                r#"
+                const root = document.documentElement;
+                const reaches = (element) =>
+                    element.getBoundingClientRect().right > root.clientWidth + 0.5;
+                const beyond = [...document.querySelectorAll("body *")]
+                    .filter(reaches)
+                    // the innermost, which are the cause
+                    .filter((element) => ![...element.children].some(reaches))
+                    .slice(0, 5)
+                    .map((element) => element.outerHTML.slice(0, 120));
+                return { page: root.scrollWidth, window: root.clientWidth, beyond };
+                "#,
+                Vec::new(),
+            )
+            .await?
+            .json()
+            .clone();
+        assert!(
+            found["page"].as_f64() <= found["window"].as_f64(),
+            "the page must be no wider than its window, but is {found:#}"
+        );
+        Ok(())
+    }
+
+    /// Checks that each element the CSS selector `selector` finds is at least as wide as each word
+    /// of its text, so that it breaks no word.
+    ///
+    /// # Panics
+    /// Panics if one is narrower, with its text, its width and the words wider than it.
+    pub async fn expect_room_for_words(&self, selector: &str) -> WebDriverResult<()> {
+        let narrow = self
+            .driver
+            .execute(
+                r#"
+                const measure = document.createElement("span");
+                measure.style.cssText =
+                    "position: absolute; visibility: hidden; white-space: nowrap";
+                document.body.append(measure);
+                const narrow = [...document.querySelectorAll(arguments[0])].flatMap((element) => {
+                    const style = getComputedStyle(element);
+                    measure.style.font = style.font;
+                    measure.style.letterSpacing = style.letterSpacing;
+                    const width = element.clientWidth
+                        - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+                    const wider = element.textContent.split(/\s+/).filter((word) => {
+                        measure.textContent = word;
+                        return measure.getBoundingClientRect().width > width + 0.5;
+                    });
+                    return wider.length ? [{ text: element.textContent, width, wider }] : [];
+                });
+                measure.remove();
+                return narrow;
+                "#,
+                vec![serde_json::Value::from(selector)],
+            )
+            .await?
+            .json()
+            .clone();
+        assert!(
+            narrow.as_array().is_some_and(Vec::is_empty),
+            "{selector} must have room for each word, but {narrow:#}"
+        );
+        Ok(())
+    }
+
     /// Pauses as long as `E2E_PAUSE` says, after an action.
     pub async fn pause() {
         if let Some(pause) = pause() {
