@@ -310,9 +310,10 @@ fn full_tournament() {
 }
 
 /// In a round robin of three, every entrant has a bye in one of the three rounds. The byes are
-/// scheduled and scored when the competition starts, before any result is reported.
+/// scheduled when the competition starts, but each is scored only once its entrant has played the
+/// rounds before it: that of round 1 right away, that of round 2 after round 1's match.
 #[test]
-fn byes_are_scored_when_they_are_scheduled() {
+fn byes_are_scored_when_their_ranking_reaches_them() {
     let mut sm = CompetitionStateMachine::default();
     let phase_id = PhaseId::new(Uuid::new_v4());
     for _ in 0..3 {
@@ -328,16 +329,44 @@ fn byes_are_scored_when_they_are_scheduled() {
         .unwrap();
 
     sm.apply_transition(StartCompetition).unwrap();
+    // the byes scored by each ranking, by the round of its bye
+    let byes_scored = |sm: &CompetitionStateMachine| {
+        let phase = sm.current().phases()[&phase_id].data();
+        phase
+            .byes()
+            .values()
+            .map(|bye| {
+                let ranking = &phase.rankings()[&bye.ranking()];
+                let WinsDrawsLosses { byes, draws, .. } = *ranking.metric().unwrap();
+                let points = ranking.metric::<Points>().unwrap().0;
+                assert_eq!(points, Score::new(f64::from(3 * byes + draws)));
+                assert_eq!(bye.is_reached(), byes == 1);
+                (bye.round().get(), byes)
+            })
+            .sorted()
+            .collect_vec()
+    };
 
     let phase = sm.current().phases()[&phase_id].data();
     assert_eq!(phase.matches().len(), 3);
     assert_eq!(phase.byes().len(), 3);
-    for ranking in phase.rankings().values() {
-        let wins_draws_losses = ranking.metric::<WinsDrawsLosses>().unwrap();
-        assert_eq!(wins_draws_losses.byes, 1);
-        assert_eq!(wins_draws_losses.matches_played(), 0);
-        assert_eq!(ranking.metric::<Points>(), Some(&Points(Score::new(3.0))));
-    }
+    assert_eq!(byes_scored(&sm), [(1, 1), (2, 0), (3, 0)]);
+
+    let first_round = phase
+        .matches()
+        .values()
+        .filter(|r#match| r#match.round().get() == 1)
+        .exactly_one()
+        .unwrap()
+        .id();
+    sm.apply_transition(ReportMatchResult::new(
+        phase_id,
+        first_round,
+        MatchResult::Draw,
+    ))
+    .unwrap();
+
+    assert_eq!(byes_scored(&sm), [(1, 1), (2, 1), (3, 0)]);
 }
 
 /// A single elimination match has to produce a winner, so a draw is rejected as not applicable

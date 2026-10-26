@@ -99,10 +99,11 @@ pub trait MetricsCalculator: Plugin + DynClone {
         old_metrics: &OldMetrics,
     ) -> Vec<(RankingId, Metric)>;
 
-    /// The new values of all rankings whose metric the newly scheduled `bye` changed.
+    /// The new values of all rankings whose metric the `bye` changed, which its ranking has just
+    /// [reached](Bye::is_reached).
     ///
-    /// A bye is not a match: it has no opponent and no result, and it never changes once
-    /// scheduled. Whether it counts for this metric at all is up to the calculator.
+    /// A bye is not a match: it has no opponent and no result, and once reached it never changes.
+    /// Whether it counts for this metric at all is up to the calculator.
     ///
     /// `old_metrics` and the returned metrics are as for [`Self::update_after_match_result`].
     fn update_after_bye(

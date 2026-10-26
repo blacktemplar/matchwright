@@ -489,7 +489,7 @@ impl Session {
         for (round, stage) in all_stages {
             stages_of_round.entry(round).or_default().insert(stage);
         }
-        // a bye is never open, it is decided when it is scheduled
+        // a bye is never open: it has nothing to report
         let byes: Vec<_> = phase
             .byes()
             .values()

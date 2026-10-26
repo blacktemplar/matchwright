@@ -985,11 +985,21 @@ at most one match or bye per round, and the bracket formats move the annotations
 of a pairing decided without a match onto its bye, so a consumer can name its
 stage.
 
-**A bye is final when it is scheduled.** A match is created open, gets a result
-later and may get another one; a bye has nothing to report and never changes.
-So it reaches calculators through a hook of its own,
-`MetricsCalculator::update_after_bye`, run right when the format schedules the
-bye, followed by a re-rank. The hook has no default implementation: whether a bye
+**A bye counts once its ranking reaches it.** A match is created open, gets a
+result later and may get another one; a bye has nothing to report. It is treated
+like a match reported automatically as soon as it can be played: it is
+*reached* (`Bye::is_reached`) once its ranking has no open match in an earlier
+round of the phase, the same rule by which a consumer offers matches as
+playable now. That is when the format schedules it, for a format scheduling
+round by round, or later, after the result that leaves its ranking nothing
+earlier to play, for one scheduling every round at once (a round robin), so
+that the standings never count a bye of a round the ranking has not got to. A
+reached bye stays reached; undoing the result that reached it is a replay, which
+reaches it later or not at all. It reaches calculators through a hook of its
+own, `MetricsCalculator::update_after_bye`, run when the bye is reached, followed
+by a re-rank. Only the byes of the reported match's rankings are checked after a
+result, which keeps the hot path's extra cost to a pass over the byes. The hook
+has no default implementation: whether a bye
 counts is a different question per metric (points: configurable; matches played,
 round of first loss, round of elimination: no; Buchholz and Sonneborn-Berger: no
 opponent to count, but the points of the bye count for the ranking's
@@ -1032,6 +1042,14 @@ opponent and are a match result.
 - **A default no-op `update_after_bye`.** Less to write per calculator, but a
   calculator that forgets byes would be silently wrong instead of failing to
   compile. Rejected.
+- **A bye final when scheduled**, counted right away. Was the first design;
+  with a round robin, which schedules every round at once, every bye counted
+  at the start, so an odd field's standings led with the byes of later rounds
+  until the end. Replaced by reaching.
+- **Formats scheduling round by round** to defer their byes. Loses the whole
+  schedule a round robin shows up front. Rejected.
+- **Hiding unreached byes in the standings only.** The metrics themselves
+  would stay wrong, e.g. for what a later phase seeds by. Rejected.
 
 ## Persistence
 

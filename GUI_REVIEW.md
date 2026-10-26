@@ -126,7 +126,12 @@ DESIGN.md updated where a mechanism changes.
   `expect_no_sideways_scroll` and `expect_room_for_words`.
 - B7 moved to step 4, which changes the widths of pairings anyway.
 
-### 2. Byes count when their round is reached (E1) — engine, needs a design decision
+### 2. Byes count when their round is reached (E1) — done
+
+Done as (a): `Bye::is_reached`, `Phase::reach_byes` in `competition.rs`, DESIGN.md *Byes*
+rewritten (the old rule and the other options under *Alternatives*), the test
+`byes_are_scored_when_their_ranking_reaches_them` in `tests/full_tournament.rs`. The benchmark is
+unchanged within its noise.
 
 The decision "a bye is final when scheduled" holds for formats that schedule round by round, and is
 wrong for those that schedule every round at once. Options:

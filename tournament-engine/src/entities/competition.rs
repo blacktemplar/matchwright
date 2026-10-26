@@ -447,17 +447,39 @@ impl Phase {
                 .all_unique()
         );
 
-        // A bye is final when it is scheduled, so it is accounted for right away. The format is not
-        // asked again afterwards, even though the ranks may have changed: only a reported result
-        // makes it schedule.
-        for bye_id in &new_bye_ids {
-            self.update_metrics(|metrics_calculator, data, old_metrics| {
-                metrics_calculator.update_after_bye(data, &data.byes[bye_id], old_metrics)
-            });
-        }
-        if !new_bye_ids.is_empty() {
+        // The format is not asked again afterwards, even though a bye reached may have changed the
+        // ranks: only a reported result makes it schedule.
+        if self.reach_byes(new_bye_ids) {
             self.update_ranks();
         }
+    }
+
+    /// Marks those of the byes `candidates` (in this order) whose ranking has no open match in an
+    /// earlier round as reached, and updates the metrics for each, as if they were matches reported
+    /// as soon as they can be played. Returns whether any was reached.
+    fn reach_byes(&mut self, candidates: impl IntoIterator<Item = ByeId>) -> bool {
+        let mut reached_any = false;
+        for bye_id in candidates {
+            let bye = &self.data.byes[&bye_id];
+            if bye.reached {
+                continue;
+            }
+            let (ranking, round) = (bye.ranking, bye.round);
+            let blocked = self.data.matches.values().any(|r#match| {
+                r#match.round < round
+                    && !r#match.is_finished()
+                    && r#match.rankings().any(|r| *r == ranking)
+            });
+            if blocked {
+                continue;
+            }
+            self.data.byes.get_mut(&bye_id).unwrap().reached = true;
+            self.update_metrics(|metrics_calculator, data, old_metrics| {
+                metrics_calculator.update_after_bye(data, &data.byes[&bye_id], old_metrics)
+            });
+            reached_any = true;
+        }
+        reached_any
     }
 
     pub(crate) fn report_match_result(&mut self, match_id: MatchId, match_result: MatchResult) {
@@ -475,6 +497,16 @@ impl Phase {
                 old_metrics,
             )
         });
+        // only the byes of the match's rankings can have been reached by its result
+        let rankings: Vec<_> = self.data.matches[&match_id].rankings().copied().collect();
+        let candidates: Vec<_> = self
+            .data
+            .byes
+            .values()
+            .filter(|bye| !bye.reached && rankings.contains(&bye.ranking))
+            .map(Bye::id)
+            .collect();
+        self.reach_byes(candidates);
         self.update_ranks();
         self.create_new_matches();
     }
@@ -839,14 +871,16 @@ pub struct ByeId(Uuid);
 /// A round of a phase in which a ranking has no match to play, as decided by the
 /// [`PhaseFormat`] that schedules it.
 ///
-/// A bye is final as soon as it is scheduled: it has no result to report, and the metrics of its
-/// ranking are updated right away, see [`MetricsCalculator::update_after_bye`]. Like a match it
-/// holds `annotations`, given by the format when creating it with [`Annotated::with_annotation`].
+/// A bye has no result to report. It counts once its ranking [reaches](Self::is_reached) it, as
+/// if it were a match reported as soon as it can be played: then the metrics of its ranking are
+/// updated, see [`MetricsCalculator::update_after_bye`]. Like a match it holds `annotations`, given
+/// by the format when creating it with [`Annotated::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bye {
     id: ByeId,
     ranking: RankingId,
     round: NonZeroU32,
+    reached: bool,
     annotations: TypeMap,
 }
 
@@ -865,12 +899,20 @@ impl Bye {
             id,
             ranking,
             round,
+            reached: false,
             annotations: TypeMap::new(),
         }
     }
 
     pub fn id(&self) -> ByeId {
         self.id
+    }
+
+    /// Whether the ranking has reached this bye, i.e. had no open match in an earlier round of the
+    /// phase at some point since it was scheduled. Only a reached bye counts for the metrics, and
+    /// it stays reached.
+    pub fn is_reached(&self) -> bool {
+        self.reached
     }
 
     /// The ranking that has no match to play.

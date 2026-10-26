@@ -174,12 +174,7 @@ mod tests {
         assert_eq!(phase.matches().len(), 5 * 2);
         assert!(matches_per_ranking(phase).values().all(|&n| n == 4));
         assert_eq!(phase.byes().len(), 5 * 2);
-        assert!(
-            phase
-                .rankings()
-                .values()
-                .all(|ranking| { ranking.metric::<WinsDrawsLosses>().unwrap().byes == 1 })
-        );
+        assert!(phase.byes().values().map(Bye::ranking).all_unique());
     }
 
     #[test]
