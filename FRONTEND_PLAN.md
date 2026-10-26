@@ -230,10 +230,15 @@ events; 20–40 entrants typically. In parts:
    the matches showing only those of entrants whose name contains what is typed, whatever the case
    and the accents (`muller` finds `Müller`), within the list shown (`view::NameSearch`). The
    standings are not filtered.
+4. **The bracket** (done 2026-10-26), see DESIGN.md, *The bracket*: a single and a double
+   elimination show every pairing from the start, as columns of stages joined by lines, in place of
+   the columns on the full width, chosen by the view switch on top, which a knockout shows at every
+   width ("Matches & standings" | "Bracket", on a narrow screen a third button). Reporting from the
+   bracket is not done; results are reported in the list.
 
 ### Later, not planned in detail
 
-Bracket view (SVG with a text alternative), print layouts, read-only public/TV view, scheduling
+Reporting results from the bracket, print layouts, read-only public/TV view, scheduling
 with drag and drop (the components' drag-and-drop list), check-in, CSV and FIDE TRF, snapshots for
 large events, the CLI on top of the app crate, and what becomes of `tournament-web`.
 

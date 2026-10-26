@@ -1,4 +1,7 @@
-use std::fmt::{self, Display, Formatter};
+use std::{
+    any::Any,
+    fmt::{self, Display, Formatter},
+};
 
 use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
@@ -14,8 +17,11 @@ use crate::{
 /// left out of its schema with `#[plugin(skip)]`. That state is serialized together with the
 /// phase, and it must only depend on the [`PhaseData`] and the calls the format has seen, so that
 /// replaying the transition log recomputes it.
+///
+/// [`Any`] is a supertrait, so that a consumer can downcast a format it knows to its type, e.g. to
+/// read the [`Bracket`] of a [`SingleElimination`].
 #[axis]
-pub trait PhaseFormat: Plugin + DynClone {
+pub trait PhaseFormat: Plugin + DynClone + Any {
     /// The matches and byes to schedule next, given everything the phase has played so far. Empty
     /// if there is nothing to schedule, which is how a finished phase is reported.
     ///
@@ -137,6 +143,7 @@ pub mod monster_dyp;
 pub mod round_robin;
 pub mod single_elimination;
 
+pub use bracket::{Advance, Bracket, BracketPairing, BracketSide, PairingId, Seat};
 pub use double_elimination::{DoubleElimination, DoubleEliminationRound};
 pub use monster_dyp::MonsterDyp;
 pub use round_robin::{RoundRobin, random_rounds::RandomRounds};

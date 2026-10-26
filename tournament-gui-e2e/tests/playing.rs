@@ -206,6 +206,36 @@ async fn a_reopened_match_has_the_focus_and_is_announced() {
     .await;
 }
 
+/// The final and the match for third place wait for the semifinals in the bracket, and take
+/// their entrants as those are decided.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_bracket_shows_who_meets_whom() {
+    run_in_new_competition(async |gui| {
+        for name in ["Alice", "Bob", "Carol", "Dave"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("single elimination").await?;
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+
+        gui.click("Bracket").await?;
+        gui.expect_bracket_stages(&["Semifinals", "Final", "Third place"])
+            .await?;
+        gui.expect_bracket_waiting(&["Winner of 1", "Winner of 2", "Loser of 2", "Loser of 1"])
+            .await?;
+        gui.page.check_accessibility().await?;
+
+        gui.click("Matches & standings").await?;
+        gui.enter_result("1 1").await?;
+
+        gui.click("Bracket").await?;
+        gui.expect_bracket_waiting(&["Winner of 2", "Loser of 2"])
+            .await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_and_redo_announce_what_they_did() {

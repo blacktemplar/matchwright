@@ -19,7 +19,10 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 use super::*;
 use crate::{
     storage::{MemoryStorage, Progress, Stored},
-    view::NameSearch,
+    view::{
+        BracketColumn, BracketEntry, BracketLine, BracketPart, BracketSection, BracketSource,
+        NameSearch,
+    },
 };
 
 /// The output of `future`, which a [`MemoryStorage`] finishes right away.
@@ -405,6 +408,201 @@ fn a_knockout_names_the_stage_of_every_match() {
         .report(numbered(&session, 4), MatchResult::BWins)
         .unwrap();
     assert_eq!((last.new_matches, last.all_finished), (0, true));
+}
+
+/// Who `entry` is, as a test reads it: the names of a team, `bye`, or where a side not decided
+/// yet comes from, by the number of the match or else the stage.
+fn entry(entry: &BracketEntry) -> String {
+    let source = |source: &BracketSource| match (source.number, source.position) {
+        (Some(number), _) => format!("#{number}"),
+        (None, Some(position)) => {
+            format!("{} ({position})", english(source.stage.clone()).unwrap())
+        }
+        (None, None) => english(source.stage.clone()).unwrap(),
+    };
+    match entry {
+        BracketEntry::Team(team) => names(team).join(" & "),
+        BracketEntry::Bye => "bye".to_owned(),
+        BracketEntry::WinnerOf(from) => format!("winner of {}", source(from)),
+        BracketEntry::LoserOf(from) => format!("loser of {}", source(from)),
+    }
+}
+
+/// `column` as its stage in English and its pairings, each as its two sides.
+fn column(column: &BracketColumn) -> (String, Vec<[String; 2]>) {
+    (
+        english(column.stage.clone()).unwrap(),
+        column
+            .pairings
+            .iter()
+            .map(|pairing| pairing.sides.each_ref().map(entry))
+            .collect(),
+    )
+}
+
+/// Every column of `section`, see [`column`].
+fn columns(section: &BracketSection) -> Vec<(String, Vec<[String; 2]>)> {
+    section.columns.iter().map(column).collect()
+}
+
+#[test]
+fn only_a_started_knockout_has_a_bracket() {
+    assert_eq!(Given::new().started().bracket(), None, "a round robin");
+    assert_eq!(
+        Given::new().format(SingleElimination::ID).added().bracket(),
+        None
+    );
+    assert!(
+        Given::new()
+            .format(SingleElimination::ID)
+            .started()
+            .bracket()
+            .is_some()
+    );
+}
+
+/// The final and the match for third place, below it, are in the bracket before they are
+/// scheduled, waiting for the semifinals, and take the entrants as those are decided.
+#[test]
+fn the_bracket_of_a_knockout_shows_who_meets_whom() {
+    let mut session = Given::new().format(SingleElimination::ID).started();
+    let first = matches(&session)[0].clone();
+
+    let bracket = session.bracket().unwrap();
+
+    let parts = bracket.sections.iter().map(|section| section.part);
+    assert_eq!(parts.collect::<Vec<_>>(), [BracketPart::Knockout]);
+    let [semifinals, the_final] = &columns(&bracket.sections[0])[..] else {
+        panic!("expected the semifinals and the final");
+    };
+    assert_eq!(semifinals.0, "Semifinals");
+    assert_eq!(
+        semifinals.1[0],
+        [names(&first.a).join(""), names(&first.b).join("")]
+    );
+    assert_eq!(
+        *the_final,
+        (
+            "Final".to_owned(),
+            vec![["winner of #1".to_owned(), "winner of #2".to_owned()]]
+        )
+    );
+    let knockout = &bracket.sections[0].columns;
+    assert_eq!(knockout[0].below, None);
+    assert_eq!(
+        knockout[1].below.as_deref().map(column),
+        Some((
+            "Third place".to_owned(),
+            vec![["loser of #2".to_owned(), "loser of #1".to_owned()]]
+        ))
+    );
+    let lines = |column: &BracketColumn| -> Vec<_> {
+        column
+            .pairings
+            .iter()
+            .map(|pairing| (pairing.line_in, pairing.line_out))
+            .collect()
+    };
+    assert_eq!(
+        lines(&knockout[0]),
+        [
+            (false, Some(BracketLine::Down)),
+            (false, Some(BracketLine::Up))
+        ]
+    );
+    assert_eq!(lines(&knockout[1]), [(true, None)]);
+
+    session.report(first.id, MatchResult::AWins).unwrap();
+
+    let bracket = session.bracket().unwrap();
+    let the_final = &bracket.sections[0].columns[1].pairings[0];
+    assert_eq!(entry(&the_final.sides[0]), names(&first.a).join(""));
+    assert_eq!(
+        the_final.r#match, None,
+        "it still waits for the other semifinal"
+    );
+    let first_row = bracket.sections[0].columns[0].pairings[0].r#match.as_ref();
+    assert_eq!(
+        first_row.map(|row| row.result),
+        Some(Some(MatchResult::AWins))
+    );
+}
+
+/// Of six entrants, the best two have byes in the quarterfinals, so neither semifinal is scheduled
+/// at the start and the final tells them apart by their place.
+#[test]
+fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_its_place_in_the_stage() {
+    let session = Given::new()
+        .entrants(&["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"])
+        .format(SingleElimination::ID)
+        .started();
+
+    let bracket = session.bracket().unwrap();
+
+    let knockout = columns(&bracket.sections[0]);
+    assert_eq!(
+        knockout[1].1[0][1], "winner of #1",
+        "a quarterfinal is scheduled"
+    );
+    assert_eq!(
+        knockout[2],
+        (
+            "Final".to_owned(),
+            vec![[
+                "winner of Semifinals (1)".to_owned(),
+                "winner of Semifinals (2)".to_owned()
+            ]]
+        )
+    );
+}
+
+/// The losers of the winner bracket drop into the loser bracket, and the reset of the grand final
+/// is only played if the champion of the loser bracket wins it.
+#[test]
+fn the_bracket_of_a_double_elimination_shows_where_the_losers_drop() {
+    let session = Given::new().format(DoubleElimination::ID).started();
+
+    let bracket = session.bracket().unwrap();
+
+    let parts = bracket.sections.iter().map(|section| section.part);
+    assert_eq!(
+        parts.collect::<Vec<_>>(),
+        [
+            BracketPart::Winners,
+            BracketPart::Losers,
+            BracketPart::GrandFinal
+        ]
+    );
+    let stages = |section: &BracketSection| -> Vec<String> {
+        columns(section)
+            .into_iter()
+            .map(|(stage, _)| stage)
+            .collect()
+    };
+    assert_eq!(
+        stages(&bracket.sections[1]),
+        ["Losers round 1", "Losers final"]
+    );
+    assert_eq!(
+        columns(&bracket.sections[1])[1].1,
+        [[
+            "winner of Losers round 1".to_owned(),
+            "loser of Winners final".to_owned()
+        ]]
+    );
+    let losers = &bracket.sections[1].columns;
+    assert_eq!(
+        losers[0].pairings[0].line_out,
+        Some(BracketLine::Straight),
+        "the survivor meets one dropping down"
+    );
+    let grand_final = &bracket.sections[2].columns;
+    assert_eq!(
+        stages(&bracket.sections[2]),
+        ["Grand final", "Grand final reset"]
+    );
+    assert!(!grand_final[0].pairings[0].only_if_needed);
+    assert!(grand_final[1].pairings[0].only_if_needed);
 }
 
 #[test]

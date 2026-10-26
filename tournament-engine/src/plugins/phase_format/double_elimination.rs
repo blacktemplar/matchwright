@@ -95,6 +95,12 @@ impl DoubleElimination {
         self
     }
 
+    /// The bracket of the double elimination, with the stage of each pairing as a
+    /// [`DoubleEliminationRound`] annotation; `None` before the phase starts.
+    pub fn bracket(&self) -> Option<&Bracket> {
+        self.bracket.as_ref()
+    }
+
     fn declare_static(declaration: &mut Declaration) {
         declaration
             .provide(MatchAnnotation::<DoubleEliminationRound>::new())
@@ -306,11 +312,14 @@ mod tests {
         entities::competition::{
             Annotated, Match, MatchId, MatchResult, Phase, PhaseBuilder, RankingId,
         },
-        plugins::metrics_calculator::{
-            round_of_elimination::{
-                LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,
+        plugins::{
+            metrics_calculator::{
+                round_of_elimination::{
+                    LaterElimination, RoundOfElimination, RoundOfEliminationCalculator,
+                },
+                wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
             },
-            wins_draws_losses::{FewerLosses, WinsDrawsLosses, WinsDrawsLossesCalculator},
+            phase_format::Advance,
         },
     };
 
@@ -740,6 +749,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The loser bracket takes in the losers of the winner bracket, and the reset follows the
+    /// grand final only if the champion of the loser bracket wins it.
+    #[test]
+    fn the_bracket_tells_where_the_losers_drop_and_when_the_reset_is_played() {
+        let phase = bracket(DoubleElimination::new().with_grand_final_reset(), 4);
+        let format: &dyn std::any::Any = phase.format();
+        let pairings = format
+            .downcast_ref::<DoubleElimination>()
+            .and_then(DoubleElimination::bracket)
+            .expect("a started double elimination has a bracket")
+            .pairings();
+        let stages = pairings
+            .iter()
+            .map(|pairing| *pairing.annotations.get::<DoubleEliminationRound>().unwrap())
+            .collect_vec();
+        let winners = |round| Winners { round, rounds: 2 };
+        let losers = |round| Losers { round, rounds: 2 };
+        assert_eq!(
+            stages,
+            [
+                winners(1),
+                winners(1),
+                winners(2),
+                losers(1),
+                losers(2),
+                GrandFinal,
+                GrandFinalReset
+            ]
+        );
+        let from = |index: usize| pairings[index].sides.map(|side| side.from);
+        let id = |index: usize| pairings[index].id;
+        assert_eq!(
+            from(3),
+            [Some(Advance::LoserOf(id(0))), Some(Advance::LoserOf(id(1)))]
+        );
+        assert_eq!(
+            from(4),
+            [
+                Some(Advance::WinnerOf(id(3))),
+                Some(Advance::LoserOf(id(2)))
+            ]
+        );
+        assert_eq!(pairings[5].advances_only_if_won_by, Some(Team::B));
+        assert_eq!(
+            from(6),
+            [
+                Some(Advance::LoserOf(id(5))),
+                Some(Advance::WinnerOf(id(5)))
+            ]
+        );
     }
 
     #[test]

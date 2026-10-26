@@ -1672,6 +1672,74 @@ tested natively and in wasm, and knows no plugin.
   it was; pinning the round after each result was rejected, since the round
   that follows is where the next results are entered.
 
+### The bracket
+
+*Implemented* 2026-10-26: a single and a double elimination show their
+bracket, every pairing in it from the start.
+
+#### Decision
+
+- **What the GUI cannot know is in the engine; the rest is not.** Matches
+  only exist once both sides are known, so from them alone a consumer sees
+  neither the pairings to come nor who of which earlier pairing they wait
+  for. That is in the state of the knockout formats, their `Bracket`, which
+  they hand out read-only (`SingleElimination::bracket`,
+  `DoubleElimination::bracket`, `None` before the start): its pairings in the
+  order they were added, each with its round, its annotations (so its stage,
+  through `PhaseFormat::stage`), its match once scheduled, and for each side
+  who took it and which pairing's winner or loser it comes from
+  (`BracketSide`). A pairing keeps its annotations once scheduled (they are
+  copied onto the match or the bye, no longer moved), so that pairings not
+  scheduled and scheduled ones are named alike.
+- **The app knows the two formats, not the trait.** `PhaseFormat` has `Any`
+  as a supertrait, and `Session::bracket` downcasts the phase's format to the
+  two knockout formats, splits the pairings into sections by their annotations
+  (`BracketPart`: the knockout, or the winner bracket, the loser bracket and
+  the grand final) and each section into columns by stage, with the match for
+  third place as the stage `below` the final's column, and works out the lines: a pairing's winner playing next
+  in the next column of its section is joined to it, straight on, or down or
+  up to meet the winner of its neighbour. A side not decided yet names its
+  source by the number of its match, or else by its stage and, where the
+  stage has several pairings, its place from the top.
+- **The GUI draws it as columns of equal slots.** Each column is a list of
+  slots of equal height, so a column of half as many pairings has slots
+  twice as high and each pairing is level with the middle of the two it
+  follows from, at every size and without measuring. The lines are borders of
+  the slots' pseudo-elements, halfway across the gap between columns. Read
+  in order, it is the list of the matches of each stage, which is what a
+  screen reader gets, with the result said in words; no separate text
+  alternative is needed. The match for third place is in the final's column,
+  apart from the lines, a little below the level of the second semifinal (in
+  the bottom quarter of the column, positioned absolutely, so that it moves no
+  slot; a bracket whose first column has fewer than 8 pairings keeps room for
+  it below them). The bracket is shown in place of the columns, on the
+  full width, scrolling sideways where it does not fit: for a knockout, the
+  view switch is shown at every width, choosing between "Matches & standings"
+  and "Bracket" where there is room for two columns, and between the matches,
+  the standings and the bracket where there is not. What is not shown stays on
+  the page, `hidden`, so that the round chosen and the search are kept. It
+  shows, reporting stays in the list of matches.
+
+#### Alternatives
+
+- **A trait method for the bracket, or one for views of any kind**
+  (`fn views(&self) -> TypeMap`). The GUI needs code of its own for each kind
+  of view either way, so a generic method only moves the table of kinds; and a
+  method the formats report through is a self-reported fact. Kept for when a
+  third-party format needs a bracket drawn.
+- **The format drawing its view.** The engine knows nothing about display.
+- **The GUI rebuilding the tree from the matches**, linked by the entrants who
+  played. Shows nothing of the pairings to come, and the double elimination's
+  order of dropping into the loser bracket would be copied from the format.
+- **SVG.** Lines drawn by CSS keep the pairings HTML, the same text a list
+  has, and need no coordinates computed.
+- **The bracket below both columns**, always shown. With many entrants it is
+  far down the page, below the standings, and nothing on top tells that it is
+  there.
+- **The bracket as a tab of a column** (beside the playable matches and the
+  rounds, or beside the standings). Half the width, so a large bracket
+  scrolls sideways more.
+
 ### Layout
 
 *Implemented* 2026-10-25: where the screens of `tournament-gui` put what they
@@ -1692,7 +1760,8 @@ format.
   beside the phase, after the start the matches beside the standings (and how
   the phase is played), half and half. Where there is room for one column only
   (below 60rem), two buttons choose which is shown; both stay on the page, the
-  other hidden by CSS only.
+  other hidden by CSS only. A knockout adds its bracket to the buttons, which
+  it then shows at every width (see [The bracket](#the-bracket)).
 - **A match is a card of two rows at every width**: the two sides around its
   number, then each side's button below its name, the draw in the middle.
   The columns are the same in every card (a CSS grid with a subgrid), so a

@@ -12,6 +12,7 @@
 //! browser's offer to install it (see [`install`]).
 
 mod announcement;
+mod bracket;
 mod competition;
 mod competitions;
 mod components;

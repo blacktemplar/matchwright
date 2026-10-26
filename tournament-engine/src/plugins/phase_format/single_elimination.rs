@@ -77,6 +77,12 @@ impl SingleElimination {
         self
     }
 
+    /// The bracket of the knockout, with the stage of each pairing as a [`KnockoutRound`]
+    /// annotation; `None` before the phase starts.
+    pub fn bracket(&self) -> Option<&Bracket> {
+        self.bracket.as_ref()
+    }
+
     fn declare_static(declaration: &mut Declaration) {
         declaration.provide(MatchAnnotation::<KnockoutRound>::new());
     }
@@ -233,8 +239,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
     use super::*;
-    use crate::entities::competition::{
-        Annotated, Match, MatchResult, Phase, PhaseBuilder, RankingId,
+    use crate::{
+        entities::competition::{Annotated, Match, MatchResult, Phase, PhaseBuilder, RankingId},
+        plugins::phase_format::{Advance, Seat},
     };
 
     #[test]
@@ -508,6 +515,59 @@ mod tests {
 
         assert_eq!(pairings(&phase, 1), [(4, 5)]);
         assert_eq!(pairings(&phase, 2), [(2, 3)]);
+    }
+
+    /// The bracket of `phase`, read the way a consumer does, by downcasting its format.
+    fn bracket_of(phase: &Phase) -> &Bracket {
+        let format: &dyn std::any::Any = phase.format();
+        format
+            .downcast_ref::<SingleElimination>()
+            .and_then(SingleElimination::bracket)
+            .expect("a started knockout has a bracket")
+    }
+
+    /// The final and the match for third place are in the bracket from the start, with the
+    /// pairings their sides come from, and take their entrants as those are decided.
+    #[test]
+    fn the_bracket_tells_who_meets_whom_before_it_is_scheduled() {
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 4);
+        let pairings = bracket_of(&phase).pairings();
+        let [semifinal_a, semifinal_b, the_final, third_place] = &pairings[..] else {
+            panic!("expected two semifinals, the final and the match for third place");
+        };
+
+        assert!(semifinal_a.r#match.is_some() && semifinal_b.r#match.is_some());
+        assert_eq!(the_final.r#match, None);
+        assert_eq!(
+            the_final.sides.map(|side| side.from),
+            [
+                Some(Advance::WinnerOf(semifinal_a.id)),
+                Some(Advance::WinnerOf(semifinal_b.id))
+            ]
+        );
+        assert_eq!(the_final.sides.map(|side| side.seat), [None, None]);
+        assert_eq!(
+            third_place.sides.map(|side| side.from),
+            [
+                Some(Advance::LoserOf(semifinal_b.id)),
+                Some(Advance::LoserOf(semifinal_a.id))
+            ]
+        );
+        assert_eq!(
+            the_final.annotations.get::<KnockoutRound>(),
+            Some(&KnockoutRound::RoundOf(2))
+        );
+
+        let winner = phase.data().matches()[&semifinal_a.r#match.unwrap()].team_a()[0];
+        play_round(&mut phase, 1);
+        let the_final = bracket_of(&phase).pairings()[2];
+        assert_eq!(the_final.sides[0].seat, Some(Seat::Ranking(winner)));
+        assert!(the_final.r#match.is_some());
+        assert_eq!(
+            the_final.annotations.get::<KnockoutRound>(),
+            Some(&KnockoutRound::RoundOf(2)),
+            "a scheduled pairing keeps its annotations"
+        );
     }
 
     /// Two entrants play nothing but the final, so the option changes nothing at all.

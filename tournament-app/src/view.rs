@@ -140,6 +140,96 @@ pub struct StageName {
     pub stage: Stage,
 }
 
+/// The bracket of a knockout phase, every pairing in it from the start, in sections of columns.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Bracket {
+    /// In the order they are played.
+    pub sections: Vec<BracketSection>,
+}
+
+/// A part of a [`Bracket`], whose columns are drawn left to right, joined by lines.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BracketSection {
+    pub part: BracketPart,
+    /// In the order they are played.
+    pub columns: Vec<BracketColumn>,
+}
+
+/// Which part of its bracket a [`BracketSection`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BracketPart {
+    /// The knockout of a single elimination, with its match for third place below the final.
+    Knockout,
+    /// The winner bracket of a double elimination.
+    Winners,
+    /// The loser bracket of a double elimination.
+    Losers,
+    /// The grand final of a double elimination, and its reset.
+    GrandFinal,
+}
+
+/// The pairings of a stage of a [`BracketSection`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BracketColumn {
+    pub stage: Option<StageName>,
+    /// Top to bottom, so that the winners of two neighbours that meet next are drawn either side
+    /// of the pairing they meet in.
+    pub pairings: Vec<BracketPairing>,
+    /// A stage drawn below the pairings, in the bottom quarter of the column, apart from the lines:
+    /// the match for third place below the final.
+    pub below: Option<Box<BracketColumn>>,
+}
+
+/// A pairing of a [`Bracket`]: a match, once both of its sides are known.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BracketPairing {
+    /// Its match, once scheduled.
+    pub r#match: Option<MatchRow>,
+    /// Sides A and B.
+    pub sides: [BracketEntry; 2],
+    /// The line from it to the pairing its winner plays next, if that is in the next column.
+    pub line_out: Option<BracketLine>,
+    /// Whether a line comes in from the previous column.
+    pub line_in: bool,
+    /// Whether it is only played if the pairing before it ends a certain way, e.g. a grand final
+    /// reset.
+    pub only_if_needed: bool,
+}
+
+/// Who takes a side of a [`BracketPairing`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BracketEntry {
+    Team(Vec<EntrantRow>),
+    /// Nobody, so the other side moves on without a match.
+    Bye,
+    /// The winner of a pairing not decided yet.
+    WinnerOf(BracketSource),
+    /// The loser of a pairing not decided yet.
+    LoserOf(BracketSource),
+}
+
+/// The pairing a side of a [`BracketPairing`] is waiting for.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BracketSource {
+    /// The number of its match, once scheduled, see [`MatchRow::number`].
+    pub number: Option<usize>,
+    pub stage: Option<StageName>,
+    /// Its place in the column of its stage, from 1 at the top, if the column has several
+    /// pairings.
+    pub position: Option<usize>,
+}
+
+/// Where the line from a [`BracketPairing`] to the pairing its winner plays next goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BracketLine {
+    /// Straight on, the next pairing taking the winner of this one alone from this column.
+    Straight,
+    /// Down, to meet the winner of the pairing below.
+    Down,
+    /// Up, to meet the winner of the pairing above.
+    Up,
+}
+
 /// The standings of the phase.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Standings {

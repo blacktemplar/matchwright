@@ -969,5 +969,6 @@ fn record(person: &Person) -> String {
     serde_json::to_string(person).expect("a person serializes as JSON")
 }
 
+mod bracket;
 #[cfg(test)]
 mod tests;

@@ -443,7 +443,8 @@ footer select {
   }
 }
 
-/* the matches, or the standings, where there is room for one column only */
+/* the matches, the standings or the bracket where there is room for one column only, else both
+ * columns or the bracket, and only for a knockout */
 .view-switch {
   display: flex;
   margin-bottom: var(--space-4);
@@ -454,13 +455,15 @@ footer select {
 }
 
 @media (width < 60rem) {
-  .hidden-narrow {
+  .hidden-narrow,
+  .wide-only {
     display: none;
   }
 }
 
 @media (width >= 60rem) {
-  .view-switch {
+  .view-switch:not(.with-bracket),
+  .narrow-only {
     display: none;
   }
 
@@ -1015,6 +1018,179 @@ ul.summary-items {
 .bye {
   margin: var(--space-3) 0 0;
   color: var(--text-muted);
+}
+
+/* The bracket: in place of the columns, across both */
+
+/* as narrow as the screen, the bracket scrolling inside it */
+.columns.play > .wide {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.bracket-section + .bracket-section {
+  margin-top: var(--space-4);
+}
+
+/* Columns of the same height, each a list of slots of the same height, a pairing in the middle of
+ * each. A column of half as many pairings as the one before has slots twice as high, so each
+ * pairing is level with the middle of the two it follows from, whatever the screen. */
+.bracket {
+  --gap: var(--space-6);
+
+  display: flex;
+  width: max-content;
+  padding-bottom: var(--space-2);
+  gap: var(--gap);
+}
+
+.bracket-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.bracket-stage {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.9em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bracket-slots {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.bracket-slots ol {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+/* The stage below the column's, the match for third place below the final: in the bottom quarter
+ * of the column, a little below the middle of the second semifinal, which is at three quarters,
+ * so that it clears the semifinal's box. It does not make the column higher, which would move the
+ * pairings of every column, so the bracket keeps room for it below the pairings where the bottom
+ * quarter is too low for it, i.e. where the first column has fewer than 8 pairings. */
+.below {
+  position: absolute;
+  top: calc(75% + 2.25rem);
+  left: 0;
+}
+
+.below .slot {
+  flex: none;
+  padding: 0;
+}
+
+.bracket:has(.below) {
+  padding-bottom: 6rem;
+}
+
+.bracket:has(.bracket-column:first-child li:nth-child(8)) {
+  padding-bottom: var(--space-2);
+}
+
+.slot {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+
+/* The lines: from the middle of a slot halfway across the gap to the next column, there down or
+ * up to the middle between the two slots that meet, which is where the slot they meet in has its
+ * middle, and on from there. */
+.slot.line-straight::after,
+.slot.line-down::after,
+.slot.line-up::after,
+.slot.line-in::before {
+  position: absolute;
+  width: calc(var(--gap) / 2);
+  border: 0 solid var(--border-strong);
+  content: "";
+}
+
+.slot.line-straight::after {
+  top: 50%;
+  right: calc(var(--gap) / -2);
+  border-top-width: 1px;
+}
+
+.slot.line-down::after {
+  top: 50%;
+  right: calc(var(--gap) / -2);
+  height: 50%;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+
+.slot.line-up::after {
+  top: 0;
+  right: calc(var(--gap) / -2);
+  height: 50%;
+  border-right-width: 1px;
+  border-bottom-width: 1px;
+}
+
+.slot.line-in::before {
+  top: 50%;
+  left: calc(var(--gap) / -2);
+  border-top-width: 1px;
+}
+
+.pairing {
+  display: grid;
+  min-width: 10rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  column-gap: var(--space-2);
+  grid-template-columns: auto 1fr;
+}
+
+.pairing.finished {
+  border-style: dashed;
+  background: var(--background);
+}
+
+.pairing .number {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.pairing .side {
+  grid-column: 2;
+}
+
+.pairing .side.pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.pairing .winner {
+  font-weight: 600;
+}
+
+.pairing .winner::before {
+  color: var(--accent);
+  content: "✓ ";
+}
+
+.pairing .if-needed {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  grid-column: 2;
 }
 
 /* The standings */

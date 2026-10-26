@@ -103,8 +103,10 @@ cancel = Cancel
 ## After the start
 
 matches = Matches
-# what a narrow screen shows: the matches or the standings
+# what a narrow screen shows: the matches or the standings (or a knockout's bracket); a wide screen
+# shows both, or the bracket
 view = View
+matches-and-standings = Matches & standings
 # the lists of matches to choose from: those playable now, and each round
 rounds = Rounds
 round = Round { $round }
@@ -135,6 +137,22 @@ bye = Bye: { $team }
 bye-in-stage = Bye: { $team } ({ $stage })
 standings = Standings
 rank = Rank
+# the bracket of a knockout, every match in it from the start
+bracket = Bracket
+bracket-winners = Winner bracket
+bracket-losers = Loser bracket
+bracket-grand-final = Grand final
+# a side of a match in the bracket that nobody takes
+bracket-bye = Bye
+# a side of a match in the bracket not decided yet, by the match or else the stage it comes from
+winner-of-match = Winner of { $number }
+loser-of-match = Loser of { $number }
+winner-of-stage = Winner of { $stage }
+loser-of-stage = Loser of { $stage }
+# a match of a stage of several, by its place from the top of the stage's column
+stage-position = { $stage } ({ $position })
+# a match of the bracket only played if the one before ends a certain way, e.g. a grand final reset
+if-needed = if needed
 # reporting a result by typing it
 # what opens the field reporting results typed in
 type-results = Type in results

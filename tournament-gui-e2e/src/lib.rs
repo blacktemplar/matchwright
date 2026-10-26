@@ -604,6 +604,27 @@ impl Gui {
             .await
     }
 
+    /// Waits until the stages the bracket shows are `stages`, in order, e.g. `"Final"`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the stages shown instead.
+    pub async fn expect_bracket_stages(&self, stages: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".bracket-stage"), stages)
+            .await
+    }
+
+    /// Waits until the sides of the bracket not decided yet are `sides`, in the order of the
+    /// bracket, e.g. `"Winner of 1"`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the sides shown instead.
+    pub async fn expect_bracket_waiting(&self, sides: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".bracket .side.pending"), sides)
+            .await
+    }
+
     /// Reports the result `entry` says by typing it, e.g. `"3 1"`, in place of what was typed
     /// before, and pressing Enter; opens the entry of results first if it is closed.
     pub async fn enter_result(&self, entry: &str) -> WebDriverResult<()> {

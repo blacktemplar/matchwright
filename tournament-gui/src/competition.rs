@@ -28,6 +28,7 @@ use tournament_browser::{
 use crate::{
     Notices, Page,
     announcement::Announcement,
+    bracket::Bracket,
     download, icons,
     phase::PhaseSummary,
     play::{Rounds, Standings},
@@ -305,21 +306,25 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
     }
 }
 
-/// Which of the two columns of the screen after the start is shown where there is room for one
-/// only.
+/// What the screen after the start shows: the matches or the standings, both side by side where
+/// there is room for two columns, or the bracket of a knockout.
 #[derive(Clone, Copy, PartialEq)]
 enum Column {
     Matches,
     Standings,
+    Bracket,
 }
 
 /// The screen after the start: the matches, and next to them the standings and how the phase is
-/// played. Where there is room for one column only, buttons choose which is shown; both stay on
-/// the page.
+/// played, or in their place the bracket of a knockout, on the full width. Buttons on top choose
+/// what is shown: the matches, the standings or the bracket where there is room for one column
+/// only, else the two columns or the bracket, shown only for a knockout. Everything stays on the
+/// page, hidden while not shown.
 #[component]
 fn Play() -> Element {
     let ctx = use_context::<Ctx>();
     let mut shown = use_signal(|| Column::Matches);
+    let has_bracket = ctx.session.read().bracket().is_some();
     let tr = ctx.translator.read();
     let column = |column| {
         if shown() == column {
@@ -328,27 +333,50 @@ fn Play() -> Element {
             "column hidden-narrow"
         }
     };
+    let bracket_shown = shown() == Column::Bracket;
     rsx! {
-        div { class: "segmented view-switch", role: "group", aria_label: tr.get("view"),
+        div {
+            class: "segmented view-switch",
+            class: if has_bracket { "with-bracket" },
+            role: "group",
+            aria_label: tr.get("view"),
             button {
+                class: "narrow-only",
                 aria_pressed: shown() == Column::Matches,
                 onclick: move |_| shown.set(Column::Matches),
                 {tr.get("matches")}
             }
             button {
+                class: "narrow-only",
                 aria_pressed: shown() == Column::Standings,
                 onclick: move |_| shown.set(Column::Standings),
                 {tr.get("standings")}
             }
+            if has_bracket {
+                button {
+                    class: "wide-only",
+                    aria_pressed: !bracket_shown,
+                    onclick: move |_| shown.set(Column::Matches),
+                    {tr.get("matches-and-standings")}
+                }
+                button {
+                    aria_pressed: bracket_shown,
+                    onclick: move |_| shown.set(Column::Bracket),
+                    {tr.get("bracket")}
+                }
+            }
         }
         div { class: "columns play",
-            div { class: column(Column::Matches), Rounds {} }
-            div { class: column(Column::Standings),
+            div { class: column(Column::Matches), hidden: bracket_shown, Rounds {} }
+            div { class: column(Column::Standings), hidden: bracket_shown,
                 Standings {}
                 section { class: "card", aria_labelledby: "phase",
                     h2 { id: "phase", {tr.get("phase-heading")} }
                     PhaseSummary {}
                 }
+            }
+            if has_bracket {
+                div { class: "column wide", hidden: !bracket_shown, Bracket {} }
             }
         }
     }

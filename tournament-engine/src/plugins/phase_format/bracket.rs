@@ -9,23 +9,59 @@ use crate::{
     type_map::TypeMap,
 };
 
-/// A fixed tree of pairings, in which the winner and the loser of a pairing move on to given seats
-/// of later pairings. Shared by the knockout formats, which build it from the seeds on their first
-/// call and keep it as their state.
+/// The bracket of a knockout format: a fixed tree of pairings, in which the winner and the loser of
+/// a pairing move on to given sides of later pairings. Built from the seeds when the phase starts.
 ///
-/// A pairing is scheduled as a match as soon as both of its seats are taken, without waiting for
+/// A pairing is scheduled as a match as soon as both of its sides are taken, without waiting for
 /// the rest of its round. A pairing with a bye on one side is decided without a match, for the
 /// other side, which is scheduled a [`Bye`] if it is a ranking.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(super) struct Bracket {
+pub struct Bracket {
     pairings: Vec<Pairing>,
     /// The pairings whose seats are both taken but which are not decided yet, i.e. those that
     /// [`Bracket::create_new_matches`] has to look at.
     in_play: Vec<PairingId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(super) struct PairingId(usize);
+/// Identifies a pairing within its [`Bracket`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct PairingId(usize);
+
+/// A pairing of a [`Bracket`], as [`Bracket::pairings`] lists it.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct BracketPairing<'a> {
+    pub id: PairingId,
+    /// The round of the phase its match or bye is played in.
+    pub round: NonZeroU32,
+    /// Sides A and B.
+    pub sides: [BracketSide; 2],
+    /// What its match or bye is annotated with, e.g. its stage.
+    pub annotations: &'a TypeMap,
+    /// Its match, once scheduled. A pairing decided by a bye has none.
+    pub r#match: Option<MatchId>,
+    /// If set, its winner and its loser only move on if this side wins it, e.g. into a grand final
+    /// reset.
+    pub advances_only_if_won_by: Option<Team>,
+}
+
+/// A side of a [`BracketPairing`]: who takes it, and where they come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BracketSide {
+    /// The pairing whose winner or loser takes the side, or `None` if the side was taken when the
+    /// bracket was built.
+    pub from: Option<Advance>,
+    /// Who took it, or `None` while [`Self::from`] is not decided.
+    pub seat: Option<Seat>,
+}
+
+/// Who moves on from a pairing of a [`Bracket`] to a side of a later one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Advance {
+    WinnerOf(PairingId),
+    LoserOf(PairingId),
+}
 
 /// Who takes a seat of a pairing.
 #[derive(Debug, Clone, Copy)]
@@ -37,9 +73,11 @@ pub(super) enum Source {
     LoserOf(PairingId),
 }
 
+/// Who takes a side of a pairing of a [`Bracket`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Seat {
+pub enum Seat {
     Ranking(RankingId),
+    /// Nobody, so the other side moves on without a match.
     Bye,
 }
 
@@ -52,7 +90,7 @@ struct Slot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pairing {
     round: NonZeroU32,
-    /// Moved into the match or the bye once it is scheduled.
+    /// Copied onto the match or the bye once it is scheduled.
     annotations: TypeMap,
     /// `None` while the source of the seat is not decided yet.
     seats: [Option<Seat>; 2],
@@ -64,6 +102,39 @@ struct Pairing {
 }
 
 impl Bracket {
+    /// Its pairings, in the order the format added them. The pairings of a round of a knockout are
+    /// in bracket order: the winners of two neighbours meet in the same pairing of the next round.
+    pub fn pairings(&self) -> Vec<BracketPairing<'_>> {
+        let mut from = vec![[None; 2]; self.pairings.len()];
+        for (id, pairing) in self.pairings.iter().enumerate() {
+            let advances = [
+                (pairing.winner_to, Advance::WinnerOf(PairingId(id))),
+                (pairing.loser_to, Advance::LoserOf(PairingId(id))),
+            ];
+            for (to, advance) in advances {
+                if let Some(Slot { pairing, side }) = to {
+                    from[pairing.0][index(side)] = Some(advance);
+                }
+            }
+        }
+        self.pairings
+            .iter()
+            .zip(from)
+            .enumerate()
+            .map(|(id, (pairing, from))| BracketPairing {
+                id: PairingId(id),
+                round: pairing.round,
+                sides: [0, 1].map(|side| BracketSide {
+                    from: from[side],
+                    seat: pairing.seats[side],
+                }),
+                annotations: &pairing.annotations,
+                r#match: pairing.r#match,
+                advances_only_if_won_by: pairing.advances_only_if_won_by,
+            })
+            .collect()
+    }
+
     /// Adds a pairing to be played in phase round `round` between the two `sources`, as sides A
     /// and B. The match or the bye it schedules is annotated with `annotations`.
     ///
@@ -176,7 +247,7 @@ impl Bracket {
                 (Seat::Ranking(a), Seat::Ranking(b)) => {
                     let Some(match_id) = pairing.r#match else {
                         let r#match = Match::new(vec1![a], vec1![b], pairing.round)
-                            .with_annotations(mem::take(&mut pairing.annotations));
+                            .with_annotations(pairing.annotations.clone());
                         pairing.r#match = Some(r#match.id());
                         new_matches.push((id, r#match));
                         self.in_play.push(id);
@@ -191,14 +262,14 @@ impl Bracket {
                         .expect("draws are rejected since knockouts do not allow them")
                 }
                 (Seat::Ranking(a), Seat::Bye) => {
-                    let bye = Bye::new(a, pairing.round)
-                        .with_annotations(mem::take(&mut pairing.annotations));
+                    let bye =
+                        Bye::new(a, pairing.round).with_annotations(pairing.annotations.clone());
                     new_byes.push((id, bye));
                     Team::A
                 }
                 (Seat::Bye, Seat::Ranking(b)) => {
-                    let bye = Bye::new(b, pairing.round)
-                        .with_annotations(mem::take(&mut pairing.annotations));
+                    let bye =
+                        Bye::new(b, pairing.round).with_annotations(pairing.annotations.clone());
                     new_byes.push((id, bye));
                     Team::B
                 }
