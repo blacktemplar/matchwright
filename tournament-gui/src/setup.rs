@@ -54,6 +54,9 @@ pub fn Entrants() -> Element {
                     {tr.get("add-entrant")}
                 }
             }
+            if count == 0 {
+                p { class: "empty", {tr.get("no-entrants")} }
+            }
             ol { id: "entrant-list",
                 for (id, name) in entrants {
                     li { key: "{id:?}",

@@ -37,6 +37,7 @@ read-only = Dieses Turnier ist in einem anderen Tab geöffnet und wird hier nur 
 ## Before the start
 
 entrants = Teilnehmer
+no-entrants = Noch keine Teilnehmer. Jeder wird mit seinem Namen hinzugefügt.
 name = Name
 add-entrant = Teilnehmer hinzufügen
 remove = Entfernen

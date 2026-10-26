@@ -48,6 +48,7 @@ read-only = This competition is open in another tab, so it is only shown here. I
 ## Before the start
 
 entrants = Entrants
+no-entrants = No entrants yet. Each one is added by its name.
 name = Name
 add-entrant = Add entrant
 remove = Remove

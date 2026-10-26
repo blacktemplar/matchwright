@@ -29,9 +29,9 @@
   color: var(--secondary-color-1);
 }
 
-/* changed: the theme's grey is too faint for WCAG AA on white */
+/* changed: the theme's grey is too faint for WCAG AA; the page's muted text, light or dark */
 .dx-select-trigger span[data-placeholder="true"] {
-  color: #555;
+  color: var(--text-muted);
 }
 
 .dx-select[data-state="open"] .dx-select-trigger {

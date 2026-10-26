@@ -1656,8 +1656,8 @@ tested natively and in wasm, and knows no plugin.
 ### Layout
 
 *Implemented* 2026-10-25: where the screens of `tournament-gui` put what they
-show, in `assets/style.css` (plain CSS, neutral greys until a palette is
-chosen). The page is used on laptops and tablets, and for small events on a
+show, and in which colours, in `assets/style.css` (plain CSS). The page is
+used on laptops and tablets, and for small events on a
 phone alone; events have 20–40 entrants typically, but any number, in any
 format.
 
@@ -1699,6 +1699,18 @@ format.
   being visually hidden ("Match", "against").
 - **The e2e tests run at a laptop's size** (`--window-size=1280,900` in
   `e2e-harness`), where every column is shown.
+- **Colours are tokens, light and dark as the system prefers**: custom
+  properties named by their role (`--text`, `--surface`, `--accent`,
+  `--accent-subtle`, `--error`, …) at the top of `style.css`, redefined under
+  `prefers-color-scheme: dark`; no rule names a colour itself. Neutral greys
+  and one accent, the navy of the icon (lighter in dark, where navy would not
+  contrast). The theme variables of the copied components are mapped onto the
+  tokens, so they follow too, and `color-scheme` lets native controls follow.
+  Every pair meets WCAG AA (text 4.5:1, borders of controls and the focus ring
+  3:1). What is chosen (`aria-pressed`) is tinted and bold, not coloured only;
+  a match with a result recedes (dashed, on the background). Animations end at
+  once under `prefers-reduced-motion`. There is no switch of the scheme on the
+  page: the system's choice is the operator's.
 
 #### Alternatives
 
