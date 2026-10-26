@@ -18,7 +18,7 @@ use std::{
 use crate::{
     __private::Index,
     Plugin, PluginType,
-    compatibility::{Declaration, OpenFacts, ProvidedFact},
+    compatibility::{Declaration, OpenFacts, ProvidedFact, RequiredFact},
     config::{self, Config, ConfigError, Path, PluginConfig, Value},
     schema::Schema,
 };
@@ -129,6 +129,24 @@ impl PluginEntry {
     /// [`PluginType::declare_static`]. Built on every call.
     pub(crate) fn declaration(&self) -> Declaration {
         Declaration::of(self.declare)
+    }
+
+    /// The plugins of `axis` providing a fact this plugin requires whatever its configuration, in
+    /// the order of their ids, e.g. the metric a criterion ranks by. Read from the static
+    /// declarations, see [`PluginType::declare_static`].
+    pub fn providers_in(&self, axis: AnyAxis) -> Vec<&'static PluginEntry> {
+        let required: Vec<_> = self
+            .declaration()
+            .required()
+            .iter()
+            .map(RequiredFact::type_id)
+            .collect();
+        axis.entries()
+            .filter(|entry| {
+                let declaration = entry.declaration();
+                required.iter().any(|fact| declaration.provides_type(*fact))
+            })
+            .collect()
     }
 
     /// What the plugin as `config` configures it provides and requires, its sub-plugins included:
@@ -602,6 +620,22 @@ mod tests {
         assert!(entry.declaration().provides_type(TypeId::of::<Implying>()));
         assert!(entry.schema().fields().is_empty());
         assert_eq!(entry_of::<Handwritten>().description(), None);
+    }
+
+    #[test]
+    fn the_providers_of_what_a_plugin_requires_are_found_in_an_axis() {
+        let providers = |entry: &PluginEntry, axis| -> Vec<_> {
+            entry
+                .providers_in(axis)
+                .into_iter()
+                .map(PluginEntry::id)
+                .collect()
+        };
+        let tested = AnyAxis::of::<dyn Tested>();
+
+        assert_eq!(providers(entry_of::<Chained>(), tested), ["only_provider"]);
+        assert!(providers(entry_of::<Chained>(), AnyAxis::of::<dyn Nested>()).is_empty());
+        assert!(providers(entry_of::<OnlyProvider>(), tested).is_empty());
     }
 
     #[test]

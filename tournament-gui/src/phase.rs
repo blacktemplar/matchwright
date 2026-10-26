@@ -743,9 +743,13 @@ fn plugin_label(tr: &Translator, option: &PluginOption) -> String {
 }
 
 fn plugin_description(tr: &Translator, option: &PluginOption) -> Option<String> {
-    option
-        .description
-        .map(|english| tr.plugin(option.id, PluginText::Description, english))
+    option.description.map(|description| {
+        tr.plugin(
+            description.plugin,
+            PluginText::Description,
+            description.english,
+        )
+    })
 }
 
 /// The id of the element of the field at `path`, e.g. `field-metrics-1-points_for_win`.

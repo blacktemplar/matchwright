@@ -154,10 +154,31 @@ pub struct PluginOption {
     pub id: &'static str,
     /// The label in English.
     pub label: &'static str,
-    /// The description in English.
-    pub description: Option<&'static str>,
+    /// What is said about it: its own description, or else that of the one plugin of the phase
+    /// providing what it requires, e.g. the metric a criterion ranks by.
+    pub description: Option<Description>,
     /// Whether the plugins chosen elsewhere recommend it here.
     pub recommended: bool,
+}
+
+/// The description of a plugin, see [`PluginOption::description`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Description {
+    /// The id of the plugin it is the description of, which translates it, see
+    /// [`PluginText::Description`](crate::i18n::PluginText::Description).
+    pub plugin: &'static str,
+    /// The description in English.
+    pub english: &'static str,
+}
+
+impl Description {
+    /// The description of `entry`, if it has one.
+    fn of(entry: &PluginEntry) -> Option<Self> {
+        Some(Self {
+            plugin: entry.id(),
+            english: entry.description()?,
+        })
+    }
 }
 
 impl PluginOption {
@@ -165,10 +186,24 @@ impl PluginOption {
         Self {
             id: entry.id(),
             label: entry.label(),
-            description: entry.description(),
+            description: Description::of(entry).or_else(|| borrowed_description(entry)),
             recommended,
         }
     }
+}
+
+/// The description of the one plugin of an axis of the phase that provides what `entry` requires
+/// and has a description; [`None`] if there is none or more than one.
+fn borrowed_description(entry: &PluginEntry) -> Option<Description> {
+    let schema = PhasePlugins::schema();
+    let mut described = schema
+        .fields()
+        .iter()
+        .filter_map(|field| field.kind().axis())
+        .flat_map(|axis| entry.providers_in(axis))
+        .filter_map(Description::of);
+    let only = described.next()?;
+    described.next().is_none().then_some(only)
 }
 
 impl PhaseForm {

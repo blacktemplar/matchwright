@@ -132,6 +132,9 @@ async fn what_is_said_about_a_plugin_shows_on_hover_and_after_a_click() {
         .await?;
         gui.press(Key::Escape).await?;
         gui.expect_toggletip(None).await?;
+        // a criterion has the description of its metric
+        gui.hover_labelled("About more points").await?;
+        gui.expect_toggletip(Some(POINTS)).await?;
         gui.click_labelled("About points").await?;
         gui.expect_toggletip(Some(POINTS)).await?;
         gui.page.check_accessibility().await?;
@@ -160,6 +163,10 @@ async fn the_description_of_an_option_shows_while_the_pointer_is_on_it() {
         gui.page.check_accessibility().await?;
         gui.hover_option("later first loss").await?;
         gui.expect_option_description("by the round of the first loss; never having lost is best")
+            .await?;
+        // a criterion without a description of its own has that of its metric
+        gui.hover_option("more Buchholz").await?;
+        gui.expect_option_description("the points of all opponents")
             .await
     })
     .await;
