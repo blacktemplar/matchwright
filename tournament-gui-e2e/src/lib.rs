@@ -535,8 +535,12 @@ impl Gui {
     }
 
     /// Reports the result `entry` says by typing it, e.g. `"3 1"`, in place of what was typed
-    /// before, and pressing Enter.
+    /// before, and pressing Enter; opens the entry of results first if it is closed.
     pub async fn enter_result(&self, entry: &str) -> WebDriverResult<()> {
+        let open = By::Css("details.result-entry[open]");
+        if self.driver.find(open).await.is_err() {
+            self.toggle_result_entry().await?;
+        }
         let input = self.driver.query(By::Id("result-entry")).first().await?;
         // selected, so that typing replaces it, as an operator would
         input.send_keys(Key::Control + "a").await?;
@@ -544,6 +548,42 @@ impl Gui {
         Page::pause().await;
         input.send_keys(Key::Enter).await?;
         Page::pause().await;
+        Ok(())
+    }
+
+    /// Opens the entry of results typed in if it is closed, or else closes it.
+    pub async fn toggle_result_entry(&self) -> WebDriverResult<()> {
+        self.driver
+            .query(By::Css("details.result-entry > summary"))
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the entry of results typed in is open, if `open`, or else closed.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_result_entry_open(&self, open: bool) -> WebDriverResult<()> {
+        let input = By::Id("result-entry");
+        if open {
+            return self
+                .page
+                .expect(
+                    input,
+                    |query| query.and_displayed(),
+                    "the entry of results open",
+                )
+                .await;
+        }
+        let shown = self.driver.query(input).and_displayed();
+        assert!(
+            shown.wait_until_gone().await.is_ok(),
+            "the entry of results must be closed"
+        );
         Ok(())
     }
 

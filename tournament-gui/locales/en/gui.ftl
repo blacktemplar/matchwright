@@ -136,6 +136,8 @@ bye-in-stage = Bye: { $team } ({ $stage })
 standings = Standings
 rank = Rank
 # reporting a result by typing it
+# what opens the field reporting results typed in
+type-results = Type in results
 enter-result = Enter a result
 # $draws: yes if a match may end in a draw, else no
 enter-result-hint = the number of the match, then 1 if the side on the left won{ $draws ->

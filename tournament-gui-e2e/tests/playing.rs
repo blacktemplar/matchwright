@@ -132,6 +132,27 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
     .await;
 }
 
+/// The entry of results typed in is closed until opened, and stays as the operator left it.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_entry_of_results_stays_as_it_was_left() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+        gui.expect_result_entry_open(false).await?;
+
+        gui.toggle_result_entry().await?;
+
+        gui.expect_result_entry_open(true).await?;
+        gui.page.check_accessibility().await?;
+        gui.page.reload().await?;
+        gui.expect_result_entry_open(true).await?;
+        gui.toggle_result_entry().await?;
+        gui.page.reload().await?;
+        gui.expect_result_entry_open(false).await
+    })
+    .await;
+}
+
 /// After a result is reported by its button, the focus moves on to the next match without one,
 /// and to the heading of the round once there is none.
 #[tokio::test]

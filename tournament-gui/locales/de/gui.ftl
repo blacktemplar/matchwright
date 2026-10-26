@@ -105,6 +105,7 @@ bye = Freilos: { $team }
 bye-in-stage = Freilos: { $team } ({ $stage })
 standings = Tabelle
 rank = Platz
+type-results = Ergebnisse eintippen
 enter-result = Ergebnis eingeben
 enter-result-hint = die Nummer des Spiels, dann 1, wenn die linke Seite gewonnen hat{ $draws ->
         [yes] , X für ein Unentschieden

@@ -265,41 +265,79 @@ fn current(rounds: &[RoundSummary]) -> Option<NonZeroU32> {
         .map(|summary| summary.round)
 }
 
-/// Reports a result typed in as the number of its match and the result, e.g. "3 1".
+/// Reports a result typed in as the number of its match and the result, e.g. "3 1", in a section
+/// that is closed until the operator opens it, as the browser remembers.
 #[component]
 fn ResultEntry(draws: bool) -> Element {
     let ctx = use_context::<Ctx>();
     let mut entry = use_signal(String::new);
+    let mut open = use_signal(result_entry_open);
     // only reported by the tab that changes the competition
     let disabled = !ctx.changes();
     let tr = ctx.translator.read();
     rsx! {
-        form {
-            class: "result-entry",
-            onsubmit: move |event| {
-                event.prevent_default();
-                if let Some(reported) = ctx.act(|session| session.report_entered(&entry.peek())) {
-                    ctx.announce(Announcement::Reported(reported));
-                    entry.set(String::new());
-                }
-            },
-            label { r#for: "result-entry", {tr.get("enter-result")} }
-            " "
-            input {
-                id: "result-entry",
-                value: "{entry}",
-                autocomplete: "off",
-                aria_describedby: "result-entry-hint",
-                disabled,
-                oninput: move |event| entry.set(event.value()),
+        details { class: "result-entry", open: open(),
+            // opened and closed by the page rather than the browser, so that it stays as rendered
+            summary {
+                onclick: move |event| {
+                    event.prevent_default();
+                    let opened = !open();
+                    open.set(opened);
+                    remember_result_entry_open(opened);
+                },
+                {tr.get("type-results")}
             }
-            " "
-            button { r#type: "submit", disabled, {tr.get("report")} }
-            p { id: "result-entry-hint", class: "hint",
-                {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
+            form {
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    let entered = entry.peek().clone();
+                    if let Some(reported) = ctx.act(|session| session.report_entered(&entered)) {
+                        ctx.announce(Announcement::Reported(reported));
+                        entry.set(String::new());
+                    }
+                },
+                label { r#for: "result-entry", class: "visually-hidden", {tr.get("enter-result")} }
+                input {
+                    id: "result-entry",
+                    value: "{entry}",
+                    autocomplete: "off",
+                    aria_describedby: "result-entry-hint",
+                    disabled,
+                    oninput: move |event| entry.set(event.value()),
+                }
+                " "
+                button { r#type: "submit", disabled, {tr.get("report")} }
+                p { id: "result-entry-hint", class: "hint",
+                    {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
+                }
             }
         }
     }
+}
+
+/// Where the browser remembers that the operator opened the entry of results.
+const RESULT_ENTRY_OPEN: &str = "tournament-gui.result-entry-open";
+
+/// Whether the operator left the entry of results open in this browser.
+fn result_entry_open() -> bool {
+    local_storage()
+        .and_then(|storage| storage.get_item(RESULT_ENTRY_OPEN).ok().flatten())
+        .is_some()
+}
+
+fn remember_result_entry_open(open: bool) {
+    // without local storage, the entry is closed again on the next visit
+    if let Some(storage) = local_storage() {
+        _ = if open {
+            storage.set_item(RESULT_ENTRY_OPEN, "true")
+        } else {
+            storage.remove_item(RESULT_ENTRY_OPEN)
+        };
+    }
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
 }
 
 #[component]
