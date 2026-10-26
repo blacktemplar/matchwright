@@ -624,7 +624,7 @@ fn a_match_can_be_played_once_its_entrants_played_the_rounds_before() {
 }
 
 #[test]
-fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_in_any_case() {
+fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_whatever_the_case_and_accents() {
     let session = Given::new()
         .entrants(&["Alice", "Bob", "Carol", "Maximilian Müller"])
         .started();
@@ -647,7 +647,7 @@ fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_in_any_case() {
         .collect();
 
     assert_eq!(of_max.len(), 3);
-    assert_eq!(found("MÜLL"), of_max);
+    assert_eq!(found("MULL"), of_max);
     assert_eq!(found(" "), [1, 2, 3, 4, 5, 6]);
     assert!(found("zed").is_empty());
 }

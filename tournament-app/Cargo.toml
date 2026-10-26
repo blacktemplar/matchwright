@@ -17,6 +17,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tournament-engine.workspace = true
 unic-langid.workspace = true
+unicode-normalization.workspace = true
 # competition and entrant ids are random, which is what keeps them independent of the names they
 # are shown with
 uuid = { workspace = true, features = ["v4"] }

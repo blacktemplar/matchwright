@@ -4,6 +4,7 @@
 use std::num::NonZeroU32;
 
 use tournament_engine::{EntrantId, MatchId, MatchResult, plugins::phase_format::Stage};
+use unicode_normalization::{UnicodeNormalization as _, char::is_combining_mark};
 
 /// An entrant as a screen shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -60,26 +61,28 @@ pub struct MatchRow {
 }
 
 /// What an operator typed to find entrants by their name: it finds those whose name contains it,
-/// whatever the case of either. Nothing typed, or only spaces, finds every entrant, and so does
-/// every match.
+/// whatever the case and the accents of either. Nothing typed, or only spaces, finds every
+/// entrant, and so does every match.
 ///
 /// ```
 /// use tournament_app::view::NameSearch;
 ///
 /// assert!(NameSearch::new(" ali").finds_name("Alice"));
+/// assert!(NameSearch::new("muller").finds_name("Müller"));
+/// assert!(NameSearch::new("ZOË").finds_name("Zoe"));
 /// assert!(!NameSearch::new("bob").finds_name("Alice"));
 /// assert!(NameSearch::new("").finds_name("Alice"));
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct NameSearch {
-    /// Trimmed and lower case.
+    /// Trimmed and [folded](fold).
     text: String,
 }
 
 impl NameSearch {
     pub fn new(text: &str) -> Self {
         Self {
-            text: text.trim().to_lowercase(),
+            text: fold(text.trim()),
         }
     }
 
@@ -89,7 +92,7 @@ impl NameSearch {
     }
 
     pub fn finds_name(&self, name: &str) -> bool {
-        name.to_lowercase().contains(&self.text)
+        fold(name).contains(&self.text)
     }
 
     /// Whether it finds `entrant`; one without a name only when nothing was typed.
@@ -107,6 +110,15 @@ impl NameSearch {
             .chain(&row.b)
             .any(|entrant| self.finds(entrant))
     }
+}
+
+/// `text` in lower case without accents: each letter split from its accents (Unicode's canonical
+/// decomposition), which are dropped, e.g. `Müller` as `muller`.
+fn fold(text: &str) -> String {
+    text.nfd()
+        .filter(|&char| !is_combining_mark(char))
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// A team that sits out a round.

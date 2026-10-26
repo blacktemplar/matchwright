@@ -226,9 +226,9 @@ events; 20–40 entrants typically. In parts:
    motion respecting `prefers-reduced-motion`, a more compact storage warning. Checked by axe-core
    in both schemes once, by hand; the e2e tests run in light only.
 3. **Finding an entrant** (done 2026-10-26), see DESIGN.md, *Running a competition*: a field above
-   the matches showing only those of entrants whose name contains what is typed, whatever the case,
-   within the list shown (`view::NameSearch`). The standings are not filtered. Not done: ignoring
-   accents (`muller` for `Müller`), which needs a Unicode normalization crate.
+   the matches showing only those of entrants whose name contains what is typed, whatever the case
+   and the accents (`muller` finds `Müller`), within the list shown (`view::NameSearch`). The
+   standings are not filtered.
 
 ### Later, not planned in detail
 
