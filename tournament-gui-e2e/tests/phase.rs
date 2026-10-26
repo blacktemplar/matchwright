@@ -175,6 +175,36 @@ async fn the_description_of_an_option_shows_while_the_pointer_is_on_it() {
     .await;
 }
 
+/// A touch screen shows the description of an option by a tap on its ⓘ, which does not choose it.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_tap_on_the_info_of_an_option_shows_its_description_without_choosing_it() {
+    run_in_new_competition(async |gui| {
+        gui.open_choice("ranking").await?;
+
+        gui.tap_option_info("fewer matches played").await?;
+
+        gui.expect_option_description_tapped_open(
+            "the same result out of fewer matches ranks higher",
+        )
+        .await?;
+        gui.page.check_accessibility().await?;
+        gui.expect_list("ranking", &["more points", "more Sonneborn-Berger"])
+            .await?;
+        gui.choose_option("fewer matches played").await?;
+        gui.expect_list(
+            "ranking",
+            &[
+                "more points",
+                "more Sonneborn-Berger",
+                "fewer matches played",
+            ],
+        )
+        .await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_phase_is_edited_after_the_start_in_a_dialog() {

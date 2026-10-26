@@ -183,7 +183,19 @@ impl Gui {
     /// `"ranking"`.
     pub async fn choose_plugin(&self, path: &str, label: &str) -> WebDriverResult<()> {
         self.open_choice(path).await?;
-        self.option(label).first().await?.click().await?;
+        self.choose_option(label).await
+    }
+
+    /// Chooses the option labelled `label` of the list of plugins open, by a click on its label
+    /// (one on its ⓘ shows its description instead).
+    pub async fn choose_option(&self, label: &str) -> WebDriverResult<()> {
+        self.option(label)
+            .first()
+            .await?
+            .find(By::Css(".option-label"))
+            .await?
+            .click()
+            .await?;
         Page::pause().await;
         Ok(())
     }
@@ -211,6 +223,35 @@ impl Gui {
             .await?;
         Page::pause().await;
         Ok(())
+    }
+
+    /// Taps the ⓘ of the option labelled `label` of the list of plugins open, as on a touch screen,
+    /// which shows its description in it, or hides it again, rather than choosing it.
+    pub async fn tap_option_info(&self, label: &str) -> WebDriverResult<()> {
+        self.option(label)
+            .first()
+            .await?
+            .find(By::Css(".option-info"))
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until an option of the list of plugins open shows its description `text` in it,
+    /// tapped open by [`Self::tap_option_info`].
+    ///
+    /// # Panics
+    /// Panics if it does not in time.
+    pub async fn expect_option_description_tapped_open(&self, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect(
+                By::Css(".option-description[data-tapped]"),
+                |query| query.and_displayed().with_text(text.to_owned()),
+                &format!("an option's description tapped open saying {text:?}"),
+            )
+            .await
     }
 
     /// Waits until the description shown of an option of the list of plugins open is `text`.

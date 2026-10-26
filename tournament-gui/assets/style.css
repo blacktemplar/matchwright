@@ -672,6 +672,7 @@ footer select {
 
 .option {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
 }
@@ -680,9 +681,13 @@ footer select {
   font-size: 0.9em;
 }
 
+/* big enough to be tapped, without making the option taller */
 .option-info {
   display: inline-flex;
+  padding: var(--space-2);
+  margin: calc(-1 * var(--space-2)) 0;
   color: var(--text-muted);
+  cursor: help;
 }
 
 .option-info .icon {
@@ -735,6 +740,27 @@ footer select {
     padding-top: var(--space-1);
     padding-left: 0;
   }
+}
+
+/* tapped open: in the option, below its label, as a touch screen has no pointer that hovers;
+ * wrapped at the width of the list rather than widening it */
+.option-description[data-tapped] {
+  position: static;
+  display: block;
+  width: auto;
+  max-width: none;
+  flex-basis: 100%;
+  padding: 0;
+  contain: inline-size;
+}
+
+.option-description[data-tapped] .option-description-text {
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 0.9em;
 }
 
 /* that of the option under the pointer, rather than both where it and the focus differ */

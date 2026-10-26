@@ -398,14 +398,15 @@ fn PluginField(
 
 /// `option` as an option of the [`Select`] whose id is `select`, at `index`. Its description
 /// shows next to the list while the option is under the pointer or has the focus, which the
-/// keyboard moves through the options, rather than behind a toggletip: a button of its own in the
-/// option would choose it.
+/// keyboard moves through the options, and in the option, below its label, from a tap or click
+/// on its ⓘ until the next, which is how a touch screen shows it before the option is chosen.
 #[component]
 fn PluginChoice(select: String, index: usize, option: PluginOption) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
     let label = plugin_label(&tr, &option);
     let description = plugin_description(&tr, &option);
+    let mut tapped = use_signal(|| false);
     // ids of plugins are namespaced by `::`
     let described_by = format!("{select}-option-{}", option.id.replace("::", "-"));
     rsx! {
@@ -421,8 +422,26 @@ fn PluginChoice(select: String, index: usize, option: PluginOption) -> Element {
                     span { class: "recommended", {tr.get("recommended")} }
                 }
                 if let Some(description) = description {
-                    span { class: "option-info", icons::Info {} }
-                    span { class: "option-description", id: "{described_by}",
+                    // no button: a keyboard and a screen reader get the description through the
+                    // option, and a button would be an element to use within one; the press is
+                    // kept from the option, which would choose it on its release
+                    span {
+                        class: "option-info",
+                        "aria-hidden": "true",
+                        onpointerdown: move |event| {
+                            event.stop_propagation();
+                            event.prevent_default();
+                        },
+                        onclick: move |event| {
+                            event.stop_propagation();
+                            tapped.toggle();
+                        },
+                        icons::Info {}
+                    }
+                    span {
+                        class: "option-description",
+                        id: "{described_by}",
+                        "data-tapped": tapped().then_some("true"),
                         span { class: "option-description-text", "{description}" }
                     }
                 }
