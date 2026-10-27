@@ -273,11 +273,39 @@ fn Footer() -> Element {
 
 /// What a screen shows for `entrants`, a team or a single entrant.
 fn team_name(tr: &Translator, entrants: &[EntrantRow]) -> String {
-    let names: Vec<_> = entrants
-        .iter()
-        .map(|entrant| entrant.name.clone().unwrap_or_else(|| tr.get("no-name")))
+    named_team(tr, entrants.iter().map(|entrant| entrant.name.as_deref()))
+}
+
+/// What a screen shows for a team whose entrants have the names `names`, `None` for one without.
+fn named_team<'a>(tr: &Translator, names: impl IntoIterator<Item = Option<&'a str>>) -> String {
+    let names: Vec<_> = names
+        .into_iter()
+        .map(|name| name.map_or_else(|| tr.get("no-name"), str::to_owned))
         .collect();
     names.join(&tr.get("team-separator"))
+}
+
+/// `label` with its first letter in upper case, as a label or a sentence on the screen starts.
+fn capitalized(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// What a screen says of the teams that won a competition, each by the names of its entrants: the
+/// winner, or those tied for first.
+fn winners_text(tr: &Translator, winners: &[Vec<Option<String>>]) -> String {
+    let teams: Vec<_> = winners
+        .iter()
+        .map(|team| named_team(tr, team.iter().map(Option::as_deref)))
+        .collect();
+    t!(
+        tr,
+        "winners",
+        count = teams.len(),
+        winners = teams.join(&tr.get("list-separator")),
+    )
 }
 
 /// What a screen shows for the result of the match `row`, e.g. "Alice won"; `None` while it has

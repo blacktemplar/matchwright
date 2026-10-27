@@ -42,6 +42,8 @@ progress-playing = Round { $round } · { $open ->
        *[other] { $open } matches to play
     }
 progress-finished = Every match played
+# $winners: what the message winners says
+progress-won = Finished · { $winners }
 export = Export
 export-competition = Export { $name }
 new-competition = New competition
@@ -71,6 +73,8 @@ remove = Remove
 remove-entrant = Remove { $name }
 # not `phase`, which is the app's message of the fields of a phase
 phase-heading = Phase
+# the heading once every match is played
+finished = Finished
 add-phase = Add phase
 start = Start
 
@@ -198,3 +202,10 @@ action-reopen = reopening match { $number }
 no-name = (no name)
 # between the names of the members of a team
 team-separator = {" & "}
+# between the teams of a list, e.g. those tied for first
+list-separator = {", "}
+# $count: how many teams are ranked first; $winners: their names
+winners = { $count ->
+        [one] winner: { $winners }
+       *[other] tied for first: { $winners }
+    }

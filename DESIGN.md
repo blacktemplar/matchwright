@@ -1716,9 +1716,23 @@ tested natively and in wasm, and knows no plugin.
   matches. A reported match stays shown, since its names still match. The
   standings are not filtered: they are read by rank, and a filtered table
   hides the rows around the entrant.
+- **A finished competition says who won** (2026-10-27): once every match
+  scheduled has a result, `Session::winners` names the teams ranked first
+  (more than one when tied, then by name, since the standings order ties by
+  nothing an operator knows). A banner above the views says "Winner: …" or
+  "Tied for first: …", the first three places of the standings stand out
+  (bold, the first tinted), and the phase folds away under its heading, still
+  editable. The list of competitions says it too: `Progress::Won` carries the
+  winners' names, since the list reads only the listings. Older listings say
+  `Progress::Finished`, kept so that they still read; the next save replaces
+  it. Undoing the last result takes all of it back, being read from the state.
 
 #### Alternatives
 
+- **A `Finished` that carries the winners**, in place of a new variant. The
+  listings stored before name it without them, and serde reads a unit variant
+  into a struct variant of the same name only by hand-written code. Rejected for
+  a variant of its own.
 - **Single-key shortcuts on the page** (e.g. `A`, `B`, `D` for the match
   selected). Keys a screen reader uses itself, letters that differ by
   language, and a hidden mode the operator has to know. The field says what

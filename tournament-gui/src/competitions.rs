@@ -10,7 +10,7 @@ use tournament_app::{
 };
 use tournament_browser::channel::Broadcast;
 
-use crate::{Notices, Page, competition::SAVED, download, i18n::t, icons, open};
+use crate::{Notices, Page, competition::SAVED, download, i18n::t, icons, open, winners_text};
 
 #[component]
 pub fn Competitions() -> Element {
@@ -97,7 +97,7 @@ pub fn Competitions() -> Element {
                         li { key: "{listing.key}",
                             div { class: "listing",
                                 a { class: "name", href: "#{listing.key}", "{listing.name}" }
-                                if let Some(progress) = listing.progress {
+                                if let Some(progress) = &listing.progress {
                                     span { class: "progress", {progress_text(&tr, progress)} }
                                 }
                             }
@@ -117,13 +117,18 @@ pub fn Competitions() -> Element {
 }
 
 /// What the list says of how far a competition is, e.g. "Round 3 · 2 matches open".
-fn progress_text(tr: &Translator, progress: Progress) -> String {
+fn progress_text(tr: &Translator, progress: &Progress) -> String {
     match progress {
-        Progress::Setup { entrants } => t!(tr, "progress-setup", entrants = entrants),
+        Progress::Setup { entrants } => t!(tr, "progress-setup", entrants = *entrants),
         Progress::Playing { round, open } => {
-            t!(tr, "progress-playing", round = round.get(), open = open)
+            t!(tr, "progress-playing", round = round.get(), open = *open)
         }
         Progress::Finished => tr.get("progress-finished"),
+        Progress::Won { winners } => t!(
+            tr,
+            "progress-won",
+            winners = winners_text(tr, winners).as_str()
+        ),
     }
 }
 

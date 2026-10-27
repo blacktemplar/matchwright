@@ -11,6 +11,7 @@ use tournament_app::{
 };
 
 use crate::{
+    capitalized,
     competition::Ctx,
     components::{
         dialog::{Dialog, DialogDescription, DialogTitle},
@@ -953,12 +954,4 @@ fn id(path: &Path) -> String {
         .replace(['.', '[', ']'], "-")
         .replace("--", "-");
     format!("field-{}", path.trim_end_matches('-'))
-}
-
-/// `label` with its first letter in upper case, as a label on the screen starts.
-fn capitalized(label: &str) -> String {
-    let mut chars = label.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
 }

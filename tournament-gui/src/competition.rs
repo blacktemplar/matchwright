@@ -17,7 +17,7 @@ use tournament_app::{
     i18n::{Message, Text, Translator},
     session::Session,
     storage::{CompetitionKey, Storage as _},
-    view::Actions,
+    view::{Actions, EntrantRow},
 };
 use tournament_browser::{
     channel::Broadcast,
@@ -29,10 +29,11 @@ use crate::{
     Notices, Page,
     announcement::Announcement,
     bracket::Bracket,
-    download, icons,
+    capitalized, download, icons,
     phase::PhaseSummary,
     play::{Rounds, Standings},
     setup::{Entrants, Phase},
+    winners_text,
 };
 
 /// The channel on which a tab tells the others that it saved, with the key of the competition.
@@ -342,7 +343,11 @@ fn Play() -> Element {
         }
     };
     let bracket_shown = shown() == Column::Bracket;
+    let winners = ctx.session.read().winners();
     rsx! {
+        if let Some(winners) = &winners {
+            Finished { winners: winners.clone() }
+        }
         div {
             class: "segmented view-switch",
             class: if has_bracket { "with-bracket" },
@@ -378,13 +383,43 @@ fn Play() -> Element {
             div { class: column(Column::Matches), hidden: bracket_shown, Rounds {} }
             div { class: column(Column::Standings), hidden: bracket_shown,
                 Standings {}
-                section { class: "card", aria_labelledby: "phase",
-                    h2 { id: "phase", {tr.get("phase-heading")} }
-                    PhaseSummary {}
+                // out of the way once every match is played, where it is rarely changed
+                if winners.is_some() {
+                    details { class: "card", aria_labelledby: "phase",
+                        summary {
+                            h2 { id: "phase", {tr.get("phase-heading")} }
+                        }
+                        PhaseSummary {}
+                    }
+                } else {
+                    section { class: "card", aria_labelledby: "phase",
+                        h2 { id: "phase", {tr.get("phase-heading")} }
+                        PhaseSummary {}
+                    }
                 }
             }
             if has_bracket {
                 div { class: "column wide", hidden: !bracket_shown, Bracket {} }
+            }
+        }
+    }
+}
+
+/// What the screen says once every match is played: who won, or who is tied for first.
+#[component]
+fn Finished(winners: Vec<Vec<EntrantRow>>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let tr = ctx.translator.read();
+    let names: Vec<Vec<Option<String>>> = winners
+        .into_iter()
+        .map(|team| team.into_iter().map(|entrant| entrant.name).collect())
+        .collect();
+    rsx! {
+        section { class: "card winners-banner", aria_labelledby: "finished",
+            icons::Trophy {}
+            div {
+                h2 { id: "finished", {tr.get("finished")} }
+                p { {capitalized(&winners_text(&tr, &names))} }
             }
         }
     }

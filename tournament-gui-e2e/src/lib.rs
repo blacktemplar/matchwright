@@ -420,8 +420,8 @@ impl Gui {
         self.page
             .expect_texts(
                 By::Css(
-                    "section[aria-labelledby=phase] > dl > dd > .answer, \
-                     section[aria-labelledby=phase] > dl > dd > ul > li > .answer",
+                    "[aria-labelledby=phase] > dl > dd > .answer, \
+                     [aria-labelledby=phase] > dl > dd > ul > li > .answer",
                 ),
                 answers,
             )
@@ -965,6 +965,43 @@ impl Gui {
     pub async fn expect_standings(&self, names: &[&str]) -> WebDriverResult<()> {
         self.page
             .expect_texts(By::Css("#standing-list tbody td:nth-child(2)"), names)
+            .await
+    }
+
+    /// Shows how the phase is played where it is folded away, once every match is played.
+    pub async fn unfold_phase(&self) -> WebDriverResult<()> {
+        self.driver
+            .query(By::Css("details:not([open]):has(#phase) > summary"))
+            .first()
+            .await?
+            .click()
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the places of the standings that stand out once every match is played, the
+    /// first three, name `names`, best first; none while a match has no result.
+    ///
+    /// # Panics
+    /// Panics if they do not in time, with those they name instead.
+    pub async fn expect_podium(&self, names: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css("#standing-list tbody tr.podium td:nth-child(2)"),
+                names,
+            )
+            .await
+    }
+
+    /// Waits until the screen says who won, `text`, e.g. "Winner: Alice", or says nothing of it for
+    /// `None`, while a match has no result.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_winners(&self, text: Option<&str>) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".winners-banner p"), &Vec::from_iter(text))
             .await
     }
 

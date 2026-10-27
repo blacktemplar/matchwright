@@ -50,7 +50,7 @@ pub struct Listing {
 }
 
 /// How far a competition is, as a list of competitions shows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Progress {
     /// Not started yet.
     Setup { entrants: usize },
@@ -61,8 +61,17 @@ pub enum Progress {
         /// The matches of that round without a result.
         open: usize,
     },
-    /// Started, and every match scheduled has a result.
+    /// Started, and every match scheduled has a result, as stored before the winners were; a
+    /// session tells [`Self::Won`] instead.
     Finished,
+    /// Started, and every match scheduled has a result.
+    Won {
+        /// The teams ranked first, more than one if they are tied, each by the names of its
+        /// entrants, `None` for one without a name (see [`EntrantRow::name`]).
+        ///
+        /// [`EntrantRow::name`]: crate::view::EntrantRow::name
+        winners: Vec<Vec<Option<String>>>,
+    },
 }
 
 /// What is stored of a competition, as [`Storage::read`] returns it.
@@ -178,7 +187,7 @@ impl Storage for MemoryStorage {
             .map(|(key, competition)| Listing {
                 key: *key,
                 name: competition.name.clone(),
-                progress: competition.progress,
+                progress: competition.progress.clone(),
             })
             .collect())
     }
@@ -216,7 +225,7 @@ impl Storage for MemoryStorage {
             "the changes must continue the stored log"
         );
         if changes.reach_end(competition.entries.len()) {
-            competition.progress = changes.listing.progress;
+            competition.progress.clone_from(&changes.listing.progress);
         }
         // older changes written after newer ones must not cut the log short
         for (position, entry) in (changes.first_entry..).zip(&changes.entries) {

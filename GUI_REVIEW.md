@@ -254,7 +254,17 @@ The original plan of this step:
   (`aria-disabled`), or move the focus to the select.
 - Tests: app unit tests for F3, F5, F6; e2e for F2 and the focus.
 
-### 6. A finished competition
+### 6. A finished competition — done
+
+- App: `Session::winners` (the teams ranked first once every match has a result, ties by name);
+  `Progress::Won { winners }` for the list, the old `Finished` kept so stored listings still read.
+- GUI: a banner above the views ("Winner: Dave", "Tied for first: Alice, Bob", with a trophy), the
+  first three of the standings bold, the first tinted, and the phase folded into a `details` under
+  its heading (still editable). The list says "Finished · winner: Dave".
+- Tests: app unit tests (winners, ties, undo, an old listing reading); e2e for the banner, podium,
+  undo, the list and a tie in German.
+
+The original plan of this step:
 
 - App: a `view` of the result once every match is played (winner, or those tied for first; top three
   for the standings), and the winner in `Listing`'s `Progress`.

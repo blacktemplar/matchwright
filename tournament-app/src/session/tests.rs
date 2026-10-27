@@ -900,7 +900,47 @@ fn the_progress_is_the_first_round_with_a_match_to_play() {
             .unwrap();
     }
 
-    assert_eq!(session.progress(), Progress::Finished);
+    let Progress::Won { winners } = session.progress() else {
+        panic!("every match has a result");
+    };
+    // every match drawn, everyone is tied for first, listed by name
+    assert_eq!(
+        winners,
+        ["Alice", "Bob", "Carol", "Dave"].map(|name| vec![Some(name.to_owned())])
+    );
+}
+
+/// A listing stored before the winners were reads as it did.
+#[test]
+fn a_progress_stored_without_the_winners_still_reads() {
+    assert_eq!(
+        serde_json::from_str::<Progress>(r#""Finished""#).unwrap(),
+        Progress::Finished
+    );
+}
+
+/// The winner is known once every match has a result, not before.
+#[test]
+fn the_winner_is_the_team_ranked_first_once_every_match_is_played() {
+    let mut session = Given::new()
+        .entrants(&["Alice", "Bob"])
+        .format(SingleElimination::ID)
+        .started();
+    assert_eq!(session.winners(), None);
+    let final_ = &matches(&session)[0];
+    let winner = final_.a.clone();
+
+    session.report(final_.id, MatchResult::AWins).unwrap();
+
+    assert_eq!(session.winners(), Some(vec![winner.clone()]));
+    assert_eq!(
+        session.progress(),
+        Progress::Won {
+            winners: vec![winner.into_iter().map(|entrant| entrant.name).collect()]
+        }
+    );
+    session.undo().unwrap();
+    assert_eq!(session.winners(), None);
 }
 
 #[test]

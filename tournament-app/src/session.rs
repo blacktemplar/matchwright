@@ -575,13 +575,45 @@ impl Session {
                 entrants: self.competition().entrants().len(),
             };
         }
-        self.rounds()
-            .into_iter()
-            .find(|summary| summary.open > 0)
-            .map_or(Progress::Finished, |summary| Progress::Playing {
+        if let Some(summary) = self.rounds().into_iter().find(|summary| summary.open > 0) {
+            return Progress::Playing {
                 round: summary.round,
                 open: summary.open,
-            })
+            };
+        }
+        let winners = self.winners().unwrap_or_default();
+        Progress::Won {
+            winners: winners
+                .into_iter()
+                .map(|team| team.into_iter().map(|entrant| entrant.name).collect())
+                .collect(),
+        }
+    }
+
+    /// The teams ranked first once every match scheduled has a result, more than one if they are
+    /// tied, by the names of their entrants, each team by its entrants; `None` before the start or
+    /// while a match has no result.
+    pub fn winners(&self) -> Option<Vec<Vec<EntrantRow>>> {
+        let data = self.started_phase()?.data();
+        if data
+            .matches()
+            .values()
+            .any(|r#match| r#match.result().is_none())
+        {
+            return None;
+        }
+        let mut winners: Vec<_> = data
+            .standings()
+            .filter(|ranking| ranking.rank() == NonZeroU32::MIN)
+            .map(|ranking| self.team(data, &[ranking.id()]))
+            .collect();
+        // tied teams are in no order of their own
+        winners.sort_by_cached_key(|team| {
+            team.iter()
+                .map(|entrant| entrant.name.as_deref().map(str::to_lowercase))
+                .collect::<Vec<_>>()
+        });
+        Some(winners)
     }
 
     /// The rounds the phase has scheduled matches or byes in, in order; none before the start.

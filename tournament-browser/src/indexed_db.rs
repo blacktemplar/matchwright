@@ -186,10 +186,10 @@ async fn write(database: &Database, changes: &Changes) -> Result<(), IndexedDbEr
             key,
             name: changes.listing().name.clone(),
             number,
-            progress: changes.listing().progress,
+            progress: changes.listing().progress.clone(),
         }),
         Some(stored_listing) if changes.reach_end(stored) => Some(ListingRecord {
-            progress: changes.listing().progress,
+            progress: changes.listing().progress.clone(),
             ..parse(&stored_listing)?
         }),
         Some(_) => None,

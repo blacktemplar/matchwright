@@ -544,6 +544,8 @@ pub fn Standings() -> Element {
     let Some(standings) = ctx.session.read().standings() else {
         return rsx! {};
     };
+    // the first three places stand out once every match is played
+    let finished = ctx.session.read().winners().is_some();
     let tr = ctx.translator.read();
     let headers: Vec<_> = standings
         .columns
@@ -588,6 +590,8 @@ pub fn Standings() -> Element {
                     tbody {
                         for row in standings.rows {
                             tr {
+                                class: if finished && row.rank.get() <= 3 { "podium" },
+                                "data-rank": finished.then_some(row.rank.get()),
                                 td { "{row.rank}" }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }
                                 for cell in row.cells {

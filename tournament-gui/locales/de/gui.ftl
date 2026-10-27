@@ -31,6 +31,7 @@ progress-playing = Runde { $round } · { $open ->
        *[other] { $open } Spiele offen
     }
 progress-finished = Alle Spiele gespielt
+progress-won = Beendet · { $winners }
 export = Exportieren
 export-competition = { $name } exportieren
 new-competition = Neues Turnier
@@ -56,6 +57,7 @@ add-entrant = Teilnehmer hinzufügen
 remove = Entfernen
 remove-entrant = { $name } entfernen
 phase-heading = Phase
+finished = Beendet
 add-phase = Phase hinzufügen
 start = Starten
 
@@ -153,3 +155,8 @@ action-reopen = Wiederöffnen von Spiel { $number }
 
 no-name = (ohne Namen)
 team-separator = {" & "}
+list-separator = {", "}
+winners = { $count ->
+        [one] Sieg: { $winners }
+       *[other] geteilter erster Platz: { $winners }
+    }

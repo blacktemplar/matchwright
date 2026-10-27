@@ -1283,6 +1283,53 @@ th {
   font-weight: 600;
 }
 
+/* the first three places once every match is played (competition.rs): bold, the first tinted,
+ * so that it does not depend on the colour alone */
+tr.podium td {
+  font-weight: 600;
+}
+
+tr.podium[data-rank="1"] td {
+  background: var(--accent-subtle);
+}
+
+/* who won, above everything else once every match is played */
+.winners-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-left: 4px solid var(--accent);
+  background: var(--accent-subtle);
+}
+
+.winners-banner > .icon {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  color: var(--accent);
+}
+
+.winners-banner h2 {
+  margin: 0;
+}
+
+.winners-banner p {
+  margin: var(--space-1) 0 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* the phase once every match is played, folded away under its heading */
+details.card > summary {
+  cursor: pointer;
+}
+
+details.card > summary > h2 {
+  display: inline;
+}
+
 /* the toggletip of a header: small, so that the header row stays low, and its text aligned with
  * the column's right edge, so that the last column's does not run out of the table */
 th .toggletip > button.small {
