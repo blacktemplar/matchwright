@@ -94,6 +94,23 @@ async fn a_number_not_taken_is_shown_with_why() {
     .await;
 }
 
+/// Leaving a number with Tab focuses the button of what is said about the next field, whose text
+/// shows below it rather than over why the number was not taken.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn what_is_said_about_the_next_field_leaves_the_issue_in_sight() {
+    run_in_new_competition(async |gui| {
+        gui.choose_format("Monster DYP").await?;
+
+        gui.enter("format.rounds", "0").await?;
+
+        gui.expect_issues(&["this takes a whole number of at least 1"])
+            .await?;
+        gui.expect_toggletip_clear_of_issues().await
+    })
+    .await;
+}
+
 /// The points can be scored in many ways, so they are not added without being chosen, and the
 /// ranking by them stays rather than being dropped unnoticed.
 #[tokio::test]
@@ -115,28 +132,33 @@ async fn a_metric_needed_and_not_chosen_is_an_issue_at_the_metrics() {
     .await;
 }
 
-/// The metrics after one removed move up, and each shows as checked still.
+/// A metric stays where it is when it is unchecked or checked again, keeping the focus, so that a
+/// second click at the same place is at the same metric; the others show as checked still.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
-async fn the_metrics_after_one_removed_stay_checked() {
+async fn the_metrics_stay_in_place_when_toggled() {
+    const ALL: [&str; 3] = ["points", "Sonneborn-Berger", "win-draw-loss record"];
     run_in_new_competition(async |gui| {
-        gui.expect_checked(
-            "metrics",
-            &["win-draw-loss record", "points", "Sonneborn-Berger"],
-        )
-        .await?;
+        gui.expect_checked("metrics", &ALL).await?;
 
         gui.toggle("points").await?;
 
-        gui.expect_checked("metrics", &["win-draw-loss record", "Sonneborn-Berger"])
+        gui.expect_checked("metrics", &["Sonneborn-Berger", "win-draw-loss record"])
             .await?;
+        gui.expect_focus_on_checkbox("points").await?;
         gui.toggle("Sonneborn-Berger").await?;
         gui.expect_checked("metrics", &["win-draw-loss record"])
-            .await
+            .await?;
+        gui.toggle("points").await?;
+        gui.toggle("Sonneborn-Berger").await?;
+        gui.expect_checked("metrics", &ALL).await?;
+        gui.expect_focus_on_checkbox("Sonneborn-Berger").await
     })
     .await;
 }
 
+/// The focus stays with what the operator works on: the list a plugin was added from, the
+/// plugin moved, even to the top, and the plugin after the one removed.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_criteria_of_the_ranking_are_added_and_moved() {
@@ -147,17 +169,97 @@ async fn the_criteria_of_the_ranking_are_added_and_moved() {
             &["more points", "more Sonneborn-Berger", "more wins"],
         )
         .await?;
+        gui.expect_focus_on_choice("ranking").await?;
 
+        gui.click_labelled("Move more wins up").await?;
         gui.click_labelled("Move more wins up").await?;
 
         gui.expect_list(
             "ranking",
-            &["more points", "more wins", "more Sonneborn-Berger"],
+            &["more wins", "more points", "more Sonneborn-Berger"],
         )
         .await?;
+        gui.expect_focus_in_list("ranking", "more wins").await?;
         gui.click_labelled("Remove more points").await?;
         gui.expect_list("ranking", &["more wins", "more Sonneborn-Berger"])
-            .await
+            .await?;
+        gui.expect_focus_in_list("ranking", "more Sonneborn-Berger")
+            .await?;
+        gui.click_labelled("Remove more Sonneborn-Berger").await?;
+        gui.expect_focus_in_list("ranking", "more wins").await
+    })
+    .await;
+}
+
+/// The format chosen, the focus is back at its choice rather than on the list that closed.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_focus_is_back_at_the_format_once_it_is_chosen() {
+    run_in_new_competition(async |gui| {
+        gui.choose_format("single elimination").await?;
+
+        gui.expect_focus_on_choice("format").await
+    })
+    .await;
+}
+
+/// A phase ranked by nothing is added, but the form says what that leads to first.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_ranking_of_nothing_is_warned_about() {
+    run_in_new_competition(async |gui| {
+        gui.click_labelled("Remove more points").await?;
+        gui.click_labelled("Remove more Sonneborn-Berger").await?;
+
+        gui.expect_warnings(&["ranked by nothing, every team is tied in the standings"])
+            .await?;
+        gui.page.check_accessibility().await?;
+        gui.click("Add phase").await?;
+        gui.expect_phase(&[
+            "round robin",
+            "(none)",
+            "win-draw-loss record",
+            "points",
+            "Sonneborn-Berger",
+        ])
+        .await
+    })
+    .await;
+}
+
+/// Undoing the phase brings back the form as it was when the phase was added, so that adding it
+/// again adds the same phase.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn undoing_the_phase_brings_back_its_form() {
+    run_in_new_competition(async |gui| {
+        gui.choose_format("Monster DYP").await?;
+        gui.enter("format.rounds", "7").await?;
+        gui.click("Add phase").await?;
+
+        gui.click("Undo").await?;
+
+        gui.expect_entered("format.rounds", "7").await?;
+        gui.expect_list("ranking", &["more points"]).await
+    })
+    .await;
+}
+
+/// Numbers are read by the form: with a comma before the decimals as well, and what is not read
+/// as a number is named.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_number_is_read_with_a_comma_and_what_is_none_is_named() {
+    run_in_new_competition(async |gui| {
+        gui.enter("metrics[1].points_for_win", "2,5").await?;
+        gui.expect_entered("metrics[1].points_for_win", "2.5")
+            .await?;
+        gui.expect_issues(&[]).await?;
+
+        gui.enter("metrics[1].points_for_win", "abc").await?;
+
+        gui.expect_issues(&["“abc” is no number"]).await?;
+        gui.expect_entered("metrics[1].points_for_win", "abc").await
     })
     .await;
 }

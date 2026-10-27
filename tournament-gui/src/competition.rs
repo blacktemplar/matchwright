@@ -256,10 +256,15 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
     rsx! {
         // in the bar the header starts
         nav { class: "bar bar-actions", aria_label: tr.get("competition-actions"),
+            // focusable while there is nothing to undo or redo, so that the focus stays on the
+            // button that undid or redid the last action
             button {
                 class: "quiet",
-                disabled: !actions.undo,
+                aria_disabled: (!actions.undo).then_some("true"),
                 onclick: move |_| {
+                    if !actions.undo {
+                        return;
+                    }
                     if let Some(action) = ctx.act(Session::undo) {
                         ctx.announce(Announcement::Undone(action));
                     }
@@ -269,8 +274,11 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
             }
             button {
                 class: "quiet",
-                disabled: !actions.redo,
+                aria_disabled: (!actions.redo).then_some("true"),
                 onclick: move |_| {
+                    if !actions.redo {
+                        return;
+                    }
                     if let Some(action) = ctx.act(Session::redo) {
                         ctx.announce(Announcement::Redone(action));
                     }

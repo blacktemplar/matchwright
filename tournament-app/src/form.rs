@@ -68,6 +68,9 @@ pub struct FormField {
     pub input: Input,
     /// What is wrong with the answer, to be fixed here.
     pub issues: Vec<Text>,
+    /// What the answer leads to that the operator may not want, although the phase can be played
+    /// with it.
+    pub warnings: Vec<Text>,
 }
 
 /// How a field is answered, with its answer.
@@ -133,6 +136,46 @@ pub struct ListInput {
     pub implied: Vec<PluginOption>,
     /// The plugins that can be added, ordered as [`PluginInput::options`].
     pub options: Vec<PluginOption>,
+}
+
+impl ListInput {
+    /// Every plugin of the list, chosen, implied or offered, in an order that choosing one or
+    /// leaving it out does not change, for a list whose order does not matter: the plugins
+    /// recommended first, then the others, each by label.
+    pub fn set(&self) -> Vec<SetEntry<'_>> {
+        let mut entries: Vec<_> = self
+            .items
+            .iter()
+            .map(SetEntry::Chosen)
+            .chain(self.implied.iter().map(SetEntry::Implied))
+            .chain(self.options.iter().map(SetEntry::Offered))
+            .collect();
+        entries.sort_by_cached_key(|entry| {
+            let plugin = entry.plugin();
+            (!plugin.recommended, plugin.label.to_lowercase())
+        });
+        entries
+    }
+}
+
+/// A plugin of a list, see [`ListInput::set`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SetEntry<'a> {
+    /// One of [`ListInput::items`].
+    Chosen(&'a Item),
+    /// One of [`ListInput::implied`].
+    Implied(&'a PluginOption),
+    /// One of [`ListInput::options`].
+    Offered(&'a PluginOption),
+}
+
+impl SetEntry<'_> {
+    pub fn plugin(&self) -> &PluginOption {
+        match self {
+            Self::Chosen(item) => &item.plugin,
+            Self::Implied(plugin) | Self::Offered(plugin) => plugin,
+        }
+    }
 }
 
 /// A plugin chosen in a list.
@@ -242,6 +285,14 @@ impl PhaseForm {
         for rejected in &self.rejected {
             place(&mut fields, &rejected.path, &rejected.problem);
         }
+        // a phase ranked by nothing is played all the same, with every team tied
+        if let Some(ranking) = fields.iter_mut().find(|field| field.name == "ranking")
+            && let Input::List(list) = &ranking.input
+            && list.items.is_empty()
+            && list.implied.is_empty()
+        {
+            ranking.warnings.push(Text::new("warning-unranked"));
+        }
         FormView {
             fields,
             complete: issues.is_empty(),
@@ -258,39 +309,32 @@ impl PhaseForm {
     }
 
     /// Answers the field at `path`, which takes a number, with the number `entered`, as an operator
-    /// typed it: with a point or a comma before its decimals. Something else, or a number the field
-    /// does not take, leaves the answer as it was, and the field shows what was entered with why
-    /// it was not taken until the next change.
+    /// typed it: with a point or a comma before its decimals, possibly with an exponent (`1e3`).
+    /// Something else, nothing, or a number the field does not take, leaves the answer as it was,
+    /// and the field shows what was entered with why it was not taken until the next change.
     ///
     /// # Errors
     /// Returns an error if there is no such field, or it takes no number.
     pub fn enter(&mut self, path: &Path, entered: &str) -> Result<(), ConfigError> {
-        let kind = self.kind(path)?;
-        let text = entered.trim().replace(',', ".");
-        let number = match kind.range() {
-            Some(NumberRange::Integer(_)) => text.parse::<i64>().ok().map(Value::from),
-            Some(NumberRange::Decimal(_)) => text
-                .parse::<f64>()
-                .ok()
-                .filter(|number| number.is_finite())
-                .map(Value::from),
-            None => {
-                return Err(ConfigError::WrongKind {
-                    path: path.clone(),
-                    expected: "an answer that is no number",
-                    found: "a number",
-                });
-            }
+        let Some(range) = self.kind(path)?.range() else {
+            return Err(ConfigError::WrongKind {
+                path: path.clone(),
+                expected: "an answer that is no number",
+                found: "a number",
+            });
         };
         self.rejected.retain(|rejected| rejected.path != *path);
-        let problem = match number.map(|number| self.change(path, |draft| draft.set(path, number)))
-        {
-            Some(Ok(())) => return Ok(()),
-            Some(Err(ConfigError::OutOfRange { allowed, .. })) => {
-                with_range(Text::new("issue-out-of-range"), allowed)
+        let out_of_range = |range| with_range(Text::new("issue-out-of-range"), range);
+        let problem = match number(entered, range) {
+            Ok(number) => match self.change(path, |draft| draft.set(path, number)) {
+                Ok(()) => return Ok(()),
+                Err(ConfigError::OutOfRange { allowed, .. }) => out_of_range(allowed),
+                Err(error) => return Err(error),
+            },
+            Err(NotTaken::OutOfRange) => out_of_range(range),
+            Err(NotTaken::NoNumber) => {
+                Text::new("issue-not-a-number").with("entered", entered.trim())
             }
-            Some(Err(error)) => return Err(error),
-            None => Text::new("issue-not-a-number").with("entered", entered.trim()),
         };
         self.rejected.push(Rejected {
             path: path.clone(),
@@ -465,7 +509,12 @@ impl PhaseForm {
             }
             answered_anew.push(path);
         }
-        self.draft = draft.with_defaults()?;
+        // a field left unanswered is answered as offered only now
+        let mut draft = draft.with_defaults()?;
+        for list in &answered_anew {
+            keep_what_is_needed(&self.draft, &mut draft, list)?;
+        }
+        self.draft = draft;
         self.rejected.clear();
         Ok(())
     }
@@ -493,6 +542,7 @@ impl PhaseForm {
                     label: field.label(),
                     description: field.description(),
                     issues: Vec::new(),
+                    warnings: Vec::new(),
                 }
             })
             .collect()
@@ -656,6 +706,146 @@ impl PhaseForm {
             )
         });
         options
+    }
+}
+
+/// Fits the list at `list` of `draft`, just answered as offered after a change of `before`, to the
+/// plugins chosen in the other fields of the phase: a plugin it offers only since a plugin offered
+/// elsewhere and not chosen there needs it, e.g. a metric of a criterion the ranking left out, is
+/// left out too, and a plugin of the list before the change that a plugin chosen elsewhere needs
+/// is kept, e.g. the metric of a criterion the ranking kept. Nothing is done if `list` takes no
+/// list.
+fn keep_what_is_needed(
+    before: &Draft<PhasePlugins>,
+    draft: &mut Draft<PhasePlugins>,
+    list: &Path,
+) -> Result<(), ConfigError> {
+    let Some(FieldKind::List { axis, .. }) = kind_at(draft.answers(), list) else {
+        return Ok(());
+    };
+    let mut chosen = Vec::new();
+    let mut declined = Vec::new();
+    for field in PhasePlugins::schema().fields() {
+        let path = Path::ROOT.field(field.name());
+        let Some(field_axis) = field.kind().axis().filter(|_| path != *list) else {
+            continue;
+        };
+        let answered = plugins_in(field_axis, draft.answers().get_at(&path));
+        // what a list offers is recommended by the plugins chosen, while a single plugin offered
+        // is no more than where the field starts out
+        if matches!(field.kind(), FieldKind::List { .. }) {
+            let offered = plugins_in(field_axis, draft.default_value(&path)?.as_ref());
+            declined.extend(
+                offered
+                    .into_iter()
+                    .filter(|offered| !answered.iter().any(|entry| entry.id() == offered.id())),
+            );
+        }
+        chosen.extend(answered);
+    }
+    let needed_by = |entry: &PluginEntry, plugins: &[&'static PluginEntry]| {
+        plugins.iter().any(|plugin| {
+            plugin
+                .providers_in(axis)
+                .iter()
+                .any(|provider| provider.id() == entry.id())
+        })
+    };
+    let items: Vec<(Value, &'static PluginEntry)> = answers_in(axis, draft.answers().get_at(list));
+    let (mut kept, mut left_out): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|(_, entry)| !needed_by(entry, &declined) || needed_by(entry, &chosen));
+    // a plugin left out that one kept needs stays after all, e.g. a metric calculated from another
+    loop {
+        let entries: Vec<_> = kept.iter().map(|(_, entry)| *entry).collect();
+        let Some(position) = left_out
+            .iter()
+            .position(|(_, entry)| needed_by(entry, &entries))
+        else {
+            break;
+        };
+        kept.push(left_out.remove(position));
+    }
+    for (answer, entry) in answers_in(axis, before.answers().get_at(list)) {
+        let present = kept.iter().any(|(_, kept)| kept.id() == entry.id());
+        if !present && needed_by(entry, &chosen) {
+            kept.push((answer, entry));
+        }
+    }
+    let answers = kept.into_iter().map(|(answer, _)| answer).collect();
+    draft.set(list, Value::Array(answers))
+}
+
+/// The plugins of `axis` answering a field with `answer`, one or a list of them.
+fn plugins_in(axis: AnyAxis, answer: Option<&Value>) -> Vec<&'static PluginEntry> {
+    let answers = match answer {
+        Some(Value::Array(answers)) => answers.iter().collect(),
+        Some(answer) => vec![answer],
+        None => Vec::new(),
+    };
+    answers
+        .into_iter()
+        .filter_map(|answer| axis.entry(PluginConfig::from_answer(answer)?.plugin()))
+        .collect()
+}
+
+/// The answers of the list `answer` of plugins of `axis`, each with its plugin.
+fn answers_in(axis: AnyAxis, answer: Option<&Value>) -> Vec<(Value, &'static PluginEntry)> {
+    answer
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|answer| {
+            let entry = axis.entry(PluginConfig::from_answer(answer)?.plugin())?;
+            Some((answer.clone(), entry))
+        })
+        .collect()
+}
+
+/// Why a number entered is not taken, see [`number`].
+enum NotTaken {
+    /// It is a number, but none of the kind the field takes, or nothing was entered.
+    OutOfRange,
+    NoNumber,
+}
+
+/// The number `entered` as the answer of a field of `range`, see [`PhaseForm::enter`].
+fn number(entered: &str, range: NumberRange) -> Result<Value, NotTaken> {
+    let text = entered.trim().replace(',', ".");
+    if text.is_empty() {
+        return Err(NotTaken::OutOfRange);
+    }
+    // what Rust reads as a number besides digits, e.g. `inf` and `NaN`, is no number to an
+    // operator
+    let numeric = text
+        .chars()
+        .all(|char| char.is_ascii_digit() || matches!(char, '.' | 'e' | 'E' | '+' | '-'));
+    let number = text
+        .parse::<f64>()
+        .ok()
+        .filter(|_| numeric && text.contains(|char: char| char.is_ascii_digit()))
+        .ok_or(NotTaken::NoNumber)?;
+    // a number too large for a float is a number all the same
+    if !number.is_finite() {
+        return Err(NotTaken::OutOfRange);
+    }
+    match range {
+        NumberRange::Integer(_) => {
+            // exactly, where a float would round
+            if let Ok(whole) = text.parse::<i64>() {
+                return Ok(Value::from(whole));
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_precision_loss,
+                reason = "a whole number within the bounds of i64"
+            )]
+            let whole =
+                (number.fract() == 0.0 && number >= i64::MIN as f64 && number < i64::MAX as f64)
+                    .then_some(number as i64);
+            whole.map(Value::from).ok_or(NotTaken::OutOfRange)
+        }
+        NumberRange::Decimal(_) => Ok(Value::from(number)),
     }
 }
 

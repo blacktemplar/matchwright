@@ -92,7 +92,8 @@ pub fn Phase() -> Element {
     let tr = ctx.translator.read();
     rsx! {
         section { class: "card", aria_labelledby: "phase",
-            h2 { id: "phase", {tr.get("phase-heading")} }
+            // focused once the phase is added, unless it can start
+            h2 { id: "phase", tabindex: "-1", {tr.get("phase-heading")} }
             if has_phase {
                 PhaseSummary {}
             } else {
@@ -100,6 +101,7 @@ pub fn Phase() -> Element {
             }
             div { class: "start",
                 button {
+                    id: "start",
                     class: "primary",
                     disabled: !actions.start,
                     aria_describedby: refusal.is_some().then_some("start-refusal"),

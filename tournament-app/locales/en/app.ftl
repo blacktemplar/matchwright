@@ -57,6 +57,8 @@ number-range = { $whole ->
         [0] {""}
        *[other] {" "}that is a multiple of { $multiple }
     }
+# what an answer leads to that the operator may not want, although the phase can be played so
+warning-unranked = ranked by nothing, every team is tied in the standings
 # what is wrong with the answer of a field, or with a plugin chosen
 issue-unanswered = this needs an answer
 # the variables of number-range

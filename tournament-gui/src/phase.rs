@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 use tournament_app::{
     form::{
         FormField, FormView, Input, Item, ListInput, Path, PhaseForm, PluginInput, PluginOption,
+        SetEntry,
     },
     i18n::{Message as _, PluginText, Text, Translator},
 };
@@ -46,7 +47,10 @@ pub fn NewPhase() -> Element {
                     focus_first_issue("new-phase");
                     return;
                 }
-                _ = ctx.act(|session| session.add_phase(form.read().draft()));
+                if ctx.act(|session| session.add_phase(form.read().draft())).is_some() {
+                    // the form is gone, and with it what had the focus
+                    focus_later(&["#start:enabled", "#phase"]);
+                }
             },
             Form { form, disabled: !actions.add_phase }
             div { class: "form-actions",
@@ -170,9 +174,10 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
     let label = capitalized(&tr.field_label(&field));
     let description = tr.field_description(&field);
     let path = field.path.clone();
-    let described_by = format!("{id}-description {id}-issues");
+    let described_by = format!("{id}-description {id}-issues {id}-warnings");
     let issues = rsx! {
         Issues { id: "{id}-issues", issues: field.issues.clone() }
+        Warnings { id: "{id}-warnings", warnings: field.warnings.clone() }
     };
     // what is said about the field, next to its label
     let about = rsx! {
@@ -210,9 +215,8 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                 NumberField {
                     form, path, id, label, disabled,
                     value: shown,
-                    min: range.min().to_string(),
-                    max: range.max().to_string(),
-                    step: range.multiple_of().to_string(),
+                    // a minus as well, where the keyboard of the numbers has none
+                    keyboard: if range.min() < 0 { "text" } else { "numeric" },
                     hint: tr.text(&hint),
                     about,
                     {issues}
@@ -226,15 +230,12 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
             hint,
         } => {
             let shown = entered.or_else(|| value.map(|value| value.to_string()));
-            let step = range
-                .multiple_of()
-                .map_or_else(|| "any".to_owned(), |step| step.to_string());
+            let negative = range.min().is_none_or(|min| min < 0.0);
             rsx! {
                 NumberField {
-                    form, path, id, label, disabled, step,
+                    form, path, id, label, disabled,
                     value: shown,
-                    min: range.min().map(|min| min.to_string()).unwrap_or_default(),
-                    max: range.max().map(|max| max.to_string()).unwrap_or_default(),
+                    keyboard: if negative { "text" } else { "decimal" },
                     hint: tr.text(&hint),
                     about,
                     {issues}
@@ -247,6 +248,7 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
                 input: *inner,
                 description: None,
                 issues: Vec::new(),
+                warnings: Vec::new(),
                 ..field.clone()
             };
             rsx! {
@@ -299,7 +301,12 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
 }
 
 /// A field taking a number, entered as text and taken once the operator leaves the field, with
-/// what is said about it, `about`, next to its label.
+/// what is said about it, `about`, next to its label. `keyboard` is the `inputmode` of the input,
+/// the keyboard a touch screen shows.
+///
+/// The input is a text: one of the type `number` hands over nothing for what it does not read as
+/// a number, e.g. `0,5` where the browser expects a point, so that the form could not say what was
+/// entered, and it would read it otherwise than the form.
 #[component]
 fn NumberField(
     form: Signal<PhaseForm>,
@@ -307,9 +314,7 @@ fn NumberField(
     id: String,
     label: String,
     value: Option<String>,
-    min: String,
-    max: String,
-    step: String,
+    keyboard: String,
     hint: String,
     disabled: bool,
     about: Element,
@@ -324,13 +329,12 @@ fn NumberField(
             {about}
             " "
             input {
-                r#type: "number",
+                r#type: "text",
+                class: "number",
                 id: "{id}",
-                inputmode: if step == "any" || step.contains('.') { "decimal" } else { "numeric" },
+                inputmode: keyboard,
+                autocomplete: "off",
                 value: value.unwrap_or_default(),
-                min: (!min.is_empty()).then_some(min),
-                max: (!max.is_empty()).then_some(max),
-                step,
                 disabled,
                 aria_describedby: "{id}-hint {id}-description {id}-issues",
                 oninput: move |event| typed.set(Some(event.value())),
@@ -372,6 +376,7 @@ fn PluginField(
         .map(|chosen| chosen.plugin.id.to_owned());
     let none = plugin.optional.then(|| tr.get("no-plugin"));
     let choose = path.clone();
+    let trigger = format!("#{id}");
     rsx! {
         div { class: "field",
             span { class: "label", id: "{id}-label", "{label}" }
@@ -387,6 +392,8 @@ fn PluginField(
                 on_change: move |chosen: String| {
                     let chosen = Some(chosen.as_str()).filter(|chosen| !chosen.is_empty());
                     _ = form.write().choose(&choose, chosen);
+                    // back from the list, which is hidden once an option is chosen
+                    focus_later(&[&trigger]);
                 },
                 for (index, option) in plugin.options.iter().enumerate() {
                     PluginChoice {
@@ -487,16 +494,23 @@ fn OrderedList(
     let tr = ctx.translator.read();
     let last = list.items.len().saturating_sub(1);
     let implied = implied(&tr, &list.implied);
+    // the plugin added, at the end, or the list adding another one
+    let added = format!(
+        "#{}-remove",
+        self::id(&path.clone().index(list.items.len()))
+    );
+    let add_trigger = format!("#{id}-add");
     rsx! {
         ol { class: "plugin-list", id: "{id}",
-            // keyed by the plugin, so that one moved keeps its element, and the focus
+            // keyed by the plugin, so that one moved keeps its element
             for (index, item) in list.items.into_iter().enumerate() {
                 OrderedItem {
                     key: "{item.plugin.id}",
                     list: id.clone(),
                     form,
+                    list_path: path.clone(),
+                    index,
                     item,
-                    first: index == 0,
                     last: index == last,
                     disabled,
                 }
@@ -518,7 +532,10 @@ fn OrderedList(
                     value: None,
                     placeholder: tr.get("choose-plugin"),
                     disabled,
-                    on_change: move |chosen: String| _ = form.write().add(&path, &chosen),
+                    on_change: move |chosen: String| {
+                        _ = form.write().add(&path, &chosen);
+                        focus_later(&[&add_trigger, &added]);
+                    },
                     for (index, option) in list.options.iter().enumerate() {
                         PluginChoice {
                             key: "{option.id}",
@@ -533,14 +550,15 @@ fn OrderedList(
     }
 }
 
-/// A plugin of a list whose order matters, with the buttons moving and removing it, and its
-/// fields.
+/// A plugin of a list whose order matters, at `index` of the list at `list_path`, with the buttons
+/// moving and removing it, and its fields.
 #[component]
 fn OrderedItem(
     form: Signal<PhaseForm>,
     list: String,
+    list_path: Path,
+    index: usize,
     item: Item,
-    first: bool,
     last: bool,
     disabled: bool,
 ) -> Element {
@@ -548,33 +566,68 @@ fn OrderedItem(
     let tr = ctx.translator.read();
     let name = plugin_label(&tr, &item.plugin);
     let (up, down, remove) = (item.path.clone(), item.path.clone(), item.path.clone());
+    // the button of the item at `index`, by its position
+    let button = move |index: usize, button: &str| {
+        format!("#{}-{button}", id(&list_path.clone().index(index)))
+    };
+    // moving it moves its element, which loses the focus, to the position it is moved to
+    let (moved_up, moved_down) = (
+        button(index.saturating_sub(1), "up"),
+        button(index + 1, "down"),
+    );
+    // after the removal the next item is at the position of the one removed, else the one before
+    // it is the last, else the list adding one is all there is
+    let mut after_removal = vec![button(index, "remove")];
+    if let Some(before) = index.checked_sub(1) {
+        after_removal.push(button(before, "remove"));
+    }
+    after_removal.push(format!("#{list}-add"));
+    let own = id(&item.path);
     rsx! {
         li {
             span { class: "name", "{name}" }
             " "
             About { list, option: item.plugin }
+            // kept focusable at the end of the list, so that the focus stays on a plugin moved
+            // there
             button {
                 class: "quiet small",
                 r#type: "button",
+                id: "{own}-up",
                 aria_label: t!(tr, "move-up", plugin = name.as_str()),
-                disabled: disabled || first,
-                onclick: move |_| _ = form.write().move_up(&up),
+                disabled,
+                aria_disabled: (index == 0).then_some("true"),
+                onclick: move |_| {
+                    _ = form.write().move_up(&up);
+                    focus_later(&[&moved_up]);
+                },
                 "↑"
             }
             button {
                 class: "quiet small",
                 r#type: "button",
+                id: "{own}-down",
                 aria_label: t!(tr, "move-down", plugin = name.as_str()),
-                disabled: disabled || last,
-                onclick: move |_| _ = form.write().move_down(&down),
+                disabled,
+                aria_disabled: last.then_some("true"),
+                onclick: move |_| {
+                    _ = form.write().move_down(&down);
+                    // nothing at the end, where it stays
+                    focus_later(&[&moved_down]);
+                },
                 "↓"
             }
             button {
                 class: "quiet small",
                 r#type: "button",
+                id: "{own}-remove",
                 aria_label: t!(tr, "remove-plugin", plugin = name.as_str()),
                 disabled,
-                onclick: move |_| _ = form.write().remove(&remove),
+                onclick: move |_| {
+                    _ = form.write().remove(&remove);
+                    let selectors: Vec<&str> = after_removal.iter().map(String::as_str).collect();
+                    focus_later(&selectors);
+                },
                 {tr.get("remove")}
             }
             Fields { form, fields: item.fields, disabled }
@@ -631,67 +684,99 @@ fn UnorderedList(
 ) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
-    let implied = implied(&tr, &list.implied);
+    // in one order, whether chosen or not, so that a plugin stays where it is when it is clicked
+    let entries: Vec<_> = list
+        .set()
+        .into_iter()
+        .map(|entry| match entry {
+            SetEntry::Chosen(item) => SetItem {
+                option: item.plugin,
+                text: plugin_label(&tr, &item.plugin),
+                state: SetState::Chosen(item.clone()),
+            },
+            SetEntry::Implied(option) => SetItem {
+                option: *option,
+                text: t!(
+                    tr,
+                    "implied-plugin",
+                    plugin = plugin_label(&tr, option).as_str()
+                ),
+                state: SetState::Implied,
+            },
+            SetEntry::Offered(option) => SetItem {
+                option: *option,
+                text: plugin_label(&tr, option),
+                state: SetState::Offered,
+            },
+        })
+        .collect();
     rsx! {
         ul { class: "plugin-set", id: "{list_id}",
-            // keyed by the plugin, which a list has once, rather than by its position: the item
-            // after one removed moves to its position, and would take over the element whose
-            // checkbox was just unchecked, which the page does not check again since it rendered
-            // it checked before as well
-            for item in list.items {
-                li { key: "{item.plugin.id}",
+            // keyed by the plugin, which a list has once, and with the same elements whether
+            // chosen or not, so that its checkbox keeps the focus when it is clicked; an implied
+            // one has elements of its own, since the page would not check again a checkbox just
+            // unchecked whose plugin turned out to be implied, having rendered it checked before
+            for entry in entries {
+                li { key: "{entry.key()}",
                     {
-                        let remove = item.path.clone();
-                        rsx! {
-                            label {
-                                input {
-                                    r#type: "checkbox",
-                                    checked: true,
-                                    disabled,
-                                    onchange: move |_| _ = form.write().remove(&remove),
-                                }
-                                " {plugin_label(&tr, &item.plugin)}"
-                            }
-                        }
-                    }
-                    " "
-                    About { list: list_id.clone(), option: item.plugin }
-                    Fields { form, fields: item.fields, disabled }
-                    Issues { id: "{id(&item.path)}-issues", issues: item.issues }
-                }
-            }
-            for implied in implied {
-                li { key: "{implied.option.id}",
-                    label {
-                        input { r#type: "checkbox", checked: true, disabled: true }
-                        " {implied.text}"
-                    }
-                    " "
-                    About { list: list_id.clone(), option: implied.option }
-                }
-            }
-            for option in list.options {
-                li { key: "{option.id}",
-                    {
+                        let plugin = entry.option.id;
+                        let chosen = match &entry.state {
+                            SetState::Chosen(item) => Some(item.path.clone()),
+                            _ => None,
+                        };
                         let add = path.clone();
                         rsx! {
                             label {
                                 input {
                                     r#type: "checkbox",
-                                    checked: false,
-                                    disabled,
-                                    onchange: move |_| _ = form.write().add(&add, option.id),
+                                    checked: !matches!(entry.state, SetState::Offered),
+                                    disabled: disabled || matches!(entry.state, SetState::Implied),
+                                    onchange: move |_| {
+                                        _ = match &chosen {
+                                            Some(item) => form.write().remove(item),
+                                            None => form.write().add(&add, plugin),
+                                        };
+                                    },
                                 }
-                                " {plugin_label(&tr, &option)}"
+                                " {entry.text}"
                             }
                         }
                     }
                     " "
-                    About { list: list_id.clone(), option }
+                    About { list: list_id.clone(), option: entry.option }
+                    if let SetState::Chosen(item) = entry.state {
+                        Fields { form, fields: item.fields, disabled }
+                        Issues { id: "{id(&item.path)}-issues", issues: item.issues }
+                    }
                 }
             }
         }
     }
+}
+
+/// A plugin of a set, as [`UnorderedList`] shows it.
+struct SetItem {
+    option: PluginOption,
+    state: SetState,
+    /// What the set shows for it.
+    text: String,
+}
+
+impl SetItem {
+    /// What its element is keyed by, see [`UnorderedList`].
+    fn key(&self) -> String {
+        match self.state {
+            SetState::Implied => format!("implied-{}", self.option.id),
+            _ => self.option.id.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum SetState {
+    Chosen(Item),
+    Implied,
+    Offered,
 }
 
 /// What is wrong, as a list with the id `id`, which the inputs it is about name as their
@@ -709,6 +794,44 @@ fn Issues(id: String, issues: Vec<Text>) -> Element {
             }
         }
     }
+}
+
+/// What the answer of a field leads to that the operator may not want, although the phase can be
+/// played with it, as a list with the id `id`; nothing if there is nothing to say.
+#[component]
+fn Warnings(id: String, warnings: Vec<Text>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let tr = ctx.translator.read();
+    rsx! {
+        if !warnings.is_empty() {
+            ul { class: "warnings", id: "{id}",
+                for warning in warnings {
+                    li { {tr.text(&warning)} }
+                }
+            }
+        }
+    }
+}
+
+/// Moves the focus, once the page shows what was just changed, to the first element that
+/// `selectors` find, if any, e.g. to the button of the next item after one removed.
+pub fn focus_later(selectors: &[&str]) {
+    // ids and classes of the page, with nothing a JavaScript string would read otherwise than Rust
+    let selectors = format!("{selectors:?}");
+    // the second frame is after the page rendered the change, which it does in the first
+    _ = document::eval(&format!(
+        r#"
+        requestAnimationFrame(() => requestAnimationFrame(() => {{
+            for (const selector of {selectors}) {{
+                const element = document.querySelector(selector);
+                if (element) {{
+                    element.focus();
+                    break;
+                }}
+            }}
+        }}));
+        "#
+    ));
 }
 
 /// Moves the focus to the first list of issues in the form whose element has the id `form`,

@@ -47,6 +47,7 @@ number-range = { $whole ->
         [0] {""}
        *[other] , die ein Vielfaches von { $multiple } ist
     }
+warning-unranked = ohne Kriterium sind in der Tabelle alle Teams gleichauf
 issue-unanswered = das braucht eine Antwort
 issue-out-of-range = das muss { number-range } sein
 issue-not-a-number = „{ $entered }“ ist keine Zahl

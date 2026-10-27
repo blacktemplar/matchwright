@@ -7,8 +7,8 @@
 //!
 //! What shows on hover and focus is the style's (`.toggletip` in `style.css`); the page keeps only
 //! which toggletip a click opened, and whether Escape hid the one shown. Each toggletip places its
-//! text before it shows: below or above its button, extending to the right or to the left,
-//! wherever there is more room.
+//! text before it shows: below its button unless the room there is short, extending to the right
+//! or to the left, wherever there is more room.
 
 use dioxus::prelude::*;
 use futures_util::StreamExt as _;
@@ -153,26 +153,36 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
     }
 }
 
-/// Where the text of a toggletip shows, so that it is not cut off: towards the middle of where it
-/// can show, i.e. of the nearest ancestor that cuts off what reaches out of it (e.g. a dialog that
-/// scrolls), or else of the window.
+/// Where the text of a toggletip shows, so that it is not cut off: extending towards the middle of
+/// where it can show, i.e. of the nearest ancestor that cuts off what reaches out of it (e.g. a
+/// dialog that scrolls), or else of the window, and below its button unless the room there is
+/// short and there is more above. Below covers what follows the button rather than what comes
+/// before it, e.g. the issues of the field before the one whose toggletip the focus reached.
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Placement {
     /// Extending to the left of the button, which is in the right half.
     end: bool,
-    /// Above the button, which is in the lower half.
+    /// Above the button.
     above: bool,
 }
+
+/// The room below a button that a text of a toggletip of a few lines takes, in CSS pixels.
+const ROOM_BELOW: f64 = 160.0;
 
 impl Placement {
     /// The placement of the text of the toggletip `element`.
     fn of(element: &web_sys::Element) -> Self {
         let window = web_sys::window().expect("the page runs in a window");
         let rect = element.get_bounding_client_rect();
-        let (x, y) = (
-            rect.left() + rect.width() / 2.0,
-            rect.top() + rect.height() / 2.0,
-        );
+        let x = rect.left() + rect.width() / 2.0;
+        // within the bounds `left`, `width`, `top` and `bottom`
+        let within = |left: f64, width: f64, top: f64, bottom: f64| {
+            let (above, below) = (rect.top() - top, bottom - rect.bottom());
+            Self {
+                end: x > left + width / 2.0,
+                above: below < ROOM_BELOW && above > below,
+            }
+        };
         let mut ancestor = element.parent_element();
         while let Some(current) = ancestor {
             let cuts_off = window
@@ -183,19 +193,18 @@ impl Placement {
                 .is_some_and(|overflow| overflow != "visible");
             if cuts_off {
                 let bounds = current.get_bounding_client_rect();
-                return Self {
-                    end: x > bounds.left() + bounds.width() / 2.0,
-                    above: y > bounds.top() + bounds.height() / 2.0,
-                };
+                return within(bounds.left(), bounds.width(), bounds.top(), bounds.bottom());
             }
             ancestor = current.parent_element();
         }
         let size = |size: Result<wasm_bindgen::JsValue, _>| {
             size.ok().and_then(|size| size.as_f64()).unwrap_or_default()
         };
-        Self {
-            end: x > size(window.inner_width()) / 2.0,
-            above: y > size(window.inner_height()) / 2.0,
-        }
+        within(
+            0.0,
+            size(window.inner_width()),
+            0.0,
+            size(window.inner_height()),
+        )
     }
 }

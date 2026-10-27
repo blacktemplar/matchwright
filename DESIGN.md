@@ -1585,6 +1585,18 @@ tested natively and in wasm, and knows no plugin.
   believes. The criterion stays and an issue at the metrics says what it
   needs. Rejected: following every change (that silent drop), and following no
   change at all (another format would keep the previous format's ranking).
+- **A list that follows fits what the operator kept.** The metrics a format
+  offers serve its ranking; when the operator changed the ranking, it stays,
+  while the metrics follow. So a list answered anew leaves out a plugin it
+  offers only because a plugin offered elsewhere and not chosen there needs it
+  (random rounds' Buchholz, when the ranking dropped the Buchholz criterion),
+  unless a plugin kept needs it, and keeps a plugin of its answer before that
+  a plugin chosen elsewhere needs (the points of *more points* kept, which a
+  single elimination does not offer). Read from the static declarations
+  (`PluginEntry::providers_in`), so the form still knows no plugin. Without it
+  a format change produced an issue the operator had not caused, or metrics
+  nothing ranks by. Rejected: following the ranking along with the metrics
+  (the operator's ranking would be lost).
 - **The plugins implied are shown, not chosen.** The view adds the implied
   plugins (`Draft::add_implied`) to a copy and shows them after the chosen ones
   of their list, as needed by another; they are not options to choose, and go
@@ -1594,16 +1606,41 @@ tested natively and in wasm, and knows no plugin.
   plugins, built with nothing open (`Draft::build`), are put at the deepest
   field or list item their path is within, and only those within none stay
   with the form. An unanswered field is an issue, since the form is what the
-  phase is built from.
+  phase is built from. A **warning** is said at its field as well, but does not
+  block: a phase ranked by nothing can be played, with everyone tied, which is
+  rarely what an operator wants.
+- **A set keeps its order.** The plugins of a list whose order does not matter
+  (the metrics) are shown in one order, chosen or not, the recommended first,
+  then by label (`ListInput::set`), so that a checkbox stays where it was
+  clicked; listing the chosen first moved the next one under the pointer.
+- **The form of a new phase starts out at the phase undone.** Undoing "add
+  phase" brings back the form as that phase was played (the session keeps its
+  config when it undoes it), so that adding it again adds the same phase
+  rather than the defaults.
 - **Options that fit, the recommended first.** A field offers the candidates
   without conflicts (and the plugin chosen, even if it no longer fits), those
   recommended first in their order, then the others by label, as the
   questionnaire orders them.
 - **A number is entered as text** and taken once the operator leaves the field
-  (`onchange`), with a comma as well as a point before the decimals. What is
-  not a number of the field's range leaves the answer as it was; the field
-  shows what was entered with why until the next change, rather than putting
-  an invalid answer into the draft, which takes only numbers of the range.
+  (`onchange`) or presses Enter, with a comma as well as a point before the
+  decimals, and possibly an exponent. What is not a number of the field's range
+  leaves the answer as it was; the field shows what was entered with why until
+  the next change, rather than putting an invalid answer into the draft, which
+  takes only numbers of the range: what the field does not take (`2.5` for
+  rounds, nothing at all, a number too large) by the numbers it takes, what is
+  no number at all by what was typed. The input is `type=text` with an
+  `inputmode` for the keyboard: a `type=number` hands over an empty value for
+  what the browser does not read as a number (`0,5` where it expects a point,
+  read as `5` by some), so the form could neither say what was typed nor read
+  it as the operator meant.
+- **The focus stays with the operator's work.** After a change that replaces
+  or moves what had the focus, the focus goes where the operator continues: a
+  plugin moved keeps it (its element is moved, which loses it, so it is set
+  again), after a removal the next item gets it, else the one before, else the
+  list adding one; after a choice the select's button; after adding the phase
+  Start. Buttons that become unavailable while focused (undo, redo, the
+  previous and next round, moving the first plugin up) are `aria-disabled`
+  rather than `disabled`, which would drop the focus to the page.
 - **The phase once added is shown as a summary** read from the same view, and
   edited in a dialog that starts out at its config (`Phase::config`). A
   refusal, e.g. an edit a reported result does not fit, is shown in the

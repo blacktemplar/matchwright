@@ -186,8 +186,13 @@ pub fn Rounds() -> Element {
                         button {
                             class: "small",
                             aria_label: tr.get("previous-round"),
-                            disabled: previous.is_none(),
-                            onclick: move |_| chosen.set(previous.map(Shown::Round)),
+                            // focusable at the first round as well, so that the focus stays
+                            aria_disabled: previous.is_none().then_some("true"),
+                            onclick: move |_| {
+                                if let Some(previous) = previous {
+                                    chosen.set(Some(Shown::Round(previous)));
+                                }
+                            },
                             icons::ChevronLeft {}
                         }
                         label { r#for: "round", class: "visually-hidden", {tr.get("rounds")} }
@@ -221,8 +226,12 @@ pub fn Rounds() -> Element {
                         button {
                             class: "small",
                             aria_label: tr.get("next-round"),
-                            disabled: next.is_none(),
-                            onclick: move |_| chosen.set(next.map(Shown::Round)),
+                            aria_disabled: next.is_none().then_some("true"),
+                            onclick: move |_| {
+                                if let Some(next) = next {
+                                    chosen.set(Some(Shown::Round(next)));
+                                }
+                            },
                             icons::ChevronRight {}
                         }
                     }

@@ -96,6 +96,12 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
     capabilities.add_arg("--lang=en-US").unwrap();
     // the size of a laptop's screen, which a page laid out by its width shows everything on
     capabilities.add_arg("--window-size=1280,900").unwrap();
+    // a profile removed with the test, where one chromedriver makes stays behind in the
+    // temporary directory, until it fills up and the browser fails to store anything
+    let profile = tempfile::tempdir().expect("a directory for the browser's profile");
+    capabilities
+        .add_arg(&format!("--user-data-dir={}", profile.path().display()))
+        .unwrap();
     // downloads into a directory of the test's own, without asking where to (see
     // `Page::expect_download`)
     capabilities
@@ -174,6 +180,8 @@ pub async fn run(site: Site, test: impl AsyncFnOnce(Page) -> WebDriverResult<()>
         Ok::<_, WebDriverError>(())
     })
     .await;
+    // the browser is gone now
+    drop(profile);
     if let Err(error) = result {
         panic!("{error}");
     }

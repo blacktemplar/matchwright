@@ -216,7 +216,29 @@ The original plan of this step:
 - Tests: an e2e test with long names that compares each line's end with the middle of the pairing it
   leads to (the bracket tester's measuring script, as a `Gui` helper), at laptop and phone size.
 
-### 5. The phase form follows the operator (F2, F3, F5, F6, F7, F9, L8)
+### 5. The phase form follows the operator (F2, F3, F5, F6, F7, F9, L8) — done
+
+- F2: the session keeps the config of the phase whose adding it undid; `Session::phase_form`
+  starts out at it.
+- F3: a list answered anew after a change leaves out what only a recommendation not chosen
+  elsewhere needs, and keeps what it had that a plugin chosen elsewhere needs (generic, by the
+  static declarations).
+- F5: the GUI's number inputs are `type=text` with an `inputmode`; `PhaseForm::enter` reads `1e3`,
+  `3.0` for whole numbers, and says "this takes …" for a number of another kind or size or nothing
+  at all, "“abc” is no number" otherwise. Deviation: a comma is read as a decimal point in every
+  language, as before (`1,000` in English is 1); a language-dependent reading would need the
+  language in the form.
+- F6: `ListInput::set`, recommended first, then by label; the GUI renders the set from it with the
+  same elements whether checked or not.
+- F7: `FormField::warnings`, shown in `.warnings`; a ranking of nothing is warned about.
+- F9: a toggletip opens below its button unless the room there is short.
+- L8: `phase::focus_later` after choosing, adding, moving and removing plugins and after adding
+  the phase (to Start); undo, redo, previous/next round and ↑/↓ are `aria-disabled`.
+- Found on the way: the e2e harness left one Chrome profile per test in `/tmp` (1,900 of them,
+  13 GB, filling the tmpfs until IndexedDB failed); each test now has a profile directory of its
+  own, removed at its end.
+
+The original plan of this step:
 
 - F2: when an undo removes the phase, rebuild the form from the undone phase's `Phase::config`
   (the session knows the action it walked through) instead of `Session::phase_form()`.

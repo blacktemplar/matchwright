@@ -14,7 +14,7 @@ use std::{
 use indexmap::IndexSet;
 use plugin_factory::{
     catalog::{AnyAxis, PluginEntry},
-    config::PluginConfig,
+    config::{Config, PluginConfig},
     draft::Draft,
 };
 use tournament_engine::{
@@ -66,6 +66,9 @@ pub struct Session {
     /// redone, the one undone last at the end, which it does not tell.
     done: Vec<Action>,
     undone: Vec<Action>,
+    /// The configuration of the phase whose adding this session undid last, which the form of a
+    /// new phase starts out at.
+    undone_phase: Option<Config>,
     /// The length of the log when it was last saved or loaded. The log is append-only, so every
     /// change since makes it longer, undo and redo included.
     saved_entries: usize,
@@ -93,6 +96,7 @@ impl Session {
             history: SessionHistory::new(),
             done: Vec::new(),
             undone: Vec::new(),
+            undone_phase: None,
             saved_entries: 0,
             unsaved_people: IndexSet::new(),
         }
@@ -121,6 +125,7 @@ impl Session {
             history: SessionHistory::new(),
             done: Vec::new(),
             undone: Vec::new(),
+            undone_phase: None,
             unsaved_people: IndexSet::new(),
         })
     }
@@ -301,6 +306,7 @@ impl Session {
             history: SessionHistory::new(),
             done: Vec::new(),
             undone: Vec::new(),
+            undone_phase: None,
             saved_entries: 0,
         })
     }
@@ -442,16 +448,20 @@ impl Session {
             .with_defaults()?)
     }
 
-    /// A form of a new phase of this competition, with every field answered as offered: in the
-    /// format a phase offers, with what that recommends. Once filled, its
-    /// [draft](PhaseForm::draft) is handed to [`Self::add_phase`].
+    /// A form of a new phase of this competition, answered as the phase was played whose adding
+    /// this session undid last, so that adding it again adds the same phase; if it undid none,
+    /// with every field answered as offered: in the format a phase offers, with what that
+    /// recommends. Once filled, its [draft](PhaseForm::draft) is handed to [`Self::add_phase`].
     ///
     /// # Errors
     /// Returns an error if a plugin offers an answer it does not take.
     pub fn phase_form(&self) -> Result<PhaseForm, PhaseDraftError> {
-        Ok(PhaseForm::new(
-            self.competition().phase_draft().with_defaults()?,
-        ))
+        let draft = self.competition().phase_draft();
+        let draft = match &self.undone_phase {
+            Some(config) => draft.with_answers(config)?,
+            None => draft.with_defaults()?,
+        };
+        Ok(PhaseForm::new(draft))
     }
 
     /// A form of the phase as it is played, see [`Self::phase_draft_to_edit`]. Once changed, its
@@ -823,10 +833,17 @@ impl Session {
     /// # Errors
     /// Returns [`NothingToUndo`] if every action of the session is undone.
     pub fn undo(&mut self) -> Result<Action, NothingToUndo> {
+        // read before the undo, which removes the phase
+        let phase = (self.done.last() == Some(&Action::AddPhase))
+            .then(|| self.phase().map(Phase::config))
+            .flatten();
         match self.history.undo_last(&mut self.machine) {
             Ok(_) => {
                 let action = self.done.pop().expect("an action was undone");
                 self.undone.push(action.clone());
+                if phase.is_some() {
+                    self.undone_phase = phase;
+                }
                 Ok(action)
             }
             Err(UndoLastError::NothingToUndo) => Err(NothingToUndo),

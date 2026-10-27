@@ -190,10 +190,40 @@ fn the_fields_answered_as_offered_follow_another_format() {
     assert_eq!(
         items(&view, "metrics"),
         [
-            RoundOfFirstLossCalculator::ID,
-            WinsDrawsLossesCalculator::ID
-        ]
+            WinsDrawsLossesCalculator::ID,
+            PointsCalculator::ID,
+            SonnebornBergerCalculator::ID
+        ],
+        "the metrics of the criteria kept, not that of the round of the first loss left out"
     );
+    assert!(view.complete);
+}
+
+/// The metrics following another format calculate what the ranking the operator chose needs,
+/// rather than what the format would rank by.
+#[test]
+fn the_metrics_following_another_format_fit_the_ranking_kept() {
+    let mut form = new_form();
+    form.remove(&path("ranking[1]")).unwrap();
+
+    form.choose(&path("format"), Some(RandomRounds::ID))
+        .unwrap();
+
+    let view = form.view();
+    assert_eq!(items(&view, "ranking"), [MorePoints::ID]);
+    assert_eq!(
+        items(&view, "metrics"),
+        [WinsDrawsLossesCalculator::ID, PointsCalculator::ID]
+    );
+
+    form.choose(&path("format"), Some(SingleElimination::ID))
+        .unwrap();
+    let view = form.view();
+    assert_eq!(
+        items(&view, "metrics"),
+        [WinsDrawsLossesCalculator::ID, PointsCalculator::ID]
+    );
+    assert!(view.complete);
 }
 
 /// What a plugin recommends follows its own fields too: a single elimination with a match for
@@ -290,6 +320,54 @@ fn a_number_not_taken_is_shown_with_why() {
     ));
 }
 
+/// What is not taken says why in the operator's terms: a number of another kind or size by the
+/// numbers the field takes, and what is no number at all by what was entered.
+#[test]
+fn a_number_not_taken_says_what_the_field_takes() {
+    let mut form = new_form();
+    form.choose(&path("format"), Some(MonsterDyp::ID)).unwrap();
+    let mut issues = |path_: &str, entered: &str| {
+        form.enter(&path(path_), entered).unwrap();
+        english_all(&field(&form.view(), path_).issues)
+    };
+
+    for entered in ["2.5", "", "  ", "99999999999999999999", "1e400"] {
+        assert_eq!(
+            issues("format.rounds", entered),
+            ["this takes a whole number of at least 1"],
+            "{entered:?}"
+        );
+    }
+    assert_eq!(
+        issues("metrics[1].points_for_win", "1e400"),
+        ["this takes a number of at least 0"]
+    );
+    for entered in ["abc", "inf", "NaN", "1.0.5", "-"] {
+        assert_eq!(
+            issues("format.rounds", entered),
+            [format!("“{entered}” is no number")],
+        );
+    }
+}
+
+/// A whole number may be written as a float or with an exponent.
+#[test]
+fn a_whole_number_is_taken_however_it_is_written() {
+    let mut form = new_form();
+    form.choose(&path("format"), Some(MonsterDyp::ID)).unwrap();
+
+    for (entered, rounds) in [("1e1", 10), ("3.0", 3), ("12", 12)] {
+        form.enter(&path("format.rounds"), entered).unwrap();
+        assert!(
+            matches!(
+                field(&form.view(), "format.rounds").input,
+                Input::Integer { value: Some(value), entered: None, .. } if value == rounds
+            ),
+            "{entered}"
+        );
+    }
+}
+
 /// A metric a criterion needs is calculated without being chosen, if there is nothing to choose:
 /// a single calculator without fields calculates it.
 #[test]
@@ -357,6 +435,46 @@ fn an_issue_is_shown_at_the_field_that_fixes_it() {
     assert!(view.issues.is_empty());
 }
 
+/// A metric stays where it is when it is chosen or left out, so that a second click at the same
+/// place is at the same metric.
+#[test]
+fn a_set_of_plugins_keeps_its_order_whatever_is_chosen() {
+    let mut form = new_form();
+    let set = |form: &PhaseForm| -> Vec<&'static str> {
+        list(&form.view(), "metrics")
+            .set()
+            .iter()
+            .map(|entry| entry.plugin().id)
+            .collect()
+    };
+    let before = set(&form);
+
+    form.remove(&path("metrics[0]")).unwrap();
+    assert_eq!(set(&form), before);
+    form.add(&path("metrics"), BuchholzCalculator::ID).unwrap();
+    assert_eq!(set(&form), before);
+    form.add(&path("metrics"), WinsDrawsLossesCalculator::ID)
+        .unwrap();
+    assert_eq!(set(&form), before);
+}
+
+/// A phase ranked by nothing can be played, but the form says what that leads to.
+#[test]
+fn a_ranking_of_nothing_is_warned_about_but_taken() {
+    let mut form = new_form();
+    assert!(field(&form.view(), "ranking").warnings.is_empty());
+
+    form.remove(&path("ranking[0]")).unwrap();
+    form.remove(&path("ranking[0]")).unwrap();
+
+    let view = form.view();
+    assert_eq!(
+        english_all(&field(&view, "ranking").warnings),
+        ["ranked by nothing, every team is tied in the standings"]
+    );
+    assert!(view.complete);
+}
+
 #[test]
 fn a_plugin_in_an_ordered_list_moves_up_and_down() {
     let mut form = new_form();
@@ -416,6 +534,25 @@ fn a_phase_is_added_and_edited_through_its_form() {
         )
         .input,
         Input::Integer { value: Some(3), .. }
+    ));
+}
+
+/// Adding the phase again after undoing it adds the same phase, not the one offered.
+#[test]
+fn the_form_of_a_new_phase_starts_out_at_the_phase_whose_adding_was_undone() {
+    let mut session = Session::new("cup");
+    let mut form = session.phase_form().unwrap();
+    form.choose(&path("format"), Some(MonsterDyp::ID)).unwrap();
+    form.enter(&path("format.rounds"), "7").unwrap();
+    session.add_phase(form.draft()).unwrap();
+
+    session.undo().unwrap();
+
+    let view = session.phase_form().unwrap().view();
+    assert_eq!(chosen(&view, "format"), MonsterDyp::ID);
+    assert!(matches!(
+        field(&view, "format.rounds").input,
+        Input::Integer { value: Some(7), .. }
     ));
 }
 

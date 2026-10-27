@@ -169,7 +169,7 @@ button,
     border-color 100ms ease-out;
 }
 
-button:hover:not(:disabled),
+button:hover:not(:disabled, [aria-disabled="true"]),
 .button:hover {
   background: var(--hover);
 }
@@ -180,7 +180,7 @@ button.primary {
   color: var(--on-accent);
 }
 
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
 }
@@ -196,7 +196,9 @@ button.small,
   padding: 0 var(--space-3);
 }
 
-button:disabled {
+/* also one that stays focusable while unavailable, so that the focus is not lost */
+button:disabled,
+button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -578,7 +580,8 @@ footer select {
   border-radius: var(--radius);
 }
 
-.field input[type="number"] {
+/* a text, read by the form (phase.rs) */
+.field input.number {
   width: 8rem;
 }
 
@@ -692,6 +695,12 @@ footer select {
 .issues {
   margin: var(--space-1) 0;
   color: var(--error);
+}
+
+/* what the phase can be played with, but the operator may not want */
+.warnings {
+  margin: var(--space-1) 0;
+  color: var(--warning);
 }
 
 .option {

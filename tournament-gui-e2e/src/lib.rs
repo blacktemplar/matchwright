@@ -317,6 +317,17 @@ impl Gui {
             .await
     }
 
+    /// Waits until what the answers of the form of the phase lead to that the operator may not
+    /// want is `warnings`, in the order of the fields.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with what is shown instead.
+    pub async fn expect_warnings(&self, warnings: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css(".phase-form .warnings li"), warnings)
+            .await
+    }
+
     /// Waits until the plugins of the list at `path` of the form of the phase whose order matters
     /// are `labels`, in this order, e.g. `"ranking"`.
     ///
@@ -344,6 +355,59 @@ impl Gui {
                 labels,
             )
             .await
+    }
+
+    /// Waits until the field at `path` of the form of the phase, which takes a number, shows
+    /// `text`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it shows instead.
+    pub async fn expect_entered(&self, path: &str, text: &str) -> WebDriverResult<()> {
+        self.page
+            .expect(
+                By::Id(field_id(path)),
+                |query| query.with_value(text.to_owned()),
+                &format!("the value {text:?}"),
+            )
+            .await
+    }
+
+    /// Waits until the focus is on the checkbox labelled `label`, e.g. a plugin of the metrics.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the label of the checkbox it is on instead, if any.
+    pub async fn expect_focus_on_checkbox(&self, label: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("label:has(> input[type=checkbox]:focus)"), &[label])
+            .await
+    }
+
+    /// Waits until the focus is in the item labelled `label` of the list at `path` of the form of
+    /// the phase whose order matters, e.g. on a button moving it.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the item it is in instead, if any.
+    pub async fn expect_focus_in_list(&self, path: &str, label: &str) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css(format!("#{} > li:has(:focus) > .name", field_id(path))),
+                &[label],
+            )
+            .await
+    }
+
+    /// Waits until the focus is on the button choosing the plugin of the field at `path` of the
+    /// form of the phase, or adding one to the list at `path`.
+    ///
+    /// # Panics
+    /// Panics if it is not in time.
+    pub async fn expect_focus_on_choice(&self, path: &str) -> WebDriverResult<()> {
+        let id = field_id(path);
+        self.driver
+            .query(By::Css(format!("#{id}:focus, #{id}-add:focus")))
+            .first()
+            .await?;
+        Ok(())
     }
 
     /// Waits until how the phase is played reads `answers`, the answers of its fields in order,
@@ -517,12 +581,51 @@ impl Gui {
         }
     }
 
-    /// Waits until the button whose text is `text` is disabled.
+    /// Waits until a toggletip shows, and checks that it covers none of the issues of the form of
+    /// the phase.
+    ///
+    /// # Panics
+    /// Panics if none shows in time, or it covers an issue.
+    pub async fn expect_toggletip_clear_of_issues(&self) -> WebDriverResult<()> {
+        let shown = self
+            .driver
+            .query(By::Css(".toggletip-text"))
+            .and_displayed()
+            .first()
+            .await?;
+        let covered = self
+            .driver
+            .execute(
+                "const text = arguments[0].getBoundingClientRect();
+                return [...document.querySelectorAll('.phase-form .issues li')]
+                    .map(issue => [issue, issue.getBoundingClientRect()])
+                    .filter(([, box]) => box.left < text.right && text.left < box.right
+                        && box.top < text.bottom && text.top < box.bottom)
+                    .map(([issue]) => issue.textContent);",
+                vec![shown.to_json()?],
+            )
+            .await?
+            .convert::<Vec<String>>()?;
+        assert!(
+            covered.is_empty(),
+            "the toggletip shown must cover no issue, but covers {covered:?}"
+        );
+        Ok(())
+    }
+
+    /// Waits until the button whose text is `text` is disabled, or says it is unavailable while
+    /// staying focusable (`aria-disabled`).
     ///
     /// # Panics
     /// Panics if it is not in time.
     pub async fn expect_disabled(&self, text: &str) -> WebDriverResult<()> {
-        self.button(text).and_not_enabled().first().await?;
+        self.driver
+            .query(By::XPath(format!(
+                "//button[{}='{text}'][@disabled or @aria-disabled='true']",
+                without_isolation_marks("normalize-space()")
+            )))
+            .first()
+            .await?;
         Ok(())
     }
 
