@@ -419,14 +419,43 @@ impl Phase {
         debug_assert!(
             matches
                 .iter()
-                .flat_map(Match::rankings)
+                .flat_map(NewMatch::rankings)
                 .copied()
                 .chain(byes.iter().map(Bye::ranking))
                 .all(|r| self.data.rankings.contains_key(&r))
         );
         let num_matches_before = self.data.matches.len();
         let num_new_matches = matches.len();
+        // looked for only if a match asks for no number, since a bracket schedules after every
+        // result, each match with a number
+        let mut highest = matches
+            .iter()
+            .any(|r#match| r#match.number().is_none())
+            .then(|| {
+                self.data
+                    .matches
+                    .values()
+                    .map(Match::number)
+                    .chain(matches.iter().filter_map(NewMatch::number))
+                    .max()
+            })
+            .flatten();
+        let matches: Vec<_> = matches
+            .into_iter()
+            .map(|r#match| {
+                let number = r#match.number().unwrap_or_else(|| {
+                    let next = highest.map_or(NonZeroU32::MIN, |highest| {
+                        highest.checked_add(1).expect("fewer matches than u32::MAX")
+                    });
+                    highest = Some(next);
+                    next
+                });
+                r#match.numbered(number)
+            })
+            .collect();
         self.data.matches.extend(matches);
+        // the numbers of the matches are unique
+        debug_assert!(self.data.matches.values().map(Match::number).all_unique());
         let new_bye_ids: Vec<_> = byes.iter().map(Bye::id).collect();
         let num_byes_before = self.data.byes.len();
         self.data.byes.extend(byes);
@@ -725,20 +754,107 @@ pub struct RankingId(Uuid);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MatchId(Uuid);
 
-/// A match between two teams of rankings in a round of a phase.
+/// A match between two teams of rankings in a round of a phase, numbered within the phase.
 ///
-/// Beyond who plays it, its round and its result, a match holds `annotations`: data that describes
-/// it, keyed by type, such as which stage of a knockout it belongs to. The
-/// [`PhaseFormat`] scheduling the match gives them when
-/// creating it, with [`Annotated::with_annotation`].
+/// Beyond who plays it, its round, its number and its result, a match holds `annotations`: data
+/// that describes it, keyed by type, such as which stage of a knockout it belongs to. The
+/// [`PhaseFormat`] scheduling the match gives them when creating it as a [`NewMatch`], with
+/// [`Annotated::with_annotation`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Match {
     id: MatchId,
     team_a: Vec1<RankingId>,
     team_b: Vec1<RankingId>,
     round: NonZeroU32,
+    number: NonZeroU32,
     result: Option<MatchResult>,
     annotations: TypeMap,
+}
+
+/// A match a [`PhaseFormat`] schedules, see [`Schedule`]: who plays it in which round, what it is
+/// annotated with, and the number it asks for, if any. The phase stores it as a [`Match`], numbered
+/// as asked, or else with the number after the highest one its matches have.
+#[derive(Debug)]
+pub struct NewMatch {
+    id: MatchId,
+    team_a: Vec1<RankingId>,
+    team_b: Vec1<RankingId>,
+    round: NonZeroU32,
+    number: Option<NonZeroU32>,
+    annotations: TypeMap,
+}
+
+impl NewMatch {
+    /// A match of `team_a` against `team_b` in `round`. Its id is derived from the teams and the
+    /// round.
+    ///
+    /// # Panics
+    /// Panics if a ranking is on both teams.
+    pub fn new(team_a: Vec1<RankingId>, team_b: Vec1<RankingId>, round: NonZeroU32) -> Self {
+        assert!(team_a.iter().all(|id| !team_b.contains(id)));
+        let id = MatchId(derive_id(
+            &NAMESPACE_MATCH,
+            team_a.iter().chain(team_b.iter()).map(|ranking| ranking.0),
+            Some(round),
+        ));
+        Self {
+            id,
+            team_a,
+            team_b,
+            round,
+            number: None,
+            annotations: TypeMap::new(),
+        }
+    }
+
+    /// Asks for the match to be numbered `number`, which no other match of the phase may have, e.g.
+    /// its place in a bracket, numbered before it is scheduled.
+    #[must_use]
+    pub fn with_number(mut self, number: NonZeroU32) -> Self {
+        self.number = Some(number);
+        self
+    }
+
+    /// The id the match will have, see [`Match::id`].
+    pub fn id(&self) -> MatchId {
+        self.id
+    }
+
+    pub fn round(&self) -> NonZeroU32 {
+        self.round
+    }
+
+    pub fn rankings(&self) -> impl Iterator<Item = &RankingId> {
+        self.team_a.iter().chain(self.team_b.iter())
+    }
+
+    /// The number asked for, if any.
+    pub fn number(&self) -> Option<NonZeroU32> {
+        self.number
+    }
+
+    /// The match as the phase stores it, numbered `number`.
+    pub(crate) fn numbered(self, number: NonZeroU32) -> Match {
+        Match {
+            id: self.id,
+            team_a: self.team_a,
+            team_b: self.team_b,
+            round: self.round,
+            number,
+            result: None,
+            annotations: self.annotations,
+        }
+    }
+}
+
+impl Annotated for NewMatch {
+    fn annotations(&self) -> &TypeMap {
+        &self.annotations
+    }
+
+    fn annotations_mut(&mut self) -> &mut TypeMap {
+        &mut self.annotations
+    }
 }
 
 impl IdAble for Match {
@@ -772,23 +888,6 @@ pub enum ResultOfTeam {
 }
 
 impl Match {
-    pub fn new(team_a: Vec1<RankingId>, team_b: Vec1<RankingId>, round: NonZeroU32) -> Self {
-        assert!(team_a.iter().all(|id| !team_b.contains(id)));
-        let id = MatchId(derive_id(
-            &NAMESPACE_MATCH,
-            team_a.iter().chain(team_b.iter()).map(|ranking| ranking.0),
-            Some(round),
-        ));
-        Self {
-            id,
-            team_a,
-            team_b,
-            round,
-            result: None,
-            annotations: TypeMap::new(),
-        }
-    }
-
     pub fn team_of(&self, ranking_id: &RankingId) -> Option<Team> {
         if self.team_a().contains(ranking_id) {
             Some(Team::A)
@@ -839,6 +938,13 @@ impl Match {
     /// in later rounds are played after those in earlier ones.
     pub fn round(&self) -> NonZeroU32 {
         self.round
+    }
+
+    /// Its number, unique within its phase: the one its format asked for, e.g. its place in a
+    /// bracket, or else the one after the highest number the phase's matches had when it was
+    /// scheduled, so that matches are numbered in the order they are scheduled.
+    pub fn number(&self) -> NonZeroU32 {
+        self.number
     }
 
     /// The result of this match, or `None` if it is not finished.

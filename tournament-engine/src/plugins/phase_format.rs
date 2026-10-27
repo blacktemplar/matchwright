@@ -7,7 +7,7 @@ use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
 use crate::{
-    entities::competition::{Bye, Match, PhaseData},
+    entities::competition::{Bye, NewMatch, PhaseData},
     type_map::TypeMap,
 };
 
@@ -32,6 +32,10 @@ pub trait PhaseFormat: Plugin + DynClone + Any {
     /// bye whose id already exists in the phase, and must not put the same ranking into two matches
     /// or byes of the same round. Rounds have to order the matches of each ranking by when they are
     /// played, since metrics such as [`RoundOfFirstLoss`] read a later round as a later match.
+    ///
+    /// A match is numbered in the order it is scheduled unless it asks for a number with
+    /// [`NewMatch::with_number`], e.g. its place in a bracket numbered from the start; a number
+    /// asked for must not be one another match of the phase has or asks for.
     ///
     /// Anything a consumer needs to know about a match or a bye beyond its round, e.g. the stage of
     /// a bracket it belongs to, is attached to it with [`Annotated::with_annotation`]. Every
@@ -123,13 +127,13 @@ impl Display for Stage {
 /// What a [`PhaseFormat`] schedules at once, see [`PhaseFormat::create_new_matches`].
 #[derive(Debug, Default)]
 pub struct Schedule {
-    pub matches: Vec<Match>,
+    pub matches: Vec<NewMatch>,
     pub byes: Vec<Bye>,
 }
 
-impl From<Vec<Match>> for Schedule {
+impl From<Vec<NewMatch>> for Schedule {
     /// Schedules `matches` and no byes.
-    fn from(matches: Vec<Match>) -> Self {
+    fn from(matches: Vec<NewMatch>) -> Self {
         Self {
             matches,
             byes: Vec::new(),

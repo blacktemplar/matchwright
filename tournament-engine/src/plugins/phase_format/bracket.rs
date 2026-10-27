@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Annotated, Bye, Match, MatchId, PhaseData, RankingId, Team},
+    entities::competition::{Annotated, Bye, MatchId, NewMatch, PhaseData, RankingId, Team},
     plugins::phase_format::Schedule,
     type_map::TypeMap,
 };
@@ -43,6 +43,11 @@ pub struct BracketPairing<'a> {
     /// If set, its winner and its loser only move on if this side wins it, e.g. into a grand final
     /// reset.
     pub advances_only_if_won_by: Option<Team>,
+    /// The number its match has once scheduled (see
+    /// [`Match::number`](crate::entities::competition::Match::number)), from the start; `None` if
+    /// it is never a match, since a side of it can only be a bye. The pairings that can be matches
+    /// are numbered by round, and within a round in the order they were added.
+    pub number: Option<NonZeroU32>,
 }
 
 /// A side of a [`BracketPairing`]: who takes it, and where they come from.
@@ -54,6 +59,9 @@ pub struct BracketSide {
     pub from: Option<Advance>,
     /// Who took it, or `None` while [`Self::from`] is not decided.
     pub seat: Option<Seat>,
+    /// Whether only a bye can take it: a bye seated when the bracket was built, the loser of a
+    /// pairing with such a side, or the winner of a pairing of two.
+    pub bye: bool,
 }
 
 /// Who moves on from a pairing of a [`Bracket`] to a side of a later one.
@@ -105,6 +113,31 @@ impl Bracket {
     /// Its pairings, in the order the format added them. The pairings of a round of a knockout are
     /// in bracket order: the winners of two neighbours meet in the same pairing of the next round.
     pub fn pairings(&self) -> Vec<BracketPairing<'_>> {
+        let from = self.sources();
+        let byes = self.byes(&from);
+        let numbers = numbers(&self.pairings, &byes);
+        self.pairings
+            .iter()
+            .enumerate()
+            .map(|(id, pairing)| BracketPairing {
+                id: PairingId(id),
+                round: pairing.round,
+                sides: [0, 1].map(|side| BracketSide {
+                    from: from[id][side],
+                    seat: pairing.seats[side],
+                    bye: byes[id][side],
+                }),
+                annotations: &pairing.annotations,
+                r#match: pairing.r#match,
+                advances_only_if_won_by: pairing.advances_only_if_won_by,
+                number: numbers[id],
+            })
+            .collect()
+    }
+
+    /// Where each side of each pairing comes from, by the position of the pairing: the pairing
+    /// whose winner or loser takes it, if any.
+    fn sources(&self) -> Vec<[Option<Advance>; 2]> {
         let mut from = vec![[None; 2]; self.pairings.len()];
         for (id, pairing) in self.pairings.iter().enumerate() {
             let advances = [
@@ -117,22 +150,24 @@ impl Bracket {
                 }
             }
         }
-        self.pairings
-            .iter()
-            .zip(from)
-            .enumerate()
-            .map(|(id, (pairing, from))| BracketPairing {
-                id: PairingId(id),
-                round: pairing.round,
-                sides: [0, 1].map(|side| BracketSide {
-                    from: from[side],
-                    seat: pairing.seats[side],
-                }),
-                annotations: &pairing.annotations,
-                r#match: pairing.r#match,
-                advances_only_if_won_by: pairing.advances_only_if_won_by,
-            })
-            .collect()
+        from
+    }
+
+    /// Whether only a bye can take each side of each pairing, see [`BracketSide::bye`]. Byes are
+    /// only seated when the bracket is built, so this follows from the tree; a pairing takes only
+    /// the winners and losers of pairings added before it.
+    fn byes(&self, from: &[[Option<Advance>; 2]]) -> Vec<[bool; 2]> {
+        let mut byes: Vec<[bool; 2]> = Vec::with_capacity(self.pairings.len());
+        for (pairing, from) in self.pairings.iter().zip(from) {
+            let sides = [0, 1].map(|side| match (pairing.seats[side], from[side]) {
+                (Some(seat), _) => seat == Seat::Bye,
+                (None, Some(Advance::LoserOf(before))) => byes[before.0].contains(&true),
+                (None, Some(Advance::WinnerOf(before))) => byes[before.0] == [true; 2],
+                (None, None) => false,
+            });
+            byes.push(sides);
+        }
+        byes
     }
 
     /// Adds a pairing to be played in phase round `round` between the two `sources`, as sides A
@@ -237,6 +272,8 @@ impl Bracket {
     pub(super) fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule {
         let mut new_matches = Vec::new();
         let mut new_byes = Vec::new();
+        // a few pairings per entrant, worked out again rather than kept in the state
+        let numbers = numbers(&self.pairings, &self.byes(&self.sources()));
         let mut to_check = mem::take(&mut self.in_play);
         while let Some(id) = to_check.pop() {
             let pairing = &mut self.pairings[id.0];
@@ -246,7 +283,10 @@ impl Bracket {
             let winner = match (a, b) {
                 (Seat::Ranking(a), Seat::Ranking(b)) => {
                     let Some(match_id) = pairing.r#match else {
-                        let r#match = Match::new(vec1![a], vec1![b], pairing.round)
+                        let number =
+                            numbers[id.0].expect("a pairing of two rankings can be a match");
+                        let r#match = NewMatch::new(vec1![a], vec1![b], pairing.round)
+                            .with_number(number)
                             .with_annotations(pairing.annotations.clone());
                         pairing.r#match = Some(r#match.id());
                         new_matches.push((id, r#match));
@@ -316,6 +356,21 @@ impl Bracket {
             }
         }
     }
+}
+
+/// The number of the match of each pairing of `pairings`, see [`BracketPairing::number`]; `byes`
+/// tells which sides only a bye can take.
+fn numbers(pairings: &[Pairing], byes: &[[bool; 2]]) -> Vec<Option<NonZeroU32>> {
+    let mut matches: Vec<usize> = (0..pairings.len())
+        .filter(|&id| byes[id] == [false; 2])
+        .collect();
+    // stable, so that the pairings of a round keep the order they were added in
+    matches.sort_by_key(|&id| pairings[id].round);
+    let mut numbers = vec![None; pairings.len()];
+    for (id, number) in matches.into_iter().zip(NonZeroU32::MIN..) {
+        numbers[id] = Some(number);
+    }
+    numbers
 }
 
 /// Phase round number `round`, counted from 1.

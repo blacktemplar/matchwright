@@ -541,10 +541,35 @@ fn the_bracket_of_a_knockout_shows_who_meets_whom() {
     );
 }
 
-/// Of six entrants, the best two have byes in the quarterfinals, so neither semifinal is scheduled
-/// at the start and the final tells them apart by their place.
+/// A knockout's matches have the numbers of their places in the bracket, whichever is scheduled
+/// first, and a result is entered by them.
 #[test]
-fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_its_place_in_the_stage() {
+fn a_knockout_numbers_its_matches_by_the_bracket() {
+    let mut session = Given::new()
+        .entrants(&["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"])
+        .format(SingleElimination::ID)
+        .started();
+
+    session.report_entered("2 1").unwrap();
+
+    let second_round = session.round(round(2)).unwrap();
+    let scheduled: Vec<_> = second_round.matches.iter().map(|row| row.number).collect();
+    assert_eq!(
+        scheduled,
+        [4],
+        "the second semifinal, though scheduled first"
+    );
+    session.report_entered("4 1").unwrap();
+    assert_eq!(
+        session.round(round(2)).unwrap().matches[0].result,
+        Some(MatchResult::AWins)
+    );
+}
+
+/// Of six entrants, the best two have byes in the quarterfinals, so neither semifinal is scheduled
+/// at the start; the final names them by the numbers their matches will have.
+#[test]
+fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_the_number_of_its_match() {
     let session = Given::new()
         .entrants(&["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"])
         .format(SingleElimination::ID)
@@ -561,10 +586,7 @@ fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_its_place_in_the_stage()
         knockout[2],
         (
             "Final".to_owned(),
-            vec![[
-                "winner of Semifinals (1)".to_owned(),
-                "winner of Semifinals (2)".to_owned()
-            ]]
+            vec![["winner of #3".to_owned(), "winner of #4".to_owned()]]
         )
     );
 }
@@ -598,10 +620,7 @@ fn the_bracket_of_a_double_elimination_shows_where_the_losers_drop() {
     );
     assert_eq!(
         columns(&bracket.sections[1])[1].1,
-        [[
-            "winner of Losers round 1".to_owned(),
-            "loser of Winners final".to_owned()
-        ]]
+        [["winner of #4".to_owned(), "loser of #3".to_owned()]]
     );
     let losers = &bracket.sections[1].columns;
     assert_eq!(
@@ -638,18 +657,16 @@ fn a_pairing_of_two_byes_is_never_played_and_a_bye_is_passed_through() {
     assert_eq!(
         column(&losers[1]).1,
         [
-            ["loser of #1".to_owned(), "loser of #2".to_owned()],
-            ["bye".to_owned(), "loser of Winners round 2 (1)".to_owned()]
+            ["loser of #1".to_owned(), "loser of #3".to_owned()],
+            ["bye".to_owned(), "loser of #2".to_owned()]
         ],
         "the losers of the winner bracket, rather than the winners of the byes they get first"
     );
     assert!(!losers[1].pairings[1].line_in);
+    let after_the_byes = column(&losers[2]).1;
     assert_eq!(
-        column(&losers[2]).1,
-        [[
-            "winner of Losers round 2 (1)".to_owned(),
-            "loser of Winners round 2 (1)".to_owned()
-        ]]
+        after_the_byes[0][1], "loser of #2",
+        "whoever gets the bye of the pairing of a bye and the loser of #2"
     );
 }
 

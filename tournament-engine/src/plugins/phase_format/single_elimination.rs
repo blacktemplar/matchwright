@@ -574,4 +574,53 @@ mod tests {
         play_round(&mut phase, 3);
         assert_eq!(phase.data().matches().len(), 6);
     }
+
+    /// The number of each match, by its pairing in the bracket, whether scheduled or not.
+    fn numbers(phase: &Phase) -> Vec<Option<u32>> {
+        bracket_of(phase)
+            .pairings()
+            .iter()
+            .map(|pairing| pairing.number.map(std::num::NonZeroU32::get))
+            .collect()
+    }
+
+    /// The matches are numbered by their place in the bracket from the start, so a semifinal keeps
+    /// its number whichever is scheduled first; the pairings against a bye are no matches.
+    #[test]
+    fn the_matches_are_numbered_by_the_bracket_whatever_is_played_first() {
+        let mut phase = knockout(SingleElimination::new().with_third_place_match(), 6);
+        // the first round: two byes, two matches; the semifinals, the final, the third place
+        assert_eq!(
+            numbers(&phase),
+            [
+                None,
+                Some(1),
+                None,
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6)
+            ]
+        );
+
+        // the second quarterfinal first, which lets the second semifinal be scheduled
+        let second = bracket_of(&phase).pairings()[3].r#match.unwrap();
+        phase.report_match_result(second, MatchResult::AWins);
+        phase.create_new_matches();
+
+        let second_semifinal = bracket_of(&phase).pairings()[5].r#match.unwrap();
+        assert_eq!(phase.data().matches()[&second_semifinal].number().get(), 4);
+        let scheduled: Vec<_> = phase
+            .data()
+            .matches()
+            .values()
+            .map(|r#match| r#match.number().get())
+            .collect();
+        assert_eq!(
+            scheduled,
+            [1, 2, 4],
+            "numbered by the bracket, not as scheduled"
+        );
+    }
 }

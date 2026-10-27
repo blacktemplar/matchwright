@@ -649,13 +649,14 @@ impl Session {
     pub fn round(&self, round: NonZeroU32) -> Option<Round> {
         let phase = self.started_phase()?;
         let data = phase.data();
-        let matches: Vec<_> = data
+        let mut matches: Vec<_> = data
             .matches()
             .values()
-            .enumerate()
-            .filter(|(_, r#match)| r#match.round() == round)
-            .map(|(index, r#match)| self.match_row(phase, index, r#match))
+            .filter(|r#match| r#match.round() == round)
+            .map(|r#match| self.match_row(phase, r#match))
             .collect();
+        // a bracket numbers its matches before it schedules them, in another order
+        matches.sort_by_key(|row| row.number);
         let byes_of_round: Vec<_> = data
             .byes()
             .values()
@@ -694,8 +695,7 @@ impl Session {
         let open = || {
             data.matches()
                 .values()
-                .enumerate()
-                .filter(|(_, r#match)| !r#match.is_finished())
+                .filter(|r#match| !r#match.is_finished())
         };
         let entrants = |r#match: &Match| -> Vec<EntrantId> {
             r#match
@@ -708,19 +708,19 @@ impl Session {
         };
         // the earliest round each entrant still has to play a match in
         let mut next_round = HashMap::new();
-        for (_, r#match) in open() {
+        for r#match in open() {
             for entrant in entrants(r#match) {
                 let round = next_round.entry(entrant).or_insert(r#match.round());
                 *round = (*round).min(r#match.round());
             }
         }
         open()
-            .filter(|(_, r#match)| {
+            .filter(|r#match| {
                 entrants(r#match)
                     .iter()
                     .all(|entrant| next_round[entrant] == r#match.round())
             })
-            .map(|(index, r#match)| self.match_row(phase, index, r#match))
+            .map(|r#match| self.match_row(phase, r#match))
             .collect()
     }
 
@@ -744,11 +744,14 @@ impl Session {
             _ => return Err(ReportEnteredError::Unreadable),
         };
         let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
-        let (id, _) = number
-            .checked_sub(1)
-            .and_then(|index| phase.data().matches().get_index(index))
+        let id = phase
+            .data()
+            .matches()
+            .values()
+            .find(|r#match| self::number(r#match) == number)
+            .map(Match::id)
             .ok_or(ReportEnteredError::NoMatch(number))?;
-        Ok(self.report(*id, result)?)
+        Ok(self.report(id, result)?)
     }
 
     /// Reports `result` for the match `id`.
@@ -758,12 +761,12 @@ impl Session {
     /// result already, or its format does not take the result.
     pub fn report(&mut self, id: MatchId, result: MatchResult) -> Result<Reported, ReportError> {
         let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
-        let Some((index, _, r#match)) = phase.data().matches().get_full(&id) else {
+        let Some(r#match) = phase.data().matches().get(&id) else {
             return Err(ReportError::UnknownMatch);
         };
         let row = MatchRow {
             result: Some(result),
-            ..self.match_row(phase, index, r#match)
+            ..self.match_row(phase, r#match)
         };
         let phase_id = phase.id();
         let matches_before = phase.data().matches().len();
@@ -800,10 +803,10 @@ impl Session {
     /// result, or a later result depends on it.
     pub fn undo_report(&mut self, id: MatchId) -> Result<Reopened, UndoReportError> {
         let phase = self.started_phase().ok_or(UndoReportError::NotStarted)?;
-        let Some((index, _, r#match)) = phase.data().matches().get_full(&id) else {
+        let Some(r#match) = phase.data().matches().get(&id) else {
             return Err(UndoReportError::UnknownMatch);
         };
-        let row = self.match_row(phase, index, r#match);
+        let row = self.match_row(phase, r#match);
         let phase_id = phase.id();
         let matches_before = phase.data().matches().len();
         self.act(Action::Reopen(row.clone()), |machine, history| {
@@ -936,12 +939,12 @@ impl Session {
         };
         let transition: &dyn Any = &**transition;
         let reported = transition.downcast_ref::<ReportMatchResult>()?;
-        let index = self
+        let r#match = self
             .started_phase()?
             .data()
             .matches()
-            .get_index_of(&reported.match_id())?;
-        Some(index + 1)
+            .get(&reported.match_id())?;
+        Some(number(r#match))
     }
 
     /// The phase of the competition, whether started or not.
@@ -975,12 +978,12 @@ impl Session {
             .collect()
     }
 
-    /// The row of `r#match`, the match at `index` of `phase`.
-    fn match_row(&self, phase: &Phase, index: usize, r#match: &Match) -> MatchRow {
+    /// The row of `r#match`, a match of `phase`.
+    fn match_row(&self, phase: &Phase, r#match: &Match) -> MatchRow {
         let data = phase.data();
         MatchRow {
             id: r#match.id(),
-            number: index + 1,
+            number: number(r#match),
             round: r#match.round(),
             stage: stage(phase, r#match.annotations()),
             a: self.team(data, r#match.team_a()),
@@ -988,6 +991,11 @@ impl Session {
             result: r#match.result(),
         }
     }
+}
+
+/// The number of `r#match`, as [`MatchRow::number`] shows it.
+fn number(r#match: &Match) -> usize {
+    usize::try_from(r#match.number().get()).expect("a number of a match fits a usize")
 }
 
 /// The stage the format of `phase` names a match or a bye with `annotations` by.

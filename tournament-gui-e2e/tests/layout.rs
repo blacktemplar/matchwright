@@ -58,7 +58,14 @@ async fn a_bracket_of_sixteen_fits_on_a_tablet() {
         show_bracket(&gui, "single elimination", &names).await?;
 
         gui.expect_bracket_lines_meet().await?;
-        gui.expect_bracket_fits().await
+        gui.expect_bracket_fits().await?;
+        // every match is numbered from the start, so every side not decided names one
+        let waiting: Vec<String> = (1..=14)
+            .map(|number| format!("Winner of {number}"))
+            .chain(["Loser of 14".to_owned(), "Loser of 13".to_owned()])
+            .collect();
+        let waiting: Vec<&str> = waiting.iter().map(String::as_str).collect();
+        gui.expect_bracket_waiting(&waiting).await
     })
     .await;
 }

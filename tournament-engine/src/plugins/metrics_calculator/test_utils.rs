@@ -12,7 +12,8 @@ use vec1::Vec1;
 
 use crate::{
     entities::competition::{
-        Annotated, Bye, Match, MatchId, MatchResult, Phase, PhaseBuilder, PhaseData, RankingId,
+        Annotated, Bye, Match, MatchId, MatchResult, NewMatch, Phase, PhaseBuilder, PhaseData,
+        RankingId,
     },
     plugins::phase_format::{PhaseFormat, Schedule},
     type_map::TypeMap,
@@ -57,7 +58,7 @@ impl PhaseFormat for FixedMatches {
             .matches
             .iter()
             .map(|((round, team_a, team_b), annotations)| {
-                Match::new(
+                NewMatch::new(
                     team(phase_data, team_a),
                     team(phase_data, team_b),
                     NonZeroU32::new(*round).unwrap(),
@@ -142,9 +143,9 @@ fn team(phase_data: &PhaseData, ranking_indices: &[usize]) -> Vec1<RankingId> {
 }
 
 /// The id of the scheduled match between the two given teams, recomputed from the fact that
-/// [`Match::new`] derives ids deterministically from the teams and the round.
+/// [`NewMatch::new`] derives ids deterministically from the teams and the round.
 pub(crate) fn match_id(phase: &Phase, round: u32, team_a: &[usize], team_b: &[usize]) -> MatchId {
-    let match_id = Match::new(
+    let match_id = NewMatch::new(
         team(phase.data(), team_a),
         team(phase.data(), team_b),
         NonZeroU32::new(round).unwrap(),

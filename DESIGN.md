@@ -787,7 +787,7 @@ who creates the entity:
   `entrant.annotation::<ClubId>()`.
 - **Matches** are created by the phase format, so the `TypeMap` on `Match` is
   populated by the format when it schedules the match
-  (`Match::new(..).with_annotation(value)`), with whatever it knows about the match
+  (`NewMatch::new(..).with_annotation(value)`), with whatever it knows about the match
   beyond its round (see "Rounds and stages"). A consumer is not in the loop there,
   so consumer annotations (*planned*) are necessarily a second step: an `AnnotateMatch`
   transition carrying `Box<dyn TypeMapValue>` (already `typetag`-serializable, so
@@ -889,37 +889,50 @@ Entity ids are deterministic so that replay reproduces them: `MatchId` and
 ids, plus the round for a match) under a per-entity namespace constant. A match
 is therefore identified by who plays it, not by when it was created.
 
-UUIDs are not usable for human input, so a match also needs a small number.
-*Planned:*
+UUIDs are not usable for human input, so a match also has a small number
+(*implemented* 2026-10-27), which the CLI, the app's rows and typed results use.
 
-- **Derived, not stored.** `Phase::matches` is an `IdMap` wrapping an
-  `IndexMap` in insertion order, and matches are only ever inserted, so the
-  number is the insertion index plus one. Lookup both ways is O(1)
-  (`get_index_of` / `get_index`), nothing new is serialized, and uniqueness is a
-  structural property of the map rather than something an assignment site has to
-  get right. `map.rs` already establishes that deriving state from iteration
-  order is sound.
-- **Core assigns, plugins never.** `Match::new` is called by third-party
-  `PhaseFormat`s and keeps its current signature, so a plugin has no way to
-  fabricate or duplicate a number.
+- **A format builds a `NewMatch`, the phase stores a `Match`.** A `NewMatch` is
+  what a format schedules (teams, round, annotations, its id derived as
+  before); only `Phase::create_new_matches` turns it into a `Match`, which
+  always has its `number: NonZeroU32`. So no reader needs a fallback, and the
+  number cannot be missing.
+- **Numbered as scheduled, unless the format asks.** A `NewMatch` without a
+  number gets the one after the highest the phase's matches have, i.e. the
+  order of scheduling, which is what every format but the knockouts wants and
+  needs no code. One may ask for a number with `NewMatch::with_number`, unique
+  within the phase (checked in debug builds, like the uniqueness of ids). The
+  highest number is only looked for when a match asks for none, since a
+  bracket schedules after every result.
+- **A bracket numbers its pairings from the start.** Which pairings can only be
+  byes follows from the seats (`BracketSide::bye`), so the others are numbered
+  by round, within a round in the order they were added, before any is
+  scheduled (`BracketPairing::number`), and each match asks for its pairing's
+  number. A semifinal keeps its number whichever quarterfinal is reported
+  first, and a side waiting for a pairing not scheduled yet says "Winner of
+  9". The numbers are worked out from the tree on every call, not kept in the
+  bracket's state, so nothing new is serialized but the field of a match in a
+  snapshot.
+- **Not part of the identity.** `MatchId` stays derived from who plays in
+  which round, without the number, so that logs saved before still replay;
+  they get the numbers on replay. A number is for display and input only.
 - **Per-phase scope**, since `Phase::create_new_matches` has no access to the
   `Competition` and multi-phase competitions are not supported yet.
-- **Positional, so not durable.** Undoing an earlier transition renumbers later
-  matches. `MatchId` is the stable identity; a match number is for display and
-  input only, and should be documented as such.
 
 ### Alternatives
 
-- **A stored field set by a `pub(crate)` setter during insertion.** Smallest
-  diff, but the invariant is upheld by one call site rather than by the types.
-  Rejected while the derived form is available.
-- **Splitting `NewMatch` (what a format returns: teams and round) from `Match`
-  (that plus id and number).** The genuinely compiler-enforced version, and it
-  would also retire the `debug_assert` on match id uniqueness. Deferred: worth
-  doing if matches ever become removable or reorderable, which is what would
-  break the derived form.
-- **A number supplied by the phase format.** A self-reported fact a plugin could
-  get wrong. Rejected.
+- **The insertion index plus one**, derived rather than stored, as first
+  planned. Uniqueness is structural then, but a knockout's matches are
+  scheduled in the order results arrive, so a match not scheduled yet has no
+  number to be named by, and the bracket fell back to its stage and place
+  ("Winner of Quarterfinals (1)"). Replaced.
+- **A number annotation** set by the formats that number, read with a
+  fallback to the index. Every reader would need the fallback. Rejected for a
+  field the engine always sets.
+- **A trait method `PhaseFormat::match_number`.** Format-specific code at
+  every reader, and the number not part of the match. Rejected.
+- **Including the number in `MatchId`.** Would break every saved log.
+  Rejected.
 
 ## Rounds and stages
 

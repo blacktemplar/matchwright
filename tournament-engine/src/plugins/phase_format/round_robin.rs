@@ -73,6 +73,25 @@ mod tests {
     use super::*;
     use crate::entities::competition::{Bye, Match, PhaseBuilder};
 
+    /// A format asking for no numbers gets its matches numbered in the order it scheduled them.
+    #[test]
+    fn matches_are_numbered_as_scheduled_unless_the_format_numbers_them() {
+        let mut phase = PhaseBuilder::new()
+            .format(RoundRobin)
+            .add_players(4)
+            .build();
+
+        phase.create_new_matches();
+
+        let numbers = phase
+            .data()
+            .matches()
+            .values()
+            .map(|r#match| r#match.number().get())
+            .collect_vec();
+        assert_eq!(numbers, [1, 2, 3, 4, 5, 6]);
+    }
+
     /// Asserts that every unordered pair of ranking ids in the phase played against each other
     /// in exactly one scheduled match.
     fn assert_every_pair_played_exactly_once(phase: &PhaseData) {

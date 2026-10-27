@@ -272,7 +272,13 @@ The original plan of this step:
   "Edit phase" moved out of the way, the winner in the list of competitions.
 - Tests: app unit test; e2e.
 
-### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6, B7) — done but B5's numbering
+### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6, B7) — done
+
+- B5's numbering (decided afterwards): a match's number is a field of `Match`, set by the engine
+  when it stores the `NewMatch` a format scheduled: the number the format asked for, or the next
+  in the order of scheduling. A bracket numbers its pairings by round from the start and asks for
+  those, so a side not decided yet says "Winner of 9" and a semifinal keeps its number whichever
+  quarterfinal comes first. The CLI and the app read the field; other formats number as before.
 
 - E3: the refusal names the later match ("the result of match 3 depends on this one; reopen that
   match first"), read from the log entry the engine's refusal names. Reopen stays offered: knowing

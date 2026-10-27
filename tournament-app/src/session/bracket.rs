@@ -86,19 +86,11 @@ impl Session {
         }
 
         let data = phase.data();
-        // whether a side can only ever be taken by a bye: one seated, the loser of a pairing with
-        // such a side (whom the bye's side beat), or the winner of a pairing of two; a pairing
-        // takes only the winners and losers of pairings before it
-        let mut byes: HashMap<PairingId, [bool; 2]> = HashMap::new();
-        for pairing in &pairings {
-            let sides = pairing.sides.map(|side| match (side.seat, side.from) {
-                (Some(seat), _) => seat == Seat::Bye,
-                (None, Some(Advance::LoserOf(from))) => byes[&from].contains(&true),
-                (None, Some(Advance::WinnerOf(from))) => byes[&from] == [true; 2],
-                (None, None) => false,
-            });
-            byes.insert(pairing.id, sides);
-        }
+        // the sides only a bye can take
+        let byes: HashMap<PairingId, [bool; 2]> = pairings
+            .iter()
+            .map(|pairing| (pairing.id, pairing.sides.map(|side| side.bye)))
+            .collect();
         let unplayed: HashMap<PairingId, Unplayed> = pairings
             .iter()
             .filter_map(|pairing| {
@@ -144,10 +136,9 @@ impl Session {
             let place = places[&id];
             let column = &layout[place.section].1[place.column].1;
             BracketSource {
-                number: pairing
-                    .r#match
-                    .and_then(|r#match| data.matches().get_index_of(&r#match))
-                    .map(|index| index + 1),
+                number: pairing.number.map(|number| {
+                    usize::try_from(number.get()).expect("a number of a match fits a usize")
+                }),
                 stage: stage(phase, pairing.annotations),
                 position: (column.len() > 1).then_some(place.index + 1),
             }
@@ -199,11 +190,11 @@ impl Session {
             let unplayed = unplayed.get(&pairing.id).copied();
             BracketPairing {
                 r#match: pairing.r#match.map(|id| {
-                    let (index, _, r#match) = data
+                    let r#match = data
                         .matches()
-                        .get_full(&id)
+                        .get(&id)
                         .expect("the bracket only holds matches of its phase");
-                    self.match_row(phase, index, r#match)
+                    self.match_row(phase, r#match)
                 }),
                 sides,
                 line_out,

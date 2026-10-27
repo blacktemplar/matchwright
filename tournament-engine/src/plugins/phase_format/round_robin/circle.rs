@@ -4,7 +4,7 @@ use itertools::Itertools;
 use vec1::vec1;
 
 use crate::{
-    entities::competition::{Bye, Match, PhaseData, RankingId},
+    entities::competition::{Bye, NewMatch, PhaseData, RankingId},
     plugins::phase_format::Schedule,
 };
 
@@ -65,7 +65,11 @@ impl Circle {
         let pairs = (0..self.seats / 2).map(|i| (on_seat(i), on_seat(self.seats - i - 1)));
         for pair in pairs {
             match pair {
-                (Some(a), Some(b)) => schedule.matches.push(Match::new(vec1![a], vec1![b], round)),
+                (Some(a), Some(b)) => {
+                    schedule
+                        .matches
+                        .push(NewMatch::new(vec1![a], vec1![b], round))
+                }
                 (Some(ranking), None) | (None, Some(ranking)) => {
                     schedule.byes.push(Bye::new(ranking, round))
                 }

@@ -4,7 +4,7 @@ use itertools::Itertools;
 use rand::{RngExt, rng};
 use tournament_engine::{
     AddEntrant, AddPhase, Competition, CompetitionStateMachine, CompetitionStateMachineExt,
-    Entrant, EntrantId, Match, MatchId, MatchResult, PhaseId, PhasePluginsBuilder, Ranking,
+    Entrant, EntrantId, MatchId, MatchResult, NewMatch, PhaseId, PhasePluginsBuilder, Ranking,
     RemoveEntrant, ReportMatchResult, Score, Seed, SetCompetitionSeed, StartCompetition,
     plugins::{
         metrics_calculator::{
@@ -154,13 +154,13 @@ fn full_tournament() {
     }
     let matches = phase.matches();
     assert_eq!(matches.len(), 2);
-    let match_0_vs_3_id = Match::new(
+    let match_0_vs_3_id = NewMatch::new(
         vec1![ranking_id_by_initial_rank[0]],
         vec1![ranking_id_by_initial_rank[3]],
         NonZeroU32::new(1).unwrap(),
     )
     .id();
-    let match_1_vs_2_id = Match::new(
+    let match_1_vs_2_id = NewMatch::new(
         vec1![ranking_id_by_initial_rank[1]],
         vec1![ranking_id_by_initial_rank[2]],
         NonZeroU32::new(1).unwrap(),
@@ -229,7 +229,7 @@ fn full_tournament() {
     assert_metrics(ranking_2, Some(1), (0, 0, 1), 0, &[match_1_vs_2_id], 3, 0);
     assert_metrics(ranking_3, None, (1, 0, 0), 3, &[match_0_vs_3_id], 0, 3);
     // assert next round matches
-    let match_3_vs_1_id = Match::new(
+    let match_3_vs_1_id = NewMatch::new(
         vec1![ranking_id_by_initial_rank[3]],
         vec1![ranking_id_by_initial_rank[1]],
         NonZeroU32::new(2).unwrap(),

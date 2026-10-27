@@ -461,14 +461,18 @@ impl Session {
             .matches()
             .values()
             .any(|r#match| stage_of(r#match.annotations()).is_some());
-        let rows: Vec<_> = phase
+        let mut listed: Vec<&Match> = phase
             .matches()
             .values()
-            .enumerate()
-            .filter(|(_, r#match)| !(only_open && r#match.is_finished()))
-            .filter(|(_, r#match)| only_round.is_none_or(|round| r#match.round() == round))
-            .map(|(index, r#match)| {
-                [(index + 1).to_string(), r#match.round().to_string()]
+            .filter(|r#match| !(only_open && r#match.is_finished()))
+            .filter(|r#match| only_round.is_none_or(|round| r#match.round() == round))
+            .collect();
+        // by number, which a bracket gives its matches before it schedules them
+        listed.sort_by_key(|r#match| r#match.number());
+        let rows: Vec<_> = listed
+            .into_iter()
+            .map(|r#match| {
+                [r#match.number().to_string(), r#match.round().to_string()]
                     .into_iter()
                     .chain(has_stages.then(|| stage_of(r#match.annotations()).unwrap_or_default()))
                     .chain([
@@ -542,19 +546,21 @@ impl Session {
             .join("\n\n"))
     }
 
-    /// The phase of the match `number` addresses and that match, where the number is the position
-    /// the match is listed at by [`Self::matches`].
+    /// The phase of the match numbered `number` (see [`Match::number`]), as [`Self::matches`]
+    /// lists it, and that match.
     ///
     /// # Errors
     /// Returns an error if the competition has not started or has no such match.
     fn match_numbered(&self, number: NonZeroUsize) -> Result<(PhaseId, MatchId), Error> {
         let phase = self.phase()?;
-        let (match_id, _) = phase
+        let match_id = phase
             .data()
             .matches()
-            .get_index(number.get() - 1)
+            .values()
+            .find(|r#match| usize::try_from(r#match.number().get()) == Ok(number.get()))
+            .map(Match::id)
             .ok_or(Error::UnknownMatch(number))?;
-        Ok((phase.id(), *match_id))
+        Ok((phase.id(), match_id))
     }
 
     fn report(&mut self, number: NonZeroUsize, result: ReportedResult) -> Result<String, Error> {
