@@ -564,6 +564,24 @@ impl Page {
         }
     }
 
+    /// Waits until the page's title, which its tab shows, is `title`, character by character.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the title it has.
+    pub async fn expect_title(&self, title: &str) -> WebDriverResult<()> {
+        let start = Instant::now();
+        loop {
+            let found = self.driver.title().await?;
+            if found == title {
+                return Ok(());
+            }
+            if start.elapsed() > TIMEOUT {
+                panic!("the title must be {title:?}, but is {found:?}");
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+    }
+
     /// Waits until the browser has downloaded the file `name`, and returns where it is.
     ///
     /// # Panics

@@ -37,7 +37,7 @@ pub fn NewPhase() -> Element {
     let tr = ctx.translator.read();
     let form = match created {
         Ok(form) => form,
-        Err(error) => return rsx! { p { class: "error", {tr.text(&error)} } },
+        Err(error) => return rsx! { p { class: "error", {tr.sentence(&error)} } },
     };
     rsx! {
         form {
@@ -129,7 +129,7 @@ fn EditPhase() -> Element {
                     Form { form, disabled: false }
                     p { class: "error", role: "alert",
                         if let Some(error) = error() {
-                            {tr.text(&error)}
+                            {tr.sentence(&error)}
                         }
                     }
                     div { class: "dialog-buttons",
@@ -230,7 +230,7 @@ fn Field(form: Signal<PhaseForm>, field: FormField, disabled: bool) -> Element {
             entered,
             hint,
         } => {
-            let shown = entered.or_else(|| value.map(|value| value.to_string()));
+            let shown = entered.or_else(|| value.map(|value| tr.number(value)));
             let negative = range.min().is_none_or(|min| min < 0.0);
             rsx! {
                 NumberField {
@@ -435,7 +435,7 @@ fn PluginField(
 fn PluginChoice(select: String, index: usize, option: PluginOption) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
-    let label = plugin_label(&tr, &option);
+    let label = capitalized(&plugin_label(&tr, &option));
     let description = plugin_description(&tr, &option);
     let mut tapped = use_signal(|| false);
     // ids of plugins are namespaced by `::`
@@ -586,7 +586,7 @@ fn OrderedItem(
     let own = id(&item.path);
     rsx! {
         li {
-            span { class: "name", "{name}" }
+            span { class: "name", {capitalized(&name)} }
             " "
             About { list, option: item.plugin }
             // kept focusable at the end of the list, so that the focus stays on a plugin moved
@@ -652,7 +652,7 @@ fn implied(tr: &Translator, implied: &[PluginOption]) -> Vec<Implied> {
             let plugin = plugin_label(tr, option);
             Implied {
                 option: *option,
-                text: t!(tr, "implied-plugin", plugin = plugin.as_str()),
+                text: capitalized(&t!(tr, "implied-plugin", plugin = plugin.as_str())),
             }
         })
         .collect()
@@ -692,21 +692,21 @@ fn UnorderedList(
         .map(|entry| match entry {
             SetEntry::Chosen(item) => SetItem {
                 option: item.plugin,
-                text: plugin_label(&tr, &item.plugin),
+                text: capitalized(&plugin_label(&tr, &item.plugin)),
                 state: SetState::Chosen(item.clone()),
             },
             SetEntry::Implied(option) => SetItem {
                 option: *option,
-                text: t!(
+                text: capitalized(&t!(
                     tr,
                     "implied-plugin",
                     plugin = plugin_label(&tr, option).as_str()
-                ),
+                )),
                 state: SetState::Implied,
             },
             SetEntry::Offered(option) => SetItem {
                 option: *option,
-                text: plugin_label(&tr, option),
+                text: capitalized(&plugin_label(&tr, option)),
                 state: SetState::Offered,
             },
         })
@@ -790,7 +790,7 @@ fn Issues(id: String, issues: Vec<Text>) -> Element {
         if !issues.is_empty() {
             ul { class: "issues", id: "{id}", tabindex: "-1",
                 for issue in issues {
-                    li { {tr.text(&issue)} }
+                    li { {tr.sentence(&issue)} }
                 }
             }
         }
@@ -807,7 +807,7 @@ fn Warnings(id: String, warnings: Vec<Text>) -> Element {
         if !warnings.is_empty() {
             ul { class: "warnings", id: "{id}",
                 for warning in warnings {
-                    li { {tr.text(&warning)} }
+                    li { {tr.sentence(&warning)} }
                 }
             }
         }
@@ -864,7 +864,9 @@ fn Summary(fields: Vec<FormField>) -> Element {
                             ul { class: "summary-items",
                                 for item in list.items.clone() {
                                     li {
-                                        span { class: "answer", {plugin_label(&tr, &item.plugin)} }
+                                        span { class: "answer",
+                                            {capitalized(&plugin_label(&tr, &item.plugin))}
+                                        }
                                         if !item.fields.is_empty() {
                                             Summary { fields: item.fields }
                                         }
@@ -872,13 +874,15 @@ fn Summary(fields: Vec<FormField>) -> Element {
                                 }
                                 for option in list.implied.clone() {
                                     li {
-                                        span { class: "answer", {plugin_label(&tr, &option)} }
+                                        span { class: "answer",
+                                            {capitalized(&plugin_label(&tr, &option))}
+                                        }
                                     }
                                 }
                             }
                         },
                         input => rsx! {
-                            span { class: "answer", {answer(&tr, input)} }
+                            span { class: "answer", {capitalized(&answer(&tr, input))} }
                             if let Input::Plugin(PluginInput { chosen: Some(chosen), .. }) = input
                                 && !chosen.fields.is_empty()
                             {
@@ -907,7 +911,7 @@ fn answer(tr: &Translator, input: &Input) -> String {
         } => value.to_string(),
         Input::Decimal {
             value: Some(value), ..
-        } => value.to_string(),
+        } => tr.number(*value),
         Input::Optional {
             answered: true,
             inner,

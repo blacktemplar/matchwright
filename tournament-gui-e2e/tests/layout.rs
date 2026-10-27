@@ -21,7 +21,7 @@ async fn the_lines_of_the_bracket_meet_whatever_the_names() {
         let names = [
             LONG_NAME, "Bo", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi",
         ];
-        show_bracket(&gui, "single elimination", &names).await?;
+        show_bracket(&gui, "Single elimination", &names).await?;
         gui.win_in_bracket("1").await?;
 
         gui.expect_bracket_lines_meet().await?;
@@ -40,7 +40,7 @@ async fn the_lines_of_the_bracket_meet_whatever_the_names() {
 async fn the_lines_of_a_double_elimination_meet() {
     run_in_new_competition(async |gui| {
         let names = ["Alice", "Bob", "Carol", "Dave", "Erin", LONG_NAME];
-        show_bracket(&gui, "double elimination", &names).await?;
+        show_bracket(&gui, "Double elimination", &names).await?;
 
         gui.expect_bracket_lines_meet().await
     })
@@ -55,7 +55,7 @@ async fn a_bracket_of_sixteen_fits_on_a_tablet() {
         let names: Vec<String> = (1..=16).map(|number| format!("Player {number}")).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         gui.page.resize(820, 1180).await?;
-        show_bracket(&gui, "single elimination", &names).await?;
+        show_bracket(&gui, "Single elimination", &names).await?;
 
         gui.expect_bracket_lines_meet().await?;
         gui.expect_bracket_fits().await?;
@@ -76,7 +76,7 @@ async fn a_bracket_of_sixteen_fits_on_a_tablet() {
 async fn a_pairing_never_played_keeps_its_place() {
     run_in_new_competition(async |gui| {
         let names = ["Alice", "Bob", "Carol", "Dave", "Erin"];
-        show_bracket(&gui, "double elimination", &names).await?;
+        show_bracket(&gui, "Double elimination", &names).await?;
 
         gui.expect_bracket_lines_meet().await?;
         gui.page.check_accessibility().await

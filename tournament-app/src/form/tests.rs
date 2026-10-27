@@ -470,7 +470,7 @@ fn a_ranking_of_nothing_is_warned_about_but_taken() {
     let view = form.view();
     assert_eq!(
         english_all(&field(&view, "ranking").warnings),
-        ["ranked by nothing, every team is tied in the standings"]
+        ["ranked by nothing, every entrant is tied in the standings"]
     );
     assert!(view.complete);
 }
@@ -608,7 +608,7 @@ fn the_label_of_a_field_is_said_in_the_language() {
     );
     assert_eq!(
         german.field_description(field(&view, "metrics")).as_deref(),
-        Some("für jedes Team berechnet")
+        Some("für jeden Teilnehmer berechnet")
     );
     assert_eq!(german.field_label(field(&view, "format.rounds")), "Runden");
     assert_eq!(
@@ -634,6 +634,6 @@ fn a_range_is_said_in_the_language() {
     );
     assert_eq!(
         say(NumberRange::Decimal(DecimalRange::ALL.multiples_of(0.5))),
-        "eine Zahl, die ein Vielfaches von 0.5 ist"
+        "eine Zahl, die ein Vielfaches von 0,5 ist"
     );
 }

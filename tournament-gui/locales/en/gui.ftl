@@ -20,12 +20,12 @@ export-this-competition = Export this competition
 install = Install the app
 # hides the warning for good
 dont-show-again = Don’t show again
-# $reason: in English, from the browser
-error-no-storage = the browser does not let the page store competitions: { $reason }
-# $reason: in English, from the storage
-error-not-saved = the changes could not be saved: { $reason }
-# $reason: from the browser
-error-not-exported = the file could not be made: { $reason }
+# the errors below with a reason from the browser or the storage show it, in English, folded away
+# below this
+error-detail = Details
+error-no-storage = the browser does not let the page store competitions
+error-not-saved = the changes could not be saved
+error-not-exported = the file could not be made
 
 ## The competitions stored
 
@@ -50,10 +50,8 @@ new-competition = New competition
 create = Create
 import = Import from a file
 error-empty-competition-name = a competition needs a name
-# $reason: in English, from the browser
-error-file-not-read = the file could not be read: { $reason }
-# $reason: in English, from the storage
-error-competitions-unreadable = the competitions stored cannot be read: { $reason }
+error-file-not-read = the file could not be read
+error-competitions-unreadable = the competitions stored cannot be read
 
 ## The competition open
 
@@ -125,7 +123,7 @@ next-round = Next round
 nothing-playable = No match can be played now.
 # a field showing only the matches of entrants whose name contains what is typed
 find-entrant = Find an entrant
-nothing-found = No match here has an entrant whose name contains “{ $text }”.
+nothing-found = No entrant here has a name containing “{ $text }”.
 # said by screen readers before the number of a match, and between its sides
 match = Match
 versus = against

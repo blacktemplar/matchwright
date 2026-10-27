@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt::Display};
+use std::{collections::BTreeSet, fmt::Display, io};
 
 use plugin_factory::{
     PluginType as _,
@@ -6,9 +6,14 @@ use plugin_factory::{
     schema::{Configurable as _, Schema},
 };
 use tournament_engine::{
-    PhasePlugins,
+    PhasePlugins, Score,
     plugins::{
-        metrics_calculator::MetricsCalculator,
+        Phrase,
+        metrics_calculator::{
+            Cell, MetricsCalculator, PointsCalculator, RoundOfElimination,
+            RoundOfEliminationCalculator, RoundOfFirstLoss, RoundOfFirstLossCalculator,
+            ToCell as _, WinsDrawsLosses, WinsDrawsLossesCalculator,
+        },
         phase_format::{
             DoubleElimination, DoubleEliminationRound, KnockoutRound, PhaseFormat,
             SingleElimination, Stage,
@@ -21,8 +26,8 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use super::*;
 use crate::error::{
-    AddEntrantError, AddPhaseError, NoPhase, NothingToUndo, ReportEnteredError, ReportError,
-    StartError, UndoReportError,
+    AddEntrantError, AddPhaseError, ImportError, LoadError, NoPhase, NothingToUndo,
+    PhaseDraftError, ReportEnteredError, ReportError, StartError, UndoReportError,
 };
 
 #[test]
@@ -52,10 +57,27 @@ fn a_text_is_said_in_the_language_with_its_variables() {
         "a value is isolated from the text around it"
     );
     assert_eq!(
-        translator.text(&Text::new("error-log-entry-unreadable").with("position", 3_usize)),
-        "Eintrag \u{2068}3\u{2069} des Protokolls kann nicht gelesen werden: \
-         \u{2068}{$reason}\u{2069}",
+        translator.text(&Text::new("error-no-match-numbered")),
+        "es gibt kein Spiel \u{2068}{$number}\u{2069}",
         "a variable not set shows as such"
+    );
+}
+
+#[test]
+fn a_sentence_begins_with_a_capital_letter_and_ends_with_a_full_stop() {
+    let resources: Resources =
+        |_| "fragment = übrig\nvariable = { $name } fehlt\nquestion = wer?\nended = { $reason }\n";
+    let translator = Translator::new(Language::German, &[resources]);
+
+    assert_eq!(translator.sentence(&Text::new("fragment")), "Übrig.");
+    assert_eq!(
+        translator.sentence(&Text::new("variable").with("name", "alice")),
+        "\u{2068}Alice\u{2069} fehlt."
+    );
+    assert_eq!(translator.sentence(&Text::new("question")), "Wer?");
+    assert_eq!(
+        translator.sentence(&Text::new("ended").with("reason", "done.")),
+        "Done."
     );
 }
 
@@ -124,6 +146,14 @@ fn an_error_says_in_english_what_its_display_says() {
         both(ReportError::NotStarted),
         both(ReportEnteredError::Unreadable),
         both(ReportEnteredError::NoMatch(3)),
+        both(ReportEnteredError::AlreadyFinished(3)),
+        both(PhaseDraftError::UnknownFormat("Swiss".to_owned())),
+        both(LoadError::<io::Error>::NotFound),
+        both(LoadError::Storage(io::Error::other("closed"))),
+        both(LoadError::<io::Error>::Person(
+            serde_json::from_str::<u32>("x").unwrap_err(),
+        )),
+        both(ImportError(serde_json::from_str::<u32>("x").unwrap_err())),
         both(UndoReportError::DependedOn),
         both(UndoReportError::DependedOnBy(3)),
         both(NothingToUndo),
@@ -239,6 +269,35 @@ fn a_stage_is_said_in_the_language_with_its_numbers_or_else_as_its_code_says() {
     );
 }
 
+#[test]
+fn a_cell_is_said_in_the_language_or_else_as_its_code_says() {
+    let german = Translator::new(Language::German, &[]);
+
+    assert_eq!(
+        german.cell(
+            RoundOfFirstLossCalculator::ID,
+            &RoundOfFirstLoss(NonZeroU32::new(3)).to_cell()
+        ),
+        "Runde \u{2068}3\u{2069}"
+    );
+    assert_eq!(
+        german.cell(
+            "my_crate::elo",
+            &Cell::Text(Phrase::new("rating", "1500 Elo"))
+        ),
+        "1500 Elo"
+    );
+    assert_eq!(
+        german.cell(PointsCalculator::ID, &Cell::Number(Score::new(2.5))),
+        "2,5"
+    );
+    assert_eq!(
+        Translator::new(Language::English, &[])
+            .cell(PointsCalculator::ID, &Cell::Number(Score::new(2.5))),
+        "2.5"
+    );
+}
+
 /// The plugins of the engine, of every axis, except those only its tests use.
 fn engine_plugins() -> Vec<&'static PluginEntry> {
     [
@@ -266,7 +325,40 @@ fn translatable(entry: &PluginEntry) -> BTreeSet<String> {
             .iter()
             .map(|stage| PluginText::Stage(stage.key()).attribute()),
     );
+    attributes.extend(
+        phrases_in_cells(entry.id())
+            .iter()
+            .map(|phrase| PluginText::Cell(phrase.key()).attribute()),
+    );
     attributes
+}
+
+/// A phrase of every key the column of the calculator `id` shows, none for a plugin that is no
+/// such calculator. They cannot be found from the plugin, so the metrics showing them are listed
+/// here.
+fn phrases_in_cells(id: &str) -> Vec<Phrase> {
+    let cells = if id == RoundOfFirstLossCalculator::ID {
+        vec![
+            RoundOfFirstLoss(NonZeroU32::new(1)).to_cell(),
+            RoundOfFirstLoss(None).to_cell(),
+        ]
+    } else if id == RoundOfEliminationCalculator::ID {
+        vec![
+            RoundOfElimination(NonZeroU32::new(1)).to_cell(),
+            RoundOfElimination(None).to_cell(),
+        ]
+    } else if id == WinsDrawsLossesCalculator::ID {
+        vec![WinsDrawsLosses::default().to_cell()]
+    } else {
+        Vec::new()
+    };
+    cells
+        .into_iter()
+        .filter_map(|cell| match cell {
+            Cell::Text(phrase) => Some(phrase),
+            Cell::Number(_) => None,
+        })
+        .collect()
 }
 
 /// A stage of every key the format `id` names, none for a plugin that is no such format. The

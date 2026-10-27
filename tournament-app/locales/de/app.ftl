@@ -21,17 +21,18 @@ error-match-finished-already = das Spiel hat schon ein Ergebnis
 error-draw-not-allowed = ein Spiel dieses Formats kann nicht unentschieden enden
 error-result-unreadable = gib die Nummer eines Spiels und sein Ergebnis ein, 1, X oder 2, z. B. „3 1“
 error-no-match-numbered = es gibt kein Spiel { $number }
+error-match-numbered-finished-already = Spiel { $number } hat schon ein Ergebnis
 error-match-not-reported = das Spiel hat kein Ergebnis, das zurückgenommen werden könnte
 error-result-depended-on = ein späteres Ergebnis hängt von diesem ab; nimm zuerst jenes zurück
 error-result-depended-on-by = das Ergebnis von Spiel { $number } hängt von diesem ab; zuerst muss Spiel { $number } wieder geöffnet werden
 error-nothing-to-undo = es gibt nichts rückgängig zu machen
 error-nothing-to-redo = es gibt nichts wiederherzustellen
 error-competition-not-found = dieses Turnier gibt es nicht
-error-competition-unreadable = das Turnier kann nicht gelesen werden: { $reason }
-error-log-entry-unreadable = Eintrag { $position } des Protokolls kann nicht gelesen werden: { $reason }
-error-person-unreadable = der Name eines Teilnehmers kann nicht gelesen werden: { $reason }
-error-log-does-not-replay = das Protokoll lässt sich nicht nachspielen: { $reason }
-error-file-unreadable = die Datei ist kein Turnier, das diese Version öffnen kann: { $reason }
+error-competition-unreadable = das Turnier kann nicht gelesen werden
+error-log-entry-unreadable = Eintrag { $position } des Protokolls kann nicht gelesen werden
+error-person-unreadable = der Name eines Teilnehmers kann nicht gelesen werden
+error-log-does-not-replay = das Protokoll lässt sich nicht nachspielen
+error-file-unreadable = die Datei ist kein Turnier, das diese Version öffnen kann
 error-rejected = abgelehnt: { $reason }
 
 ## The form of a phase
@@ -48,7 +49,7 @@ number-range = { $whole ->
         [0] {""}
        *[other] , die ein Vielfaches von { $multiple } ist
     }
-warning-unranked = ohne Kriterium sind in der Tabelle alle Teams gleichauf
+warning-unranked = ohne Kriterium sind in der Tabelle alle Teilnehmer gleichauf
 issue-unanswered = das braucht eine Antwort
 issue-out-of-range = das muss { number-range } sein
 issue-not-a-number = „{ $entered }“ ist keine Zahl

@@ -1,14 +1,16 @@
 use std::{
     any::{Any, TypeId},
-    fmt::Display,
+    fmt::{self, Display, Formatter},
 };
 
 use dyn_clone::DynClone;
 use plugin_factory::{Plugin, axis};
 
 use crate::{
+    Score,
     entities::competition::{Bye, Match, PhaseData, Ranking, RankingId},
     map::Map,
+    plugins::Phrase,
     type_map::{TypeMapValue, downcast_unchecked_ref},
 };
 
@@ -122,20 +124,20 @@ pub trait MetricsCalculator: Plugin + DynClone {
 
 dyn_clone::clone_trait_object!(MetricsCalculator);
 
-/// A column of a table of standings showing one metric: its header and the text of every
+/// A column of a table of standings showing one metric: its header and the cell of every
 /// ranking's value.
 #[derive(Debug, Clone, Copy)]
 pub struct MetricColumn {
     header: &'static str,
-    cell: fn(&Ranking) -> Option<String>,
+    cell: fn(&Ranking) -> Option<Cell>,
 }
 
 impl MetricColumn {
-    /// The column headed `header` that shows the metric `M` of a ranking through its [`Display`].
-    pub fn new<M: TypeMapValue + Display>(header: &'static str) -> Self {
+    /// The column headed `header` that shows the metric `M` of a ranking as its [`ToCell`].
+    pub fn new<M: TypeMapValue + ToCell>(header: &'static str) -> Self {
         Self {
             header,
-            cell: |ranking| ranking.metric::<M>().map(ToString::to_string),
+            cell: |ranking| ranking.metric::<M>().map(M::to_cell),
         }
     }
 
@@ -143,8 +145,32 @@ impl MetricColumn {
         self.header
     }
 
-    /// The text of the metric of `ranking`, or `None` if `ranking` has no such metric.
-    pub fn cell(&self, ranking: &Ranking) -> Option<String> {
+    /// The cell of the metric of `ranking`, or `None` if `ranking` has no such metric.
+    pub fn cell(&self, ranking: &Ranking) -> Option<Cell> {
         (self.cell)(ranking)
+    }
+}
+
+/// A metric shown in a [`MetricColumn`].
+pub trait ToCell {
+    /// What its cell shows.
+    fn to_cell(&self) -> Cell;
+}
+
+/// What a cell of a [`MetricColumn`] shows. Shows as it does in English.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Cell {
+    /// A number, which a frontend writes as its language writes numbers.
+    Number(Score),
+    /// A phrase of the calculator's, which a translation finds by the calculator's id.
+    Text(Phrase),
+}
+
+impl Display for Cell {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Number(number) => Display::fmt(number, f),
+            Self::Text(phrase) => Display::fmt(phrase, f),
+        }
     }
 }

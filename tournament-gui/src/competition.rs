@@ -149,7 +149,7 @@ impl Ctx {
                     Broadcast::new(SAVED).post(&changes.listing().key.to_string());
                 }
                 Err(error) => self.error.set(Some(
-                    Text::new("error-not-saved").with("reason", error.to_string()),
+                    Text::new("error-not-saved").with_detail(error.to_string()),
                 )),
             }
             drop(lock);

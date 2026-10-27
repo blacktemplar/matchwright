@@ -365,6 +365,18 @@ footer select {
   margin: 0;
 }
 
+/* what a library or the browser said, below the alert, for whoever looks into it */
+.error-detail {
+  margin: calc(-1 * var(--space-3)) 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.error-detail p {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
 .warning,
 .notice {
   margin: 0 0 var(--space-4);

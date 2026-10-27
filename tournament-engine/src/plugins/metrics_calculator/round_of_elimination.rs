@@ -1,7 +1,4 @@
-use std::{
-    fmt::{self, Display, Formatter},
-    num::NonZeroU32,
-};
+use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
@@ -9,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     entities::competition::{Annotated, Bye, Match, MatchResult, PhaseData, RankingId, Team},
     plugins::{
+        Phrase,
         facts::{CalculatesMetric, MatchAnnotation},
-        metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
+        metrics_calculator::{Cell, Metric, MetricColumn, MetricsCalculator, OldMetrics, ToCell},
         ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
@@ -36,13 +34,16 @@ impl TypeMapValue for Eliminates {}
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct RoundOfElimination(pub Option<NonZeroU32>);
 
-/// Shows the round as e.g. `round 3`, and `-` while the ranking is still in.
-impl Display for RoundOfElimination {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(round) => write!(f, "round {round}"),
-            None => f.write_str("-"),
-        }
+/// Shows the round as the phrase `round`, e.g. `round 3`, and `still-in`, `-`, while the ranking
+/// is still in.
+impl ToCell for RoundOfElimination {
+    fn to_cell(&self) -> Cell {
+        Cell::Text(match self.0 {
+            Some(round) => {
+                Phrase::new("round", format!("round {round}")).with("round", round.get())
+            }
+            None => Phrase::new("still-in", "-"),
+        })
     }
 }
 

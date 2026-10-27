@@ -126,7 +126,7 @@ fn App() -> Element {
         match IndexedDb::open(DATABASE).await {
             Ok(storage) => page.storage.set(Some(storage)),
             Err(error) => page.error.set(Some(
-                Text::new("error-no-storage").with("reason", error.to_string()),
+                Text::new("error-no-storage").with_detail(error.to_string()),
             )),
         }
     });
@@ -200,8 +200,10 @@ fn Header() -> Element {
     let tr = page.translator.read();
     let shown = page.shown.read().clone();
     let (title, heading) = match &shown {
+        // a title is plain text, where tabs and windows show the marks isolating a variable as
+        // boxes
         Some(name) => (
-            t!(tr, "competition-title", name = name.as_str()),
+            t!(tr, "competition-title", name = name.as_str()).replace(['\u{2068}', '\u{2069}'], ""),
             name.clone(),
         ),
         None => (tr.get("app-title"), tr.get("app-title")),
@@ -325,7 +327,7 @@ fn download(mut page: Page, name: &str, file: &str) {
         tournament_browser::file::download(&format!("{name}.json"), "application/json", file)
     {
         page.error.set(Some(
-            Text::new("error-not-exported").with("reason", format!("{error:?}")),
+            Text::new("error-not-exported").with_detail(format!("{error:?}")),
         ));
     }
 }

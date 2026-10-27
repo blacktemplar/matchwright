@@ -725,24 +725,15 @@ impl Session {
     }
 
     /// Reports the result `entry` says: the number of a match, as [`MatchRow::number`], and its
-    /// result, separated by whitespace. The result is `1` for a win of side A, `2` for one of side
-    /// B, and `X` (or `x`) for a draw, e.g. `"3 1"` or `"12 X"`.
+    /// result, separated by whitespace or a `-`. The result is `1` for a win of side A, `2` for one
+    /// of side B, and `X` (or `x`) for a draw, which needs no separator, e.g. `"3 1"`, `"3-1"`,
+    /// `"12 X"` or `"12x"`.
     ///
     /// # Errors
     /// Returns an error if `entry` does not read as a number and a result, there is no match of
-    /// that number, or the result is not reported, see [`Self::report`].
+    /// that number, it has a result already, or the result is not reported, see [`Self::report`].
     pub fn report_entered(&mut self, entry: &str) -> Result<Reported, ReportEnteredError> {
-        let mut parts = entry.split_whitespace();
-        let (Some(number), Some(result), None) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(ReportEnteredError::Unreadable);
-        };
-        let number: usize = number.parse().map_err(|_| ReportEnteredError::Unreadable)?;
-        let result = match result {
-            "1" => MatchResult::AWins,
-            "2" => MatchResult::BWins,
-            "X" | "x" => MatchResult::Draw,
-            _ => return Err(ReportEnteredError::Unreadable),
-        };
+        let (number, result) = read_entry(entry).ok_or(ReportEnteredError::Unreadable)?;
         let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
         let id = phase
             .data()
@@ -751,7 +742,10 @@ impl Session {
             .find(|r#match| self::number(r#match) == number)
             .map(Match::id)
             .ok_or(ReportEnteredError::NoMatch(number))?;
-        Ok(self.report(id, result)?)
+        self.report(id, result).map_err(|error| match error {
+            ReportError::AlreadyFinished => ReportEnteredError::AlreadyFinished(number),
+            error => error.into(),
+        })
     }
 
     /// Reports `result` for the match `id`.
@@ -996,6 +990,23 @@ impl Session {
 /// The number of `r#match`, as [`MatchRow::number`] shows it.
 fn number(r#match: &Match) -> usize {
     usize::try_from(r#match.number().get()).expect("a number of a match fits a usize")
+}
+
+/// The number of a match and its result that `entry` says, see [`Session::report_entered`].
+fn read_entry(entry: &str) -> Option<(usize, MatchResult)> {
+    let entry = entry.trim();
+    let digits = entry.find(|char: char| !char.is_ascii_digit())?;
+    let (number, rest) = entry.split_at(digits);
+    let result = rest.trim_start_matches(|char: char| char.is_whitespace() || char == '-');
+    // a win needs a separator, or its side would be read as a digit of the number
+    let separated = result.len() < rest.len();
+    let result = match result {
+        "1" if separated => MatchResult::AWins,
+        "2" if separated => MatchResult::BWins,
+        "X" | "x" => MatchResult::Draw,
+        _ => return None,
+    };
+    Some((number.parse().ok()?, result))
 }
 
 /// The stage the format of `phase` names a match or a bye with `annotations` by.

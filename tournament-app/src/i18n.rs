@@ -8,7 +8,9 @@
 //! Plugins are translated by keys derived from their ids, see [`PluginText`], and are shown with
 //! the English of their code where no translation has them, so that a plugin needs no change to be
 //! shown, and to be translated. The fields of a phase itself are translated in the same way, see
-//! [`Translator::field_label`], and so are the stages a format names, see [`Translator::stage`].
+//! [`Translator::field_label`], and so are the stages a format names, see [`Translator::stage`],
+//! and what a calculator's column shows, see [`Translator::cell`]. Numbers are written as the
+//! language writes them, in messages too.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -18,6 +20,7 @@ use std::{
 
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use fluent_syntax::{ast, parser};
+use tournament_engine::plugins::{Phrase, metrics_calculator::Cell};
 
 use crate::{form::FormField, view::StageName};
 
@@ -87,11 +90,12 @@ impl Language {
 pub type Resources = fn(Language) -> &'static str;
 
 /// Something to be said in the operator's language: the key of a Fluent message, and the values of
-/// its variables.
+/// its variables, and possibly a detail, which is not translated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Text {
     key: &'static str,
     args: Vec<(&'static str, Arg)>,
+    detail: Option<String>,
 }
 
 impl Text {
@@ -100,6 +104,7 @@ impl Text {
         Self {
             key,
             args: Vec::new(),
+            detail: None,
         }
     }
 
@@ -110,9 +115,22 @@ impl Text {
         self
     }
 
+    /// This text with `detail`, which says more for whoever looks into it, e.g. where a file
+    /// stops being readable, as a library says it, in English.
+    #[must_use]
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
     /// The key of its message.
     pub fn key(&self) -> &'static str {
         self.key
+    }
+
+    /// Its detail, see [`Self::with_detail`].
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 }
 
@@ -203,6 +221,9 @@ pub enum PluginText<'a> {
     /// variables, see [`Translator::stage`] and
     /// [`Stage::key`](tournament_engine::plugins::phase_format::Stage::key).
     Stage(&'a str),
+    /// The phrase of this key in a cell of a calculator's column, `.cell-<key>`, with the phrase's
+    /// numbers as its variables, see [`Translator::cell`].
+    Cell(&'a str),
 }
 
 impl PluginText<'_> {
@@ -220,6 +241,7 @@ impl PluginText<'_> {
             Self::Field(name) => format!("field-{name}"),
             Self::FieldDescription(name) => format!("field-{name}-description"),
             Self::Stage(key) => format!("stage-{key}"),
+            Self::Cell(key) => format!("cell-{key}"),
         }
     }
 }
@@ -281,6 +303,26 @@ impl Translator {
             .unwrap_or_else(|| text.key.to_owned())
     }
 
+    /// `text` as a sentence of its own, as [`Self::text`] says it beginning with a capital letter
+    /// and ending with a full stop, e.g. an error, which says itself as part of a sentence.
+    pub fn sentence(&self, text: &Text) -> String {
+        let said = self.text(text);
+        let isolating = |char: char| matches!(char, '\u{2068}' | '\u{2069}');
+        // a text beginning with a variable begins with the mark isolating it
+        let (marks, rest) = said.split_at(said.find(|char| !isolating(char)).unwrap_or(said.len()));
+        let mut rest = rest.chars();
+        let mut sentence = marks.to_owned();
+        sentence.extend(rest.next().into_iter().flat_map(char::to_uppercase));
+        sentence.push_str(rest.as_str());
+        if !sentence
+            .trim_end_matches(isolating)
+            .ends_with(['.', '!', '?', '…'])
+        {
+            sentence.push('.');
+        }
+        sentence
+    }
+
     /// The message `key`, which has no variables, see [`Self::text`].
     pub fn get(&self, key: &'static str) -> String {
         self.text(&Text::new(key))
@@ -300,16 +342,36 @@ impl Translator {
     /// The name of `stage` in the language, as the [`PluginText::Stage`] of its format with its
     /// numbers set, or else in English, as the format's code names it.
     pub fn stage(&self, stage: &StageName) -> String {
+        self.phrase(
+            stage.format,
+            PluginText::Stage(stage.stage.key()),
+            &stage.stage,
+        )
+    }
+
+    /// What `cell` of the column of the calculator `calculator` shows in the language: a number as
+    /// the language writes it, see [`Self::number`], and a phrase as the [`PluginText::Cell`] of
+    /// the calculator with its numbers set, or else in English, as the calculator's code says it.
+    pub fn cell(&self, calculator: &str, cell: &Cell) -> String {
+        match cell {
+            Cell::Number(number) => self.number(number.get()),
+            Cell::Text(phrase) => self.phrase(calculator, PluginText::Cell(phrase.key()), phrase),
+        }
+    }
+
+    /// `number` as the language writes it, e.g. `0,5` in German.
+    pub fn number(&self, number: f64) -> String {
+        written(self.language, &number.to_string())
+    }
+
+    /// `phrase` of the plugin `id` as its `text` with the phrase's numbers set, or else in English.
+    fn phrase(&self, id: &str, text: PluginText<'_>, phrase: &Phrase) -> String {
         let mut args = FluentArgs::new();
-        for (name, value) in stage.stage.numbers() {
+        for (name, value) in phrase.numbers() {
             args.set(*name, *value);
         }
-        self.format(
-            &PluginText::key(stage.format),
-            Some(&PluginText::Stage(stage.stage.key()).attribute()),
-            Some(&args),
-        )
-        .unwrap_or_else(|| stage.stage.to_string())
+        self.format(&PluginText::key(id), Some(&text.attribute()), Some(&args))
+            .unwrap_or_else(|| phrase.to_string())
     }
 
     /// The label of `field` in the language, or else its English one. A field of a plugin is
@@ -448,6 +510,14 @@ fn bundle(language: Language, resources: &[Resources]) -> FluentBundle<FluentRes
     // isolate its writing direction, so that a name written right to left keeps its place in the
     // sentence; they are kept, and tests comparing texts ignore them
     let mut bundle = FluentBundle::new(vec![tag]);
+    // Fluent writes every number as English does; a formatter is a function, which cannot capture
+    // the language
+    if language == Language::German {
+        bundle.set_formatter(Some(|value, _| match value {
+            FluentValue::Number(number) => Some(written(Language::German, &number.as_string())),
+            _ => None,
+        }));
+    }
     let sources = language
         .resources()
         .into_iter()
@@ -460,6 +530,14 @@ fn bundle(language: Language, resources: &[Resources]) -> FluentBundle<FluentRes
         _ = bundle.add_resource(resource);
     }
     bundle
+}
+
+/// The number `english`, as English writes it, as `language` writes it.
+fn written(language: Language, english: &str) -> String {
+    match language {
+        Language::English => english.to_owned(),
+        Language::German => english.replace('.', ","),
+    }
 }
 
 /// The message `key` of `bundle`, or its attribute `attribute`, if it has it.

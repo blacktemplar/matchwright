@@ -2,11 +2,11 @@
 # Display of its error says.
 
 error-empty-name = an entrant name must not be empty
-error-duplicate-name = there already is an entrant named "{ $name }"
+error-duplicate-name = there already is an entrant named “{ $name }”
 error-entrant-added-after-start = the competition has started, so no entrant can be added anymore
 error-unknown-entrant = there is no such entrant
 error-entrant-removed-after-start = the competition has started, so no entrant can be removed anymore
-error-unknown-format = there is no format "{ $format }"
+error-unknown-format = there is no format “{ $format }”
 # $reason: in English, from the format's code
 error-format-misconfigured = { $reason }
 error-invalid-phase = the phase cannot be played this way; the form shows what to change
@@ -21,8 +21,9 @@ error-not-started = the competition has not started yet
 error-unknown-match = there is no such match
 error-match-finished-already = the match has a result already
 error-draw-not-allowed = a match of this format cannot end in a draw
-error-result-unreadable = enter the number of a match and its result, 1, X or 2, e.g. "3 1"
+error-result-unreadable = enter the number of a match and its result, 1, X or 2, e.g. “3 1”
 error-no-match-numbered = there is no match { $number }
+error-match-numbered-finished-already = match { $number } has a result already
 error-match-not-reported = the match has no result that could be undone
 error-result-depended-on = a later result depends on this one; undo that one first
 # $number: the number of the match whose result depends on the one to reopen
@@ -30,16 +31,13 @@ error-result-depended-on-by = the result of match { $number } depends on this on
 error-nothing-to-undo = there is nothing to undo
 error-nothing-to-redo = there is nothing to redo
 error-competition-not-found = there is no such competition
-# $reason: in English, from the storage
-error-competition-unreadable = the competition cannot be read: { $reason }
-# $reason: in English, from reading JSON
-error-log-entry-unreadable = entry { $position } of the log cannot be read: { $reason }
-# $reason: in English, from reading JSON
-error-person-unreadable = an entrant's name cannot be read: { $reason }
-# $reason: in English, from the engine
-error-log-does-not-replay = the log does not replay: { $reason }
-# $reason: in English, from reading JSON or from the engine
-error-file-unreadable = the file is no competition this version can open: { $reason }
+# the messages below have a detail, in English, saying why: from the storage, from reading JSON or
+# from the engine
+error-competition-unreadable = the competition cannot be read
+error-log-entry-unreadable = entry { $position } of the log cannot be read
+error-person-unreadable = an entrant’s name cannot be read
+error-log-does-not-replay = the log does not replay
+error-file-unreadable = the file is no competition this version can open
 # $reason: in English, why the engine refused an action
 error-rejected = { $reason }
 
@@ -60,7 +58,7 @@ number-range = { $whole ->
        *[other] {" "}that is a multiple of { $multiple }
     }
 # what an answer leads to that the operator may not want, although the phase can be played so
-warning-unranked = ranked by nothing, every team is tied in the standings
+warning-unranked = ranked by nothing, every entrant is tied in the standings
 # what is wrong with the answer of a field, or with a plugin chosen
 issue-unanswered = this needs an answer
 # the variables of number-range

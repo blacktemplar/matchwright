@@ -638,11 +638,12 @@ impl Session {
                 ]
                 .into_iter()
                 // a column of a metric its calculator does not calculate is left empty
-                .chain(
-                    columns
-                        .iter()
-                        .map(|column| column.cell(ranking).unwrap_or_default()),
-                )
+                .chain(columns.iter().map(|column| {
+                    column
+                        .cell(ranking)
+                        .map(|cell| cell.to_string())
+                        .unwrap_or_default()
+                }))
                 .collect()
             })
             .collect();

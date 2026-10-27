@@ -46,6 +46,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "test-util")]
 pub use crate::plugins::builder::PhasePluginsBuilder;
+pub use crate::plugins::phrase::Phrase;
 use crate::plugins::{
     metrics_calculator::MetricsCalculator,
     phase_format::PhaseFormat,
@@ -57,6 +58,7 @@ mod builder;
 pub mod facts;
 pub mod metrics_calculator;
 pub mod phase_format;
+mod phrase;
 pub mod ranker;
 
 /// The plugins of one phase: the format its matches are scheduled by, the slice rankers it is
@@ -116,7 +118,7 @@ pub struct PhasePlugins {
     )]
     ranking: Vec<Box<dyn SliceRanker>>,
     #[serde(default)]
-    #[plugin(label = "metrics", description = "calculated for every team")]
+    #[plugin(label = "metrics", description = "calculated for every entrant")]
     metrics: DependencyOrderedSet<dyn MetricsCalculator>,
 }
 

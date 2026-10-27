@@ -14,7 +14,7 @@ use e2e_harness::{
     ISOLATION_MARKS, Page, Site,
     thirtyfour::{
         By, WebDriver, components::SelectElement, error::WebDriverResult,
-        extensions::query::ElementQueryable,
+        extensions::query::ElementQueryable, stringmatch::StringMatch,
     },
 };
 pub use e2e_harness::{failures, thirtyfour, thirtyfour::Key};
@@ -636,6 +636,26 @@ impl Gui {
     pub async fn expect_error(&self, text: &str) -> WebDriverResult<()> {
         self.page
             .expect_texts(By::Css("[role=alert]:not(:empty)"), &[text])
+            .await
+    }
+
+    /// Unfolds the detail of the refusal shown, and waits until it contains `part`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it shows instead.
+    pub async fn expect_error_detail(&self, part: &str) -> WebDriverResult<()> {
+        self.driver
+            .query(By::Css(".error-detail summary"))
+            .first()
+            .await?
+            .click()
+            .await?;
+        self.page
+            .expect(
+                By::Css(".error-detail p"),
+                |query| query.with_text(StringMatch::new(part).partial()),
+                &format!("the detail of the refusal containing {part:?}"),
+            )
             .await
     }
 

@@ -12,19 +12,19 @@ async fn start_round_robin(gui: &Gui) -> WebDriverResult<()> {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_format_brings_what_it_recommends() {
     run_in_new_competition(async |gui| {
-        gui.expect_list("ranking", &["more points", "more Sonneborn-Berger"])
+        gui.expect_list("ranking", &["More points", "More Sonneborn-Berger"])
             .await?;
 
-        gui.choose_format("single elimination").await?;
+        gui.choose_format("Single elimination").await?;
 
-        gui.expect_list("ranking", &["later first loss", "fewer losses"])
+        gui.expect_list("ranking", &["Later first loss", "Fewer losses"])
             .await?;
         gui.page.check_accessibility().await?;
         gui.click("Add phase").await?;
         gui.expect_phase(&[
-            "single elimination",
-            "later first loss, fewer losses",
-            "round of the first loss, win-draw-loss record",
+            "Single elimination",
+            "Later first loss, fewer losses",
+            "Round of the first loss, win-draw-loss record",
         ])
         .await
     })
@@ -41,7 +41,7 @@ async fn enter_in_a_number_takes_it_without_adding_the_phase() {
         gui.type_into("format.rounds", "0").await?;
         gui.press(Key::Enter).await?;
 
-        gui.expect_issues(&["this takes a whole number of at least 1"])
+        gui.expect_issues(&["This takes a whole number of at least 1."])
             .await?;
         gui.type_into("format.rounds", "7").await?;
         gui.press(Key::Enter).await?;
@@ -50,9 +50,9 @@ async fn enter_in_a_number_takes_it_without_adding_the_phase() {
         gui.click("Add phase").await?;
         gui.expect_phase(&[
             "Monster DYP",
-            "more points",
-            "win-draw-loss record",
-            "points",
+            "More points",
+            "Win-draw-loss record",
+            "Points",
         ])
         .await
     })
@@ -64,12 +64,12 @@ async fn enter_in_a_number_takes_it_without_adding_the_phase() {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn adding_a_phase_with_issues_moves_the_focus_to_them() {
     run_in_new_competition(async |gui| {
-        gui.toggle("points").await?;
+        gui.toggle("Points").await?;
 
         gui.click("Add phase").await?;
 
         gui.expect_focus(
-            "more points needs one of these: points\nSonneborn-Berger needs one of these: points",
+            "More points needs one of these: points.\nSonneborn-Berger needs one of these: points.",
         )
         .await?;
         gui.expect_no_error().await?;
@@ -86,7 +86,7 @@ async fn a_number_not_taken_is_shown_with_why() {
 
         gui.enter("format.rounds", "0").await?;
 
-        gui.expect_issues(&["this takes a whole number of at least 1"])
+        gui.expect_issues(&["This takes a whole number of at least 1."])
             .await?;
         gui.enter("format.rounds", "7").await?;
         gui.expect_issues(&[]).await
@@ -104,7 +104,7 @@ async fn what_is_said_about_the_next_field_leaves_the_issue_in_sight() {
 
         gui.enter("format.rounds", "0").await?;
 
-        gui.expect_issues(&["this takes a whole number of at least 1"])
+        gui.expect_issues(&["This takes a whole number of at least 1."])
             .await?;
         gui.expect_toggletip_clear_of_issues().await
     })
@@ -117,16 +117,16 @@ async fn what_is_said_about_the_next_field_leaves_the_issue_in_sight() {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_metric_needed_and_not_chosen_is_an_issue_at_the_metrics() {
     run_in_new_competition(async |gui| {
-        gui.toggle("points").await?;
+        gui.toggle("Points").await?;
 
         gui.expect_issues(&[
-            "more points needs one of these: points",
-            "Sonneborn-Berger needs one of these: points",
+            "More points needs one of these: points.",
+            "Sonneborn-Berger needs one of these: points.",
         ])
         .await?;
-        gui.expect_list("ranking", &["more points", "more Sonneborn-Berger"])
+        gui.expect_list("ranking", &["More points", "More Sonneborn-Berger"])
             .await?;
-        gui.toggle("points").await?;
+        gui.toggle("Points").await?;
         gui.expect_issues(&[]).await
     })
     .await;
@@ -137,19 +137,19 @@ async fn a_metric_needed_and_not_chosen_is_an_issue_at_the_metrics() {
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_metrics_stay_in_place_when_toggled() {
-    const ALL: [&str; 3] = ["points", "Sonneborn-Berger", "win-draw-loss record"];
+    const ALL: [&str; 3] = ["Points", "Sonneborn-Berger", "Win-draw-loss record"];
     run_in_new_competition(async |gui| {
         gui.expect_checked("metrics", &ALL).await?;
 
-        gui.toggle("points").await?;
+        gui.toggle("Points").await?;
 
-        gui.expect_checked("metrics", &["Sonneborn-Berger", "win-draw-loss record"])
+        gui.expect_checked("metrics", &["Sonneborn-Berger", "Win-draw-loss record"])
             .await?;
-        gui.expect_focus_on_checkbox("points").await?;
+        gui.expect_focus_on_checkbox("Points").await?;
         gui.toggle("Sonneborn-Berger").await?;
-        gui.expect_checked("metrics", &["win-draw-loss record"])
+        gui.expect_checked("metrics", &["Win-draw-loss record"])
             .await?;
-        gui.toggle("points").await?;
+        gui.toggle("Points").await?;
         gui.toggle("Sonneborn-Berger").await?;
         gui.expect_checked("metrics", &ALL).await?;
         gui.expect_focus_on_checkbox("Sonneborn-Berger").await
@@ -163,10 +163,10 @@ async fn the_metrics_stay_in_place_when_toggled() {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_criteria_of_the_ranking_are_added_and_moved() {
     run_in_new_competition(async |gui| {
-        gui.choose_plugin("ranking", "more wins").await?;
+        gui.choose_plugin("ranking", "More wins").await?;
         gui.expect_list(
             "ranking",
-            &["more points", "more Sonneborn-Berger", "more wins"],
+            &["More points", "More Sonneborn-Berger", "More wins"],
         )
         .await?;
         gui.expect_focus_on_choice("ranking").await?;
@@ -176,17 +176,17 @@ async fn the_criteria_of_the_ranking_are_added_and_moved() {
 
         gui.expect_list(
             "ranking",
-            &["more wins", "more points", "more Sonneborn-Berger"],
+            &["More wins", "More points", "More Sonneborn-Berger"],
         )
         .await?;
-        gui.expect_focus_in_list("ranking", "more wins").await?;
+        gui.expect_focus_in_list("ranking", "More wins").await?;
         gui.click_labelled("Remove more points").await?;
-        gui.expect_list("ranking", &["more wins", "more Sonneborn-Berger"])
+        gui.expect_list("ranking", &["More wins", "More Sonneborn-Berger"])
             .await?;
-        gui.expect_focus_in_list("ranking", "more Sonneborn-Berger")
+        gui.expect_focus_in_list("ranking", "More Sonneborn-Berger")
             .await?;
         gui.click_labelled("Remove more Sonneborn-Berger").await?;
-        gui.expect_focus_in_list("ranking", "more wins").await
+        gui.expect_focus_in_list("ranking", "More wins").await
     })
     .await;
 }
@@ -196,7 +196,7 @@ async fn the_criteria_of_the_ranking_are_added_and_moved() {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_focus_is_back_at_the_format_once_it_is_chosen() {
     run_in_new_competition(async |gui| {
-        gui.choose_format("single elimination").await?;
+        gui.choose_format("Single elimination").await?;
 
         gui.expect_focus_on_choice("format").await
     })
@@ -211,15 +211,15 @@ async fn a_ranking_of_nothing_is_warned_about() {
         gui.click_labelled("Remove more points").await?;
         gui.click_labelled("Remove more Sonneborn-Berger").await?;
 
-        gui.expect_warnings(&["ranked by nothing, every team is tied in the standings"])
+        gui.expect_warnings(&["Ranked by nothing, every entrant is tied in the standings."])
             .await?;
         gui.page.check_accessibility().await?;
         gui.click("Add phase").await?;
         gui.expect_phase(&[
-            "round robin",
+            "Round robin",
             "(none)",
-            "win-draw-loss record",
-            "points",
+            "Win-draw-loss record",
+            "Points",
             "Sonneborn-Berger",
         ])
         .await
@@ -240,7 +240,7 @@ async fn undoing_the_phase_brings_back_its_form() {
         gui.click("Undo").await?;
 
         gui.expect_entered("format.rounds", "7").await?;
-        gui.expect_list("ranking", &["more points"]).await
+        gui.expect_list("ranking", &["More points"]).await
     })
     .await;
 }
@@ -258,8 +258,22 @@ async fn a_number_is_read_with_a_comma_and_what_is_none_is_named() {
 
         gui.enter("metrics[1].points_for_win", "abc").await?;
 
-        gui.expect_issues(&["“abc” is no number"]).await?;
+        gui.expect_issues(&["“abc” is no number."]).await?;
         gui.expect_entered("metrics[1].points_for_win", "abc").await
+    })
+    .await;
+}
+
+/// In German, a number is written with a comma before its decimals.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_number_is_shown_with_a_comma_in_german() {
+    run_in_new_competition(async |gui| {
+        gui.choose_language("Deutsch").await?;
+
+        gui.enter("metrics[1].points_for_win", "2.5").await?;
+
+        gui.expect_entered("metrics[1].points_for_win", "2,5").await
     })
     .await;
 }
@@ -308,16 +322,16 @@ async fn the_description_of_an_option_shows_while_the_pointer_is_on_it() {
     run_in_new_competition(async |gui| {
         gui.open_choice("ranking").await?;
 
-        gui.hover_option("fewer matches played").await?;
+        gui.hover_option("Fewer matches played").await?;
 
         gui.expect_option_description("the same result out of fewer matches ranks higher")
             .await?;
         gui.page.check_accessibility().await?;
-        gui.hover_option("later first loss").await?;
+        gui.hover_option("Later first loss").await?;
         gui.expect_option_description("by the round of the first loss; never having lost is best")
             .await?;
         // a criterion without a description of its own has that of its metric
-        gui.hover_option("more Buchholz").await?;
+        gui.hover_option("More Buchholz").await?;
         gui.expect_option_description("the points of all opponents")
             .await
     })
@@ -331,22 +345,22 @@ async fn a_tap_on_the_info_of_an_option_shows_its_description_without_choosing_i
     run_in_new_competition(async |gui| {
         gui.open_choice("ranking").await?;
 
-        gui.tap_option_info("fewer matches played").await?;
+        gui.tap_option_info("Fewer matches played").await?;
 
         gui.expect_option_description_tapped_open(
             "the same result out of fewer matches ranks higher",
         )
         .await?;
         gui.page.check_accessibility().await?;
-        gui.expect_list("ranking", &["more points", "more Sonneborn-Berger"])
+        gui.expect_list("ranking", &["More points", "More Sonneborn-Berger"])
             .await?;
-        gui.choose_option("fewer matches played").await?;
+        gui.choose_option("Fewer matches played").await?;
         gui.expect_list(
             "ranking",
             &[
-                "more points",
-                "more Sonneborn-Berger",
-                "fewer matches played",
+                "More points",
+                "More Sonneborn-Berger",
+                "Fewer matches played",
             ],
         )
         .await
@@ -388,20 +402,20 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
 
         gui.expect_no_dialog().await?;
         gui.expect_phase(&[
-            "round robin",
-            "more Sonneborn-Berger, more points",
-            "win-draw-loss record",
-            "points",
+            "Round robin",
+            "More Sonneborn-Berger, more points",
+            "Win-draw-loss record",
+            "Points",
             "Sonneborn-Berger",
         ])
         .await?;
         gui.expect_results(&["Alice won"]).await?;
         gui.click("Undo").await?;
         gui.expect_phase(&[
-            "round robin",
-            "more points, more Sonneborn-Berger",
-            "win-draw-loss record",
-            "points",
+            "Round robin",
+            "More points, more Sonneborn-Berger",
+            "Win-draw-loss record",
+            "Points",
             "Sonneborn-Berger",
         ])
         .await
@@ -424,17 +438,17 @@ async fn an_edit_a_result_does_not_fit_is_refused_in_the_dialog() {
         gui.click("Save changes").await?;
 
         gui.expect_dialog_error(
-            "the phase cannot be changed this way, since a later change no longer fits it: match \
-             does not exist",
+            "The phase cannot be changed this way, since a later change no longer fits it: match \
+             does not exist.",
         )
         .await?;
         gui.click("Cancel").await?;
         gui.expect_no_dialog().await?;
         gui.expect_phase(&[
-            "round robin",
-            "more points, more Sonneborn-Berger",
-            "win-draw-loss record",
-            "points",
+            "Round robin",
+            "More points, more Sonneborn-Berger",
+            "Win-draw-loss record",
+            "Points",
             "Sonneborn-Berger",
         ])
         .await

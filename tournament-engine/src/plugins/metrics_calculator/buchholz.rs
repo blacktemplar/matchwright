@@ -1,9 +1,7 @@
-use std::fmt::{self, Debug, Display, Formatter};
-
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::{Metric, MetricColumn, OldMetrics};
+use super::{Cell, Metric, MetricColumn, OldMetrics, ToCell};
 use crate::{
     entities::competition::{Bye, Match, MatchResult, PhaseData, RankingId, ResultOfTeam, Team},
     map::Map,
@@ -22,9 +20,9 @@ pub struct Buchholz(pub Score);
 #[typetag::serde(name = "tournament_engine::buchholz")]
 impl TypeMapValue for Buchholz {}
 
-impl Display for Buchholz {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+impl ToCell for Buchholz {
+    fn to_cell(&self) -> Cell {
+        Cell::Number(self.0)
     }
 }
 
@@ -120,9 +118,9 @@ pub struct BuchholzOfBuchholz(pub Score);
 #[typetag::serde(name = "tournament_engine::buchholz_of_buchholz")]
 impl TypeMapValue for BuchholzOfBuchholz {}
 
-impl Display for BuchholzOfBuchholz {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+impl ToCell for BuchholzOfBuchholz {
+    fn to_cell(&self) -> Cell {
+        Cell::Number(self.0)
     }
 }
 
@@ -223,9 +221,9 @@ pub struct SonnebornBerger(pub Score);
 #[typetag::serde(name = "tournament_engine::sonneborn_berger")]
 impl TypeMapValue for SonnebornBerger {}
 
-impl Display for SonnebornBerger {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+impl ToCell for SonnebornBerger {
+    fn to_cell(&self) -> Cell {
+        Cell::Number(self.0)
     }
 }
 

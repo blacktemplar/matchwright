@@ -1,4 +1,7 @@
-use tournament_gui_e2e::{run, run_in_new_competition, thirtyfour::By};
+use tournament_gui_e2e::{
+    run, run_in_new_competition,
+    thirtyfour::{By, stringmatch::StringMatch},
+};
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
@@ -15,13 +18,13 @@ async fn the_page_speaks_the_language_the_browser_prefers() {
 async fn everything_is_said_in_the_language_chosen() {
     run_in_new_competition(async |gui| {
         gui.click("Add entrant").await?;
-        gui.expect_error("an entrant name must not be empty")
+        gui.expect_error("An entrant name must not be empty.")
             .await?;
 
         gui.choose_language("Deutsch").await?;
 
         gui.expect_page_language("de").await?;
-        gui.expect_error("der Name eines Teilnehmers darf nicht leer sein")
+        gui.expect_error("Der Name eines Teilnehmers darf nicht leer sein.")
             .await?;
         gui.add_entrant("Alice").await?;
         gui.add_entrant("Bob").await?;
@@ -50,7 +53,16 @@ async fn the_stages_are_said_in_the_language_chosen() {
 
         gui.click("Starten").await?;
 
-        gui.expect_stages(&["Halbfinale", "Halbfinale"]).await
+        gui.expect_stages(&["Halbfinale", "Halbfinale"]).await?;
+        // the round of the loss, as the standings show it
+        gui.click_labelled("Alice gewinnt").await?;
+        gui.page
+            .expect(
+                By::Css("#standing-list tbody"),
+                |query| query.with_text(StringMatch::new("Runde").partial()),
+                "the round lost in, in German",
+            )
+            .await
     })
     .await;
 }

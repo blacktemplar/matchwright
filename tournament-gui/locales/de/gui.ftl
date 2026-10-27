@@ -14,9 +14,10 @@ not-persisted-install = Als App installiert, darf die Seite sie meist behalten.
 export-this-competition = Dieses Turnier exportieren
 install = App installieren
 dont-show-again = Nicht mehr anzeigen
-error-no-storage = der Browser lässt die Seite keine Turniere speichern: { $reason }
-error-not-saved = die Änderungen konnten nicht gespeichert werden: { $reason }
-error-not-exported = die Datei konnte nicht erstellt werden: { $reason }
+error-detail = Einzelheiten
+error-no-storage = der Browser lässt die Seite keine Turniere speichern
+error-not-saved = die Änderungen konnten nicht gespeichert werden
+error-not-exported = die Datei konnte nicht erstellt werden
 
 ## The competitions stored
 
@@ -38,8 +39,8 @@ new-competition = Neues Turnier
 create = Erstellen
 import = Aus einer Datei importieren
 error-empty-competition-name = ein Turnier braucht einen Namen
-error-file-not-read = die Datei konnte nicht gelesen werden: { $reason }
-error-competitions-unreadable = die gespeicherten Turniere können nicht gelesen werden: { $reason }
+error-file-not-read = die Datei konnte nicht gelesen werden
+error-competitions-unreadable = die gespeicherten Turniere können nicht gelesen werden
 
 ## The competition open
 
@@ -95,7 +96,7 @@ previous-round = Vorige Runde
 next-round = Nächste Runde
 nothing-playable = Gerade kann kein Spiel gespielt werden.
 find-entrant = Teilnehmer suchen
-nothing-found = Kein Spiel hier hat einen Teilnehmer, dessen Name „{ $text }“ enthält.
+nothing-found = Kein Teilnehmer hier hat einen Namen, der „{ $text }“ enthält.
 match = Spiel
 versus = gegen
 wins = { $team } gewinnt

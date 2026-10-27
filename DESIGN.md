@@ -1701,7 +1701,11 @@ tested natively and in wasm, and knows no plugin.
   number of its match and `1`, `X` or `2` (`Session::report_entered`, e.g.
   `3 1`), the notation of football pools, which needs no word of a language
   and no knowledge of which entrant is which side beyond the left and the
-  right of the match shown. A refused entry stays in the field to be corrected. And the result
+  right of the match shown. The two are separated by whitespace or a `-`
+  (`3-1`); a draw needs no separator (`3x`), but a win does, since `31` could
+  be match 3 or match 31. Whatever does not read so is refused with one
+  message saying how to enter a result; a match that has a result already is
+  named. A refused entry stays in the field to be corrected. And the result
   buttons of a match move the focus on once one is pressed, which removes
   them: to the first button of the next match of the list without a result
   (after it, or else before it), or to the heading of the list if there is
@@ -2059,7 +2063,8 @@ Implemented 2026-10-24, in English and German.
   draft names the plugins in the operator's language. The issues are
   translated by their kind; what a plugin or an incompatibility says inside
   one (a rejection's reason, the name of a fact) stays English.
-- **The stages a format names** (`PhaseFormat::stage`) are a `Stage`: a key
+- **The stages a format names** (`PhaseFormat::stage`) are a `Stage`, the
+  engine's `Phrase` (see the cells below): a key
   naming the stage among the format's, the numbers its name has (e.g. the
   round of the loser bracket) and its English name, which is its `Display`.
   They are translated as the attribute `.stage-<key>` of the format's message,
@@ -2072,9 +2077,41 @@ Implemented 2026-10-24, in English and German.
   format does not tell which stages it can name. Rejected: the GUI translating
   the engine's annotations (`KnockoutRound`, ...), which would make it a table
   of plugins.
-- **Not translated yet**: the reasons the engine or the storage give inside an
-  error, which are English text, and numbers, which show as Rust formats them
-  (`1.5`, not `1,5`; a comma is taken when entered).
+- **What a calculator's column shows** is a `Cell`, which its metric makes by
+  `ToCell` (`MetricColumn::new` requires it): a number (`Cell::Number` of a
+  `Score`), or a `Phrase` of the calculator's, e.g. `round 3` for the round of
+  a first loss, translated as the attribute `.cell-<key>` of the calculator's
+  message with the phrase's numbers as variables, as a stage is. A `Phrase` is
+  what a plugin says for a frontend, a stage's name being one, so stages and
+  cells share the type and the way they are translated. Rejected: the metric's
+  `Display`, which is English (`round 3`, `0.5`), and a cell of a plain
+  `String`, which would leave room for text no translation can find. The test
+  of the plugin messages lists the phrases of the engine's metrics, as it lists
+  the stages.
+- **Numbers are written as the language writes them**: `Translator::number`
+  (`0,5` in German), and Fluent's numbers inside messages too, through a
+  formatter of the bundle (a function pointer, which cannot capture the
+  language, so it is set for German alone). A comma is taken when entered.
+- **The detail of an error stays apart**: what a library or the browser says
+  about why (serde's `expected value at line 1 column 1`, a storage's error) is
+  the `Text`'s detail (`Text::with_detail`), not one of its variables, and the
+  GUI folds it away in a `<details>` below the alert, marked `lang="en"`,
+  outside the alert so that a screen reader does not read it out with the
+  error. The error's `Display` leaves it to its `source`, as Rust's errors do.
+  The reasons the engine gives in a refusal it does not know (`Rejected`) are
+  still variables, since they are all the refusal says.
+- **Errors are said as sentences on the screen.** The messages, like the
+  `Display`s they match, are fragments in lower case without a full stop, as
+  Rust's errors are; `Translator::sentence` capitalizes the first letter (past
+  the isolation mark of a leading variable) and ends it with a full stop, and
+  the GUI says errors, issues and warnings that way. Rejected: writing the
+  messages as sentences, which would part them from the `Display`s.
+- **A plugin's label standing alone is capitalized** by the GUI, as a field's
+  label is: an option, an item of a list, an answer of the summary, a column's
+  header. Inside a sentence (`Remove more points`, an issue naming a plugin) it
+  stays as the plugin labels it, lowercase but for names.
+- **The title of the page** has no isolation marks: tabs and windows show them
+  as boxes.
 
 ### Accessibility
 

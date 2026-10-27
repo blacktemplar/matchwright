@@ -1,13 +1,12 @@
-use std::fmt::{self, Display, Formatter};
-
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     entities::competition::{Bye, Match, PhaseData, RankingId, ResultOfTeam, Team},
     plugins::{
+        Phrase,
         facts::CalculatesMetric,
-        metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
+        metrics_calculator::{Cell, Metric, MetricColumn, MetricsCalculator, OldMetrics, ToCell},
         ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
@@ -36,10 +35,17 @@ impl WinsDrawsLosses {
     }
 }
 
-/// Shows the wins, draws and losses as e.g. `2-1-0`, without the byes.
-impl Display for WinsDrawsLosses {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}-{}", self.wins, self.draws, self.losses)
+/// Shows the wins, draws and losses as the phrase `wins-draws-losses`, e.g. `2-1-0`, without the
+/// byes.
+impl ToCell for WinsDrawsLosses {
+    fn to_cell(&self) -> Cell {
+        let english = format!("{}-{}-{}", self.wins, self.draws, self.losses);
+        Cell::Text(
+            Phrase::new("wins-draws-losses", english)
+                .with("wins", self.wins)
+                .with("draws", self.draws)
+                .with("losses", self.losses),
+        )
     }
 }
 

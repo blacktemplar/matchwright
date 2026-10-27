@@ -9,9 +9,12 @@ use plugin_factory::{
     PluginType,
     config::{Path as ConfigPath, PluginConfig},
 };
-use tournament_engine::plugins::{
-    metrics_calculator::MoreWins,
-    phase_format::{DoubleElimination, MonsterDyp, RoundRobin, SingleElimination},
+use tournament_engine::{
+    Score,
+    plugins::{
+        metrics_calculator::{Cell as MetricCell, MoreWins},
+        phase_format::{DoubleElimination, MonsterDyp, RoundRobin, SingleElimination},
+    },
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -839,10 +842,13 @@ fn the_standings_show_the_columns_of_the_metrics() {
             },
         ]
     );
-    let points: Vec<f64> = standings
+    let points: Vec<Score> = standings
         .rows
         .iter()
-        .map(|row| row.cells[1].as_deref().unwrap().parse().unwrap())
+        .map(|row| match row.cells[1] {
+            Some(MetricCell::Number(points)) => points,
+            ref cell => panic!("{cell:?} is no number of points"),
+        })
         .collect();
     assert_eq!(points.len(), 4);
     assert!(
@@ -1067,20 +1073,42 @@ fn a_result_is_entered_as_the_number_of_its_match_and_1_x_or_2() {
 
     session.report_entered("1 2").unwrap();
     let reported = session.report_entered("  2  x ").unwrap();
+    session.report_entered("3-1").unwrap();
+    session.report_entered("4X").unwrap();
 
     let results: Vec<_> = matches(&session).iter().map(|row| row.result).collect();
     assert_eq!(
-        results[..3],
-        [Some(MatchResult::BWins), Some(MatchResult::Draw), None]
+        results[..5],
+        [
+            Some(MatchResult::BWins),
+            Some(MatchResult::Draw),
+            Some(MatchResult::AWins),
+            Some(MatchResult::Draw),
+            None
+        ]
     );
     assert_eq!(reported.row.number, 2);
+}
+
+#[test]
+fn a_result_entered_for_a_match_that_has_one_names_the_match() {
+    let mut session = Given::new().started();
+    session.report_entered("2 1").unwrap();
+
+    assert!(matches!(
+        session.report_entered("2 2"),
+        Err(ReportEnteredError::AlreadyFinished(2))
+    ));
 }
 
 #[test]
 fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
     let mut session = Given::new().format(SingleElimination::ID).started();
 
-    for entry in ["", "1", "1 3", "one 1", "1 1 1", "-1 1"] {
+    // "11" could be match 1 won by side A, or match 11
+    for entry in [
+        "", "1", "11", "1 3", "one 1", "1 1 1", "-1 1", "1x1", "1 x 1", "1:1",
+    ] {
         assert!(
             matches!(
                 session.report_entered(entry),

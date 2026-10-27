@@ -32,7 +32,7 @@ async fn an_entrant_without_a_name_is_refused_with_why() {
     run_in_new_competition(async |gui| {
         gui.click("Add entrant").await?;
 
-        gui.expect_error("an entrant name must not be empty")
+        gui.expect_error("An entrant name must not be empty.")
             .await?;
         gui.expect_entrants(&[]).await
     })
@@ -44,11 +44,11 @@ async fn an_entrant_without_a_name_is_refused_with_why() {
 async fn the_start_says_why_it_is_not_possible_yet() {
     run_in_new_competition(async |gui| {
         gui.add_entrant("Alice").await?;
-        gui.expect_start_refusal(Some("the competition has no phase yet"))
+        gui.expect_start_refusal(Some("The competition has no phase yet."))
             .await?;
         gui.click("Add phase").await?;
 
-        gui.expect_start_refusal(Some("a competition needs at least two entrants"))
+        gui.expect_start_refusal(Some("A competition needs at least two entrants."))
             .await?;
         gui.expect_disabled("Start").await?;
         gui.add_entrant("Bob").await?;
@@ -115,7 +115,7 @@ async fn starting_needs_a_phase() {
         gui.add_entrant("Bob").await?;
         gui.expect_disabled("Start").await?;
 
-        gui.choose_format("single elimination").await?;
+        gui.choose_format("Single elimination").await?;
         gui.click("Add phase").await?;
 
         gui.click("Start").await

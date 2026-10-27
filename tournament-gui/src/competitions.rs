@@ -10,7 +10,10 @@ use tournament_app::{
 };
 use tournament_browser::channel::Broadcast;
 
-use crate::{Notices, Page, competition::SAVED, download, i18n::t, icons, open, winners_text};
+use crate::{
+    Notices, Page, competition::SAVED, download, i18n::t, icons, notices::Detail, open,
+    winners_text,
+};
 
 #[component]
 pub fn Competitions() -> Element {
@@ -33,13 +36,13 @@ pub fn Competitions() -> Element {
             .clone()
             .expect("the list is shown once the database is open");
         storage.list().await.map_err(|error| {
-            Text::new("error-competitions-unreadable").with("reason", error.to_string())
+            Text::new("error-competitions-unreadable").with_detail(error.to_string())
         })
     });
     let tr = page.translator.read();
     let (listings, unreadable) = match &*listings.read() {
         Some(Ok(listings)) => (listings.clone(), None),
-        Some(Err(why)) => (Vec::new(), Some(tr.text(why))),
+        Some(Err(why)) => (Vec::new(), Some(why.clone())),
         None => (Vec::new(), None),
     };
     rsx! {
@@ -88,7 +91,10 @@ pub fn Competitions() -> Element {
             section { class: "card", aria_labelledby: "competitions",
                 h2 { id: "competitions", {tr.get("competitions")} }
                 if let Some(why) = unreadable {
-                    p { class: "error", "{why}" }
+                    p { class: "error", {tr.sentence(&why)} }
+                    if let Some(detail) = why.detail() {
+                        Detail { detail }
+                    }
                 } else if listings.is_empty() {
                     p { class: "empty", {tr.get("no-competitions")} }
                 }
@@ -138,7 +144,7 @@ async fn import(mut page: Page, file: FileData) {
         Ok(text) => text,
         Err(error) => {
             page.error.set(Some(
-                Text::new("error-file-not-read").with("reason", error.to_string()),
+                Text::new("error-file-not-read").with_detail(error.to_string()),
             ));
             return;
         }
@@ -160,7 +166,7 @@ fn store(mut page: Page, mut session: Session) {
         match session.save(&storage).await {
             Ok(()) => open(Some(session.key())),
             Err(error) => page.error.set(Some(
-                Text::new("error-not-saved").with("reason", error.to_string()),
+                Text::new("error-not-saved").with_detail(error.to_string()),
             )),
         }
     });

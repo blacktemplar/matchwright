@@ -308,7 +308,29 @@ The original plan of this step:
 - B6: remember the view in local storage like the result entry.
 - Tests: app unit tests of the bracket view; the engine's tag/locale tests for the new stage names.
 
-### 8. Translation and text (E6, L5, L6, P2, P3, wording)
+### 8. Translation and text (E6, L5, L6, P2, P3, wording) — done
+
+- E6: a metric's column shows a `Cell` (`ToCell`, required by `MetricColumn::new`): a number, or a
+  `Phrase` (the type of a stage's name too, `Stage` being an alias) translated as `.cell-<key>` of
+  the calculator's message (`Runde 3`). Numbers are written by the language, in messages too, by a
+  formatter of the Fluent bundle (`0,5` in German, also in the range hints and the form's fields).
+- L5: the title without the marks (`Page::expect_title`).
+- L6: an error's detail is apart from its message (`Text::with_detail`), for the import and the
+  load errors and the GUI's errors with a reason of the browser; the GUI folds it in a `<details>`
+  below the alert. The `Display`s leave it to their `source`.
+- P2: `3-1` and `3x` are taken (a win needs a separator: `31` could be match 31), anything else is
+  the one message; a match with a result is named (`ReportEnteredError::AlreadyFinished`); curly
+  quotes in English. P3: the search's empty message only when no bye is found either, worded
+  "No entrant here has a name containing …".
+- Wording: errors, issues, warnings and the start's refusal are shown as sentences
+  (`Translator::sentence`), the messages staying fragments like the `Display`s (Rust's convention);
+  plugin labels standing alone are capitalized like field labels; "entrant" for "team" in the
+  metrics' description and the warning of no ranking.
+- Not done: hiding "Points for a draw" where the format has no draws. That needs a field that
+  applies only when a fact holds (`plugin_factory` has no such thing), and the format's
+  `allows_draws` would have to become a declared fact; left for a decision.
+
+The original plan of this step:
 
 - E6: a metric column says its value as a `Text` the app translates (a key with the round as
   variable, like stages), and `Score`s are formatted by the language (`,` in German).

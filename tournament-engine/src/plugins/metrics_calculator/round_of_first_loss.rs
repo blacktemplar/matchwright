@@ -1,7 +1,4 @@
-use std::{
-    fmt::{self, Display, Formatter},
-    num::NonZeroU32,
-};
+use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
@@ -9,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     entities::competition::{Bye, Match, PhaseData, RankingId},
     plugins::{
+        Phrase,
         facts::CalculatesMetric,
-        metrics_calculator::{Metric, MetricColumn, MetricsCalculator, OldMetrics},
+        metrics_calculator::{Cell, Metric, MetricColumn, MetricsCalculator, OldMetrics, ToCell},
         ranker::{Comparison, RankingCriterion, requires_metric},
     },
     type_map::TypeMapValue,
@@ -19,13 +17,16 @@ use crate::{
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct RoundOfFirstLoss(pub Option<NonZeroU32>);
 
-/// Shows the round as e.g. `round 3`, and `-` if there was no loss.
-impl Display for RoundOfFirstLoss {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(round) => write!(f, "round {round}"),
-            None => f.write_str("-"),
-        }
+/// Shows the round as the phrase `round`, e.g. `round 3`, and `unbeaten`, `-`, if there was no
+/// loss.
+impl ToCell for RoundOfFirstLoss {
+    fn to_cell(&self) -> Cell {
+        Cell::Text(match self.0 {
+            Some(round) => {
+                Phrase::new("round", format!("round {round}")).with("round", round.get())
+            }
+            None => Phrase::new("unbeaten", "-"),
+        })
     }
 }
 

@@ -86,6 +86,28 @@ async fn an_exported_competition_is_imported_as_another_one() {
     .await;
 }
 
+/// A file that is no competition is refused in the operator's language, with where reading it
+/// stopped folded away below.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_file_that_is_no_competition_is_refused_with_its_detail_apart() {
+    run(async |gui| {
+        let file =
+            std::env::temp_dir().join(format!("not-a-competition-{}.json", std::process::id()));
+        std::fs::write(&file, "<html>").unwrap();
+
+        gui.import(&file).await?;
+
+        gui.expect_error("The file is no competition this version can open.")
+            .await?;
+        gui.expect_error_detail("line 1 column 1").await?;
+        gui.page.check_accessibility().await?;
+        std::fs::remove_file(file).unwrap();
+        Ok(())
+    })
+    .await;
+}
+
 /// After an update, say, a log may hold what the page no longer knows; the operator can still keep
 /// a copy of it.
 #[tokio::test]

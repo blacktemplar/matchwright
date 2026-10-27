@@ -2,6 +2,7 @@
 //! keep what is stored.
 
 use dioxus::prelude::*;
+use tournament_app::i18n::Text;
 
 use crate::{Page, install};
 
@@ -14,14 +15,34 @@ const WARNING_DISMISSED: &str = "tournament-gui.storage-warning-dismissed";
 pub fn Notices(export: Option<EventHandler>) -> Element {
     let page = use_context::<Page>();
     let tr = page.translator.read();
+    let error = page.error.read();
+    let detail = error.as_ref().and_then(Text::detail).map(str::to_owned);
     rsx! {
         if *page.persisted.read() == Some(false) && !*page.warning_dismissed.read() {
             StorageWarning { export }
         }
         p { class: "error", role: "alert",
-            if let Some(error) = page.error.read().as_ref() {
-                {tr.text(error)}
+            if let Some(error) = error.as_ref() {
+                {tr.sentence(error)}
             }
+        }
+        if let Some(detail) = detail {
+            Detail { detail }
+        }
+    }
+}
+
+/// The [detail](Text::detail) of an error, folded away, for whoever looks into it. It is not part
+/// of the alert, so it is not announced with the error.
+#[component]
+pub fn Detail(detail: String) -> Element {
+    let page = use_context::<Page>();
+    let tr = page.translator.read();
+    rsx! {
+        details { class: "error-detail",
+            summary { {tr.get("error-detail")} }
+            // as a library or the browser says it
+            p { lang: "en", "{detail}" }
         }
     }
 }

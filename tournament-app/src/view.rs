@@ -3,7 +3,10 @@
 
 use std::num::NonZeroU32;
 
-use tournament_engine::{EntrantId, MatchId, MatchResult, plugins::phase_format::Stage};
+use tournament_engine::{
+    EntrantId, MatchId, MatchResult,
+    plugins::{metrics_calculator::Cell, phase_format::Stage},
+};
 use unicode_normalization::{UnicodeNormalization as _, char::is_combining_mark};
 
 /// An entrant as a screen shows it.
@@ -269,8 +272,9 @@ pub struct StandingRow {
     /// Shared by tied teams.
     pub rank: NonZeroU32,
     pub entrants: Vec<EntrantRow>,
-    /// One cell per column of [`Standings::columns`], `None` where the metric is not calculated.
-    pub cells: Vec<Option<String>>,
+    /// One cell per column of [`Standings::columns`], `None` where the metric is not calculated,
+    /// said in the operator's language by [`Translator::cell`](crate::i18n::Translator::cell).
+    pub cells: Vec<Option<Cell>>,
 }
 
 /// What the operator can do now. Each is true exactly when doing it would not be refused for the

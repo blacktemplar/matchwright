@@ -8,7 +8,7 @@ phase =
     .field-ranking = Reihenfolge der Tabelle
     .field-ranking-description = die Besten zuerst; jedes Kriterium entscheidet nur, wo die vor ihm gleich sind
     .field-metrics = Kennzahlen
-    .field-metrics-description = für jedes Team berechnet
+    .field-metrics-description = für jeden Teilnehmer berechnet
 
 ## Phase formats
 
@@ -66,6 +66,7 @@ plugin-tournament_engine-wins_draws_losses =
     .label = Bilanz aus Siegen, Unentschieden und Niederlagen
     .description = wie viele Spiele gewonnen, unentschieden gespielt und verloren wurden
     .column = S-U-N
+    .cell-wins-draws-losses = { $wins }-{ $draws }-{ $losses }
 plugin-tournament_engine-buchholz =
     .label = Buchholz
     .description = die Punkte aller Gegner
@@ -86,10 +87,14 @@ plugin-tournament_engine-round_of_first_loss =
     .label = Runde der ersten Niederlage
     .description = die Runde, in der ein Teilnehmer zum ersten Mal verloren hat
     .column = verloren in
+    .cell-round = Runde { $round }
+    .cell-unbeaten = -
 plugin-tournament_engine-round_of_elimination =
     .label = Runde des Ausscheidens
     .description = die Runde, in der ein Teilnehmer ausgeschieden ist
     .column = raus in
+    .cell-round = Runde { $round }
+    .cell-still-in = -
 
 ## Ranking criteria
 

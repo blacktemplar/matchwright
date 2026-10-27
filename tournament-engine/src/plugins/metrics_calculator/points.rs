@@ -1,9 +1,7 @@
-use std::fmt::{self, Display, Formatter};
-
 use plugin_factory::{Plugin, compatibility::Declaration, register};
 use serde::{Deserialize, Serialize};
 
-use super::{Metric, MetricColumn, OldMetrics};
+use super::{Cell, Metric, MetricColumn, OldMetrics, ToCell};
 use crate::{
     entities::competition::{Bye, Match, PhaseData, RankingId},
     plugins::{
@@ -21,9 +19,9 @@ pub struct Points(pub Score);
 #[typetag::serde(name = "tournament_engine::points")]
 impl TypeMapValue for Points {}
 
-impl Display for Points {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+impl ToCell for Points {
+    fn to_cell(&self) -> Cell {
+        Cell::Number(self.0)
     }
 }
 

@@ -285,7 +285,7 @@ impl PhaseForm {
         for rejected in &self.rejected {
             place(&mut fields, &rejected.path, &rejected.problem);
         }
-        // a phase ranked by nothing is played all the same, with every team tied
+        // a phase ranked by nothing is played all the same, with every entrant tied
         if let Some(ranking) = fields.iter_mut().find(|field| field.name == "ranking")
             && let Input::List(list) = &ranking.input
             && list.items.is_empty()

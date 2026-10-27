@@ -16,8 +16,8 @@ use tournament_engine::{MatchId, MatchResult};
 use wasm_bindgen::JsCast as _;
 
 use crate::{
-    announcement::Announcement, competition::Ctx, i18n::t, icons, result_text, team_name,
-    toggletip::Toggletip,
+    announcement::Announcement, capitalized, competition::Ctx, i18n::t, icons, result_text,
+    team_name, toggletip::Toggletip,
 };
 
 /// The list of matches shown.
@@ -113,7 +113,7 @@ pub fn Rounds() -> Element {
             .unwrap_or_default(),
     };
     drop(session);
-    let listed = matches.len();
+    let listed = matches.len() + byes.len();
     let matches: Vec<_> = matches
         .into_iter()
         .filter(|row| search.finds_in(row))
@@ -255,13 +255,14 @@ pub fn Rounds() -> Element {
                     Shown::Round(round) => t!(tr, "round", round = round),
                 }
             }
-            if rows.is_empty() {
+            if rows.is_empty() && byes.is_empty() {
                 if listed > 0 {
                     p { class: "empty", {t!(tr, "nothing-found", text = searched.read().trim())} }
                 } else if shown == Shown::Playable {
                     p { class: "empty", {tr.get("nothing-playable")} }
                 }
-            } else {
+            }
+            if !rows.is_empty() {
                 ol { id: "match-list",
                     for (after_report, row) in rows {
                         MatchLine {
@@ -368,7 +369,7 @@ fn ResultEntry(draws: bool) -> Element {
             button { r#type: "submit", disabled, {tr.get("report")} }
             p { id: "result-entry-error", class: "error", role: "alert",
                 if let Some(error) = error() {
-                    {tr.text(&error)}
+                    {tr.sentence(&error)}
                 }
             }
             p { id: "result-entry-hint", class: "hint",
@@ -551,7 +552,8 @@ pub fn Standings() -> Element {
         .columns
         .iter()
         .map(|column| {
-            let header = tr.plugin(column.calculator, PluginText::Column, column.header);
+            let header =
+                capitalized(&tr.plugin(column.calculator, PluginText::Column, column.header));
             let about = column
                 .description
                 .map(|english| tr.plugin(column.calculator, PluginText::Description, english));
@@ -594,8 +596,8 @@ pub fn Standings() -> Element {
                                 "data-rank": finished.then_some(row.rank.get()),
                                 td { "{row.rank}" }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }
-                                for cell in row.cells {
-                                    td { {cell} }
+                                for (column, cell) in standings.columns.iter().zip(row.cells) {
+                                    td { {cell.map(|cell| tr.cell(column.calculator, &cell))} }
                                 }
                             }
                         }

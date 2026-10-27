@@ -110,7 +110,7 @@ pub fn Phase() -> Element {
                 }
                 if let Some(refusal) = &refusal {
                     " "
-                    span { id: "start-refusal", class: "hint", {tr.text(refusal)} }
+                    span { id: "start-refusal", class: "hint", {tr.sentence(refusal)} }
                 }
             }
         }

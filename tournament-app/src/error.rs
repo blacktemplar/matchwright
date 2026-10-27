@@ -17,7 +17,7 @@ use crate::i18n::{Message, Text};
 pub enum AddEntrantError {
     #[error("an entrant name must not be empty")]
     EmptyName,
-    #[error("there already is an entrant named {0:?}")]
+    #[error("there already is an entrant named “{0}”")]
     DuplicateName(String),
     #[error("the competition has started, so no entrant can be added anymore")]
     Started,
@@ -42,7 +42,7 @@ pub enum RemoveEntrantError {
 #[derive(Debug, Error)]
 pub enum PhaseDraftError {
     /// No registered phase format has this id.
-    #[error("there is no format {0:?}")]
+    #[error("there is no format “{0}”")]
     UnknownFormat(String),
     /// The format offers an answer its own schema does not take.
     #[error(transparent)]
@@ -119,10 +119,12 @@ pub enum ReportError {
 /// [`Session::report_entered`](crate::session::Session::report_entered).
 #[derive(Debug, Error)]
 pub enum ReportEnteredError {
-    #[error("enter the number of a match and its result, 1, X or 2, e.g. \"3 1\"")]
+    #[error("enter the number of a match and its result, 1, X or 2, e.g. “3 1”")]
     Unreadable,
     #[error("there is no match {0}")]
     NoMatch(usize),
+    #[error("match {0} has a result already")]
+    AlreadyFinished(usize),
     #[error(transparent)]
     Report(#[from] ReportError),
 }
@@ -157,30 +159,31 @@ pub struct NothingToUndo;
 #[error("there is nothing to redo")]
 pub struct NothingToRedo;
 
-/// Why a stored competition was not loaded. `E` is the error of the storage.
+/// Why a stored competition was not loaded, with its source saying why that is. `E` is the error
+/// of the storage.
 #[derive(Debug, Error)]
 pub enum LoadError<E> {
     #[error("there is no such competition")]
     NotFound,
-    #[error("the competition cannot be read: {0}")]
+    #[error("the competition cannot be read")]
     Storage(#[source] E),
     /// An entry of the log is not one this version knows, e.g. one of a plugin it does not have.
-    #[error("entry {position} of the log cannot be read: {source}")]
+    #[error("entry {position} of the log cannot be read")]
     Entry {
         position: usize,
         source: serde_json::Error,
     },
-    #[error("an entrant's name cannot be read: {0}")]
+    #[error("an entrant’s name cannot be read")]
     Person(#[source] serde_json::Error),
     /// The log does not replay into a competition.
-    #[error("the log does not replay: {0}")]
+    #[error("the log does not replay")]
     Replay(#[source] StateMachineError),
 }
 
 /// Why a file was not imported: it is no competition's file, or holds a log that does not replay,
-/// e.g. one of a plugin this version does not have.
+/// e.g. one of a plugin this version does not have. Its source says where.
 #[derive(Debug, Error)]
-#[error("the file is no competition this version can open: {0}")]
+#[error("the file is no competition this version can open")]
 pub struct ImportError(#[source] pub serde_json::Error);
 
 impl Message for AddEntrantError {
@@ -276,6 +279,9 @@ impl Message for ReportEnteredError {
         match self {
             Self::Unreadable => Text::new("error-result-unreadable"),
             Self::NoMatch(number) => Text::new("error-no-match-numbered").with("number", *number),
+            Self::AlreadyFinished(number) => {
+                Text::new("error-match-numbered-finished-already").with("number", *number)
+            }
             Self::Report(error) => error.text(),
         }
     }
@@ -312,16 +318,16 @@ impl<E: Display> Message for LoadError<E> {
         match self {
             Self::NotFound => Text::new("error-competition-not-found"),
             Self::Storage(error) => {
-                Text::new("error-competition-unreadable").with("reason", error.to_string())
+                Text::new("error-competition-unreadable").with_detail(error.to_string())
             }
             Self::Entry { position, source } => Text::new("error-log-entry-unreadable")
                 .with("position", *position)
-                .with("reason", source.to_string()),
+                .with_detail(source.to_string()),
             Self::Person(error) => {
-                Text::new("error-person-unreadable").with("reason", error.to_string())
+                Text::new("error-person-unreadable").with_detail(error.to_string())
             }
             Self::Replay(error) => {
-                Text::new("error-log-does-not-replay").with("reason", error.to_string())
+                Text::new("error-log-does-not-replay").with_detail(error.to_string())
             }
         }
     }
@@ -329,7 +335,7 @@ impl<E: Display> Message for LoadError<E> {
 
 impl Message for ImportError {
     fn text(&self) -> Text {
-        Text::new("error-file-unreadable").with("reason", self.0.to_string())
+        Text::new("error-file-unreadable").with_detail(self.0.to_string())
     }
 }
 
