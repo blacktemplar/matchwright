@@ -143,8 +143,8 @@ standings = Standings
 rank = Rank
 # the bracket of a knockout, every match in it from the start
 bracket = Bracket
-bracket-winners = Winner bracket
-bracket-losers = Loser bracket
+bracket-winners = Winners bracket
+bracket-losers = Losers bracket
 bracket-grand-final = Grand final
 # above the bracket, while a match in it has no result: the names of its sides are buttons
 bracket-report-hint = Click or tap the name of the side that won.
@@ -159,6 +159,8 @@ loser-of-stage = Loser of { $stage }
 stage-position = { $stage } ({ $position })
 # a match of the bracket only played if the one before ends a certain way, e.g. a grand final reset
 if-needed = if needed
+# a pairing only played if needed, once it is not
+bracket-not-needed = not needed
 # reporting a result by typing it
 # what opens the field reporting results typed in
 type-results = Type in results

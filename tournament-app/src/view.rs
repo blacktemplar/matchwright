@@ -192,8 +192,19 @@ pub struct BracketPairing {
     /// Whether a line comes in from the previous column.
     pub line_in: bool,
     /// Whether it is only played if the pairing before it ends a certain way, e.g. a grand final
-    /// reset.
+    /// reset, which is not decided yet.
     pub only_if_needed: bool,
+    /// Why it is never played, if it is not: then it has no lines, and its sides say nothing.
+    pub unplayed: Option<Unplayed>,
+}
+
+/// Why a [`BracketPairing`] is never played.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Unplayed {
+    /// Both of its sides are byes, so nobody moves on from it.
+    Byes,
+    /// It was only played if needed, see [`BracketPairing::only_if_needed`], and was not.
+    NotNeeded,
 }
 
 /// Who takes a side of a [`BracketPairing`].

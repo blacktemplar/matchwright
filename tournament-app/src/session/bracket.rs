@@ -5,7 +5,7 @@ use std::{any::Any, collections::HashMap};
 use tournament_engine::{
     TypeMap,
     plugins::phase_format::{
-        Advance, BracketPairing as Pairing, DoubleElimination, DoubleEliminationRound,
+        Advance, BracketPairing as Pairing, BracketSide, DoubleElimination, DoubleEliminationRound,
         KnockoutRound, PairingId, Seat, SingleElimination,
     },
 };
@@ -13,7 +13,7 @@ use tournament_engine::{
 use super::{Session, stage};
 use crate::view::{
     Bracket, BracketColumn, BracketEntry, BracketLine, BracketPairing, BracketPart, BracketSection,
-    BracketSource,
+    BracketSource, Unplayed,
 };
 
 /// What a pairing is laid out with.
@@ -85,12 +85,52 @@ impl Session {
             ids.push(pairing.id);
         }
 
-        // the place each pairing's winner is drawn at next, if that is in the next column
+        let data = phase.data();
+        // whether a side can only ever be taken by a bye: one seated, the loser of a pairing with
+        // such a side (whom the bye's side beat), or the winner of a pairing of two; a pairing
+        // takes only the winners and losers of pairings before it
+        let mut byes: HashMap<PairingId, [bool; 2]> = HashMap::new();
+        for pairing in &pairings {
+            let sides = pairing.sides.map(|side| match (side.seat, side.from) {
+                (Some(seat), _) => seat == Seat::Bye,
+                (None, Some(Advance::LoserOf(from))) => byes[&from].contains(&true),
+                (None, Some(Advance::WinnerOf(from))) => byes[&from] == [true; 2],
+                (None, None) => false,
+            });
+            byes.insert(pairing.id, sides);
+        }
+        let unplayed: HashMap<PairingId, Unplayed> = pairings
+            .iter()
+            .filter_map(|pairing| {
+                if byes[&pairing.id] == [true; 2] {
+                    return Some((pairing.id, Unplayed::Byes));
+                }
+                // waiting for a pairing whose result moved nobody on
+                let decided_without_it = pairing.sides.iter().any(|side| {
+                    let Some(Advance::WinnerOf(from) | Advance::LoserOf(from)) = side.from else {
+                        return false;
+                    };
+                    let from = by_id[&from];
+                    from.advances_only_if_won_by.is_some()
+                        && from
+                            .r#match
+                            .is_some_and(|id| data.matches()[&id].result().is_some())
+                }) && pairing.sides.iter().all(|side| side.seat.is_none());
+                decided_without_it.then_some((pairing.id, Unplayed::NotNeeded))
+            })
+            .collect();
+
+        // the place each pairing's winner is drawn at next, if that is in the next column; none
+        // from or to a pairing never played
         let mut next: HashMap<PairingId, Place> = HashMap::new();
         for pairing in &pairings {
+            if unplayed.contains_key(&pairing.id) {
+                continue;
+            }
             let place = places[&pairing.id];
             for side in pairing.sides {
                 if let Some(Advance::WinnerOf(from)) = side.from
+                    && !unplayed.contains_key(&from)
                     && places[&from].section == place.section
                     && places[&from].column + 1 == place.column
                 {
@@ -99,7 +139,6 @@ impl Session {
             }
         }
 
-        let data = phase.data();
         let source = |id: PairingId| {
             let pairing = by_id[&id];
             let place = places[&id];
@@ -113,16 +152,33 @@ impl Session {
                 position: (column.len() > 1).then_some(place.index + 1),
             }
         };
-        let row = |pairing: &Pairing| {
-            let sides = pairing.sides.map(|side| match (side.seat, side.from) {
+        // who takes `side`, where the winner of a pairing against a bye is whoever plays the bye
+        let entry = |mut side: BracketSide| loop {
+            return match (side.seat, side.from) {
                 (Some(Seat::Ranking(ranking)), _) => {
                     BracketEntry::Team(self.team(data, &[ranking]))
                 }
                 (Some(Seat::Bye), _) => BracketEntry::Bye,
+                (None, Some(Advance::WinnerOf(from) | Advance::LoserOf(from)))
+                    if byes[&from] == [true; 2] =>
+                {
+                    BracketEntry::Bye
+                }
+                (None, Some(Advance::LoserOf(from))) if byes[&from].contains(&true) => {
+                    BracketEntry::Bye
+                }
+                (None, Some(Advance::WinnerOf(from))) if byes[&from].contains(&true) => {
+                    let playing = usize::from(byes[&from][0]);
+                    side = by_id[&from].sides[playing];
+                    continue;
+                }
                 (None, Some(Advance::WinnerOf(from))) => BracketEntry::WinnerOf(source(from)),
                 (None, Some(Advance::LoserOf(from))) => BracketEntry::LoserOf(source(from)),
                 (None, None) => unreachable!("a side the bracket was built with is taken"),
-            });
+            };
+        };
+        let row = |pairing: &Pairing| {
+            let sides = pairing.sides.map(entry);
             let place = places[&pairing.id];
             let line_out = next.get(&pairing.id).map(|to| {
                 // the places of the pairings whose winners meet in `to`, this one's included
@@ -140,6 +196,7 @@ impl Session {
                 }
             });
             let from = || pairing.sides.iter().filter_map(|side| side.from);
+            let unplayed = unplayed.get(&pairing.id).copied();
             BracketPairing {
                 r#match: pairing.r#match.map(|id| {
                     let (index, _, r#match) = data
@@ -151,10 +208,14 @@ impl Session {
                 sides,
                 line_out,
                 line_in: next.values().any(|to| *to == place),
-                only_if_needed: from().any(|advance| {
-                    let (Advance::WinnerOf(from) | Advance::LoserOf(from)) = advance;
-                    by_id[&from].advances_only_if_won_by.is_some()
-                }),
+                // until it is scheduled or known not to be played
+                only_if_needed: pairing.r#match.is_none()
+                    && unplayed.is_none()
+                    && from().any(|advance| {
+                        let (Advance::WinnerOf(from) | Advance::LoserOf(from)) = advance;
+                        by_id[&from].advances_only_if_won_by.is_some()
+                    }),
+                unplayed,
             }
         };
         let mut sections: Vec<BracketSection> = Vec::new();

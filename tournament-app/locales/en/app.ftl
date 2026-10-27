@@ -25,6 +25,8 @@ error-result-unreadable = enter the number of a match and its result, 1, X or 2,
 error-no-match-numbered = there is no match { $number }
 error-match-not-reported = the match has no result that could be undone
 error-result-depended-on = a later result depends on this one; undo that one first
+# $number: the number of the match whose result depends on the one to reopen
+error-result-depended-on-by = the result of match { $number } depends on this one; reopen that match first
 error-nothing-to-undo = there is nothing to undo
 error-nothing-to-redo = there is nothing to redo
 error-competition-not-found = there is no such competition

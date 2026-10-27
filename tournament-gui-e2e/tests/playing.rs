@@ -266,6 +266,55 @@ async fn results_are_reported_in_the_bracket() {
     .await;
 }
 
+/// A semifinal whose winner played the final is reopened only after the final, which the refusal
+/// names.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn reopening_a_result_a_later_one_depends_on_names_that_one() {
+    run_in_new_competition(async |gui| {
+        for name in ["Alice", "Bob", "Carol", "Dave"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("single elimination").await?;
+        gui.toggle("Match for third place").await?;
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+        for entry in ["1 1", "2 1", "3 1"] {
+            gui.enter_result(entry).await?;
+        }
+        gui.choose_round("Round 1").await?;
+
+        gui.click_labelled("Reopen match 1").await?;
+
+        gui.expect_error("the result of match 3 depends on this one; reopen that match first")
+            .await
+    })
+    .await;
+}
+
+/// The bracket, once chosen, is shown first on the next visit.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_bracket_chosen_is_shown_again_after_a_reload() {
+    run_in_new_competition(async |gui| {
+        for name in ["Alice", "Bob"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("single elimination").await?;
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+
+        gui.click("Bracket").await?;
+        gui.page.reload().await?;
+
+        gui.expect_view("Bracket").await?;
+        gui.click("Matches & standings").await?;
+        gui.page.reload().await?;
+        gui.expect_view("Matches & standings").await
+    })
+    .await;
+}
+
 /// Once every match is played, the screen says who won, the first places stand out, the phase
 /// folds away, and the list of competitions names the winner too; undoing the last result takes
 /// it all back.

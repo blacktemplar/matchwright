@@ -125,6 +125,7 @@ fn an_error_says_in_english_what_its_display_says() {
         both(ReportEnteredError::Unreadable),
         both(ReportEnteredError::NoMatch(3)),
         both(UndoReportError::DependedOn),
+        both(UndoReportError::DependedOnBy(3)),
         both(NothingToUndo),
     ] {
         assert_eq!(message, display);
@@ -234,7 +235,7 @@ fn a_stage_is_said_in_the_language_with_its_numbers_or_else_as_its_code_says() {
             SingleElimination::ID,
             KnockoutRound::RoundOf(16).into()
         )),
-        "8th-finals"
+        "Round of 16"
     );
 }
 

@@ -21,7 +21,7 @@ use crate::{
     storage::{MemoryStorage, Progress, Stored},
     view::{
         BracketColumn, BracketEntry, BracketLine, BracketPart, BracketSection, BracketSource,
-        NameSearch,
+        NameSearch, Unplayed,
     },
 };
 
@@ -618,6 +618,80 @@ fn the_bracket_of_a_double_elimination_shows_where_the_losers_drop() {
     assert!(grand_final[1].pairings[0].only_if_needed);
 }
 
+/// Of five entrants, three have byes in the first round, so two byes meet in the loser bracket: a
+/// pairing never played, without lines, whose winner is a bye too. A side waiting for the winner
+/// of a pairing against a bye waits for whoever plays the bye.
+#[test]
+fn a_pairing_of_two_byes_is_never_played_and_a_bye_is_passed_through() {
+    let session = Given::new()
+        .entrants(&["Alice", "Bob", "Carol", "Dave", "Erin"])
+        .format(DoubleElimination::ID)
+        .started();
+
+    let bracket = session.bracket().unwrap();
+
+    let losers = &bracket.sections[1].columns;
+    let byes = &losers[0].pairings[1];
+    assert_eq!(byes.unplayed, Some(Unplayed::Byes));
+    assert_eq!(byes.line_out, None);
+    assert_eq!(losers[0].pairings[0].unplayed, None);
+    assert_eq!(
+        column(&losers[1]).1,
+        [
+            ["loser of #1".to_owned(), "loser of #2".to_owned()],
+            ["bye".to_owned(), "loser of Winners round 2 (1)".to_owned()]
+        ],
+        "the losers of the winner bracket, rather than the winners of the byes they get first"
+    );
+    assert!(!losers[1].pairings[1].line_in);
+    assert_eq!(
+        column(&losers[2]).1,
+        [[
+            "winner of Losers round 2 (1)".to_owned(),
+            "loser of Winners round 2 (1)".to_owned()
+        ]]
+    );
+}
+
+/// Reports side A as the winner of every match playable, as long as there is one, except
+/// `exception`, a stage in English whose match side B wins.
+fn play_out(session: &mut Session, exception: &str) {
+    while let Some(row) = session.playable().into_iter().next() {
+        let result = if english(row.stage.clone()).as_deref() == Some(exception) {
+            MatchResult::BWins
+        } else {
+            MatchResult::AWins
+        };
+        session.report(row.id, result).unwrap();
+    }
+}
+
+/// The reset of the grand final is "if needed" until it is scheduled, or until the champion of the
+/// winner bracket won the grand final, which leaves it unplayed.
+#[test]
+fn the_reset_of_the_grand_final_is_only_if_needed_until_that_is_decided() {
+    let reset = |session: &Session| {
+        let bracket = session.bracket().unwrap();
+        bracket.sections[2].columns[1].pairings[0].clone()
+    };
+    let mut session = Given::new().format(DoubleElimination::ID).started();
+    assert!(reset(&session).only_if_needed);
+
+    play_out(&mut session, "none");
+
+    let not_needed = reset(&session);
+    assert!(!not_needed.only_if_needed);
+    assert_eq!(not_needed.unplayed, Some(Unplayed::NotNeeded));
+    let grand_final = &session.bracket().unwrap().sections[2].columns[0].pairings[0];
+    assert_eq!(grand_final.line_out, None);
+
+    let mut session = Given::new().format(DoubleElimination::ID).started();
+    play_out(&mut session, "Grand final");
+    let played = reset(&session);
+    assert!(!played.only_if_needed && played.unplayed.is_none());
+    assert!(played.r#match.is_some());
+}
+
 #[test]
 fn a_reported_result_comes_with_its_match() {
     let mut session = Given::new().started();
@@ -704,7 +778,7 @@ fn a_result_a_later_one_depends_on_is_undone_after_it() {
 
     assert!(matches!(
         session.undo_report(semifinal),
-        Err(UndoReportError::DependedOn)
+        Err(UndoReportError::DependedOnBy(3))
     ));
     session.undo_report(numbered(&session, 3)).unwrap();
     let reopened = session.undo_report(semifinal).unwrap();

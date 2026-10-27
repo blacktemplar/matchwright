@@ -819,6 +819,52 @@ impl Gui {
         Ok(())
     }
 
+    /// Waits until the view chosen after the start is `label`, e.g. "Bracket", as the buttons
+    /// choosing it say: the one pressed of those shown.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with the view chosen instead.
+    pub async fn expect_view(&self, label: &str) -> WebDriverResult<()> {
+        let pressed = self
+            .driver
+            .query(By::Css(".view-switch button[aria-pressed=true]"))
+            .and_displayed()
+            .all_from_selector()
+            .await?;
+        let mut texts = Vec::new();
+        for button in pressed {
+            texts.push(button.text().await?);
+        }
+        assert!(
+            texts.iter().any(|text| text == label),
+            "the view chosen must be {label:?}, but is {texts:?}"
+        );
+        Ok(())
+    }
+
+    /// Checks that the bracket fits into its card, so that it does not scroll sideways.
+    ///
+    /// # Panics
+    /// Panics if it does not, with how much wider it is.
+    pub async fn expect_bracket_fits(&self) -> WebDriverResult<()> {
+        let [content, shown] = self
+            .driver
+            .execute(
+                r#"
+                const scroll = document.querySelector("[aria-labelledby=bracket] > .scroll");
+                return [scroll.scrollWidth, scroll.clientWidth];
+                "#,
+                Vec::new(),
+            )
+            .await?
+            .convert::<[u32; 2]>()?;
+        assert!(
+            content <= shown,
+            "the bracket must fit into its card, but is {content}px wide in {shown}px"
+        );
+        Ok(())
+    }
+
     /// Waits until the sides of the bracket not decided yet are `sides`, in the order of the
     /// bracket, e.g. `"Winner of 1"`.
     ///

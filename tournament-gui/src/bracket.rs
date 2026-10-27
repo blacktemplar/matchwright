@@ -10,7 +10,7 @@ use tournament_app::{
     i18n::Translator,
     view::{
         self, BracketColumn, BracketEntry, BracketLine, BracketPairing, BracketPart,
-        BracketSection, BracketSource, MatchRow, StageName,
+        BracketSection, BracketSource, MatchRow, StageName, Unplayed,
     },
 };
 use tournament_engine::{MatchId, MatchResult};
@@ -172,6 +172,26 @@ fn Stage(stage: Option<StageName>, nested: bool) -> Element {
 fn Pairing(pairing: BracketPairing, focus: Signal<Option<Focus>>) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
+    // its slot kept, so that the others stay where the lines meet them
+    match pairing.unplayed {
+        Some(Unplayed::Byes) => {
+            return rsx! {
+                li { class: "slot", aria_hidden: "true",
+                    div { class: "pairing unplayed" }
+                }
+            };
+        }
+        Some(Unplayed::NotNeeded) => {
+            return rsx! {
+                li { class: "slot",
+                    div { class: "pairing unplayed",
+                        span { class: "if-needed", {tr.get("bracket-not-needed")} }
+                    }
+                }
+            };
+        }
+        None => {}
+    }
     let line_out = match pairing.line_out {
         None => "",
         Some(BracketLine::Straight) => "line-straight",

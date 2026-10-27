@@ -47,6 +47,36 @@ async fn the_lines_of_a_double_elimination_meet() {
     .await;
 }
 
+/// A knockout of 16 has four rounds, which fit next to each other on a tablet held sideways.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_bracket_of_sixteen_fits_on_a_tablet() {
+    run_in_new_competition(async |gui| {
+        let names: Vec<String> = (1..=16).map(|number| format!("Player {number}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        gui.page.resize(820, 1180).await?;
+        show_bracket(&gui, "single elimination", &names).await?;
+
+        gui.expect_bracket_lines_meet().await?;
+        gui.expect_bracket_fits().await
+    })
+    .await;
+}
+
+/// Two byes meeting in the loser bracket leave their place empty, and the lines still meet.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_pairing_never_played_keeps_its_place() {
+    run_in_new_competition(async |gui| {
+        let names = ["Alice", "Bob", "Carol", "Dave", "Erin"];
+        show_bracket(&gui, "double elimination", &names).await?;
+
+        gui.expect_bracket_lines_meet().await?;
+        gui.page.check_accessibility().await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_standings_scroll_inside_their_card_on_a_phone() {

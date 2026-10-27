@@ -23,6 +23,7 @@ error-result-unreadable = gib die Nummer eines Spiels und sein Ergebnis ein, 1, 
 error-no-match-numbered = es gibt kein Spiel { $number }
 error-match-not-reported = das Spiel hat kein Ergebnis, das zurückgenommen werden könnte
 error-result-depended-on = ein späteres Ergebnis hängt von diesem ab; nimm zuerst jenes zurück
+error-result-depended-on-by = das Ergebnis von Spiel { $number } hängt von diesem ab; zuerst muss Spiel { $number } wieder geöffnet werden
 error-nothing-to-undo = es gibt nichts rückgängig zu machen
 error-nothing-to-redo = es gibt nichts wiederherzustellen
 error-competition-not-found = dieses Turnier gibt es nicht

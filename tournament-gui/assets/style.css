@@ -1224,7 +1224,10 @@ ul.summary-items {
   background: var(--hover);
 }
 
+/* where a side comes from: wrapping within the narrowest column, rather than widening its column
+ * for a long stage ("Winner of Quarterfinals (1)"), so that a knockout of 16 fits a tablet */
 .pairing .side.pending {
+  max-width: 7rem;
   color: var(--text-muted);
   font-style: italic;
 }
@@ -1246,6 +1249,17 @@ ul.summary-items {
   color: var(--text-muted);
   font-size: 0.9em;
   grid-column: 2;
+}
+
+/* never played (bracket.rs): its place kept, only an outline, and nothing at all for two byes */
+.pairing.unplayed {
+  align-content: center;
+  border-style: dashed;
+  background: transparent;
+}
+
+.slot[aria-hidden="true"] > .pairing.unplayed {
+  visibility: hidden;
 }
 
 /* The standings */

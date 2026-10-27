@@ -332,17 +332,32 @@ enum Column {
 #[component]
 fn Play() -> Element {
     let ctx = use_context::<Ctx>();
-    let mut shown = use_signal(|| Column::Matches);
+    let mut shown = use_signal(|| {
+        if bracket_remembered() {
+            Column::Bracket
+        } else {
+            Column::Matches
+        }
+    });
     let has_bracket = ctx.session.read().bracket().is_some();
+    // a phase without a bracket shows the matches, whatever was chosen for a knockout
+    let current = match shown() {
+        Column::Bracket if !has_bracket => Column::Matches,
+        column => column,
+    };
+    let mut show = move |column| {
+        shown.set(column);
+        remember_bracket(column == Column::Bracket);
+    };
     let tr = ctx.translator.read();
     let column = |column| {
-        if shown() == column {
+        if current == column {
             "column"
         } else {
             "column hidden-narrow"
         }
     };
-    let bracket_shown = shown() == Column::Bracket;
+    let bracket_shown = current == Column::Bracket;
     let winners = ctx.session.read().winners();
     rsx! {
         if let Some(winners) = &winners {
@@ -355,26 +370,26 @@ fn Play() -> Element {
             aria_label: tr.get("view"),
             button {
                 class: "narrow-only",
-                aria_pressed: shown() == Column::Matches,
-                onclick: move |_| shown.set(Column::Matches),
+                aria_pressed: current == Column::Matches,
+                onclick: move |_| show(Column::Matches),
                 {tr.get("matches")}
             }
             button {
                 class: "narrow-only",
-                aria_pressed: shown() == Column::Standings,
-                onclick: move |_| shown.set(Column::Standings),
+                aria_pressed: current == Column::Standings,
+                onclick: move |_| show(Column::Standings),
                 {tr.get("standings")}
             }
             if has_bracket {
                 button {
                     class: "wide-only",
                     aria_pressed: !bracket_shown,
-                    onclick: move |_| shown.set(Column::Matches),
+                    onclick: move |_| show(Column::Matches),
                     {tr.get("matches-and-standings")}
                 }
                 button {
                     aria_pressed: bracket_shown,
-                    onclick: move |_| shown.set(Column::Bracket),
+                    onclick: move |_| show(Column::Bracket),
                     {tr.get("bracket")}
                 }
             }
@@ -403,6 +418,32 @@ fn Play() -> Element {
             }
         }
     }
+}
+
+/// Where the browser remembers that the operator chose the bracket, which a knockout shows first
+/// then.
+const BRACKET_SHOWN: &str = "tournament-gui.bracket-shown";
+
+/// Whether the operator chose the bracket last in this browser.
+fn bracket_remembered() -> bool {
+    local_storage()
+        .and_then(|storage| storage.get_item(BRACKET_SHOWN).ok().flatten())
+        .is_some()
+}
+
+fn remember_bracket(shown: bool) {
+    // without local storage, the matches are shown first on the next visit
+    if let Some(storage) = local_storage() {
+        _ = if shown {
+            storage.set_item(BRACKET_SHOWN, "true")
+        } else {
+            storage.remove_item(BRACKET_SHOWN)
+        };
+    }
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
 }
 
 /// What the screen says once every match is played: who won, or who is tied for first.

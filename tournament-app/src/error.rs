@@ -140,6 +140,11 @@ pub enum UndoReportError {
     /// participants of; it has to be undone first.
     #[error("a later result depends on this one; undo that one first")]
     DependedOn,
+    /// The result of the match of this number (see
+    /// [`MatchRow::number`](crate::view::MatchRow::number)) depends on this one, e.g. that of the
+    /// final the undone semifinal decided the participants of; it has to be undone first.
+    #[error("the result of match {0} depends on this one; reopen that match first")]
+    DependedOnBy(usize),
 }
 
 /// The session has done nothing it has not undone.
@@ -283,6 +288,9 @@ impl Message for UndoReportError {
             Self::UnknownMatch => Text::new("error-unknown-match"),
             Self::NotReported => Text::new("error-match-not-reported"),
             Self::DependedOn => Text::new("error-result-depended-on"),
+            Self::DependedOnBy(number) => {
+                Text::new("error-result-depended-on-by").with("number", *number)
+            }
         }
     }
 }

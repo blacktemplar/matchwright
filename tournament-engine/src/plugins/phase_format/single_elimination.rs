@@ -151,8 +151,8 @@ impl KnockoutRound {
     }
 }
 
-/// Shows the round by its fraction of the final, e.g. `Final`, `Quarterfinals`, `16th-finals`,
-/// or `Third place`.
+/// Shows the round by its fraction of the final, e.g. `Final`, `Quarterfinals`, `Round of 32` (the
+/// sixteenth-finals, of 32 entrants), or `Third place`.
 impl Display for KnockoutRound {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.fraction_of_final() {
@@ -160,7 +160,7 @@ impl Display for KnockoutRound {
             Some(1) => f.write_str("Final"),
             Some(2) => f.write_str("Semifinals"),
             Some(4) => f.write_str("Quarterfinals"),
-            Some(fraction) => write!(f, "{fraction}{}-finals", ordinal_suffix(fraction)),
+            Some(fraction) => write!(f, "Round of {}", 2 * fraction),
         }
     }
 }
@@ -178,17 +178,6 @@ impl From<KnockoutRound> for Stage {
             Some(4) => Self::new("quarterfinals", english),
             Some(fraction) => Self::new("fraction-finals", english).with("fraction", fraction),
         }
-    }
-}
-
-/// The English ordinal suffix of `n`, e.g. "nd" for 32.
-fn ordinal_suffix(n: u32) -> &'static str {
-    match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
     }
 }
 
@@ -255,11 +244,11 @@ mod tests {
                 "Final",
                 "Semifinals",
                 "Quarterfinals",
-                "8th-finals",
-                "16th-finals",
-                "32nd-finals",
-                "64th-finals",
-                "512th-finals"
+                "Round of 16",
+                "Round of 32",
+                "Round of 64",
+                "Round of 128",
+                "Round of 1024"
             ]
         );
         assert_eq!(KnockoutRound::ThirdPlace.to_string(), "Third place");
@@ -288,19 +277,7 @@ mod tests {
                 ("third-place", &[]),
             ]
         );
-        assert_eq!(stages[3].to_string(), "8th-finals");
-    }
-
-    #[test]
-    fn ordinal_suffixes_follow_english_rules() {
-        let suffixes = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 111, 112, 1001].map(ordinal_suffix);
-
-        assert_eq!(
-            suffixes,
-            [
-                "st", "nd", "rd", "th", "th", "th", "th", "st", "nd", "rd", "th", "th", "st"
-            ]
-        );
+        assert_eq!(stages[3].to_string(), "Round of 16");
     }
 
     /// A knockout between `num_players` entrants with its first round already scheduled.

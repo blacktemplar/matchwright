@@ -7,6 +7,7 @@
 //! loaded competition starts with nothing to undo.
 
 use std::{
+    any::Any,
     collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroU32,
 };
@@ -28,7 +29,8 @@ use tournament_engine::{
         self as engine, CompetitionAlreadyStarted, ReconfigurePhaseError, UndoMatchResultError,
     },
     undoable_state_machine::{
-        LogEntry, RedoLastError, SessionHistory, StateMachineError, TransitionError, UndoLastError,
+        LogEntry, LogEntryKind, RedoLastError, SessionHistory, StateMachineError, TransitionError,
+        UndoLastError,
     },
     uuid::Uuid,
 };
@@ -809,7 +811,9 @@ impl Session {
         })
         .map_err(|error| match error {
             UndoMatchResultError::NotReported => UndoReportError::NotReported,
-            UndoMatchResultError::Rejected(_) => UndoReportError::DependedOn,
+            UndoMatchResultError::Rejected(error) => self
+                .reported_number(&error)
+                .map_or(UndoReportError::DependedOn, UndoReportError::DependedOnBy),
         })?;
         let matches = self
             .started_phase()
@@ -917,6 +921,27 @@ impl Session {
             self.undone.clear();
         }
         Ok(done)
+    }
+
+    /// The number of the match whose result the entry of the log that `error` names reports, if it
+    /// is one reporting a result of a match of the phase, e.g. the later result an undo refused
+    /// would no longer apply to.
+    fn reported_number(&self, error: &StateMachineError) -> Option<usize> {
+        let StateMachineError::Transition(id, _) = error else {
+            return None;
+        };
+        let entry = self.machine.log().iter().find(|entry| entry.id() == *id)?;
+        let LogEntryKind::Apply(transition) = entry.kind() else {
+            return None;
+        };
+        let transition: &dyn Any = &**transition;
+        let reported = transition.downcast_ref::<ReportMatchResult>()?;
+        let index = self
+            .started_phase()?
+            .data()
+            .matches()
+            .get_index_of(&reported.match_id())?;
+        Some(index + 1)
     }
 
     /// The phase of the competition, whether started or not.

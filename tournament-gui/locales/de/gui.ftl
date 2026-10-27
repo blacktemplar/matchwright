@@ -120,6 +120,7 @@ winner-of-stage = Sieger: { $stage }
 loser-of-stage = Verlierer: { $stage }
 stage-position = { $stage } ({ $position })
 if-needed = falls nötig
+bracket-not-needed = nicht nötig
 type-results = Ergebnisse eintippen
 enter-result = Ergebnis eingeben
 enter-result-hint = die Nummer des Spiels, dann 1, wenn die linke Seite gewonnen hat{ $draws ->

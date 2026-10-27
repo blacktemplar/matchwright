@@ -272,7 +272,23 @@ The original plan of this step:
   "Edit phase" moved out of the way, the winner in the list of competitions.
 - Tests: app unit test; e2e.
 
-### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6, B7)
+### 7. Bracket and reopen correctness of the view (E3, E4, E5, B5, B6, B7) — done but B5's numbering
+
+- E3: the refusal names the later match ("the result of match 3 depends on this one; reopen that
+  match first"), read from the log entry the engine's refusal names. Reopen stays offered: knowing
+  beforehand would take a trial replay per reported result on every render.
+- E4: what can only be a bye is worked out from the bracket's tree; a pairing of two byes keeps
+  its slot, empty and without lines (`Unplayed::Byes`); a side taking the winner of a pairing
+  against a bye names whoever plays the bye. A bye that passes a loser on ("Bye vs Loser of 1")
+  stays, receded like a finished pairing, since it is decided without a match. E5: "if needed"
+  until the reset is scheduled; "not needed" once the grand final ended without it.
+- B5: English stages "Round of 16", "Round of 32" (German keeps "Achtelfinale" etc.); "Winners
+  bracket"/"Losers bracket" headings. *Open:* numbering every pairing from the start, see below.
+- B6: the bracket chosen is remembered in local storage.
+- B7: where a side comes from wraps within 7rem, so a knockout of 16 fits 820px (it was 835px in
+  739px, not 7px over as first measured).
+
+The original plan of this step:
 
 - E3: name the blocking match in the refusal (the engine knows which later result depends on it;
   the app maps it to a match number); in the app's match rows, mark a result that can't be reopened

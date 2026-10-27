@@ -1770,6 +1770,19 @@ bracket, every pairing in it from the start.
   up to meet the winner of its neighbour. A side not decided yet names its
   source by the number of its match, or else by its stage and, where the
   stage has several pairings, its place from the top.
+- **What can only be a bye is worked out from the tree** (2026-10-27). Byes
+  come only from the seats the bracket was built with, so a side is a bye for
+  certain if it is seated one, takes the loser of a pairing with such a side,
+  or the winner of a pairing of two. A pairing of two byes is never played
+  (`Unplayed::Byes`): it keeps its slot, empty, without lines, so that the
+  others stay where the lines meet them. A side taking the winner of a pairing
+  against a bye names whoever plays the bye ("Loser of 1" rather than "Winner
+  of Losers round 1 (1)"). A pairing only played if needed (the grand final
+  reset) says "if needed" until it is scheduled, and "not needed" once the
+  pairing it depends on ended without it (`Unplayed::NotNeeded`). Rejected:
+  dropping such pairings from the columns, which breaks the geometry of the
+  lines; the formats not adding them, since which ones are byes depends on the
+  number of entrants and the engine's tree is simpler whole.
 - **The GUI draws it as columns of equal slots.** Each column is a list of
   slots of equal height (a grid of `1fr` rows, so a name of two lines makes
   every slot of its column as high, and the columns stretch alike), so a
@@ -1791,7 +1804,11 @@ bracket, every pairing in it from the start.
   view switch is shown at every width, choosing between "Matches & standings"
   and "Bracket" where there is room for two columns, and between the matches,
   the standings and the bracket where there is not. What is not shown stays on
-  the page, `hidden`, so that the round chosen and the search are kept.
+  the page, `hidden`, so that the round chosen and the search are kept. The
+  browser remembers whether the bracket was chosen (local storage), as it does
+  the typed entry of results. Where a side comes from wraps within the
+  narrowest column (`7rem`) rather than widening its column, so that a
+  knockout of 16 fits a tablet held upright.
 - **A result is reported in the bracket by a click on the side that won.**
   While a match has no result, the names of its sides are buttons ("Alice
   wins", said under the pointer too) shaped like the names, so that the
@@ -1799,7 +1816,10 @@ bracket, every pairing in it from the start.
   a touch screen has no pointer to tint them under, with a line above the
   bracket saying what a click does; a knockout has no draws. The focus then moves on to the next match without a result in
   the order of the bracket, as in the list of matches. Reopening a match and
-  typing a result stay in the list of matches.
+  typing a result stay in the list of matches. Reopening a result a later one
+  depends on is refused naming that match (the log entry the engine's refusal
+  names, read back as the result it reports); Reopen stays offered, since
+  knowing beforehand would take a trial replay per result on every render.
 
 #### Alternatives
 
@@ -2032,7 +2052,8 @@ Implemented 2026-10-24, in English and German.
   They are translated as the attribute `.stage-<key>` of the format's message,
   with the numbers as variables, so that a language can word them as it needs
   (German has a word of its own for each fraction of the final, `Achtelfinale`,
-  where English says `8th-finals`). A format that names stages its message
+  where English says `Round of 16`, by the entrants rather than the
+  fraction). A format that names stages its message
   does not translate shows them in English, as every plugin. The test of the
   plugin messages lists the stages of the engine's formats itself, since a
   format does not tell which stages it can name. Rejected: the GUI translating
