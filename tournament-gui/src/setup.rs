@@ -31,12 +31,34 @@ pub fn Entrants() -> Element {
                     span { class: "count", "({count})" }
                 }
             }
+            if count == 0 {
+                p { class: "empty", {tr.get("no-entrants")} }
+            }
+            ol { id: "entrant-list",
+                for (id, name) in entrants {
+                    li { key: "{id:?}",
+                        span { class: "name", "{name}" }
+                        button {
+                            class: "small",
+                            aria_label: t!(tr, "remove-entrant", name = name.as_str()),
+                            disabled: !actions.remove_entrant,
+                            onclick: move |_| {
+                                _ = ctx.act(|session| session.remove_entrant(id));
+                            },
+                            {tr.get("remove")}
+                        }
+                    }
+                }
+            }
+            // below the list, so that the entrant just added shows right above the field, which
+            // keeps the focus for the next
             form {
                 class: "row",
                 onsubmit: move |event| {
                     event.prevent_default();
                     if ctx.act(|session| session.add_entrant(&name.peek())).is_some() {
                         name.set(String::new());
+                        scroll_to_field();
                     }
                 },
                 label { r#for: "entrant-name", class: "visually-hidden", {tr.get("name")} }
@@ -54,27 +76,17 @@ pub fn Entrants() -> Element {
                     {tr.get("add-entrant")}
                 }
             }
-            if count == 0 {
-                p { class: "empty", {tr.get("no-entrants")} }
-            }
-            ol { id: "entrant-list",
-                for (id, name) in entrants {
-                    li { key: "{id:?}",
-                        span { class: "name", "{name}" }
-                        button {
-                            class: "quiet small",
-                            aria_label: t!(tr, "remove-entrant", name = name.as_str()),
-                            disabled: !actions.remove_entrant,
-                            onclick: move |_| {
-                                _ = ctx.act(|session| session.remove_entrant(id));
-                            },
-                            {tr.get("remove")}
-                        }
-                    }
-                }
-            }
         }
     }
+}
+
+/// Scrolls the field of the name into view, once the entrant just added is rendered above it, so
+/// that the list growing with the page does not push it out of sight.
+fn scroll_to_field() {
+    document::eval(
+        "requestAnimationFrame(() => document.getElementById('entrant-name')\
+         ?.form.scrollIntoView({ block: 'nearest' }))",
+    );
 }
 
 /// The phase: its form until it is added, then how it is played; and the start.
@@ -99,10 +111,11 @@ pub fn Phase() -> Element {
             } else {
                 NewPhase {}
             }
+            // apart from the phase above it, the card's primary action once the phase is added
             div { class: "start",
                 button {
                     id: "start",
-                    class: "primary",
+                    class: if has_phase { "primary" },
                     disabled: !actions.start,
                     aria_describedby: refusal.is_some().then_some("start-refusal"),
                     onclick: move |_| _ = ctx.act(Session::start),

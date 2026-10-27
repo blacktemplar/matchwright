@@ -525,7 +525,7 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     rsx! {
         span { class: "result", {result_text(&tr, &row)} }
         button {
-            class: "quiet small",
+            class: "small",
             disabled,
             aria_label: t!(tr, "reopen-match", number = row.number),
             onclick: move |_| {

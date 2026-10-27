@@ -325,10 +325,12 @@ fn NumberField(
     let mut typed = use_signal(|| None::<String>);
     let take = path.clone();
     rsx! {
-        div { class: "field",
-            label { r#for: "{id}", "{label}" }
-            {about}
-            " "
+        // on a grid of a column of labels and one of inputs, the numbers it takes below its input
+        div { class: "field number-field",
+            span { class: "number-label",
+                label { r#for: "{id}", "{label}" }
+                {about}
+            }
             input {
                 r#type: "text",
                 class: "number",
@@ -349,8 +351,7 @@ fn NumberField(
                 },
                 onchange: move |event| _ = form.write().enter(&path, &event.value()),
             }
-            " "
-            span { class: "hint", id: "{id}-hint", "({hint})" }
+            span { class: "hint", id: "{id}-hint", {capitalized(&hint)} }
             {children}
         }
     }
@@ -378,6 +379,11 @@ fn PluginField(
     let none = plugin.optional.then(|| tr.get("no-plugin"));
     let choose = path.clone();
     let trigger = format!("#{id}");
+    // what the plugin chosen does, below the choice, rather than a second ⓘ next to the field's
+    let chosen_description = plugin
+        .chosen
+        .as_ref()
+        .and_then(|chosen| plugin_description(&tr, &chosen.plugin));
     rsx! {
         div { class: "field",
             span { class: "label", id: "{id}-label", "{label}" }
@@ -386,6 +392,7 @@ fn PluginField(
             Select {
                 id: "{id}",
                 labelled_by: "{id}-label",
+                described_by: chosen_description.is_some().then(|| format!("{id}-chosen")),
                 value: chosen.or_else(|| plugin.optional.then(String::new)),
                 placeholder: tr.get("choose-plugin"),
                 disabled,
@@ -413,9 +420,10 @@ fn PluginField(
                     }
                 }
             }
-            if let Some(chosen) = &plugin.chosen {
-                " "
-                About { list: id.clone(), option: chosen.plugin }
+            if let Some(description) = chosen_description {
+                p { class: "hint chosen-description", id: "{id}-chosen",
+                    {capitalized(&description)}
+                }
             }
             {children}
             if let Some(chosen) = plugin.chosen {
@@ -589,47 +597,50 @@ fn OrderedItem(
             span { class: "name", {capitalized(&name)} }
             " "
             About { list, option: item.plugin }
-            // kept focusable at the end of the list, so that the focus stays on a plugin moved
-            // there
-            button {
-                class: "quiet small",
-                r#type: "button",
-                id: "{own}-up",
-                aria_label: t!(tr, "move-up", plugin = name.as_str()),
-                disabled,
-                aria_disabled: (index == 0).then_some("true"),
-                onclick: move |_| {
-                    _ = form.write().move_up(&up);
-                    focus_later(&[&moved_up]);
-                },
-                "↑"
-            }
-            button {
-                class: "quiet small",
-                r#type: "button",
-                id: "{own}-down",
-                aria_label: t!(tr, "move-down", plugin = name.as_str()),
-                disabled,
-                aria_disabled: last.then_some("true"),
-                onclick: move |_| {
-                    _ = form.write().move_down(&down);
-                    // nothing at the end, where it stays
-                    focus_later(&[&moved_down]);
-                },
-                "↓"
-            }
-            button {
-                class: "quiet small",
-                r#type: "button",
-                id: "{own}-remove",
-                aria_label: t!(tr, "remove-plugin", plugin = name.as_str()),
-                disabled,
-                onclick: move |_| {
-                    _ = form.write().remove(&remove);
-                    let selectors: Vec<&str> = after_removal.iter().map(String::as_str).collect();
-                    focus_later(&selectors);
-                },
-                {tr.get("remove")}
+            span { class: "item-buttons",
+                // kept focusable at the end of the list, so that the focus stays on a plugin
+                // moved there
+                button {
+                    class: "small icon-only",
+                    r#type: "button",
+                    id: "{own}-up",
+                    aria_label: t!(tr, "move-up", plugin = name.as_str()),
+                    disabled,
+                    aria_disabled: (index == 0).then_some("true"),
+                    onclick: move |_| {
+                        _ = form.write().move_up(&up);
+                        focus_later(&[&moved_up]);
+                    },
+                    icons::ArrowUp {}
+                }
+                button {
+                    class: "small icon-only",
+                    r#type: "button",
+                    id: "{own}-down",
+                    aria_label: t!(tr, "move-down", plugin = name.as_str()),
+                    disabled,
+                    aria_disabled: last.then_some("true"),
+                    onclick: move |_| {
+                        _ = form.write().move_down(&down);
+                        // nothing at the end, where it stays
+                        focus_later(&[&moved_down]);
+                    },
+                    icons::ArrowDown {}
+                }
+                button {
+                    class: "small",
+                    r#type: "button",
+                    id: "{own}-remove",
+                    aria_label: t!(tr, "remove-plugin", plugin = name.as_str()),
+                    disabled,
+                    onclick: move |_| {
+                        _ = form.write().remove(&remove);
+                        let selectors: Vec<&str> =
+                            after_removal.iter().map(String::as_str).collect();
+                        focus_later(&selectors);
+                    },
+                    {tr.get("remove")}
+                }
             }
             Fields { form, fields: item.fields, disabled }
             Issues { id: "{id(&item.path)}-issues", issues: item.issues }

@@ -19,6 +19,28 @@ pub fn ChevronDown() -> Element {
     }
 }
 
+/// Moving up, to before the one above.
+#[component]
+pub fn ArrowUp() -> Element {
+    rsx! {
+        Icon {
+            path { d: "m5 12 7-7 7 7" }
+            path { d: "M12 19V5" }
+        }
+    }
+}
+
+/// Moving down, to after the one below.
+#[component]
+pub fn ArrowDown() -> Element {
+    rsx! {
+        Icon {
+            path { d: "M12 5v14" }
+            path { d: "m19 12-7 7-7-7" }
+        }
+    }
+}
+
 /// The one after.
 #[component]
 pub fn ChevronRight() -> Element {

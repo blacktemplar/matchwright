@@ -326,9 +326,9 @@ The original plan of this step:
   (`Translator::sentence`), the messages staying fragments like the `Display`s (Rust's convention);
   plugin labels standing alone are capitalized like field labels; "entrant" for "team" in the
   metrics' description and the warning of no ranking.
-- Not done: hiding "Points for a draw" where the format has no draws. That needs a field that
-  applies only when a fact holds (`plugin_factory` has no such thing), and the format's
-  `allows_draws` would have to become a declared fact; left for a decision.
+- Not done, decided against for now (2026-10-27): hiding "Points for a draw" where the format has
+  no draws. That needs a field that applies only when a fact holds (`plugin_factory` has no such
+  thing), and the format's `allows_draws` would have to become a declared fact; the field stays.
 
 The original plan of this step:
 

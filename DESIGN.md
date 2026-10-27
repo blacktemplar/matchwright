@@ -1876,13 +1876,38 @@ format.
   (undo, redo, export), which the screen of the competition renders as a
   sibling that the page's grid puts into the same row. On a narrow screen the
   actions show icons only, their texts kept for screen readers. The language
-  is chosen in the footer, being chosen rarely.
+  is chosen in the footer, being chosen rarely. The bar stays on top while the
+  page scrolls (`position: sticky`, a fixed height), and so does the view
+  switch below it, so that undo and the other view are always at hand; the
+  page's `scroll-padding-top` keeps what the keyboard scrolls to clear of them.
 - **Cards in columns where there is room**: before the start the entrants
-  beside the phase, after the start the matches beside the standings (and how
-  the phase is played), half and half. Where there is room for one column only
-  (below 60rem), two buttons choose which is shown; both stay on the page, the
-  other hidden by CSS only. A knockout adds its bracket to the buttons, which
-  it then shows at every width (see [The bracket](#the-bracket)).
+  beside the phase (from 64rem, where their third leaves room for a name next
+  to its button), stacked below that, the entrants first, as the setup is done;
+  after the start the matches beside the standings (and how the phase is
+  played), half and half. Where there is room for one column only (below
+  60rem), two buttons choose which is shown after the start; both stay on the
+  page, the other hidden by CSS only. A knockout adds its bracket to the
+  buttons, which it then shows at every width (see
+  [The bracket](#the-bracket)). The setup has no such buttons: its cards are
+  filled one after the other, and scrolling from the entrants to the phase
+  is what the operator does anyway.
+- **The entrants grow with the page**, rather than scrolling in a box of
+  their own inside the page's scroll, with the field adding one below them, so
+  that the one just added shows right above the field, which keeps the focus
+  and is scrolled into view.
+- **What can be clicked looks like a button**: bordered, also the small ones
+  (remove, reopen, the arrows moving a plugin, as icons), at least 44 pixels
+  where the pointer is a finger (`pointer: coarse`). One primary action per
+  card: adding the phase until it is added, then the start, which a line sets
+  apart from the phase above it.
+- **The form of a phase**: what the chosen plugin does under its choice, as
+  text, rather than a second ⓘ next to the field's; the numbers on a grid of a
+  column of labels and one of inputs, so that a plugin's inputs line up, the
+  numbers a field takes below its input; one column on a phone, where the
+  summary also puts each label above its answer.
+- **The dialog** is left-aligned like the page, its buttons kept at its bottom
+  while its form scrolls (with a scroll padding, so that what scrolls into
+  view is not under them), its backdrop darker in dark mode.
 - **A match is a card of two rows at every width**: the two sides around its
   number, then each side's button below its name, the draw in the middle.
   The columns are the same in every card (a CSS grid with a subgrid), so a

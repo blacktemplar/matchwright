@@ -2,7 +2,8 @@
 .dx-dialog-backdrop {
   position: fixed;
   z-index: 1000;
-  background: rgb(0 0 0 / 30%);
+  /* changed: darker on a dark page, where the original barely dims it */
+  background: light-dark(rgb(0 0 0 / 30%), rgb(0 0 0 / 65%));
   inset: 0;
   opacity: 0;
   will-change: opacity;
@@ -58,11 +59,14 @@
   /* changed: the page's font */
   font-family: inherit;
   gap: 16px;
-  text-align: center;
+  /* changed: left, as the form in it, on a phone too */
+  text-align: left;
   transform: translate(-50%, -50%);
   /* changed: a long form scrolls within the dialog */
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
+  /* changed: what scrolls into view stays clear of the buttons kept at the bottom */
+  scroll-padding-bottom: 6rem;
 }
 
 .dx-dialog-title {
@@ -83,7 +87,6 @@
   .dx-dialog {
     /* changed: wide enough for the form of a phase */
     max-width: 48rem;
-    text-align: left;
   }
 }
 

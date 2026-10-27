@@ -217,7 +217,8 @@ fn Header() -> Element {
                     span { class: "bar-label", {tr.get("all-competitions")} }
                 }
             }
-            h1 { "{heading}" }
+            // the whole name under the pointer, where the bar cuts it with "…"
+            h1 { title: "{heading}", "{heading}" }
         }
     }
 }
@@ -289,10 +290,16 @@ fn named_team<'a>(tr: &Translator, names: impl IntoIterator<Item = Option<&'a st
 
 /// `label` with its first letter in upper case, as a label or a sentence on the screen starts.
 fn capitalized(label: &str) -> String {
-    let mut chars = label.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
+    // a text beginning with a variable begins with the mark isolating it
+    let marks = label
+        .find(|char| !matches!(char, '\u{2068}' | '\u{2069}'))
+        .unwrap_or(label.len());
+    let (marks, rest) = label.split_at(marks);
+    let mut rest = rest.chars();
+    let mut capitalized = marks.to_owned();
+    capitalized.extend(rest.next().into_iter().flat_map(char::to_uppercase));
+    capitalized.push_str(rest.as_str());
+    capitalized
 }
 
 /// What a screen says of the teams that won a competition, each by the names of its entrants: the

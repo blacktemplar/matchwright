@@ -84,6 +84,24 @@ async fn a_pairing_never_played_keeps_its_place() {
     .await;
 }
 
+/// The list of entrants grows with the page, the field adding one below it staying in sight, and
+/// the bar with undo stays on top.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_field_of_a_new_entrant_and_the_bar_stay_in_sight_on_a_phone() {
+    run_in_new_competition(async |gui| {
+        gui.page.resize(390, 844).await?;
+
+        for number in 1..=20 {
+            gui.add_entrant(&format!("Player {number}")).await?;
+        }
+
+        gui.page.expect_in_view("#entrant-name").await?;
+        gui.page.expect_in_view(".bar-actions").await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_standings_scroll_inside_their_card_on_a_phone() {

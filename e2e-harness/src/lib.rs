@@ -564,6 +564,46 @@ impl Page {
         }
     }
 
+    /// Waits until the first element `selector` finds is wholly within the window, not covered at
+    /// its middle by another one, e.g. a bar staying on top.
+    ///
+    /// # Panics
+    /// Panics if it is not in time, with where it is.
+    pub async fn expect_in_view(&self, selector: &str) -> WebDriverResult<()> {
+        let start = Instant::now();
+        loop {
+            let found = self
+                .driver
+                .execute(
+                    r"
+                    const element = document.querySelector(arguments[0]);
+                    if (!element) return 'nowhere';
+                    const box = element.getBoundingClientRect();
+                    // a fraction of a pixel out is rounding
+                    const inside = box.top >= -1 && box.left >= -1
+                        && box.bottom <= window.innerHeight + 1
+                        && box.right <= window.innerWidth + 1;
+                    const top = document.elementFromPoint(
+                        box.left + box.width / 2, box.top + box.height / 2);
+                    const under = top?.outerHTML.slice(0, 80);
+                    return inside && (element === top || element.contains(top))
+                        ? null
+                        : `at ${box.top}..${box.bottom} of ${window.innerHeight}, under ${under}`;
+                    ",
+                    vec![serde_json::json!(selector)],
+                )
+                .await?
+                .convert::<Option<String>>()?;
+            let Some(found) = found else {
+                return Ok(());
+            };
+            if start.elapsed() > TIMEOUT {
+                panic!("{selector} must be in view, but is {found}");
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+    }
+
     /// Waits until the page's title, which its tab shows, is `title`, character by character.
     ///
     /// # Panics

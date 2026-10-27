@@ -12,14 +12,16 @@ struct Styles;
 // Changed from the component `dx components add` copied: the trigger has an id and is named by a
 // label of the page together with the value it shows, since a `label` around the trigger would
 // also catch the clicks on the options; the value is a plugin's id, and only the single select is
-// kept.
+// kept. The trigger may be described by an element of the page, e.g. what the option chosen does.
 
 /// A choice of one of its options, each a [`SelectOption`], whose trigger has the id `id` and is
-/// named by the element `labelled_by` followed by the option chosen, or else by `placeholder`.
+/// named by the element `labelled_by` followed by the option chosen, or else by `placeholder`, and
+/// described by the element `described_by`, if any.
 #[component]
 pub fn Select(
     id: String,
     labelled_by: String,
+    #[props(default)] described_by: Option<String>,
     value: ReadSignal<Option<String>>,
     #[props(into)] placeholder: String,
     on_change: EventHandler<String>,
@@ -43,6 +45,7 @@ pub fn Select(
                 class: Styles::dx_select_trigger,
                 id: "{id}",
                 aria_labelledby: "{labelled_by} {id}",
+                aria_describedby: described_by,
                 select::SelectValue { placeholder }
                 ChevronDown {
                     class: "dx-select-expand-icon",

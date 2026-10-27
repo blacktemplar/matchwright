@@ -39,6 +39,7 @@
   --radius-card: 0.6rem;
   /* the height of a control, big enough to be tapped */
   --control: 2.75rem;
+  --bar-height: 3.5rem;
 
   /* The components (src/components) in the colours of the page: each of their theme's variables
    * is one of the tokens, which follow the system themselves. */
@@ -82,6 +83,16 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* what the keyboard or a script scrolls to stays clear of the bar, and of the view switch below it,
+ * which stay on top */
+html {
+  scroll-padding-top: calc(var(--bar-height) + var(--space-4));
+}
+
+html:has(.view-switch) {
+  scroll-padding-top: calc(var(--bar-height) + var(--control) + var(--space-6));
 }
 
 body {
@@ -196,6 +207,23 @@ button.small,
   padding: 0 var(--space-3);
 }
 
+button.icon-only {
+  min-width: 2.25rem;
+  padding: 0;
+}
+
+/* big enough to be tapped where the pointer is a finger (WCAG's 44 pixels) */
+@media (pointer: coarse) {
+  button.small,
+  .button.small {
+    min-height: var(--control);
+  }
+
+  button.icon-only {
+    min-width: var(--control);
+  }
+}
+
 /* also one that stays focusable while unavailable, so that the focus is not lost */
 button:disabled,
 button[aria-disabled="true"] {
@@ -275,9 +303,13 @@ input::placeholder {
 
 /* The bar */
 
+/* on top while the page scrolls, so that undo is always at hand; above the toggletips */
 .bar {
+  position: sticky;
+  z-index: 20;
+  top: 0;
   display: flex;
-  min-height: 3.5rem;
+  height: var(--bar-height);
   align-items: center;
   padding: var(--space-1) var(--space-4);
   border-bottom: 1px solid var(--border);
@@ -467,6 +499,9 @@ footer select {
 /* the matches, the standings or the bracket where there is room for one column only, else both
  * columns or the bracket, and only for a knockout */
 .view-switch {
+  position: sticky;
+  z-index: 15;
+  top: calc(var(--bar-height) + var(--space-2));
   display: flex;
   margin-bottom: var(--space-4);
 }
@@ -546,11 +581,10 @@ footer select {
 
 /* Entrants */
 
+/* growing with the page, the field adding one below it */
 #entrant-list {
-  overflow: auto;
-  max-height: 32rem;
   padding: 0;
-  margin: var(--space-3) 0 0;
+  margin: 0 0 var(--space-3);
   counter-reset: entrant;
   list-style: none;
 }
@@ -576,7 +610,10 @@ footer select {
   flex: 1;
 }
 
+/* the start, apart from the phase above it */
 .start {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
   margin-top: var(--space-4);
 }
 
@@ -595,6 +632,37 @@ footer select {
 /* a text, read by the form (phase.rs) */
 .field input.number {
   width: 8rem;
+}
+
+/* the labels in a column wide enough for most, so that the inputs of a plugin's fields line up;
+ * the numbers a field takes below its input; one column on a phone */
+.number-field {
+  display: grid;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  grid-template-columns: minmax(0, 15rem) auto;
+}
+
+.number-field > .hint {
+  grid-column: 2;
+}
+
+.number-field > :not(.number-label, input, .hint) {
+  grid-column: 1 / -1;
+}
+
+@media (width < 30rem) {
+  .number-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .number-field > .hint {
+    grid-column: 1;
+  }
+}
+
+.chosen-description {
+  margin: var(--space-1) 0 0;
 }
 
 .field .label {
@@ -628,6 +696,42 @@ footer select {
 .plugin-list li,
 .plugin-set li {
   margin: var(--space-1) 0;
+}
+
+/* an item of an ordered list: its number, its name, and its buttons at the end of the line, its
+ * fields below */
+.plugin-list {
+  padding-left: 0;
+  counter-reset: item;
+  list-style: none;
+}
+
+.plugin-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  counter-increment: item;
+  gap: var(--space-1) var(--space-2);
+}
+
+.plugin-list li::before {
+  min-width: 1.5em;
+  content: counter(item) ".";
+}
+
+.plugin-list li > .name {
+  overflow-wrap: anywhere;
+}
+
+.item-buttons {
+  display: inline-flex;
+  margin-left: auto;
+  gap: var(--space-1);
+}
+
+.plugin-list li > .field,
+.plugin-list li > .issues {
+  flex-basis: 100%;
 }
 
 .implied {
@@ -825,9 +929,16 @@ footer select {
   gap: var(--space-2);
 }
 
+/* at the bottom of the dialog while its form scrolls, over the dialog's own padding */
 .dialog-buttons {
+  position: sticky;
+  bottom: -24px;
   display: flex;
   justify-content: flex-end;
+  padding: var(--space-3) 0 24px;
+  border-top: 1px solid var(--border);
+  margin-bottom: -24px;
+  background: var(--surface);
   gap: var(--space-2);
 }
 
@@ -845,6 +956,17 @@ dl.summary dt {
 
 dl.summary dd {
   margin: 0;
+}
+
+/* each label above its answer on a phone, where two columns leave each too little */
+@media (width < 30rem) {
+  dl.summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  dl.summary dd + dt {
+    margin-top: var(--space-2);
+  }
 }
 
 /* the fields of a plugin, set off below it */
