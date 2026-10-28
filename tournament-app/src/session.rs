@@ -47,8 +47,8 @@ use crate::{
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Progress, Storage, Stored},
     view::{
-        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Reopened, Reported, Round,
-        RoundSummary, StageName, StandingRow, Standings,
+        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Medal, Reopened, Reported,
+        Round, RoundSummary, StageName, StandingRow, Standings,
     },
 };
 
@@ -866,6 +866,7 @@ impl Session {
             })
             .collect();
         let data = phase.data();
+        let finished = data.matches().values().all(Match::is_finished);
         Some(Standings {
             columns: columns
                 .iter()
@@ -889,6 +890,7 @@ impl Session {
                         .iter()
                         .map(|(_, column)| column.cell(ranking))
                         .collect(),
+                    medal: finished.then(|| Medal::of(ranking.rank())).flatten(),
                 })
                 .collect(),
         })

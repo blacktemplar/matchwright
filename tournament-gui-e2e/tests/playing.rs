@@ -339,9 +339,9 @@ async fn the_bracket_chosen_is_shown_again_after_a_reload() {
     .await;
 }
 
-/// Once every match is played, the screen says who won, the first places stand out, the phase
-/// folds away, and the list of competitions names the winner too; undoing the last result takes
-/// it all back.
+/// Once every match is played, the screen says who won, the first places stand out with their
+/// medals, the phase folds away, and the list of competitions names the winner too; undoing the
+/// last result takes it all back.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_winner_is_shown_once_every_match_is_played() {
@@ -354,9 +354,11 @@ async fn the_winner_is_shown_once_every_match_is_played() {
 
         gui.expect_winners(Some("Winner: Alice")).await?;
         gui.expect_podium(&["Alice", "Bob"]).await?;
+        gui.expect_medals(&["Gold medal,", "Silver medal,"]).await?;
         gui.page.check_accessibility().await?;
         gui.click("Undo").await?;
         gui.expect_winners(None).await?;
+        gui.expect_medals(&[]).await?;
         gui.click("Redo").await?;
         gui.follow("All competitions").await?;
         gui.expect_progress(&["Finished · winner: Alice"]).await
@@ -364,7 +366,7 @@ async fn the_winner_is_shown_once_every_match_is_played() {
     .await;
 }
 
-/// Teams tied for first are all named, in German as well.
+/// Teams tied for first are all named, in German as well, and both win gold, so no one silver.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn teams_tied_for_first_are_named_together() {
@@ -375,6 +377,7 @@ async fn teams_tied_for_first_are_named_together() {
 
         gui.expect_winners(Some("Tied for first: Alice, Bob"))
             .await?;
+        gui.expect_medals(&["Gold medal,", "Gold medal,"]).await?;
         gui.choose_language("Deutsch").await?;
         gui.expect_winners(Some("Geteilter erster Platz: Alice, Bob"))
             .await

@@ -28,6 +28,11 @@
   --on-error: light-dark(#fff, #2a0d0b);
   --warning: light-dark(#b54708, #e3a13b);
   --warning-subtle: light-dark(#fffaeb, #2a2113);
+  /* the discs of the medals, 3:1 against the surface and gold against the tint of the first
+   * place too, outlined in the text's colour */
+  --gold: light-dark(#a67c00, #e0b84a);
+  --silver: light-dark(#848c94, #c0c7ce);
+  --bronze: light-dark(#a0612b, #d08a50);
   --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 6%), transparent);
   /* at the edge where more of what scrolls sideways is out of sight */
   --scroll-shadow: light-dark(rgb(16 24 40 / 18%), rgb(0 0 0 / 70%));
@@ -1496,8 +1501,30 @@ th {
   font-weight: 600;
 }
 
-/* the first three places once every match is played (competition.rs): bold, the first tinted,
- * so that it does not depend on the colour alone */
+/* the places with a medal once every match is played (play.rs): bold, the first tinted, the
+ * medal before the rank, so that it does not depend on the colour alone */
+td.rank .medal {
+  margin-right: var(--space-1);
+  vertical-align: -0.2em;
+}
+
+.medal .icon {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.medal.gold circle {
+  fill: var(--gold);
+}
+
+.medal.silver circle {
+  fill: var(--silver);
+}
+
+.medal.bronze circle {
+  fill: var(--bronze);
+}
+
 tr.podium td {
   font-weight: 600;
 }

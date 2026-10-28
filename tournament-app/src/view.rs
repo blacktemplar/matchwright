@@ -285,6 +285,29 @@ pub struct StandingRow {
     /// One cell per column of [`Standings::columns`], `None` where the metric is not calculated,
     /// said in the operator's language by [`Translator::cell`](crate::i18n::Translator::cell).
     pub cells: Vec<Option<Cell>>,
+    /// The medal of its rank, once every match has a result; `None` before that.
+    pub medal: Option<Medal>,
+}
+
+/// A medal of the first three ranks. Teams tied share the rank and its medal, and the next rank
+/// is counted past them: two teams tied for first both win gold, and the next one bronze.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Medal {
+    Gold,
+    Silver,
+    Bronze,
+}
+
+impl Medal {
+    /// The medal of `rank`, if any.
+    pub fn of(rank: NonZeroU32) -> Option<Self> {
+        match rank.get() {
+            1 => Some(Self::Gold),
+            2 => Some(Self::Silver),
+            3 => Some(Self::Bronze),
+            _ => None,
+        }
+    }
 }
 
 /// What the operator can do now. Each is true exactly when doing it would not be refused for the

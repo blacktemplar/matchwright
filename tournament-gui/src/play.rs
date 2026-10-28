@@ -10,7 +10,7 @@ use std::{num::NonZeroU32, rc::Rc};
 use dioxus::prelude::*;
 use tournament_app::{
     i18n::{PluginText, Text},
-    view::{MatchRow, NameSearch, RoundSummary},
+    view::{MatchRow, Medal, NameSearch, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
 use wasm_bindgen::JsCast as _;
@@ -545,14 +545,28 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     }
 }
 
+/// The medal of a place, said to screen readers by its name.
+#[component]
+fn MedalOf(medal: Medal) -> Element {
+    let ctx = use_context::<Ctx>();
+    let tr = ctx.translator.read();
+    let (class, name) = match medal {
+        Medal::Gold => ("gold", "medal-gold"),
+        Medal::Silver => ("silver", "medal-silver"),
+        Medal::Bronze => ("bronze", "medal-bronze"),
+    };
+    rsx! {
+        icons::Medal { class }
+        span { class: "visually-hidden", {tr.get(name)} }
+    }
+}
+
 #[component]
 pub fn Standings() -> Element {
     let ctx = use_context::<Ctx>();
     let Some(standings) = ctx.session.read().standings() else {
         return rsx! {};
     };
-    // the first three places stand out once every match is played
-    let finished = ctx.session.read().winners().is_some();
     let tr = ctx.translator.read();
     let headers: Vec<_> = standings
         .columns
@@ -605,10 +619,16 @@ pub fn Standings() -> Element {
                     }
                     tbody {
                         for row in standings.rows {
+                            // the places with a medal, once every match is played, stand out
                             tr {
-                                class: if finished && row.rank.get() <= 3 { "podium" },
-                                "data-rank": finished.then_some(row.rank.get()),
-                                td { "{row.rank}" }
+                                class: if row.medal.is_some() { "podium" },
+                                "data-rank": row.medal.map(|_| row.rank.get()),
+                                td { class: "rank",
+                                    if let Some(medal) = row.medal {
+                                        MedalOf { medal }
+                                    }
+                                    "{row.rank}"
+                                }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }
                                 td { "{row.played}" }
                                 for (column, cell) in standings.columns.iter().zip(row.cells) {

@@ -90,6 +90,10 @@ remove-entrant = Remove { $name }
 phase-heading = Phase
 # the heading once every match is played
 finished = Finished
+# the medals of the first three ranks in the standings, before the rank
+medal-gold = Gold medal,
+medal-silver = Silver medal,
+medal-bronze = Bronze medal,
 add-phase = Add phase
 start = Start
 

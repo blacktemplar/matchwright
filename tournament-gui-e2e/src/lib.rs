@@ -1115,6 +1115,17 @@ impl Gui {
             .await
     }
 
+    /// Waits until the medals of the standings are `medals`, best first, as a screen reader says
+    /// them, e.g. "Gold medal,"; none while a match has no result.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the medals shown instead.
+    pub async fn expect_medals(&self, medals: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(By::Css("#standing-list td.rank .medal + span"), medals)
+            .await
+    }
+
     /// Waits until the screen says who won, `text`, e.g. "Winner: Alice", or says nothing of it for
     /// `None`, while a match has no result.
     ///

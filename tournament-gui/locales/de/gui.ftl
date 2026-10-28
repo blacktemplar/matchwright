@@ -73,6 +73,9 @@ remove = Entfernen
 remove-entrant = { $name } entfernen
 phase-heading = Phase
 finished = Beendet
+medal-gold = Goldmedaille,
+medal-silver = Silbermedaille,
+medal-bronze = Bronzemedaille,
 add-phase = Phase hinzufügen
 start = Starten
 

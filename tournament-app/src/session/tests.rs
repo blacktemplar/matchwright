@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    cmp::Ordering,
     fmt,
     pin::pin,
     task::{Context, Poll, Waker},
@@ -26,7 +27,7 @@ use crate::{
     storage::{MemoryStorage, Progress, Stored},
     view::{
         BracketColumn, BracketEntry, BracketLine, BracketPart, BracketSection, BracketSource,
-        NameSearch, Unplayed,
+        Medal, NameSearch, Unplayed,
     },
 };
 
@@ -907,6 +908,53 @@ fn the_standings_count_the_matches_played() {
         .collect();
     played.sort_unstable();
     assert_eq!(played, [0, 0, 1, 1]);
+}
+
+/// Once every match has a result, the first three ranks win medals; Carol and Dave, tied for
+/// third, both win bronze.
+#[test]
+fn the_first_three_ranks_win_medals_once_every_match_has_a_result() {
+    let mut session = Given::new().started();
+    let medals = |session: &Session| -> Vec<_> {
+        session
+            .standings()
+            .unwrap()
+            .rows
+            .iter()
+            .map(|row| (names(&row.entrants).join(""), row.medal))
+            .collect()
+    };
+    assert!(medals(&session).iter().all(|(_, medal)| medal.is_none()));
+
+    // Alice beats everyone, Bob everyone else, Carol and Dave draw
+    let strength = ["Alice", "Bob", "Carol"];
+    while let Some(row) = session.playable().first().cloned() {
+        let rank = |team: &[EntrantRow]| {
+            strength
+                .iter()
+                .position(|name| names(team) == [*name])
+                .unwrap_or(strength.len() - 1)
+        };
+        let result = match rank(&row.a).cmp(&rank(&row.b)) {
+            Ordering::Less => MatchResult::AWins,
+            Ordering::Greater => MatchResult::BWins,
+            Ordering::Equal => MatchResult::Draw,
+        };
+        session.report(row.id, result).unwrap();
+    }
+
+    let mut medals = medals(&session);
+    // tied, in no order of their own
+    medals[2..].sort_by(|(a, _), (b, _)| a.cmp(b));
+    assert_eq!(
+        medals,
+        [
+            ("Alice".to_owned(), Some(Medal::Gold)),
+            ("Bob".to_owned(), Some(Medal::Silver)),
+            ("Carol".to_owned(), Some(Medal::Bronze)),
+            ("Dave".to_owned(), Some(Medal::Bronze)),
+        ]
+    );
 }
 
 #[test]
