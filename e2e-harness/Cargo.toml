@@ -4,6 +4,7 @@ description = "Runs end-to-end tests of a page built into a directory, in headle
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

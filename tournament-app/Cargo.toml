@@ -4,6 +4,10 @@ description = "What a GUI for running tournaments does, without any UI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["tournament", "competition", "bracket", "i18n", "offline"]
+categories = ["games", "wasm"]
 
 [dependencies]
 fluent-bundle.workspace = true

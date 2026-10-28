@@ -4,6 +4,7 @@ description = "What the GUI for running tournaments needs of the browser: storag
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

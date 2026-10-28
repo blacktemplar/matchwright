@@ -3,6 +3,10 @@ name = "plugin-factory"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Plugins that describe themselves: a schema to configure them by, a catalog to find them in and checks of what they provide and require"
+repository = "https://github.com/blacktemplar/matchwright"
+keywords = ["plugin", "registry", "schema", "configuration", "typetag"]
+categories = ["config", "rust-patterns"]
 
 [dependencies]
 inventory = "0.3.25"

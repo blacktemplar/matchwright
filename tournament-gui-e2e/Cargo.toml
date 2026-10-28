@@ -4,6 +4,7 @@ description = "End-to-end tests of tournament-gui, using its screen in a browser
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

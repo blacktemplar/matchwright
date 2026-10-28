@@ -4,6 +4,10 @@ description = "A small command line interface for running tournaments"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["tournament", "competition", "bracket", "cli", "repl"]
+categories = ["command-line-utilities", "games"]
 
 [[bin]]
 name = "tournament-cli"

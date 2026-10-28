@@ -4,6 +4,8 @@ description = "The command line of tournament-cli, running in the browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+publish = false
 
 [dependencies]
 console_error_panic_hook.workspace = true

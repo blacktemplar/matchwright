@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "The derive macro of plugin-factory"
+repository = "https://github.com/blacktemplar/matchwright"
+keywords = ["plugin", "derive", "registry", "schema", "typetag"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true

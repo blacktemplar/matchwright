@@ -4,6 +4,7 @@ description = "The GUI for running tournaments, in the browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

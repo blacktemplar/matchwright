@@ -1,8 +1,13 @@
 [package]
 name = "tournament-engine"
+description = "Runs tournaments of pluggable formats, rankings and metrics, every change a logged transition that can be undone"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["tournament", "competition", "bracket", "round-robin", "elimination"]
+categories = ["algorithms", "games"]
 
 [dependencies]
 dyn-clone.workspace = true
