@@ -890,7 +890,7 @@ fn the_standings_show_the_columns_of_the_metrics() {
     assert!(points[0] > points[3], "{standings:?}");
 }
 
-/// A round robin's cross table has a row per team, in the order they were entered, and in each the
+/// A round robin's cross table has a row per team, in the order of the standings, and in each the
 /// one match against each other team, seen from the row's team.
 #[test]
 fn the_cross_table_shows_the_match_of_every_two_teams() {
@@ -909,7 +909,14 @@ fn the_cross_table_shows_the_match_of_every_two_teams() {
         .iter()
         .map(|row| names(&row.entrants).join(""))
         .collect();
-    assert_eq!(teams, ["Alice", "Bob", "Carol", "Dave"]);
+    let standings: Vec<_> = session
+        .standings()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| names(&row.entrants).join(""))
+        .collect();
+    assert_eq!(teams, standings);
     for (i, row) in table.rows.iter().enumerate() {
         assert_eq!(row.cells.len(), 4);
         assert!(row.cells[i].is_empty(), "no match against itself");
@@ -938,17 +945,14 @@ fn the_cross_table_shows_the_match_of_every_two_teams() {
         .collect();
     assert_eq!(outcomes.len(), 2, "the match reported, from either side");
     assert!(outcomes.iter().all(|(id, _)| *id == first));
-    let winner = table
-        .rows
-        .iter()
-        .find(|row| {
-            row.cells
-                .iter()
-                .flatten()
-                .any(|played| played.outcome == Some(Outcome::Win))
-        })
-        .unwrap();
-    assert_eq!(winner.rank.get(), 1);
+    assert!(
+        table.rows[0]
+            .cells
+            .iter()
+            .flatten()
+            .any(|played| played.outcome == Some(Outcome::Win)),
+        "the winner first: {table:?}"
+    );
 }
 
 /// A knockout has its bracket instead, and the teams of a Monster DYP change every round.

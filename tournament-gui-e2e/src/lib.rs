@@ -935,8 +935,8 @@ impl Gui {
     }
 
     /// Waits until the cells of the row of the cross table numbered `row`, from 1, are `cells`,
-    /// the rank last, each as shown followed by what only a screen reader gets on a line of its
-    /// own, e.g. `"1\nwon"`, or the number of a match without a result, `""` against itself.
+    /// each as shown followed by what only a screen reader gets on a line of its own, e.g.
+    /// `"1\nwon"`, `""` for a match without a result and against itself.
     ///
     /// # Panics
     /// Panics if they are not in time, with the cells shown instead.

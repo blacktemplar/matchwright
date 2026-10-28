@@ -1926,21 +1926,28 @@ bracket, every pairing in it from the start.
   a round robin, random rounds; not a Monster DYP, whose teams are drawn anew
   each round, and not a knockout, which has its bracket. No table of formats
   is kept beyond the bracket's.
-- **Rows in the order the entrants were entered**, which results do not
-  change, so that a cell stays where it was while results are reported in the
-  table; the rank is the last column. Columns are headed by the rows'
-  numbers, the names said to screen readers, as names across the top would
-  make a table of 20 too wide. The names stay in sight while it scrolls
+- **Rows by rank**, in the order of the standings, as every cross table
+  published is. Columns are headed by the rows' numbers, the names said to
+  screen readers, as names across the top would make a table of 20 too wide.
+  No column of ranks: the row's number is the rank but for ties, and the
+  standings show the ranks. The names stay in sight while it scrolls
   sideways, as in the standings.
-- **A result is reported in the table** by the number of an open match, a
-  button opening a dialog with the result buttons (draws included, which a
-  click on a cell meaning "the row won" could not report). The focus then
-  moves on to the next open match in the order of the table, as in the list.
+- **Read-only.** An open match leaves its cell empty; results are reported in
+  the list of matches. With the rows by rank, a result reported in the table
+  would move the rows, and the cell with them, under the operator's hand.
+  With nothing but `1`, `½` or `0` in a cell, the columns are narrow, which a
+  table of many teams needs.
 
 #### Alternatives
 
-- **Rows by rank.** The standings are that; the rows would move after every
-  result, and a cell with them.
+- **Rows in the order the entrants were entered**, which results do not
+  change, so that a cell stays where it was while results are reported in the
+  table (the first version, with an open match's number a button opening a
+  dialog with the result buttons). No cross table one sees elsewhere is in
+  that order, and the buttons widened every column.
+- **An open match shown by its number.** Tells which match is still to be
+  played, which the list of matches tells as well, at the cost of wider
+  columns.
 - **Rows in the order of the draw** (the rankings' initial order). Stable as
   well, but an order the operator sees nowhere else.
 

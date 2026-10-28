@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use tournament_engine::{EntrantId, MatchResult, RankingId};
+use tournament_engine::{MatchResult, RankingId};
 
 use super::{Session, bracket::plays_bracket};
 use crate::view::{CrossMatch, CrossRow, CrossTable, Outcome};
@@ -25,27 +25,18 @@ impl Session {
             };
             pairs.push((*a, *b, r#match));
         }
-        // by the first entrant of each, in the order they were entered, as the list of entrants
-        let entered: HashMap<EntrantId, usize> = self
-            .competition()
-            .entrants()
-            .keys()
-            .enumerate()
-            .map(|(position, id)| (*id, position))
-            .collect();
-        let mut seeded: Vec<_> = data.rankings().values().collect();
-        seeded.sort_by_key(|ranking| entered.get(ranking.entrants().first()));
-        let index: HashMap<RankingId, usize> = seeded
+        // in the order of the standings
+        let ranked: Vec<_> = data.standings().collect();
+        let index: HashMap<RankingId, usize> = ranked
             .iter()
             .enumerate()
             .map(|(index, ranking)| (ranking.id(), index))
             .collect();
-        let mut rows: Vec<CrossRow> = seeded
+        let mut rows: Vec<CrossRow> = ranked
             .iter()
             .map(|ranking| CrossRow {
                 entrants: self.team(data, &[ranking.id()]),
-                rank: ranking.rank(),
-                cells: vec![Vec::new(); seeded.len()],
+                cells: vec![Vec::new(); ranked.len()],
             })
             .collect();
         for (a, b, r#match) in pairs {
@@ -69,9 +60,6 @@ impl Session {
                 cell.sort_by_key(|played| played.row.number);
             }
         }
-        Some(CrossTable {
-            rows,
-            draws: phase.format().allows_draws(),
-        })
+        Some(CrossTable { rows })
     }
 }

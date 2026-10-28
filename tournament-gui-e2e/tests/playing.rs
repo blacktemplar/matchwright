@@ -306,27 +306,26 @@ async fn a_reopened_match_has_the_focus_and_is_announced() {
     .await;
 }
 
-/// A round robin's cross table shows the match of every two entrants, which is reported there
-/// through a dialog; the focus then goes to the table's heading, no match being left.
+/// A round robin's cross table shows the result of every two entrants' match, nothing while it
+/// is open, in the order of the standings: Bob, who was entered last, first once he won.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
-async fn results_are_reported_in_the_cross_table() {
+async fn the_cross_table_shows_the_results_by_rank() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
-
         gui.click("Cross table").await?;
         gui.expect_view("Cross table").await?;
-        gui.expect_cross_table_row(1, &["", "1", "1"]).await?;
+        gui.expect_cross_table_row(1, &["", ""]).await?;
         gui.page.check_accessibility().await?;
-        gui.click_labelled("Report match 1").await?;
-        gui.page.check_accessibility().await?;
-        gui.click("Alice wins").await?;
+        gui.click("Matches & standings").await?;
 
-        gui.expect_no_dialog().await?;
-        gui.expect_cross_table_row(1, &["", "1\nwon", "1"]).await?;
-        gui.expect_cross_table_row(2, &["0\nlost", "", "2"]).await?;
-        gui.expect_focus("Cross table").await?;
-        gui.expect_announcement("Match 1: Alice won. Every match has a result.")
+        gui.click_labelled("Bob wins").await?;
+        gui.click("Cross table").await?;
+
+        gui.expect_cross_table_row(1, &["", "1\nwon"]).await?;
+        gui.expect_cross_table_row(2, &["0\nlost", ""]).await?;
+        gui.page
+            .expect_texts(By::Css("#cross-table-grid tbody th"), &["1 Bob", "2 Alice"])
             .await
     })
     .await;

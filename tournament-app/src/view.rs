@@ -253,19 +253,14 @@ pub enum BracketLine {
 /// The matches of every two teams of a phase, as a square table with a row and a column per team.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CrossTable {
-    /// In the order the teams' entrants were entered, which results do not change; the columns are
-    /// in the same order.
+    /// In the order of the [`Standings`]; the columns are in the same order.
     pub rows: Vec<CrossRow>,
-    /// Whether a match may end in a [`MatchResult::Draw`].
-    pub draws: bool,
 }
 
 /// A team's row of a [`CrossTable`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CrossRow {
     pub entrants: Vec<EntrantRow>,
-    /// Its rank in the standings, shared by tied teams.
-    pub rank: NonZeroU32,
     /// One per column, i.e. per row of the table, in the same order: the matches of this team
     /// against that row's team, by their numbers; none against itself.
     pub cells: Vec<Vec<CrossMatch>>,

@@ -1619,13 +1619,15 @@ td.name {
   white-space: normal;
 }
 
-/* The cross table (cross_table.rs): the cells centred under the numbers of the columns, a
- * cell's matches side by side, the row's number before its name as the columns name it */
+/* The cross table (cross_table.rs): narrow cells, so that a table of many teams fits, centred
+ * under the numbers of the columns, a cell's matches side by side, the row's number before its
+ * name as the columns name it */
 .cross-table td,
 .cross-table thead th:not(.name) {
   /* holding what only screen readers get, which would otherwise widen the page, not the table */
   position: relative;
-  min-width: 2.5rem;
+  min-width: 1.75rem;
+  padding-inline: var(--space-1);
   border-left: 1px solid var(--border);
   text-align: center;
 }
@@ -1649,9 +1651,4 @@ td.name {
 
 .cross-table .outcome {
   font-weight: 600;
-}
-
-/* a match without a result, which another tab reports */
-.cross-table .open {
-  color: var(--text-muted);
 }
