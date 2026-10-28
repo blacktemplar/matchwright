@@ -381,6 +381,28 @@ async fn teams_tied_for_first_are_named_together() {
     .await;
 }
 
+/// Undoing the start leaves play, back to the setup, so the operator is asked first.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn undoing_the_start_is_asked_about_first() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+
+        gui.click("Undo").await?;
+        gui.page.check_accessibility().await?;
+        gui.click("Cancel").await?;
+
+        gui.expect_no_dialog().await?;
+        gui.expect_matches(&["1"]).await?;
+        gui.click("Undo").await?;
+        gui.click("Undo the start").await?;
+        gui.expect_no_dialog().await?;
+        gui.expect_entrants(&["Alice", "Bob"]).await?;
+        gui.expect_announcement("Undone: the start.").await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn undo_and_redo_announce_what_they_did() {

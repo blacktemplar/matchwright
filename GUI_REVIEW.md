@@ -342,7 +342,36 @@ The original plan of this step:
   `tournament_engine::plugins`, checked by its test), errors as sentences, "entrant" not "team",
   hide "Points for a draw" where the format has no draws (a fact the format declares).
 
-### 9. Layout polish (look and feel, L4, L7, L9, L10, P4, E2)
+### 9. Layout polish (look and feel, L4, L7, L9, L10, P4, E2) — done but E2
+
+Done in four commits:
+
+- Layout: the bar and the view switch sticky; Remove, Reopen and the arrows (icons now) bordered,
+  44px where the pointer is a finger; the entrants growing with the page, the field below them
+  scrolled into view; Start primary once the phase is added, a line apart from it; the chosen
+  plugin's description under its choice instead of a second ⓘ; number fields on a grid with what
+  they take below the input; the summary one column on a phone. L4: the dialog left-aligned, its
+  buttons kept at its bottom, a darker backdrop in dark mode (the page behind no longer scrolls
+  sideways). L7: the setup stacks below 64rem, which DESIGN.md now says (no column switch: the
+  setup is filled one card after the other).
+- Playing: the storage warning folds to its first line, remembered; a match with a result is one
+  line (on a phone the reopen button stays below the pairing); the standings abbreviate SB, Bh,
+  BhBh (FBh) with the whole name in the toggletip, and count the matches played; a toggletip in
+  the standings is pinned to the window, out of the table's scroller, which cut it off.
+- L9: the latest competition first; rename and delete from the list (delete asks, and is refused
+  while another tab holds the competition); an imported copy under a name stored already is named
+  "Cup (2)" (a number rather than a translated "(imported)", which would put a language into the
+  stored name); the competition's whole name as the bar's title. L10: a name equal to an
+  entrant's ignoring case and NFKC is pointed out while typed, and taken.
+- P4: undoing the start asks first.
+- Not done: open matches first (finished ones on one line instead, which keeps each in the place
+  of its number). E2, confirmed: random rounds samples `rounds` of the rotations and shuffles them,
+  so the rounds drawn depend on how many are asked for; adding rounds after a result is refused,
+  since the reported matches are no longer scheduled. Shuffling every rotation and taking the first
+  `rounds` keeps the earlier rounds, but changes the draw of every random-rounds phase, so saved
+  logs of one with results would no longer replay; left for a decision.
+
+The original plan of this step:
 
 - Sticky bar with Undo and the view switch; the storage warning collapsible to one line once seen.
 - Match list: open matches first, or finished ones collapsed to one line each.

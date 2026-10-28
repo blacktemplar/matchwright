@@ -924,6 +924,20 @@ fn undo_and_redo_walk_back_and_forth_through_the_actions() {
 }
 
 #[test]
+fn the_action_an_undo_would_undo_is_told_before() {
+    let mut session = Given::new().started();
+    assert_eq!(session.next_undo(), Some(&Action::Start));
+    let first = matches(&session).remove(0);
+
+    session.report(first.id, MatchResult::AWins).unwrap();
+
+    assert!(matches!(session.next_undo(), Some(Action::Report(_))));
+    session.undo().unwrap();
+    assert_eq!(session.next_undo(), Some(&Action::Start));
+    assert_eq!(Session::new("cup").next_undo(), None);
+}
+
+#[test]
 fn undo_and_redo_tell_the_action_they_walked_through() {
     let mut session = Given::new().started();
     let first = matches(&session).remove(0);

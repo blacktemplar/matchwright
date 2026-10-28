@@ -1743,6 +1743,12 @@ tested natively and in wasm, and knows no plugin.
   see [The app crate](#the-app-crate)). The announcement is kept as data
   and said when shown, so that it follows a change of the language, like an
   error. It goes with the next action.
+- **Undoing the start is asked about first**, in a dialog
+  (`Session::next_undo` tells the action an undo would undo): it leaves play
+  for the setup, a screen of another kind, which an operator stepping back
+  through results would not expect after the last one. Nothing is lost, redo
+  starts it again, so it is a question rather than a refusal. Every other undo
+  goes at once.
 - **The rows carry what the announcements say**: `Reported` and `Reopened`
   hold the row of the match, with the result reported or the one it had.
 - **Finding an entrant** (2026-10-26): a field above the list shows only the

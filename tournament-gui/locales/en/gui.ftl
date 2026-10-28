@@ -12,6 +12,10 @@ theme-light = Light
 theme-dark = Dark
 undo = Undo
 redo = Redo
+# undoing the start leaves play, so it is asked about first
+undo-start-title = Undo the start?
+undo-start-description = The competition goes back to its setup, where the entrants and the phase can be changed. Redo starts it again.
+undo-start = Undo the start
 # the browser refused to keep what is stored, which a private window does as well; the first line,
 # which stays shown when the warning is folded, then what it unfolds to
 not-persisted-summary = This browser may not keep the competitions stored here.

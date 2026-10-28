@@ -894,6 +894,12 @@ impl Session {
         })
     }
 
+    /// The action [`Self::undo`] would undo now, if any, e.g. so that undoing the start, which
+    /// leaves play, is asked about first.
+    pub fn next_undo(&self) -> Option<&Action> {
+        self.done.last()
+    }
+
     /// Undoes the latest action of this session that is still in effect, which may be an
     /// [`Self::undo_report`], bringing the result back. Returns the action undone.
     ///

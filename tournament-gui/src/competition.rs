@@ -17,7 +17,7 @@ use tournament_app::{
     i18n::{Message, Text, Translator},
     session::Session,
     storage::{CompetitionKey, Storage as _},
-    view::{Actions, EntrantRow},
+    view::{Action, Actions, EntrantRow},
 };
 use tournament_browser::{
     channel::Broadcast,
@@ -29,7 +29,9 @@ use crate::{
     Notices, Page,
     announcement::Announcement,
     bracket::Bracket,
-    capitalized, download, icons,
+    capitalized,
+    components::dialog::{Dialog, DialogDescription, DialogTitle},
+    download, icons,
     phase::PhaseSummary,
     play::{Rounds, Standings},
     setup::{Entrants, Phase},
@@ -249,6 +251,8 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
     let changes = ctx.changes();
     let actions = ctx.actions();
     let started = ctx.session.read().competition().is_started();
+    // whether the operator is asked to confirm undoing the start
+    let mut undoing_start = use_signal(|| false);
     let tr = ctx.translator.read();
     let export = move || {
         let session = ctx.session.peek();
@@ -266,8 +270,11 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
                     if !actions.undo {
                         return;
                     }
-                    if let Some(action) = ctx.act(Session::undo) {
-                        ctx.announce(Announcement::Undone(action));
+                    // leaving play, which is asked about first
+                    if ctx.session.peek().next_undo() == Some(&Action::Start) {
+                        undoing_start.set(true);
+                    } else {
+                        undo(ctx);
                     }
                 },
                 icons::Undo {}
@@ -312,6 +319,30 @@ fn Screen(competition: CompetitionKey, loaded: Loaded) -> Element {
                 }
             }
         }
+        Dialog {
+            open: Some(undoing_start()),
+            on_open_change: move |open: bool| undoing_start.set(open),
+            DialogTitle { {tr.get("undo-start-title")} }
+            DialogDescription { {tr.get("undo-start-description")} }
+            div { class: "dialog-buttons",
+                button {
+                    class: "primary",
+                    onclick: move |_| {
+                        undoing_start.set(false);
+                        undo(ctx);
+                    },
+                    {tr.get("undo-start")}
+                }
+                button { onclick: move |_| undoing_start.set(false), {tr.get("cancel")} }
+            }
+        }
+    }
+}
+
+/// Undoes the latest action of the session, and says what it undid.
+fn undo(ctx: Ctx) {
+    if let Some(action) = ctx.act(Session::undo) {
+        ctx.announce(Announcement::Undone(action));
     }
 }
 
