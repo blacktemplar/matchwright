@@ -384,6 +384,7 @@ header.bar {
 footer {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
   padding: var(--space-4);
   color: var(--text-muted);
@@ -392,6 +393,27 @@ footer {
 
 footer select {
   margin-left: var(--space-2);
+}
+
+/* the help and the source code, with their icons; as high as a control, so that they are easy to
+ * tap */
+footer a,
+.help a {
+  display: inline-flex;
+  min-height: var(--control);
+  align-items: center;
+  color: var(--accent);
+  gap: var(--space-1);
+}
+
+/* The help */
+
+.help p {
+  margin: 0 0 var(--space-3);
+}
+
+.help p:last-child {
+  margin-bottom: 0;
 }
 
 /* Notices */

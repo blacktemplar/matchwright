@@ -4,7 +4,8 @@
 //!
 //! The competitions are stored in the browser's IndexedDB, see [`tournament_browser`]. The page
 //! starts with the list of them ([`competitions`]); the one open is named after the `#` of the URL
-//! and saved after each change ([`competition`]). Everything the page says goes through a
+//! and saved after each change ([`competition`]); `#help` is the [`help`], which the footer links
+//! to beside the source code. Everything the page says goes through a
 //! [`Translator`] of the language chosen, see [`i18n`].
 //!
 //! The page is an app that works offline and can be installed: `public/` holds its manifest, the
@@ -17,6 +18,7 @@ mod competition;
 mod competitions;
 mod components;
 mod cross_table;
+mod help;
 mod i18n;
 mod icons;
 mod install;
@@ -38,7 +40,8 @@ use tournament_browser::{channel::Events, indexed_db::IndexedDb, persistence};
 use tournament_engine::{MatchResult, uuid::Uuid};
 
 use crate::{
-    competition::Competition, competitions::Competitions, i18n::t, notices::Notices, theme::Theme,
+    competition::Competition, competitions::Competitions, help::Help, i18n::t, notices::Notices,
+    theme::Theme,
 };
 
 /// The variables the styles of the [`components`] are built from.
@@ -48,8 +51,39 @@ const STYLE: Asset = asset!("/assets/style.css");
 /// The database of IndexedDB the competitions are stored in.
 const DATABASE: &str = "matchwright";
 
+/// Where the source code is.
+const REPOSITORY: &str = "https://github.com/blacktemplar/matchwright";
+
+/// The fragment of the URL naming the help.
+const HELP: &str = "help";
+
 fn main() {
     dioxus::launch(App);
+}
+
+/// What the page shows, as the `#` of the URL names it.
+#[derive(Clone, Copy, PartialEq)]
+enum Screen {
+    /// The list of competitions, for an empty fragment or one naming nothing.
+    List,
+    Help,
+    Competition(CompetitionKey),
+}
+
+impl Screen {
+    /// The screen the URL names after its `#`.
+    fn in_url() -> Self {
+        let Some(hash) = web_sys::window().and_then(|window| window.location().hash().ok()) else {
+            return Self::List;
+        };
+        let fragment = hash.strip_prefix('#').unwrap_or(&hash);
+        if fragment == HELP {
+            return Self::Help;
+        }
+        Uuid::parse_str(fragment).map_or(Self::List, |key| {
+            Self::Competition(CompetitionKey::new(key))
+        })
+    }
 }
 
 /// The state every screen shares. Signals are `Copy` handles, so this is too.
@@ -72,6 +106,8 @@ struct Page {
     installable: Signal<bool>,
     /// The name of the competition shown, which the page is headed with.
     shown: Signal<Option<String>>,
+    /// What the page shows.
+    screen: Signal<Screen>,
 }
 
 impl Page {
@@ -116,9 +152,9 @@ fn App() -> Element {
         warning_dismissed: Signal::new(notices::warning_dismissed()),
         installable: Signal::new(install::offered()),
         shown: Signal::new(None),
+        screen: Signal::new(Screen::in_url()),
     });
     toggletip::use_toggletips();
-    let mut open = use_signal(opened_in_url);
     // runs again whenever the language changes
     use_effect(move || i18n::set_page_language(page.translator.read().language()));
     // and whenever the theme does
@@ -136,7 +172,7 @@ fn App() -> Element {
         let mut changes = Events::new(&window, "hashchange");
         while changes.next().await.is_some() {
             page.error.set(None);
-            open.set(opened_in_url());
+            page.screen.set(Screen::in_url());
         }
     });
     use_future(move || async move {
@@ -163,9 +199,12 @@ fn App() -> Element {
         document::Stylesheet { href: STYLE }
         // the same for every screen, so that its elements stay while the screens change
         Header {}
-        if !stored {
+        // the help also where nothing can be stored
+        if *page.screen.read() == Screen::Help {
+            Help {}
+        } else if !stored {
             main { Notices {} }
-        } else if let Some(key) = open() {
+        } else if let Screen::Competition(key) = *page.screen.read() {
             // made anew for another competition
             Competition { competition: key, key: "{key}" }
         } else {
@@ -173,13 +212,6 @@ fn App() -> Element {
         }
         Footer {}
     }
-}
-
-/// The competition the URL names after its `#`, if any.
-fn opened_in_url() -> Option<CompetitionKey> {
-    let hash = web_sys::window()?.location().hash().ok()?;
-    let key = Uuid::parse_str(hash.strip_prefix('#')?).ok()?;
-    Some(CompetitionKey::new(key))
 }
 
 /// Opens the competition `key`, or the list of competitions for `None`.
@@ -192,15 +224,17 @@ fn open(key: Option<CompetitionKey>) {
     }
 }
 
-/// The top of every screen: its heading, the name of the competition shown or else the
-/// application's, and while a competition is shown the way back to all of them. The screen of a
-/// competition follows it with its actions, in the same bar.
+/// The top of every screen: its heading, the name of the competition shown, the help's, or else
+/// the application's, and while a competition or the help is shown the way back to all
+/// competitions. The screen of a competition follows it with its actions, in the same bar.
 #[component]
 fn Header() -> Element {
     let page = use_context::<Page>();
     let tr = page.translator.read();
     let shown = page.shown.read().clone();
+    let help = *page.screen.read() == Screen::Help;
     let (title, heading) = match &shown {
+        _ if help => (tr.get("help-title"), tr.get("help")),
         // a title is plain text, where tabs and windows show the marks isolating a variable as
         // boxes
         Some(name) => (
@@ -212,7 +246,7 @@ fn Header() -> Element {
     rsx! {
         document::Title { "{title}" }
         header { class: "bar",
-            if shown.is_some() {
+            if help || shown.is_some() {
                 a { class: "back", href: "#",
                     icons::ChevronLeft {}
                     span { class: "bar-label", {tr.get("all-competitions")} }
@@ -224,7 +258,8 @@ fn Header() -> Element {
     }
 }
 
-/// The bottom of every screen: the choice of the language and of the colours.
+/// The bottom of every screen: the choice of the language and of the colours, the help and the
+/// source code.
 #[component]
 fn Footer() -> Element {
     let page = use_context::<Page>();
@@ -232,6 +267,14 @@ fn Footer() -> Element {
     let language = tr.language();
     rsx! {
         footer {
+            a { href: "#{HELP}",
+                icons::Help {}
+                {tr.get("help")}
+            }
+            a { href: REPOSITORY,
+                icons::GitHub {}
+                {tr.get("source-code")}
+            }
             label {
                 {tr.get("language")}
                 " "

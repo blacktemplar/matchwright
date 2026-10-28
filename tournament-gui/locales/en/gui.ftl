@@ -32,6 +32,23 @@ error-detail = Details
 error-no-storage = the browser does not let the page store competitions
 error-not-saved = the changes could not be saved
 error-not-exported = the file could not be made
+# a link to the repository, shown with GitHub's icon
+source-code = Source code
+
+## The help
+
+help = Help
+# the title of the page while the help is shown
+help-title = Help – Matchwright
+help-stored = Your data stays on your device
+help-stored-here = Matchwright stores all competitions locally in your browser. No data is sent to a server, and no account is required.
+help-stored-lost = Your competitions are therefore only available in this browser on this device. They are deleted when you clear your browser’s site data or close a private window.
+help-stored-export = To create a backup or continue on another device, export the competition as a file and import it there.
+help-offline = Offline use and installation
+help-offline-text = Once loaded, Matchwright also works without an internet connection. You can install it as an app from your browser’s menu; installed apps are usually allowed to keep their data permanently.
+help-tabs = If a competition is open in several tabs, it can only be edited in one of them at a time. The other tabs show it read-only and update automatically.
+help-open-source = Open source
+help-open-source-text = Matchwright is free, open-source software, licensed under MIT or Apache 2.0. The source code is available on GitHub, where you can also report bugs and suggest improvements.
 
 ## The competitions stored
 
