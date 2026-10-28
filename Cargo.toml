@@ -102,3 +102,14 @@ overflow-checks = true
 [profile.wasm-test]
 inherits = "dev"
 debug = false
+
+# The GUI's page, which `dx build --release` builds with this profile (without it, dx makes one of
+# `release` with `opt-level = "s"`). Optimising the whole program at once makes the wasm smaller
+# (under 1 MB with gzip) and, at this opt-level, about as fast as `release`; it takes longer to
+# build. "z" is smaller still, but more than twice as slow.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
