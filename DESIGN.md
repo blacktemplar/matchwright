@@ -532,7 +532,14 @@ how it came about, so a result reported before a restore can still be undone.
 
 A tag is a persistence contract, not a name: renaming or moving a type must not
 change it, so tags are written out and pinned in tests, for plugins, metrics,
-annotations and transitions alike.
+annotations and transitions alike. Since v0.1.0 saved competitions of real users
+depend on them: a tag may be added, never changed or given another meaning.
+
+The namespace is the crate defining the type (`tournament_engine::points`), not
+the product: published as Matchwright, the tags stayed, since a crate's tags
+should not change with what an application built on it is called. Rejected:
+renaming them to `matchwright::` before the release (churn in every tag, plugin
+id and Fluent key, for a name the crates do not carry).
 
 Rejected: `TypeId` (stable only within a build); a hand-rolled binary tag
 registry (reimplements `typetag`); auto-derived tags from the type path

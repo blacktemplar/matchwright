@@ -52,6 +52,7 @@ Crates: `plugin-factory` (+ `plugin-factory-derive`: generic plugin axes, catalo
 
 - Two paths: a `Competition` snapshot, and the transition log (deserializing replays it; a log that doesn't replay fails to load). The CLI saves `{"format": 1, "log": .., "people": ..}` as JSON; the app stores each log entry and each person as a JSON record. Neither saves the undo history.
 - Trait objects serialize via `typetag` with **adjacent tagging** (`#[typetag::serde(tag = "type", content = "value")]`); internal tagging breaks non-self-describing formats like postcard. Tests exercise postcard and serde_json.
+- **Saved data is a promise to users** (since v0.1.0): a change to what is saved must keep older saves loading; note it under *Unreleased* in `CHANGELOG.md`, as any change an operator notices.
 - **Tags are persistence contracts.** Every `CompetitionTransition` has an explicit namespaced tag (`#[typetag::serde(name = "tournament_engine::...")]`); a plugin's tag is its `PluginType::ID` (e.g. `tournament_engine::points`); both pinned in `tests/transition_log_serialization.rs`. New transitions/plugins/metrics/annotations need an explicit tag; never change an existing one.
 - `IdMap` (`map.rs`) and `TypeMap` wrap `IndexMap` and serialize as sequences in insertion order, which code may rely on (matches are kept in scheduling order). A match's number is a field (`Match::number`), set by the format (`NewMatch::with_number`, as a bracket does from `BracketPairing::number`) or else by scheduling order; `MatchId` does not include it.
 

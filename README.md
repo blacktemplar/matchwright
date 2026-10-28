@@ -57,8 +57,9 @@ prek run --all-files                  # formatting, lints and tests, as CI runs 
 
 The page needs [`dx`](https://dioxuslabs.com/learn/0.7/getting_started) of the
 version of `dioxus` in `Cargo.lock`, and the `wasm32-unknown-unknown` target.
-[`DESIGN.md`](DESIGN.md) records the design decisions and their reasons, and
-[`AGENTS.md`](AGENTS.md) describes the commands and architecture in detail.
+[`DESIGN.md`](DESIGN.md) records the design decisions and their reasons,
+[`AGENTS.md`](AGENTS.md) describes the commands and architecture in detail, and
+[`CHANGELOG.md`](CHANGELOG.md) what changed in each version.
 
 ## License
 
