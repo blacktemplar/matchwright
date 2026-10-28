@@ -1,9 +1,9 @@
 # What the GUI says in English. Why an action was refused, and the plugins, are translated by
 # tournament-app.
 
-app-title = Tournament
+app-title = Matchwright
 # the title of the page while a competition is open
-competition-title = { $name } – Tournament
+competition-title = { $name } – Matchwright
 language = Language
 # whether the page is light or dark
 theme = Colours

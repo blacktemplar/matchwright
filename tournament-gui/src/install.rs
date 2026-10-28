@@ -1,18 +1,18 @@
 //! Installing the page as an app, which Chromium-based browsers offer with the event
 //! `beforeinstallprompt`. The offer may come before the WebAssembly runs, so `public/pwa.js` keeps
-//! it as `window.tournamentInstallPrompt` and announces it with the event [`OFFERED`].
+//! it as `window.matchwrightInstallPrompt` and announces it with the event [`OFFERED`].
 
 use js_sys::{Function, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
 
 /// The event of the window that announces an offer.
-pub const OFFERED: &str = "tournament-installable";
+pub const OFFERED: &str = "matchwright-installable";
 
 /// The event of the window that tells that the page was installed.
 pub const INSTALLED: &str = "appinstalled";
 
 /// Where `pwa.js` keeps the offer.
-const KEPT: &str = "tournamentInstallPrompt";
+const KEPT: &str = "matchwrightInstallPrompt";
 
 /// Whether the browser offers to install the page now.
 pub fn offered() -> bool {

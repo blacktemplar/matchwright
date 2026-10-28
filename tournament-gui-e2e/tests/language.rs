@@ -8,7 +8,7 @@ use tournament_gui_e2e::{
 async fn the_page_speaks_the_language_the_browser_prefers() {
     run(async |gui| {
         gui.expect_page_language("en").await?;
-        gui.page.expect_text(By::Css("h1"), "Tournament").await
+        gui.page.expect_text(By::Css("h1"), "Matchwright").await
     })
     .await;
 }
@@ -76,7 +76,9 @@ async fn the_language_chosen_is_kept_for_the_next_visit() {
         gui.page.reload().await?;
 
         gui.expect_page_language("de").await?;
-        gui.page.expect_text(By::Css("h1"), "Turnier").await
+        gui.page
+            .expect_text(By::Id("new-competition"), "Neues Turnier")
+            .await
     })
     .await;
 }

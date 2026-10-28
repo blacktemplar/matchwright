@@ -1,6 +1,6 @@
 {
-  "name": "Tournament",
-  "short_name": "Tournament",
+  "name": "Matchwright",
+  "short_name": "Matchwright",
   "description": "Runs tournaments in the browser, also offline.",
   "id": "./",
   "start_url": "./",

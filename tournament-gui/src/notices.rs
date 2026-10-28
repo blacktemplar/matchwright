@@ -7,7 +7,7 @@ use tournament_app::i18n::Text;
 use crate::{Page, install};
 
 /// Where the browser remembers that the operator does not want to see the warning again.
-const WARNING_DISMISSED: &str = "tournament-gui.storage-warning-dismissed";
+const WARNING_DISMISSED: &str = "matchwright.storage-warning-dismissed";
 
 /// Why the last action was refused, and the [warning](StorageWarning) while the browser may not
 /// keep what is stored. `export` exports the competition shown, for the warning to offer.
@@ -104,7 +104,7 @@ fn StorageWarning(export: Option<EventHandler>) -> Element {
 }
 
 /// Where the browser remembers that the operator folded the warning.
-const WARNING_FOLDED: &str = "tournament-gui.storage-warning-folded";
+const WARNING_FOLDED: &str = "matchwright.storage-warning-folded";
 
 fn warning_folded() -> bool {
     local_storage()

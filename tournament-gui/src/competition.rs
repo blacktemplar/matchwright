@@ -40,14 +40,14 @@ use crate::{
 };
 
 /// The channel on which a tab tells the others that it saved, with the key of the competition.
-pub const SAVED: &str = "tournament-gui.saved";
+pub const SAVED: &str = "matchwright.saved";
 
 /// The message telling that the competition is changed in another tab.
 const READ_ONLY: &str = "read-only";
 
 /// The name of the lock of the competition `key`, held by the tab that changes it.
 pub fn lock_name(key: CompetitionKey) -> String {
-    format!("tournament-gui.competition.{key}")
+    format!("matchwright.competition.{key}")
 }
 
 /// The state the components of the screen share. Signals are `Copy` handles, so this is too.
@@ -478,8 +478,8 @@ fn Play() -> Element {
 }
 
 /// Where the browser remembers that the operator chose the chart, which a phase with one shows
-/// first then; named when the bracket was the only chart, and kept so that browsers keep it.
-const CHART_SHOWN: &str = "tournament-gui.bracket-shown";
+/// first then.
+const CHART_SHOWN: &str = "matchwright.chart-shown";
 
 /// Whether the operator chose the chart last in this browser.
 fn chart_remembered() -> bool {

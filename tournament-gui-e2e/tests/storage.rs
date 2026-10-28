@@ -189,7 +189,7 @@ async fn append_unknown_entry(gui: &Gui) -> WebDriverResult<()> {
         .execute_async(
             r#"
             const done = arguments[arguments.length - 1];
-            const request = indexedDB.open("tournament-gui");
+            const request = indexedDB.open("matchwright");
             request.onsuccess = () => {
                 const database = request.result;
                 const transaction = database.transaction("entries", "readwrite");

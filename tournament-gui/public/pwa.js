@@ -28,9 +28,9 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-// the offer, as `tournamentInstallPrompt`, announced by the event `tournament-installable`
+// the offer, as `matchwrightInstallPrompt`, announced by the event `matchwright-installable`
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
-  window.tournamentInstallPrompt = event;
-  window.dispatchEvent(new Event("tournament-installable"));
+  window.matchwrightInstallPrompt = event;
+  window.dispatchEvent(new Event("matchwright-installable"));
 });

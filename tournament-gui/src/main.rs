@@ -46,7 +46,7 @@ const COMPONENTS_THEME: Asset = asset!("/assets/dx-components-theme.css");
 const STYLE: Asset = asset!("/assets/style.css");
 
 /// The database of IndexedDB the competitions are stored in.
-const DATABASE: &str = "tournament-gui";
+const DATABASE: &str = "matchwright";
 
 fn main() {
     dioxus::launch(App);

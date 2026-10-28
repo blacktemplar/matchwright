@@ -1,7 +1,7 @@
 # What the GUI says in German.
 
-app-title = Turnier
-competition-title = { $name } – Turnier
+app-title = Matchwright
+competition-title = { $name } – Matchwright
 language = Sprache
 theme = Farben
 theme-system = Wie das System
