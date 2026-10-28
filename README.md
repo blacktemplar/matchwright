@@ -35,6 +35,10 @@ except to update itself. It is served by GitHub Pages, which, like any web
 server, receives your IP address when it delivers the page (see
 [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)).
 
+## Legal notice
+
+Media owner (disclosure under § 25 MedienG): Benedikt Posch, Dornbirn, Austria.
+
 ## For developers
 
 Matchwright is written in Rust and runs as WebAssembly. The repository is a

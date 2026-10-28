@@ -14,6 +14,7 @@ a file whose `"format"` changes is migrated, not refused.
 
 - The help says that nothing entered leaves the device and that there is no
   tracking, and that GitHub Pages, which serves the page, sees the IP address.
+- The help names the media owner (§ 25 MedienG).
 
 ## [0.1.0] - 2026-10-28
 

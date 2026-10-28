@@ -1,5 +1,5 @@
 //! The help, at `#help`: that the competitions are kept in the browser and nowhere else, what
-//! follows from that, and where the source code is.
+//! follows from that, where the source code is, and who owns the page.
 
 use dioxus::prelude::*;
 
@@ -32,6 +32,7 @@ pub fn Help() -> Element {
                         {tr.get("source-code")}
                     }
                 }
+                p { {tr.get("help-media-owner")} }
             }
         }
     }
