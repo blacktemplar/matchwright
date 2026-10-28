@@ -281,6 +281,7 @@ impl Session {
     /// The competition as a file, with its name, log and people, see [`crate::file`].
     pub fn export(&self) -> String {
         file::to_json(&File {
+            format: file::Format::CURRENT,
             name: Some(self.name.clone()),
             log: self.machine.log(),
             people: &self.people,
@@ -297,6 +298,7 @@ impl Session {
     /// Returns an error if `file` is no competition's file, or its log does not replay.
     pub fn import(file: &str, name: &str, stored: &[Listing]) -> Result<Self, ImportError> {
         let File {
+            format: _,
             name: named,
             log: machine,
             people,

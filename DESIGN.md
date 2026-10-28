@@ -705,8 +705,12 @@ through a `BroadcastChannel`.
 - **Persistent storage is asked for when a competition is opened** (some
   browsers ask the operator, so not on load); a refusal shows a warning, see
   [Offline and installing](#offline-and-installing).
-- **Files are the CLI's**: `{"log", "people"}` plus `"name"`, so competitions
-  move between CLI and GUI. Importing makes a new competition under a new key,
+- **Files are the CLI's**: `{"format", "log", "people"}` plus `"name"`, so
+  competitions move between CLI and GUI. `"format"` (`file::Format`, first, a
+  missing one is 1) is raised with a change older versions cannot read; a newer
+  one is refused as such rather than as a broken log, and a later version can
+  migrate older ones. The records in IndexedDB need no such field: the
+  database's own version can drive their migration. Importing makes a new competition under a new key,
   numbered (`Cup (2)`) if the name exists (a number, not a translated word in
   stored data). Exporting from the list writes the stored records as they are,
   so a log that no longer replays can still be exported.

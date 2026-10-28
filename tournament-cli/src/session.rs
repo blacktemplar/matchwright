@@ -20,6 +20,7 @@ use plugin_factory::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tournament_app::file::Format;
 use tournament_engine::{
     AddEntrant, AddPhase, Annotated as _, Competition, CompetitionStateMachine,
     CompetitionStateMachineExt as _, Entrant, EntrantId, Match, MatchId, MatchResult, Phase,
@@ -204,6 +205,7 @@ impl Session {
         let saved: Result<Saved<CompetitionStateMachine, People>, _> =
             serde_json::from_slice(&bytes);
         let Saved {
+            format: _,
             log: machine,
             people,
         } = match saved {
@@ -682,6 +684,7 @@ impl Session {
     fn save(&mut self, name: Option<String>) -> Result<String, Error> {
         let name = name.or_else(|| self.name.clone()).ok_or(Error::NoName)?;
         let saved = Saved {
+            format: Format::CURRENT,
             log: &self.machine,
             people: &self.people,
         };
@@ -763,10 +766,13 @@ fn summary(answers: &Config) -> String {
     format!("{format}, ranked by {}", ranked_by.join(", then "))
 }
 
-/// What a competition is saved as: the transition log of its machine, and the people its
-/// entrants are, apart from the log.
+/// What a competition is saved as: the [`Format`] of the file, the transition log of its machine,
+/// and the people its entrants are, apart from the log.
 #[derive(Serialize, Deserialize)]
 struct Saved<L, P> {
+    // first, so that a file of a newer format is refused for that before its log is read
+    #[serde(default)]
+    format: Format,
     log: L,
     people: P,
 }
@@ -2016,6 +2022,22 @@ mod tests {
             Session::load(storage, "notes"),
             Err(Error::Load { .. })
         ));
+    }
+
+    #[test]
+    fn a_file_of_a_newer_format_is_rejected_for_its_format() {
+        let mut storage = MemoryStorage::default();
+        let mut session = Session::new(storage.clone()).named("cup");
+        output(&mut session, "save");
+        let mut saved: Value = serde_json::from_slice(&storage.read("cup").unwrap()).unwrap();
+        assert_eq!(saved["format"], 1);
+        saved["format"] = 2.into();
+        storage.write("cup", saved.to_string().as_bytes()).unwrap();
+
+        let Err(Error::Load { source, .. }) = Session::load(storage, "cup") else {
+            panic!("a file of a newer format must not load");
+        };
+        assert!(source.to_string().contains("format 2"), "{source}");
     }
 
     #[test]
