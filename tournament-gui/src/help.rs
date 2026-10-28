@@ -14,6 +14,7 @@ pub fn Help() -> Element {
             section { class: "card", aria_labelledby: "help-stored",
                 h2 { id: "help-stored", {tr.get("help-stored")} }
                 p { {tr.get("help-stored-here")} }
+                p { {tr.get("help-stored-hosting")} }
                 p { {tr.get("help-stored-lost")} }
                 p { {tr.get("help-stored-export")} }
             }

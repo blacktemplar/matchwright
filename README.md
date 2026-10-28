@@ -28,8 +28,12 @@ keeps everything on your device: there is no account, no server and no tracking.
 
 ## Privacy
 
-Everything you enter stays in your browser. The page is a static site: once
-loaded it makes no requests except to update itself.
+Nothing you enter leaves your device: competitions and names are stored in
+your browser's IndexedDB and nowhere else. There is no tracking, no analytics
+and no cookies. The page is a static site: once loaded it makes no requests
+except to update itself. It is served by GitHub Pages, which, like any web
+server, receives your IP address when it delivers the page (see
+[GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)).
 
 ## For developers
 

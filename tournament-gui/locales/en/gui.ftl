@@ -41,7 +41,8 @@ help = Help
 # the title of the page while the help is shown
 help-title = Help – Matchwright
 help-stored = Your data stays on your device
-help-stored-here = Matchwright stores all competitions locally in your browser. No data is sent to a server, and no account is required.
+help-stored-here = Matchwright stores all competitions locally in your browser (in its IndexedDB). Nothing you enter leaves your device: no data is sent to a server, there is no tracking, and no account is required.
+help-stored-hosting = The page itself is delivered by GitHub Pages, which, like any web server, receives your IP address when you load it.
 help-stored-lost = Your competitions are therefore only available in this browser on this device. They are deleted when you clear your browser’s site data or close a private window.
 help-stored-export = To create a backup or continue on another device, export the competition as a file and import it there.
 help-offline = Offline use and installation
