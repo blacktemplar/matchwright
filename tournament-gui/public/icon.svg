@@ -1,7 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- a bracket of four entrants; everything drawn stays within the circle a maskable icon keeps -->
+  <!-- a bracket of four entrants whose final line is a lit match; everything drawn stays within the
+       circle a maskable icon keeps -->
   <rect width="512" height="512" fill="#1f4e79"/>
-  <path d="M128 160H208V224H128M208 192H288M128 288H208V352H128M208 320H288M288 192V320M288 256H368"
+  <path d="M128 160H208V224H128M208 192H288M128 288H208V352H128M208 320H288M288 192V320M288 256H352"
         fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="380" cy="256" r="28" fill="#f2b705"/>
+  <path d="M378 246C350 246 338 222 346 198C352 180 368 168 370 140C380 152 386 160 390 168C394 160 396 154 396 146C414 166 422 192 418 214C414 234 400 246 378 246Z"
+        fill="#f2b705"/>
+  <path d="M380 236C366 236 360 224 364 212C367 203 374 198 376 186C388 196 396 208 394 220C393 230 388 236 380 236Z"
+        fill="#fff3c4"/>
+  <circle cx="370" cy="256" r="22" fill="#c0392b"/>
 </svg>
