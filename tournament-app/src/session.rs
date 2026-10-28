@@ -1180,5 +1180,6 @@ fn record(person: &Person) -> String {
 }
 
 mod bracket;
+mod cross_table;
 #[cfg(test)]
 mod tests;

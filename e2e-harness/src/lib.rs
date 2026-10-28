@@ -744,7 +744,8 @@ impl Page {
     }
 
     /// Checks the page as it is now with axe-core, against the rules of WCAG 2.1 at levels A and
-    /// AA. [`run`] checks every page at the end of its test.
+    /// AA, once what it animates has come to rest, e.g. a dialog fading in. [`run`] checks every
+    /// page at the end of its test.
     ///
     /// # Panics
     /// Panics with what violates them, if anything does, or if axe-core cannot be downloaded, see
@@ -760,8 +761,16 @@ impl Page {
         let violations = self
             .driver
             .execute(
+                // the colours of what fades in would be measured half way otherwise; an animation
+                // cancelled meanwhile counts as done, one that never ends is not waited for
                 format!(
-                    "return axe.run(document, {{ runOnly: {{ type: 'tag', values: {AXE_TAGS} }} }})
+                    "return Promise.all(document.getAnimations()
+                            .filter(animation => animation.effect
+                                && animation.effect.getComputedTiming().endTime !== Infinity)
+                            .map(animation => animation.finished.catch(() => {{}})))
+                        .then(() => axe.run(document, {{
+                            runOnly: {{ type: 'tag', values: {AXE_TAGS} }},
+                        }}))
                         .then(results => results.violations.map(violation => ({{
                             rule: violation.id,
                             help: violation.help,

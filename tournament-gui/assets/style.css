@@ -1601,3 +1601,40 @@ td.name {
   text-align: left;
   white-space: normal;
 }
+
+/* The cross table (cross_table.rs): the cells centred under the numbers of the columns, a
+ * cell's matches side by side, the row's number before its name as the columns name it */
+.cross-table td,
+.cross-table thead th:not(.name) {
+  /* holding what only screen readers get, which would otherwise widen the page, not the table */
+  position: relative;
+  min-width: 2.5rem;
+  border-left: 1px solid var(--border);
+  text-align: center;
+}
+
+.cross-table td > * + * {
+  margin-left: var(--space-1);
+}
+
+.cross-table th.name .number {
+  display: inline-block;
+  min-width: 2ch;
+  color: var(--text-muted);
+  font-weight: 400;
+  text-align: right;
+}
+
+/* a team against itself */
+.cross-table td.self {
+  background: var(--hover);
+}
+
+.cross-table .outcome {
+  font-weight: 600;
+}
+
+/* a match without a result, which another tab reports */
+.cross-table .open {
+  color: var(--text-muted);
+}

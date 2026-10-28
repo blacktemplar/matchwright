@@ -31,6 +31,7 @@ use crate::{
     bracket::Bracket,
     capitalized,
     components::dialog::{Dialog, DialogDescription, DialogTitle},
+    cross_table::CrossTable,
     download, icons,
     phase::PhaseSummary,
     play::{Rounds, Standings},
@@ -347,41 +348,56 @@ fn undo(ctx: Ctx) {
 }
 
 /// What the screen after the start shows: the matches or the standings, both side by side where
-/// there is room for two columns, the bracket of a knockout, or how the phase is played.
+/// there is room for two columns, the chart of the phase, or how the phase is played.
 #[derive(Clone, Copy, PartialEq)]
 enum Column {
     Matches,
     Standings,
-    Bracket,
+    Chart,
     Phase,
 }
 
+/// What a phase shows of all its matches at once, if anything.
+#[derive(Clone, Copy, PartialEq)]
+enum Chart {
+    /// That of a knockout.
+    Bracket,
+    /// That of teams that stay the same, e.g. in a round robin.
+    CrossTable,
+}
+
 /// The screen after the start: the matches and next to them the standings, or in their place the
-/// bracket of a knockout or how the phase is played, on the full width. Buttons on top choose what
-/// is shown: the matches, the standings, the bracket or the phase where there is room for one
-/// column only, else the two columns, the bracket or the phase; the bracket only for a knockout.
+/// chart of the phase (its bracket or its cross table) or how the phase is played, on the full
+/// width. Buttons on top choose what is shown: the matches, the standings, the chart or the phase
+/// where there is room for one column only, else the two columns, the chart or the phase.
 /// Everything stays on the page, hidden while not shown.
 #[component]
 fn Play() -> Element {
     let ctx = use_context::<Ctx>();
     let mut shown = use_signal(|| {
-        if bracket_remembered() {
-            Column::Bracket
+        if chart_remembered() {
+            Column::Chart
         } else {
             Column::Matches
         }
     });
-    let has_bracket = ctx.session.read().bracket().is_some();
-    // a phase without a bracket shows the matches, whatever was chosen for a knockout
+    let chart = if ctx.session.read().bracket().is_some() {
+        Some(Chart::Bracket)
+    } else if ctx.session.read().cross_table().is_some() {
+        Some(Chart::CrossTable)
+    } else {
+        None
+    };
+    // a phase without a chart shows the matches, whatever was chosen for another phase
     let current = match shown() {
-        Column::Bracket if !has_bracket => Column::Matches,
+        Column::Chart if chart.is_none() => Column::Matches,
         column => column,
     };
     let mut show = move |column| {
         shown.set(column);
         // the phase is looked at now and then, so the next visit shows what was played on
         if column != Column::Phase {
-            remember_bracket(column == Column::Bracket);
+            remember_chart(column == Column::Chart);
         }
     };
     let tr = ctx.translator.read();
@@ -420,11 +436,14 @@ fn Play() -> Element {
                 onclick: move |_| show(Column::Matches),
                 {tr.get("matches-and-standings")}
             }
-            if has_bracket {
+            if let Some(chart) = chart {
                 button {
-                    aria_pressed: current == Column::Bracket,
-                    onclick: move |_| show(Column::Bracket),
-                    {tr.get("bracket")}
+                    aria_pressed: current == Column::Chart,
+                    onclick: move |_| show(Column::Chart),
+                    match chart {
+                        Chart::Bracket => tr.get("bracket"),
+                        Chart::CrossTable => tr.get("cross-table"),
+                    }
                 }
             }
             button {
@@ -436,8 +455,17 @@ fn Play() -> Element {
         div { class: "columns play",
             div { class: column(Column::Matches), hidden: !columns_shown, Rounds {} }
             div { class: column(Column::Standings), hidden: !columns_shown, Standings {} }
-            if has_bracket {
-                div { class: "column wide", hidden: current != Column::Bracket, Bracket {} }
+            if let Some(chart) = chart {
+                div { class: "column wide", hidden: current != Column::Chart,
+                    match chart {
+                        Chart::Bracket => rsx! {
+                            Bracket {}
+                        },
+                        Chart::CrossTable => rsx! {
+                            CrossTable {}
+                        },
+                    }
+                }
             }
             div { class: "column wide", hidden: current != Column::Phase,
                 section { class: "card", aria_labelledby: "phase",
@@ -449,24 +477,24 @@ fn Play() -> Element {
     }
 }
 
-/// Where the browser remembers that the operator chose the bracket, which a knockout shows first
-/// then.
-const BRACKET_SHOWN: &str = "tournament-gui.bracket-shown";
+/// Where the browser remembers that the operator chose the chart, which a phase with one shows
+/// first then; named when the bracket was the only chart, and kept so that browsers keep it.
+const CHART_SHOWN: &str = "tournament-gui.bracket-shown";
 
-/// Whether the operator chose the bracket last in this browser.
-fn bracket_remembered() -> bool {
+/// Whether the operator chose the chart last in this browser.
+fn chart_remembered() -> bool {
     local_storage()
-        .and_then(|storage| storage.get_item(BRACKET_SHOWN).ok().flatten())
+        .and_then(|storage| storage.get_item(CHART_SHOWN).ok().flatten())
         .is_some()
 }
 
-fn remember_bracket(shown: bool) {
+fn remember_chart(shown: bool) {
     // without local storage, the matches are shown first on the next visit
     if let Some(storage) = local_storage() {
         _ = if shown {
-            storage.set_item(BRACKET_SHOWN, "true")
+            storage.set_item(CHART_SHOWN, "true")
         } else {
-            storage.remove_item(BRACKET_SHOWN)
+            storage.remove_item(CHART_SHOWN)
         };
     }
 }

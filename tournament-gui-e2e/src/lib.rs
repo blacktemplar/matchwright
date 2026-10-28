@@ -934,6 +934,21 @@ impl Gui {
             .await
     }
 
+    /// Waits until the cells of the row of the cross table numbered `row`, from 1, are `cells`,
+    /// the rank last, each as shown followed by what only a screen reader gets on a line of its
+    /// own, e.g. `"1\nwon"`, or the number of a match without a result, `""` against itself.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the cells shown instead.
+    pub async fn expect_cross_table_row(&self, row: usize, cells: &[&str]) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css(format!("#cross-table-grid tbody tr:nth-child({row}) td")),
+                cells,
+            )
+            .await
+    }
+
     /// Waits until the numbers of the bracket's pairings are `numbers`, in the order of the
     /// bracket, scheduled or not, e.g. `"3"`.
     ///

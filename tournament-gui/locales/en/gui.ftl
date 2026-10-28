@@ -162,6 +162,22 @@ standings = Standings
 rank = Rank
 # the header of how many matches an entrant has a result of
 played = Played
+# a table with a row and a column per team, each cell the matches of the row's team against the
+# column's
+cross-table = Cross table
+# above the cross table, while a match in it has no result: its number is a button
+cross-table-report-hint = Click or tap the number of a match to report its result.
+# what a screen reader says for that button
+report-match = Report match { $number }
+# what a cell says to a screen reader for a match without a result, which the tab does not report
+match-open = match { $number }, open
+# how a match ended for the team of the row, said by screen readers for 1, ½ and 0
+outcome-win = won
+outcome-draw = drawn
+outcome-loss = lost
+# the dialog reporting a match of the cross table
+match-numbered = Match { $number }
+match-between = { $a } against { $b }
 # the bracket of a knockout, every match in it from the start
 bracket = Bracket
 bracket-winners = Winners bracket

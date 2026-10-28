@@ -268,6 +268,32 @@ async fn a_reopened_match_has_the_focus_and_is_announced() {
     .await;
 }
 
+/// A round robin's cross table shows the match of every two entrants, which is reported there
+/// through a dialog; the focus then goes to the table's heading, no match being left.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn results_are_reported_in_the_cross_table() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+
+        gui.click("Cross table").await?;
+        gui.expect_view("Cross table").await?;
+        gui.expect_cross_table_row(1, &["", "1", "1"]).await?;
+        gui.page.check_accessibility().await?;
+        gui.click_labelled("Report match 1").await?;
+        gui.page.check_accessibility().await?;
+        gui.click("Alice wins").await?;
+
+        gui.expect_no_dialog().await?;
+        gui.expect_cross_table_row(1, &["", "1\nwon", "1"]).await?;
+        gui.expect_cross_table_row(2, &["0\nlost", "", "2"]).await?;
+        gui.expect_focus("Cross table").await?;
+        gui.expect_announcement("Match 1: Alice won. Every match has a result.")
+            .await
+    })
+    .await;
+}
+
 /// The final and the match for third place wait for the semifinals in the bracket, and take
 /// their entrants as those are decided; they show the numbers they are named by before that.
 #[tokio::test]

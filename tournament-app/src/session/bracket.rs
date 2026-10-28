@@ -3,7 +3,7 @@
 use std::{any::Any, collections::HashMap};
 
 use tournament_engine::{
-    TypeMap,
+    Phase, TypeMap,
     plugins::phase_format::{
         Advance, BracketPairing as Pairing, BracketSide, DoubleElimination, DoubleEliminationRound,
         KnockoutRound, PairingId, Seat, SingleElimination,
@@ -236,6 +236,12 @@ impl Session {
         }
         Some(Bracket { sections })
     }
+}
+
+/// Whether the format of `phase` plays a bracket, see [`Session::bracket`].
+pub(super) fn plays_bracket(phase: &Phase) -> bool {
+    let format: &dyn Any = phase.format();
+    format.is::<SingleElimination>() || format.is::<DoubleElimination>()
 }
 
 /// The match for third place is drawn below the final.

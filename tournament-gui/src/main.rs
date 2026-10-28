@@ -16,6 +16,7 @@ mod bracket;
 mod competition;
 mod competitions;
 mod components;
+mod cross_table;
 mod i18n;
 mod icons;
 mod install;

@@ -1903,6 +1903,39 @@ bracket, every pairing in it from the start.
   rounds, or beside the standings). Half the width, so a large bracket
   scrolls sideways more.
 
+### The cross table
+
+(2026-10-28)
+
+#### Decision
+
+- **A phase whose teams stay the same shows a cross table** in the place of
+  the bracket (the view switch's chart): a row and a column per team, each
+  cell the matches of the row's team against the column's, seen from the row
+  (`1`, `½`, `0`, said as "won", "drawn", "lost"), several in a cell where two
+  teams meet more than once. `Session::cross_table` offers it where each match
+  is played by two teams of one ranking each and the format plays no bracket:
+  a round robin, random rounds; not a Monster DYP, whose teams are drawn anew
+  each round, and not a knockout, which has its bracket. No table of formats
+  is kept beyond the bracket's.
+- **Rows in the order the entrants were entered**, which results do not
+  change, so that a cell stays where it was while results are reported in the
+  table; the rank is the last column. Columns are headed by the rows'
+  numbers, the names said to screen readers, as names across the top would
+  make a table of 20 too wide. The names stay in sight while it scrolls
+  sideways, as in the standings.
+- **A result is reported in the table** by the number of an open match, a
+  button opening a dialog with the result buttons (draws included, which a
+  click on a cell meaning "the row won" could not report). The focus then
+  moves on to the next open match in the order of the table, as in the list.
+
+#### Alternatives
+
+- **Rows by rank.** The standings are that; the rows would move after every
+  result, and a cell with them.
+- **Rows in the order of the draw** (the rankings' initial order). Stable as
+  well, but an order the operator sees nowhere else.
+
 ### Layout
 
 *Implemented* 2026-10-25: where the screens of `tournament-gui` put what they

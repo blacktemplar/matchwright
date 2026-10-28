@@ -58,6 +58,28 @@ async fn the_views_of_a_knockout_fit_a_phone_in_german() {
     .await;
 }
 
+/// A cross table of 8 is wider than a phone, so it scrolls inside its card, not the page.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_cross_table_scrolls_inside_its_card_on_a_phone() {
+    run_in_new_competition(async |gui| {
+        gui.page.resize(360, 740).await?;
+        for name in [
+            LONG_NAME, "Bob", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi",
+        ] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("Round robin").await?;
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+
+        gui.click("Cross table").await?;
+
+        gui.page.expect_no_sideways_scroll().await
+    })
+    .await;
+}
+
 /// A double elimination of 6 has byes, and a loser bracket whose rounds alternate between
 /// dropping losers in and halving.
 #[tokio::test]

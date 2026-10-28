@@ -27,7 +27,7 @@ use crate::{
     storage::{MemoryStorage, Progress, Stored},
     view::{
         BracketColumn, BracketEntry, BracketLine, BracketPart, BracketSection, BracketSource,
-        Medal, NameSearch, Unplayed,
+        Medal, NameSearch, Outcome, Unplayed,
     },
 };
 
@@ -888,6 +888,79 @@ fn the_standings_show_the_columns_of_the_metrics() {
         "{standings:?}"
     );
     assert!(points[0] > points[3], "{standings:?}");
+}
+
+/// A round robin's cross table has a row per team, in the order they were entered, and in each the
+/// one match against each other team, seen from the row's team.
+#[test]
+fn the_cross_table_shows_the_match_of_every_two_teams() {
+    let mut session = Given::new().started();
+    assert!(
+        Given::new().added().cross_table().is_none(),
+        "before the start"
+    );
+    let first = numbered(&session, 1);
+    session.report(first, MatchResult::AWins).unwrap();
+
+    let table = session.cross_table().unwrap();
+
+    let teams: Vec<_> = table
+        .rows
+        .iter()
+        .map(|row| names(&row.entrants).join(""))
+        .collect();
+    assert_eq!(teams, ["Alice", "Bob", "Carol", "Dave"]);
+    for (i, row) in table.rows.iter().enumerate() {
+        assert_eq!(row.cells.len(), 4);
+        assert!(row.cells[i].is_empty(), "no match against itself");
+        for (j, cell) in row.cells.iter().enumerate().filter(|(j, _)| *j != i) {
+            let [played] = cell.as_slice() else {
+                panic!("one match of {i} against {j}: {cell:?}");
+            };
+            let [mirrored] = table.rows[j].cells[i].as_slice() else {
+                panic!("one match of {j} against {i}");
+            };
+            assert_eq!(played.row, mirrored.row);
+            let expected = match played.outcome {
+                Some(Outcome::Win) => Some(Outcome::Loss),
+                Some(Outcome::Loss) => Some(Outcome::Win),
+                outcome => outcome,
+            };
+            assert_eq!(mirrored.outcome, expected);
+        }
+    }
+    let outcomes: Vec<_> = table
+        .rows
+        .iter()
+        .flat_map(|row| &row.cells)
+        .flatten()
+        .filter_map(|played| played.outcome.map(|outcome| (played.row.id, outcome)))
+        .collect();
+    assert_eq!(outcomes.len(), 2, "the match reported, from either side");
+    assert!(outcomes.iter().all(|(id, _)| *id == first));
+    let winner = table
+        .rows
+        .iter()
+        .find(|row| {
+            row.cells
+                .iter()
+                .flatten()
+                .any(|played| played.outcome == Some(Outcome::Win))
+        })
+        .unwrap();
+    assert_eq!(winner.rank.get(), 1);
+}
+
+/// A knockout has its bracket instead, and the teams of a Monster DYP change every round.
+#[test]
+fn a_cross_table_is_only_of_teams_that_stay_the_same_without_a_bracket() {
+    for format in [SingleElimination::ID, DoubleElimination::ID, MonsterDyp::ID] {
+        let session = Given::new().format(format).started();
+
+        assert!(session.cross_table().is_none(), "{format}");
+    }
+    let session = Given::new().format(RandomRounds::ID).started();
+    assert!(session.cross_table().is_some());
 }
 
 /// A ranking that lost every match is told apart from one that has not played yet.
