@@ -109,3 +109,41 @@ jobs:
       - uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
         with:
           extra-args: --all-files cargo-fmt
+
+  # the GUI on GitHub Pages, at blacktemplar.github.io/matchwright/ (hence the base path), built
+  # here, since the wasm holds the absolute paths of the sources of its assets; after every push to
+  # main that passes the jobs above
+  pages-build:
+    if: github.event_name == 'push'
+    needs: [test, wasm-test, web-e2e, gui-e2e, fmt]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7.10
+      - run: dx build -p tournament-gui --release --debug-symbols false --base-path matchwright
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/dx/tournament-gui/release/web/public
+
+  pages-deploy:
+    needs: pages-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # one deployment at a time, never stopped halfway; of those waiting, only the last runs
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

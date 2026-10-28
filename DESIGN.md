@@ -929,10 +929,12 @@ Rejected: precaching a build-time list (dx makes none); network first for
 assets (waits on a bad venue connection, and content-named assets never go
 stale); dismissing the warning per session only (nags in every tab).
 
-*Hosting (planned):* static files over HTTPS on GitHub Pages, under
-`/matchwright/` (hence `--base-path`), built and deployed by a CI workflow:
-the wasm holds the absolute paths of its asset sources, so what is hosted must
-not be built on a developer's machine.
+**Hosting**: static files over HTTPS on GitHub Pages, under `/matchwright/`
+(hence `--base-path`), built and deployed by CI after every push to `main` that
+passes it: the wasm holds the absolute paths of its asset sources, so what is
+hosted must not be built on a developer's machine. Navigation is after `#`, so
+no 404 fallback is needed. The command line in the browser (`tournament-web`)
+is a development tool and not hosted.
 
 ### Translation
 
