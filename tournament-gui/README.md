@@ -29,7 +29,7 @@ competition and to install the app, after which browsers usually keep it.
 ```text
 dx serve -p tournament-gui              # add --hot-patch to patch Rust code into the running page
 # into target/dx/tournament-gui/release/web/public, optimized by wasm-opt, which dx runs itself;
-# add --base-path <path> for a page served under a path, e.g. tournament-engine on GitHub Pages
+# add --base-path <path> for a page served under a path, e.g. matchwright on GitHub Pages
 dx build -p tournament-gui --release --debug-symbols false
 ```
 
