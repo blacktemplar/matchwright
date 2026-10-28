@@ -95,44 +95,6 @@ async fn the_matches_that_can_be_played_now_are_listed() {
 
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
-async fn the_matches_shown_are_those_of_the_entrants_found() {
-    run_in_new_competition(async |gui| {
-        start_round_robin(&gui, &["Alice", "Bob"]).await?;
-
-        gui.find_entrant("carol").await?;
-
-        gui.expect_matches(&[]).await?;
-        gui.page
-            .expect_texts(
-                By::Css(".empty"),
-                &["No entrant here has a name containing “carol”."],
-            )
-            .await?;
-        gui.page.check_accessibility().await?;
-        gui.find_entrant("ALI").await?;
-        gui.expect_matches(&["1"]).await
-    })
-    .await;
-}
-
-/// Of three, one has a bye in every round, and is found as well.
-#[tokio::test]
-#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
-async fn an_entrant_found_with_a_bye_is_not_said_to_be_missing() {
-    run_in_new_competition(async |gui| {
-        start_round_robin(&gui, &["Alice", "Bob", "Carol"]).await?;
-
-        for name in ["Alice", "Bob", "Carol"] {
-            gui.find_entrant(name).await?;
-            gui.page.expect_texts(By::Css(".empty"), &[]).await?;
-        }
-        Ok(())
-    })
-    .await;
-}
-
-#[tokio::test]
-#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_result_is_typed_in_by_the_number_of_its_match() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;

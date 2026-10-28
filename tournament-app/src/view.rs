@@ -67,7 +67,7 @@ pub struct MatchRow {
 
 /// What an operator typed to find entrants by their name: it finds those whose name contains it,
 /// whatever the case and the accents of either. Nothing typed, or only spaces, finds every
-/// entrant, and so does every match.
+/// entrant.
 ///
 /// ```
 /// use tournament_app::view::NameSearch;
@@ -106,14 +106,6 @@ impl NameSearch {
             Some(name) => self.finds_name(name),
             None => self.is_empty(),
         }
-    }
-
-    /// Whether it finds an entrant of either side of the match `row`.
-    pub fn finds_in(&self, row: &MatchRow) -> bool {
-        row.a
-            .iter()
-            .chain(&row.b)
-            .any(|entrant| self.finds(entrant))
     }
 }
 

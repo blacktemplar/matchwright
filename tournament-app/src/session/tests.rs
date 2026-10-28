@@ -1126,35 +1126,6 @@ fn a_match_can_be_played_once_its_entrants_played_the_rounds_before() {
     assert!(Given::new().added().playable().is_empty());
 }
 
-#[test]
-fn a_search_finds_the_matches_of_an_entrant_by_part_of_the_name_whatever_the_case_and_accents() {
-    let session = Given::new()
-        .entrants(&["Alice", "Bob", "Carol", "Maximilian Müller"])
-        .started();
-    let found = |text: &str| -> Vec<usize> {
-        let search = NameSearch::new(text);
-        matches(&session)
-            .iter()
-            .filter(|row| search.finds_in(row))
-            .map(|row| row.number)
-            .collect()
-    };
-    let of_max: Vec<usize> = matches(&session)
-        .iter()
-        .filter(|row| {
-            [&row.a, &row.b]
-                .iter()
-                .any(|side| names(side).contains(&"Maximilian Müller"))
-        })
-        .map(|row| row.number)
-        .collect();
-
-    assert_eq!(of_max.len(), 3);
-    assert_eq!(found("MULL"), of_max);
-    assert_eq!(found(" "), [1, 2, 3, 4, 5, 6]);
-    assert!(found("zed").is_empty());
-}
-
 /// A round robin of four plays three rounds of two matches.
 #[test]
 fn the_progress_is_the_first_round_with_a_match_to_play() {

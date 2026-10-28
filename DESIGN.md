@@ -1737,7 +1737,8 @@ tested natively and in wasm, and knows no plugin.
   coming to the desk says who won rather than the number of the match,
   followed by the number of the match where needed and by `X` for a draw, in
   either order (`ali`, `ali 5`, `ali X`, `ali 5 X`; `Session::read_entered`).
-  The name is found as the search finds names, among all open matches; it
+  The name is found by part of it, whatever the case and the accents
+  (`view::NameSearch`), among all open matches; it
   says a result only if it fits one side of one match (one match for a draw);
   otherwise the refusal asks for more of the name, or for the number of the
   match. It never guesses which of several matches is meant, not even the one
@@ -1775,15 +1776,24 @@ tested natively and in wasm, and knows no plugin.
   goes at once.
 - **The rows carry what the announcements say**: `Reported` and `Reopened`
   hold the row of the match, with the result reported or the one it had.
-- **Finding an entrant** (2026-10-26): a field above the list shows only the
-  matches (and byes) of entrants whose name contains what is typed, whatever
-  the case and the accents (`view::NameSearch`: both folded by Unicode's
-  canonical decomposition, the accents dropped, so `muller` finds `Müller`;
-  `ß` stays itself), within the list shown, kept while another is
-  chosen. It answers "whom does Carol play, and can she now?" among 10–20
-  matches. A reported match stays shown, since its names still match. The
-  standings are not filtered: they are read by rank, and a filtered table
-  hides the rows around the entrant.
+- **Finding an entrant is the browser's find in page** (2026-10-28). A
+  field above the list once showed only the matches of entrants whose name
+  contained what was typed (2026-10-26). It was removed: with 10–20 matches
+  in a list, jumping to a name the browser highlights answers "whom does
+  Carol play, and can she now?" as well as a filtered list, and the
+  browsers' find ignores case and accents too. A second field above the
+  list also overlapped the typed entry of results, which finds names the
+  same way (`view::NameSearch`: both folded by Unicode's canonical
+  decomposition, the accents dropped, so `muller` finds `Müller`; `ß` stays
+  itself) and, while it has text, takes over the list, so the search had to
+  step aside. Merging the two into one field was rejected: an Enter pressed
+  out of habit after a search would report a result, and a read-only tab
+  needs to search but cannot report. What finding by the browser needs is
+  that every name shown is text on the page, not drawn and not loaded only
+  when scrolled to, and that what is not shown is `hidden`, which find in
+  page skips. Planned: once a match can be running, the entry of results
+  belongs to the list of running matches, where an entrant has at most one,
+  so that a name fits one match there and one field can find and report.
 - **A finished competition says who won** (2026-10-27): once every match
   scheduled has a result, `Session::winners` names the teams ranked first
   (more than one when tied, then by name, since the standings order ties by
@@ -1871,7 +1881,7 @@ bracket, every pairing in it from the start.
   chooses between "Matches & standings", "Bracket" and "Phase" where there is
   room for two columns, and between the matches, the standings, the bracket
   and the phase where there is not. What is not shown stays on
-  the page, `hidden`, so that the round chosen and the search are kept. The
+  the page, `hidden`, so that the round chosen and the entry typed are kept. The
   browser remembers whether the bracket was chosen (local storage), as it does
   the typed entry of results. Where a side comes from wraps within the
   narrowest column (`7rem`) rather than widening its column, so that a

@@ -226,10 +226,10 @@ events; 20–40 entrants typically. In parts:
    them, hover and chosen states, a finished match receding, an empty list of entrants saying so,
    motion respecting `prefers-reduced-motion`, a more compact storage warning. Checked by axe-core
    in both schemes once, by hand; the e2e tests run in light only.
-3. **Finding an entrant** (done 2026-10-26), see DESIGN.md, *Running a competition*: a field above
-   the matches showing only those of entrants whose name contains what is typed, whatever the case
-   and the accents (`muller` finds `Müller`), within the list shown (`view::NameSearch`). The
-   standings are not filtered.
+3. **Finding an entrant** (done 2026-10-26, removed 2026-10-28), see DESIGN.md, *Running a
+   competition*: a field above the matches showing only those of entrants whose name contains what
+   is typed. Removed in favour of the browser's find in page, since it overlapped the typed entry
+   of results.
 4. **The bracket** (done 2026-10-26), see DESIGN.md, *The bracket*: a single and a double
    elimination show every pairing from the start, as columns of stages joined by lines, in place of
    the columns on the full width, chosen by the view switch on top, which a knockout shows at every

@@ -10,7 +10,7 @@ use std::{num::NonZeroU32, rc::Rc};
 use dioxus::prelude::*;
 use tournament_app::{
     i18n::{Message as _, PluginText, Text},
-    view::{MatchRow, Medal, NameSearch, RoundSummary},
+    view::{MatchRow, Medal, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
 use wasm_bindgen::JsCast as _;
@@ -91,9 +91,6 @@ pub fn Rounds() -> Element {
     let typing = use_signal(result_entry_open);
     // what is typed into it, which while there is any shows the matches it fits instead
     let entry = use_signal(String::new);
-    // what the operator typed to find entrants, kept while the list shown changes
-    let mut searched = use_signal(String::new);
-    let search = NameSearch::new(&searched.read());
     let session = ctx.session.read();
     let rounds = session.rounds();
     let Some(current) = current(&rounds) else {
@@ -121,20 +118,6 @@ pub fn Rounds() -> Element {
             .unwrap_or_default(),
     };
     drop(session);
-    let listed = matches.len() + byes.len();
-    let (matches, byes): (Vec<_>, Vec<_>) = if entered.is_some() {
-        (matches, byes)
-    } else {
-        (
-            matches
-                .into_iter()
-                .filter(|row| search.finds_in(row))
-                .collect(),
-            byes.into_iter()
-                .filter(|bye| bye.entrants.iter().any(|entrant| search.finds(entrant)))
-                .collect(),
-        )
-    };
     // the match whose result Enter in the entry reports
     let to_report = entered.as_ref().and_then(|(_, _, to_report)| *to_report);
     let with_round = shown == Shown::Playable || entered.is_some();
@@ -257,17 +240,6 @@ pub fn Rounds() -> Element {
                     }
                 }
             }
-            div { class: "row search", hidden: entered.is_some(),
-                label { r#for: "find-entrant", class: "visually-hidden", {tr.get("find-entrant")} }
-                input {
-                    id: "find-entrant",
-                    r#type: "search",
-                    value: "{searched}",
-                    autocomplete: "off",
-                    placeholder: tr.get("find-entrant"),
-                    oninput: move |event| searched.set(event.value()),
-                }
-            }
             // focused once no match shown is left without a result, so that the focus is not lost
             h3 { tabindex: "-1", onmounted: on_heading_mounted,
                 match (&entered, shown) {
@@ -279,8 +251,6 @@ pub fn Rounds() -> Element {
             if rows.is_empty() && byes.is_empty() {
                 if let Some((text, ..)) = &entered {
                     p { class: "empty", {t!(tr, "entry-nothing-found", text = text.as_str())} }
-                } else if listed > 0 {
-                    p { class: "empty", {t!(tr, "nothing-found", text = searched.read().trim())} }
                 } else if shown == Shown::Playable {
                     p { class: "empty", {tr.get("nothing-playable")} }
                 }
