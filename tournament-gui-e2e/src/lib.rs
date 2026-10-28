@@ -1151,7 +1151,10 @@ impl Gui {
     /// Panics if they are not in time, with the medals shown instead.
     pub async fn expect_medals(&self, medals: &[&str]) -> WebDriverResult<()> {
         self.page
-            .expect_texts(By::Css("#standing-list td.rank .medal + span"), medals)
+            .expect_texts(
+                By::Css("#standing-list td.rank .medal .visually-hidden"),
+                medals,
+            )
             .await
     }
 

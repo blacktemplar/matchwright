@@ -593,9 +593,10 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     }
 }
 
-/// The medal of a place, said to screen readers by its name.
+/// The rank of a place with a medal, on a disc in the medal's colour, said to screen readers by the
+/// medal's name before it.
 #[component]
-fn MedalOf(medal: Medal) -> Element {
+fn MedalOf(medal: Medal, rank: u32) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
     let (class, name) = match medal {
@@ -604,8 +605,10 @@ fn MedalOf(medal: Medal) -> Element {
         Medal::Bronze => ("bronze", "medal-bronze"),
     };
     rsx! {
-        icons::Medal { class }
-        span { class: "visually-hidden", {tr.get(name)} }
+        span { class: "medal {class}",
+            span { class: "visually-hidden", {tr.get(name)} }
+            "{rank}"
+        }
     }
 }
 
@@ -692,9 +695,10 @@ pub fn Standings() -> Element {
                                 "data-rank": row.medal.map(|_| row.rank.get()),
                                 td { class: "rank",
                                     if let Some(medal) = row.medal {
-                                        MedalOf { medal }
+                                        MedalOf { medal, rank: row.rank.get() }
+                                    } else {
+                                        "{row.rank}"
                                     }
-                                    "{row.rank}"
                                 }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }
                                 td { "{row.played}" }

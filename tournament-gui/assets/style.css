@@ -28,11 +28,12 @@
   --on-error: light-dark(#fff, #2a0d0b);
   --warning: light-dark(#b54708, #e3a13b);
   --warning-subtle: light-dark(#fffaeb, #2a2113);
-  /* the discs of the medals, 3:1 against the surface and gold against the tint of the first
-   * place too, outlined in the text's colour */
-  --gold: light-dark(#a67c00, #e0b84a);
-  --silver: light-dark(#848c94, #c0c7ce);
-  --bronze: light-dark(#a0612b, #d08a50);
+  /* the discs of the medals, under their rank, which tells them apart, so that they need not
+   * stand out 3:1 and can have the medals' colours; the rank on them 4.5:1 in --on-medal */
+  --gold: light-dark(#f2c230, #e0b84a);
+  --silver: light-dark(#c9ced3, #c0c7ce);
+  --bronze: light-dark(#d08a50, #d08a50);
+  --on-medal: light-dark(#1b1f24, #1b1f24);
   --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 6%), transparent);
   /* at the edge where more of what scrolls sideways is out of sight */
   --scroll-shadow: light-dark(rgb(16 24 40 / 18%), rgb(0 0 0 / 70%));
@@ -1520,27 +1521,31 @@ th {
 }
 
 /* the places with a medal once every match is played (play.rs): bold, the first tinted, the
- * medal before the rank, so that it does not depend on the colour alone */
-td.rank .medal {
-  margin-right: var(--space-1);
-  vertical-align: -0.2em;
+ * rank on a disc in the medal's colour, so that the medals differ by their rank, not by the
+ * colour alone; as high as a line, so that the row does not grow */
+.medal {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  margin-block: -0.3em;
+  padding-inline: 0.3em;
+  border-radius: 0.8em;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 25%);
+  color: var(--on-medal);
+  font-weight: 700;
 }
 
-.medal .icon {
-  width: 1.1em;
-  height: 1.1em;
+.medal.gold {
+  background: var(--gold);
 }
 
-.medal.gold circle {
-  fill: var(--gold);
+.medal.silver {
+  background: var(--silver);
 }
 
-.medal.silver circle {
-  fill: var(--silver);
-}
-
-.medal.bronze circle {
-  fill: var(--bronze);
+.medal.bronze {
+  background: var(--bronze);
 }
 
 tr.podium td {

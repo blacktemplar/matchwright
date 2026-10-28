@@ -118,25 +118,6 @@ pub fn Trophy() -> Element {
     }
 }
 
-/// A medal on its ribbon, the disc filled by the CSS of `class`, e.g. in gold.
-#[component]
-pub fn Medal(class: &'static str) -> Element {
-    rsx! {
-        span { class: "medal {class}",
-            Icon {
-                path {
-                    d: "M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12 \
-                        a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15",
-                }
-                path { d: "M11 12 5.12 2.2" }
-                path { d: "m13 12 5.88-9.8" }
-                path { d: "M8 7h8" }
-                circle { cx: "12", cy: "17", r: "5" }
-            }
-        }
-    }
-}
-
 /// What is said about something.
 #[component]
 pub fn Info() -> Element {
