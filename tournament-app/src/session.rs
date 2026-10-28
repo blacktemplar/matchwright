@@ -779,15 +779,15 @@ impl Session {
     /// - part of the name of the winner, found as [`NameSearch`] finds it, optionally followed by
     ///   the number of the match and by `X` for a draw, in either order, each apart by whitespace,
     ///   e.g. `"ali"`, `"ali X"`, `"ali 5"` or `"ali 5 X"`. It fits the open matches with an
-    ///   entrant of that name, and says a result if they are one side of one match (one match for
-    ///   a draw), or else if just one of them is playable now (see [`Self::playable`]). A number
+    ///   entrant of that name, and says a result only if they are one side of one match (one match
+    ///   for a draw), whichever of them is playable now. A number
     ///   or an `X` at the end is read as a part of the name as long as a name contains it, e.g.
     ///   `"Malcolm X"` is Malcolm X's win, and `"Malcolm X X"` a draw of his match.
     ///
     /// The result is an error if the competition has not started, `entry` is empty, it is the
     /// number of a match alone, there is no match of the number entered, it has a result already,
     /// its format has no draws while a draw is entered, or the name entered fits no open match,
-    /// both sides of one, or several matches none or several of which are playable now.
+    /// both sides of one, or several matches.
     pub fn read_entered(&self, entry: &str) -> Entered {
         let nothing = |error: ReportEnteredError| Entered {
             found: Vec::new(),
@@ -875,39 +875,20 @@ impl Session {
         let report = if reading.draw && !phase.format().allows_draws() {
             Err(ReportError::DrawNotAllowed.into())
         } else {
-            // where the name fits several matches, the one playable now, if just one is
-            let pool = if fitting.len() > 1 {
-                let playable: HashSet<MatchId> = self.playable().iter().map(|row| row.id).collect();
-                let now: Vec<_> = fitting
-                    .iter()
-                    .filter(|(row, _)| playable.contains(&row.id))
-                    .copied()
-                    .collect();
-                if now.is_empty() { fitting } else { now }
-            } else {
-                fitting
-            };
-            match pool.as_slice() {
-                [(row, result)] => Ok(MatchRow {
+            match (fitting.as_slice(), found.as_slice()) {
+                ([(row, result)], _) => Ok(MatchRow {
                     result: Some(*result),
                     ..(*row).clone()
                 }),
-                [(first, _), ..] if pool.iter().all(|(row, _)| row.id == first.id) => {
-                    Err(ReportEnteredError::BothSides {
-                        name: reading.name.to_owned(),
-                        number: first.number,
-                    })
-                }
-                [(first, _), ..] => Err(ReportEnteredError::SeveralMatches {
+                (_, [row]) => Err(ReportEnteredError::BothSides {
                     name: reading.name.to_owned(),
-                    matches: pool
-                        .iter()
-                        .map(|(row, _)| row.id)
-                        .collect::<HashSet<_>>()
-                        .len(),
-                    number: first.number,
+                    number: row.number,
                 }),
-                [] => unreachable!("only a reading that fits is chosen"),
+                (_, rows) => Err(ReportEnteredError::SeveralMatches {
+                    name: reading.name.to_owned(),
+                    matches: rows.len(),
+                    number: rows[0].number,
+                }),
             }
         };
         Entered { found, report }

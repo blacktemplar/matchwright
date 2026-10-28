@@ -138,8 +138,7 @@ pub enum ReportEnteredError {
     /// Open matches have an entrant whose name contains `name`, but not the match `number`.
     #[error("no open match {number} has an entrant whose name contains “{name}”")]
     NotInMatch { name: String, number: usize },
-    /// The name entered is found in `matches` open matches, none of them playable now or several,
-    /// e.g. in the match numbered `number`.
+    /// The name entered is found in `matches` open matches, e.g. in the match numbered `number`.
     #[error("“{name}” fits {matches} open matches; add the number of one, e.g. “{name} {number}”")]
     SeveralMatches {
         name: String,

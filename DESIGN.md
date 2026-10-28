@@ -1738,10 +1738,12 @@ tested natively and in wasm, and knows no plugin.
   followed by the number of the match where needed and by `X` for a draw, in
   either order (`ali`, `ali 5`, `ali X`, `ali 5 X`; `Session::read_entered`).
   The name is found as the search finds names, among all open matches; it
-  says a result if it fits one side of one match (one match for a draw), or
-  else one of them playable now, as in a round robin, where an entrant has an
-  open match in every round but plays the first; otherwise the refusal asks
-  for more of the name, or for the number of the match. A number or an `X` at
+  says a result only if it fits one side of one match (one match for a draw);
+  otherwise the refusal asks for more of the name, or for the number of the
+  match. It never guesses which of several matches is meant, not even the one
+  playable now, which a round robin, where an entrant has an open match in
+  every round, would suggest: a match reported other than the one the
+  operator looks at is worse than a number typed. A number or an `X` at
   the end is part of the name while a name contains it, so that `Malcolm X`
   is his win and `Team 7` that team's: the longest name that fits wins. While
   the field has text, the list shows the matches it fits, in place of the

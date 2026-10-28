@@ -1363,44 +1363,27 @@ fn win_of(row: &MatchRow, name: &str) -> MatchResult {
     }
 }
 
-/// Part of the winner's name fits every open match of the entrant, and reports the one playable
-/// now: Alice plays a match in every round of a round robin, the one of round 1 first. Once that
-/// one has a result, none of hers is playable before the other match of round 1, so the number
-/// of the one meant is needed.
+/// Part of the winner's name fits every open match of the entrant, all of which are shown, and
+/// reports nothing while they are several, even if just one is playable now: Alice plays a match
+/// in every round of a round robin, so the number of the one meant is needed.
 #[test]
 fn a_win_is_entered_as_part_of_the_winners_name() {
     let mut session = Given::new().started();
     let alices = open_matches_of(&session, "Alice");
-    let first = session
-        .playable()
-        .into_iter()
-        .find(|row| alices.iter().any(|alice| alice.id == row.id))
-        .unwrap();
 
     let entered = session.read_entered(" ALI ");
-    let reported = session.report_entered(" ALI ").unwrap();
 
-    assert_eq!(
-        numbers(&entered.found),
-        numbers(&alices),
-        "all of hers are shown"
-    );
-    assert_eq!(entered.report.unwrap(), reported.row);
-    assert_eq!(reported.row.id, first.id);
-    assert_eq!(reported.row.result, Some(win_of(&first, "Alice")));
-
-    let left = open_matches_of(&session, "Alice");
-    let entered = session.read_entered("ali");
-    assert_eq!(numbers(&entered.found), numbers(&left));
+    assert_eq!(numbers(&entered.found), numbers(&alices));
     assert!(matches!(
         entered.report,
-        Err(ReportEnteredError::SeveralMatches { name, matches: 2, number })
-            if name == "ali" && number == left[0].number
+        Err(ReportEnteredError::SeveralMatches { name, matches: 3, number })
+            if name == "ALI" && number == alices[0].number
     ));
-    let meant = &left[1];
-    let reported = session
-        .report_entered(&format!("ali {}", meant.number))
-        .unwrap();
+    assert!(session.report_entered("ali").is_err());
+    let meant = &alices[1];
+    let entry = format!(" ali {} ", meant.number);
+    assert_eq!(numbers(&session.read_entered(&entry).found), [meant.number]);
+    let reported = session.report_entered(&entry).unwrap();
     assert_eq!(reported.row.id, meant.id);
     assert_eq!(reported.row.result, Some(win_of(meant, "Alice")));
 }
@@ -1411,19 +1394,23 @@ fn a_draw_is_entered_as_part_of_a_name_and_x() {
     let mut session = Given::new().started();
     let alices = open_matches_of(&session, "Alice");
 
-    let first = session.report_entered("ali x").unwrap();
+    let first = session
+        .report_entered(&format!("ali {} X", alices[0].number))
+        .unwrap();
     let second = session
-        .report_entered(&format!("ali {} X", alices[1].number))
+        .report_entered(&format!("Ali x {}", alices[1].number))
         .unwrap();
-    let third = session
-        .report_entered(&format!("Ali X {}", alices[2].number))
-        .unwrap();
+    let third = session.report_entered("ali x").unwrap();
 
     assert_eq!(
         [first.row.result, second.row.result, third.row.result],
         [Some(MatchResult::Draw); 3]
     );
-    assert_eq!(numbers(&[second.row, third.row]), numbers(&alices[1..]));
+    assert_eq!(
+        numbers(&[first.row, second.row, third.row]),
+        numbers(&alices),
+        "the last one without a number, being the only one left"
+    );
 }
 
 /// A number or an `X` at the end is part of the name as long as a name contains it.
