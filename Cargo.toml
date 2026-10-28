@@ -114,3 +114,14 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# The GUI's page for its end-to-end tests (`dx build --profile wasm-e2e`), built in seconds rather
+# than the best part of a minute. dx counts a profile not inheriting `release` as debug, so it skips
+# wasm-opt; without debug assertions the page leaves out dioxus-web's devtools client, which would
+# try to reach `dx serve`.
+[profile.wasm-e2e]
+inherits = "dev"
+opt-level = 1
+debug = false
+debug-assertions = false
+strip = true

@@ -3,10 +3,10 @@
 //! single competition starts in a new one with [`run_in_new_competition`]. A [`Gui`] compares
 //! texts without the [`ISOLATION_MARKS`] the translation puts around names and numbers.
 //!
-//! The page is served from where `dx build -p tournament-gui --release --debug-symbols false`
-//! builds it, as it is hosted. Everything else,
-//! from the chromedriver to what a failing test leaves and the environment variables that show a
-//! test in a window, is that of [`e2e_harness`].
+//! The page is served from where dx builds it with the profile `wasm-e2e` into `target/e2e` (as
+//! the hook `gui-e2e` does): the page as it is hosted, but without the optimizations that only
+//! make it smaller. Everything else, from the chromedriver to what a failing test leaves and the
+//! environment variables that show a test in a window, is that of [`e2e_harness`].
 
 use std::path::Path;
 
@@ -42,10 +42,11 @@ pub async fn run_in_new_competition(test: impl AsyncFnOnce(Gui) -> WebDriverResu
 /// Panics if `test` fails, if the page logs an error, or if it is not accessible at the end.
 pub async fn run(test: impl AsyncFnOnce(Gui) -> WebDriverResult<()>) {
     let site = Site {
-        // where dx builds the page; the debug build would try to reach `dx serve`
+        // where dx builds the page with the profile `wasm-e2e`
         dist: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../target/dx/tournament-gui/release/web/public"),
-        build: "dx build -p tournament-gui --release --debug-symbols false",
+            .join("../target/e2e/dx/tournament-gui/debug/web/public"),
+        build: "CARGO_TARGET_DIR=\"$PWD/target/e2e\" dx build -p tournament-gui --profile wasm-e2e \
+                --debug-symbols false",
         // rendered by the WebAssembly
         ready: By::Css("h1"),
     };

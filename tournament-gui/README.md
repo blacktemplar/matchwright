@@ -49,9 +49,12 @@ This needs the Dioxus CLI `dx` of the version of `dioxus` in `Cargo.lock`
 [`tournament-gui-e2e`](../tournament-gui-e2e) uses the page in headless Chrome,
 like the tests of [`tournament-web`](../tournament-web/README.md#end-to-end-tests)
 (the same environment variables), and checks its accessibility with axe-core at
-the end of every test. They run on the release build, since a debug build tries
-to reach the server of `dx serve`:
+the end of every test. They run on a build of their own, with the profile
+`wasm-e2e` in its own target directory (so it leaves `dx serve` alone; absolute,
+since dx runs cargo in the crate's directory). It builds in seconds and, unlike a
+debug build, does not try to reach the server of `dx serve`:
 
 ```text
-dx build -p tournament-gui --release --debug-symbols false && cargo test -p tournament-gui-e2e -- --ignored
+CARGO_TARGET_DIR="$PWD/target/e2e" dx build -p tournament-gui --profile wasm-e2e --debug-symbols false
+cargo test -p tournament-gui-e2e -- --ignored
 ```
