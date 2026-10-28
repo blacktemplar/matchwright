@@ -391,3 +391,18 @@ The original plan of this step:
 - P4: an undo that leaves play (undoing the start) asks first.
 - E2: confirm the redraw; if the config feeds the rng, draw from the competition's seed only, or
   warn in the edit dialog that a change after the start redraws open rounds.
+
+## Left open (2026-10-28)
+
+Findings of *Look and feel* that no step took up, left for later:
+
+- Bracket: a small bracket uses a third of a laptop's card; a bracket of 32 is ~1100px tall, its
+  column headings scrolled out of sight; the sections of a double elimination are not visibly
+  joined to the grand final.
+- Errors: the typed entry's and the phase form's errors are next to their cause (step 3), the
+  others still in the page-wide alert above the cards. The announcement keeps its slot on purpose
+  (the page does not move, and a screen reader notices its changes).
+
+Kept as it is: the heading of the matches ("Round 1", "Playable now") repeats the choice above it,
+but it is where the focus goes once the matches shown have their results (saying the round moved
+on), and it lets a screen reader find the list.
