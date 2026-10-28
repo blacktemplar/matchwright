@@ -1734,15 +1734,21 @@ tested natively and in wasm, and knows no plugin.
   (`3-1`); a draw needs no separator (`3x`), but a win does, since `31` could
   be match 3 or match 31. A match that has a result already is named. The
   field also takes part of the winner's name (2026-10-28), since an entrant
-  coming to the desk says who won rather than the number of the match: it is
-  found as the search finds names, among the matches playable now, where an
-  entrant plays one match, rather than among all open ones, where an entrant
-  of a round robin has a match in every round; it has to find one side, else
-  the refusal says how many it found, to be typed further. While what is
-  typed says a result, the field says which ("Reports match 3: Alice won."),
-  so that a name found where it was not meant is seen before Enter. A number
-  alone, or nothing, is refused with the message saying how to enter a
-  result. A refused entry stays in the field to be corrected. And the result
+  coming to the desk says who won rather than the number of the match,
+  followed by the number of the match where needed and by `X` for a draw, in
+  either order (`ali`, `ali 5`, `ali X`, `ali 5 X`; `Session::read_entered`).
+  The name is found as the search finds names, among all open matches; it
+  says a result if it fits one side of one match (one match for a draw), or
+  else one of them playable now, as in a round robin, where an entrant has an
+  open match in every round but plays the first; otherwise the refusal asks
+  for more of the name, or for the number of the match. A number or an `X` at
+  the end is part of the name while a name contains it, so that `Malcolm X`
+  is his win and `Team 7` that team's: the longest name that fits wins. While
+  the field has text, the list shows the matches it fits, in place of the
+  round chosen, whose choice steps aside, the one Enter reports marked, and
+  the field says what Enter does ("Reports match 3: Alice won.") or why it
+  does nothing, so that a name found where it was not meant is seen before
+  Enter. A refused entry stays in the field to be corrected. And the result
   buttons of a match move the focus on once one is pressed, which removes
   them: to the first button of the next match of the list without a result
   (after it, or else before it), or to the heading of the list if there is

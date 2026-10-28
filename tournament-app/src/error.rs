@@ -124,17 +124,31 @@ pub enum ReportEnteredError {
          winner's name"
     )]
     Unreadable,
+    /// The number of a match was entered alone.
+    #[error("enter the result of match {0} as well: 1, X or 2")]
+    MissingResult(usize),
     #[error("there is no match {0}")]
     NoMatch(usize),
     #[error("match {0} has a result already")]
     AlreadyFinished(usize),
-    /// No entrant of a match playable now has a name containing what was entered, which it holds
-    /// as entered, without the spaces around it.
-    #[error("no entrant playing now has a name containing “{0}”")]
+    /// No open match has an entrant whose name contains what was entered, which it holds as
+    /// entered, without the spaces around it.
+    #[error("no open match has an entrant whose name contains “{0}”")]
     NoNameFound(String),
-    /// What was entered is in the names of entrants of `sides` sides of matches playable now.
-    #[error("“{entered}” is in the names of {sides} entrants playing now; enter more of the name")]
-    SeveralNamesFound { entered: String, sides: usize },
+    /// Open matches have an entrant whose name contains `name`, but not the match `number`.
+    #[error("no open match {number} has an entrant whose name contains “{name}”")]
+    NotInMatch { name: String, number: usize },
+    /// The name entered is found in `matches` open matches, none of them playable now or several,
+    /// e.g. in the match numbered `number`.
+    #[error("“{name}” fits {matches} open matches; add the number of one, e.g. “{name} {number}”")]
+    SeveralMatches {
+        name: String,
+        matches: usize,
+        number: usize,
+    },
+    /// The name entered is found on both sides of the match `number`, so it names no winner.
+    #[error("“{name}” fits both sides of match {number}; enter more of the name")]
+    BothSides { name: String, number: usize },
     #[error(transparent)]
     Report(#[from] ReportError),
 }
@@ -292,12 +306,26 @@ impl Message for ReportEnteredError {
             Self::AlreadyFinished(number) => {
                 Text::new("error-match-numbered-finished-already").with("number", *number)
             }
+            Self::MissingResult(number) => {
+                Text::new("error-result-missing").with("number", *number)
+            }
             Self::NoNameFound(entered) => {
                 Text::new("error-no-name-found").with("entered", entered.as_str())
             }
-            Self::SeveralNamesFound { entered, sides } => Text::new("error-several-names-found")
-                .with("entered", entered.as_str())
-                .with("sides", *sides),
+            Self::NotInMatch { name, number } => Text::new("error-name-not-in-match")
+                .with("name", name.as_str())
+                .with("number", *number),
+            Self::SeveralMatches {
+                name,
+                matches,
+                number,
+            } => Text::new("error-name-in-several-matches")
+                .with("name", name.as_str())
+                .with("matches", *matches)
+                .with("number", *number),
+            Self::BothSides { name, number } => Text::new("error-name-on-both-sides")
+                .with("name", name.as_str())
+                .with("number", *number),
             Self::Report(error) => error.text(),
         }
     }

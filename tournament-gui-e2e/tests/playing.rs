@@ -150,29 +150,67 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
     .await;
 }
 
-/// Part of the winner's name reports the win of the one side of the matches playable now it
-/// finds, which the entry says before.
+/// Part of the winner's name reports the win of the one side it fits, part of a name and X a draw;
+/// while typed, the list shows the matches it fits, and the entry says what Enter does, or why it
+/// reports nothing.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
-async fn a_win_is_typed_in_by_part_of_the_winners_name() {
+async fn a_result_is_typed_in_by_part_of_a_name() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Anna"]).await?;
 
         gui.type_result("a").await?;
-        gui.expect_result_preview(None).await?;
-        gui.enter_result("a").await?;
-        gui.expect_result_entry_error(
-            "“a” is in the names of 2 entrants playing now; enter more of the name.",
-        )
+        gui.expect_result_preview(Some(
+            "“a” fits both sides of match 1; enter more of the name.",
+        ))
         .await?;
+        gui.page
+            .expect_texts(
+                By::Css("[aria-labelledby=matches] > h3"),
+                &["Matches fitting “a”"],
+            )
+            .await?;
+        gui.expect_matches(&["1"]).await?;
+        gui.type_result("a x").await?;
+        gui.expect_result_preview(Some("Reports match 1: Draw."))
+            .await?;
         gui.type_result("ali").await?;
         gui.expect_result_preview(Some("Reports match 1: Alice won."))
+            .await?;
+        gui.page
+            .expect_texts(By::Css("#match-list .to-report .number"), &["1"])
             .await?;
         gui.page.check_accessibility().await?;
         gui.enter_result("ali").await?;
 
         gui.expect_results(&["Alice won"]).await?;
-        gui.expect_result_preview(None).await
+        gui.expect_result_preview(None).await?;
+        gui.page
+            .expect_texts(By::Css("[aria-labelledby=matches] > h3"), &["Round 1"])
+            .await
+    })
+    .await;
+}
+
+/// The number of a match alone shows it and asks for its result; a name nobody plays is said so.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn what_is_typed_in_shows_the_match_it_fits() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Bob"]).await?;
+
+        gui.type_result("1").await?;
+        gui.expect_matches(&["1"]).await?;
+        gui.expect_result_preview(Some("Enter the result of match 1 as well: 1, X or 2."))
+            .await?;
+        gui.type_result("carol").await?;
+        gui.expect_matches(&[]).await?;
+        gui.page
+            .expect_texts(By::Css(".empty"), &["No match fits “carol”."])
+            .await?;
+        gui.enter_result("carol").await?;
+        gui.expect_result_entry_error("No open match has an entrant whose name contains “carol”.")
+            .await
     })
     .await;
 }

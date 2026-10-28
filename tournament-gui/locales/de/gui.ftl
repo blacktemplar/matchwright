@@ -154,8 +154,13 @@ enter-result = Ergebnis eingeben
 enter-result-hint = die Nummer des Spiels, dann 1, wenn die linke Seite gewonnen hat{ $draws ->
         [yes] , X für ein Unentschieden
        *[no] {""}
-    } oder 2, wenn die rechte Seite gewonnen hat, z. B. „3 1“; oder einen Teil des Namens des Siegers
+    } oder 2, wenn die rechte Seite gewonnen hat, z. B. „3 1“; oder einen Teil des Namens des Siegers, mit der Nummer des Spiels, wo er zu mehreren passt{ $draws ->
+        [yes] {" "}und X für ein Unentschieden, z. B. „ali“, „ali 5“ oder „ali X“
+       *[no] , z. B. „ali“ oder „ali 5“
+    }
 result-entry-preview = Meldet Spiel { $number }: { $result }.
+entry-found = Spiele zu „{ $text }“
+entry-nothing-found = Kein Spiel passt zu „{ $text }“.
 report = Melden
 
 ## What was done, as the page announces it

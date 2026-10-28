@@ -9,6 +9,8 @@ use tournament_engine::{
 };
 use unicode_normalization::{UnicodeNormalization as _, char::is_combining_mark};
 
+use crate::error::ReportEnteredError;
+
 /// An entrant as a screen shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EntrantRow {
@@ -362,6 +364,18 @@ pub struct Actions {
     pub report: bool,
     pub undo: bool,
     pub redo: bool,
+}
+
+/// What an entry of a result fits and says, see
+/// [`Session::read_entered`](crate::session::Session::read_entered).
+#[derive(Debug)]
+pub struct Entered {
+    /// The matches it fits, by their numbers, for a screen to show: the match of the number
+    /// entered, or the open matches with an entrant of the name entered; none where it fits none.
+    pub found: Vec<MatchRow>,
+    /// The match whose result it says, one of [`Self::found`], with that result; or why it
+    /// reports none.
+    pub report: Result<MatchRow, ReportEnteredError>,
 }
 
 /// What reporting a result led to.

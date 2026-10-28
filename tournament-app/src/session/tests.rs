@@ -1291,8 +1291,7 @@ fn a_result_entered_for_a_match_that_has_one_names_the_match() {
 fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
     let mut session = Given::new().format(SingleElimination::ID).started();
 
-    // "11" could be match 1 won by side A, or match 11
-    for entry in ["", " ", "1", "11"] {
+    for entry in ["", " "] {
         assert!(
             matches!(
                 session.report_entered(entry),
@@ -1301,6 +1300,13 @@ fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
             "{entry:?}"
         );
     }
+    // "11" could be match 1 won by side A, or match 11, which is read
+    let entered = session.read_entered("1");
+    assert!(matches!(
+        entered.report,
+        Err(ReportEnteredError::MissingResult(1))
+    ));
+    assert_eq!(numbers(&entered.found), [1], "the match is shown");
     // read as part of a name, which nobody has
     for entry in ["1 3", "one 1", "1 1 1", "-1 1", "1x1", "1 x 1", "1:1"] {
         assert!(
@@ -1311,7 +1317,7 @@ fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
             "{entry:?}"
         );
     }
-    for (entry, number) in [("0 1", 0), ("9 1", 9)] {
+    for (entry, number) in [("0 1", 0), ("9 1", 9), ("11", 11)] {
         assert!(
             matches!(
                 session.report_entered(entry),
@@ -1327,54 +1333,161 @@ fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
     assert!(matches(&session).iter().all(|row| row.result.is_none()));
 }
 
-/// Part of the winner's name reports the win of the side it finds among the matches playable now:
-/// Alice plays one match in every round, but only that of the first round is playable.
-#[test]
-fn a_win_is_entered_as_part_of_the_winners_name() {
-    let mut session = Given::new().started();
-    let first = session
-        .playable()
+/// The numbers of `rows`, in order.
+fn numbers(rows: &[MatchRow]) -> Vec<usize> {
+    rows.iter().map(|row| row.number).collect()
+}
+
+/// The open matches of `name`, by number.
+fn open_matches_of(session: &Session, name: &str) -> Vec<MatchRow> {
+    let mut rows: Vec<_> = matches(session)
         .into_iter()
-        .find(|row| names(&row.a) == ["Alice"] || names(&row.b) == ["Alice"])
-        .unwrap();
+        .filter(|row| {
+            row.result.is_none()
+                && names(&row.a)
+                    .iter()
+                    .chain(&names(&row.b))
+                    .any(|n| *n == name)
+        })
+        .collect();
+    rows.sort_by_key(|row| row.number);
+    rows
+}
 
-    let preview = session.entered_report(" ALI ").unwrap();
-    let reported = session.report_entered(" ALI ").unwrap();
-
-    assert_eq!(preview, reported.row);
-    assert_eq!(reported.row.id, first.id);
-    let alice_won = if names(&first.a) == ["Alice"] {
+/// The win of the side of `name` in `row`.
+fn win_of(row: &MatchRow, name: &str) -> MatchResult {
+    if names(&row.a) == [name] {
         MatchResult::AWins
     } else {
         MatchResult::BWins
-    };
-    assert_eq!(reported.row.result, Some(alice_won));
+    }
+}
+
+/// Part of the winner's name fits every open match of the entrant, and reports the one playable
+/// now: Alice plays a match in every round of a round robin, the one of round 1 first. Once that
+/// one has a result, none of hers is playable before the other match of round 1, so the number
+/// of the one meant is needed.
+#[test]
+fn a_win_is_entered_as_part_of_the_winners_name() {
+    let mut session = Given::new().started();
+    let alices = open_matches_of(&session, "Alice");
+    let first = session
+        .playable()
+        .into_iter()
+        .find(|row| alices.iter().any(|alice| alice.id == row.id))
+        .unwrap();
+
+    let entered = session.read_entered(" ALI ");
+    let reported = session.report_entered(" ALI ").unwrap();
+
+    assert_eq!(
+        numbers(&entered.found),
+        numbers(&alices),
+        "all of hers are shown"
+    );
+    assert_eq!(entered.report.unwrap(), reported.row);
+    assert_eq!(reported.row.id, first.id);
+    assert_eq!(reported.row.result, Some(win_of(&first, "Alice")));
+
+    let left = open_matches_of(&session, "Alice");
+    let entered = session.read_entered("ali");
+    assert_eq!(numbers(&entered.found), numbers(&left));
+    assert!(matches!(
+        entered.report,
+        Err(ReportEnteredError::SeveralMatches { name, matches: 2, number })
+            if name == "ali" && number == left[0].number
+    ));
+    let meant = &left[1];
+    let reported = session
+        .report_entered(&format!("ali {}", meant.number))
+        .unwrap();
+    assert_eq!(reported.row.id, meant.id);
+    assert_eq!(reported.row.result, Some(win_of(meant, "Alice")));
+}
+
+/// A draw is entered as part of a name and an `X`, before or after the number of the match.
+#[test]
+fn a_draw_is_entered_as_part_of_a_name_and_x() {
+    let mut session = Given::new().started();
+    let alices = open_matches_of(&session, "Alice");
+
+    let first = session.report_entered("ali x").unwrap();
+    let second = session
+        .report_entered(&format!("ali {} X", alices[1].number))
+        .unwrap();
+    let third = session
+        .report_entered(&format!("Ali X {}", alices[2].number))
+        .unwrap();
+
+    assert_eq!(
+        [first.row.result, second.row.result, third.row.result],
+        [Some(MatchResult::Draw); 3]
+    );
+    assert_eq!(numbers(&[second.row, third.row]), numbers(&alices[1..]));
+}
+
+/// A number or an `X` at the end is part of the name as long as a name contains it.
+#[test]
+fn a_name_with_a_number_or_an_x_is_read_as_the_name_first() {
+    let mut session = Given::new().entrants(&["Malcolm X", "Team 7"]).started();
+    let the_match = &matches(&session)[0];
+
+    let won = session.read_entered("malcolm x").report.unwrap();
+    assert_eq!(won.result, Some(win_of(the_match, "Malcolm X")));
+    let won = session.read_entered("team 7").report.unwrap();
+    assert_eq!(won.result, Some(win_of(the_match, "Team 7")));
+    let drawn = session.read_entered("Malcolm X X").report.unwrap();
+    assert_eq!(drawn.result, Some(MatchResult::Draw));
+    assert!(
+        session.read_entered("team 7 1").report.is_ok(),
+        "Team 7 in match 1"
+    );
+    assert!(matches!(
+        session.read_entered("team 7 9").report,
+        Err(ReportEnteredError::NotInMatch { name, number: 9 }) if name == "team 7"
+    ));
+    session.report_entered("team 7 1 x").unwrap();
     assert!(
         matches!(
-            session.entered_report("Alice"),
+            session.read_entered("team").report,
             Err(ReportEnteredError::NoNameFound(_))
         ),
-        "her match of round 2 waits for the other match of round 1"
+        "a match with a result is not open"
     );
 }
 
-/// A name found on several sides of the matches playable now, or on none, reports nothing.
+/// A name found on both sides of a match names no winner, but a draw of it; a name nobody has
+/// reports nothing.
 #[test]
-fn a_name_entered_has_to_find_one_side_playing_now() {
-    let mut session = Given::new()
-        .entrants(&["Anna", "Hannah", "Bob", "Dave"])
-        .started();
+fn a_name_entered_has_to_fit_one_side() {
+    let mut session = Given::new().entrants(&["Anna", "Hannah"]).started();
 
     assert!(matches!(
         session.report_entered("ANN"),
-        Err(ReportEnteredError::SeveralNamesFound { entered, sides: 2 }) if entered == "ANN"
+        Err(ReportEnteredError::BothSides { name, number: 1 }) if name == "ANN"
     ));
     assert!(matches!(
         session.report_entered("Erin"),
         Err(ReportEnteredError::NoNameFound(name)) if name == "Erin"
     ));
     assert!(matches(&session).iter().all(|row| row.result.is_none()));
-    session.report_entered("hannah").unwrap();
+    let drawn = session.report_entered("ann x").unwrap();
+    assert_eq!(drawn.row.result, Some(MatchResult::Draw));
+}
+
+/// The number of a match with a result fits it, so that it is shown, but reports nothing.
+#[test]
+fn a_match_entered_with_a_result_is_shown_but_not_reported() {
+    let mut session = Given::new().started();
+    session.report_entered("1 1").unwrap();
+
+    let entered = session.read_entered("1 2");
+
+    assert_eq!(numbers(&entered.found), [1]);
+    assert!(matches!(
+        entered.report,
+        Err(ReportEnteredError::AlreadyFinished(1))
+    ));
 }
 
 /// `undo_report` is an action like any other, so `undo` brings the result back rather than undoing

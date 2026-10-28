@@ -9,7 +9,7 @@ use std::{num::NonZeroU32, rc::Rc};
 
 use dioxus::prelude::*;
 use tournament_app::{
-    i18n::{PluginText, Text},
+    i18n::{Message as _, PluginText, Text},
     view::{MatchRow, Medal, NameSearch, RoundSummary},
 };
 use tournament_engine::{MatchId, MatchResult};
@@ -89,6 +89,8 @@ pub fn Rounds() -> Element {
     let on_heading_mounted = use_focus(focus, Focus::Heading);
     // whether the entry of results typed in is shown
     let typing = use_signal(result_entry_open);
+    // what is typed into it, which while there is any shows the matches it fits instead
+    let entry = use_signal(String::new);
     // what the operator typed to find entrants, kept while the list shown changes
     let mut searched = use_signal(String::new);
     let search = NameSearch::new(&searched.read());
@@ -105,24 +107,37 @@ pub fn Rounds() -> Element {
         .unwrap_or(Shown::Round(current));
     let playable = session.playable();
     let draws = session.round(current).is_some_and(|round| round.draws);
-    let (matches, byes) = match shown {
-        Shown::Playable => (playable.clone(), Vec::new()),
-        Shown::Round(round) => session
+    let entered = entry.read().trim().to_owned();
+    let entered = (typing() && !entered.is_empty()).then(|| {
+        let read = session.read_entered(&entered);
+        (entered, read.found, read.report.ok().map(|row| row.id))
+    });
+    let (matches, byes) = match (&entered, shown) {
+        (Some((_, found, _)), _) => (found.clone(), Vec::new()),
+        (None, Shown::Playable) => (playable.clone(), Vec::new()),
+        (None, Shown::Round(round)) => session
             .round(round)
             .map(|round| (round.matches, round.byes))
             .unwrap_or_default(),
     };
     drop(session);
     let listed = matches.len() + byes.len();
-    let matches: Vec<_> = matches
-        .into_iter()
-        .filter(|row| search.finds_in(row))
-        .collect();
-    let byes: Vec<_> = byes
-        .into_iter()
-        .filter(|bye| bye.entrants.iter().any(|entrant| search.finds(entrant)))
-        .collect();
-    let with_round = shown == Shown::Playable;
+    let (matches, byes): (Vec<_>, Vec<_>) = if entered.is_some() {
+        (matches, byes)
+    } else {
+        (
+            matches
+                .into_iter()
+                .filter(|row| search.finds_in(row))
+                .collect(),
+            byes.into_iter()
+                .filter(|bye| bye.entrants.iter().any(|entrant| search.finds(entrant)))
+                .collect(),
+        )
+    };
+    // the match whose result Enter in the entry reports
+    let to_report = entered.as_ref().and_then(|(_, _, to_report)| *to_report);
+    let with_round = shown == Shown::Playable || entered.is_some();
     let with_stage = matches.iter().any(|row| row.stage.is_some());
     // after the result of a match is reported by its buttons, the focus moves on to the next match
     // shown without one, after it or else before it
@@ -166,9 +181,14 @@ pub fn Rounds() -> Element {
                 ResultEntryToggle { open: typing }
             }
             if typing() {
-                ResultEntry { draws }
+                ResultEntry { draws, entry }
             }
-            nav { class: "toolbar", aria_label: tr.get("rounds"),
+            // out of the way while the matches shown are those the entry fits, which they would not
+            // change
+            nav {
+                class: "toolbar",
+                aria_label: tr.get("rounds"),
+                hidden: entered.is_some(),
                 div { class: "segmented",
                     button {
                         aria_pressed: shown == Shown::Playable,
@@ -237,7 +257,7 @@ pub fn Rounds() -> Element {
                     }
                 }
             }
-            div { class: "row search",
+            div { class: "row search", hidden: entered.is_some(),
                 label { r#for: "find-entrant", class: "visually-hidden", {tr.get("find-entrant")} }
                 input {
                     id: "find-entrant",
@@ -250,13 +270,16 @@ pub fn Rounds() -> Element {
             }
             // focused once no match shown is left without a result, so that the focus is not lost
             h3 { tabindex: "-1", onmounted: on_heading_mounted,
-                match shown {
-                    Shown::Playable => tr.get("playable-now"),
-                    Shown::Round(round) => t!(tr, "round", round = round),
+                match (&entered, shown) {
+                    (Some((text, ..)), _) => t!(tr, "entry-found", text = text.as_str()),
+                    (None, Shown::Playable) => tr.get("playable-now"),
+                    (None, Shown::Round(round)) => t!(tr, "round", round = round),
                 }
             }
             if rows.is_empty() && byes.is_empty() {
-                if listed > 0 {
+                if let Some((text, ..)) = &entered {
+                    p { class: "empty", {t!(tr, "entry-nothing-found", text = text.as_str())} }
+                } else if listed > 0 {
                     p { class: "empty", {t!(tr, "nothing-found", text = searched.read().trim())} }
                 } else if shown == Shown::Playable {
                     p { class: "empty", {tr.get("nothing-playable")} }
@@ -272,6 +295,7 @@ pub fn Rounds() -> Element {
                             draws,
                             focus,
                             after_report,
+                            to_report: to_report == Some(row.id),
                             row,
                         }
                     }
@@ -327,19 +351,31 @@ fn ResultEntryToggle(open: Signal<bool>) -> Element {
     }
 }
 
-/// Reports a result typed in as the number of its match and the result, e.g. "3 1", or as part of
-/// the winner's name, saying beforehand what it would report.
+/// Reports a result typed in as `entry`, the number of its match and the result, e.g. "3 1", or
+/// part of the winner's name, saying while it is typed what it would report, or why nothing.
 #[component]
-fn ResultEntry(draws: bool) -> Element {
+fn ResultEntry(draws: bool, entry: Signal<String>) -> Element {
     let ctx = use_context::<Ctx>();
-    let mut entry = use_signal(String::new);
     // why what was entered last was not reported, until it is changed
     let mut error = use_signal(|| None::<Text>);
     // only reported by the tab that changes the competition
     let disabled = !ctx.changes();
-    // the match and result reported if submitted now
-    let preview = ctx.session.read().entered_report(&entry.read()).ok();
+    // the match and result reported if submitted now, or why none; nothing while nothing is typed
+    let preview = (!entry.read().trim().is_empty())
+        .then(|| ctx.session.read().read_entered(&entry.read()).report);
     let tr = ctx.translator.read();
+    let preview = preview.map(|report| match report {
+        Ok(row) => (
+            "preview",
+            t!(
+                tr,
+                "result-entry-preview",
+                number = row.number,
+                result = result_text(&tr, &row).unwrap_or_default(),
+            ),
+        ),
+        Err(why) => ("preview hint", tr.sentence(&why.text())),
+    });
     rsx! {
         form {
             class: "result-entry",
@@ -375,17 +411,9 @@ fn ResultEntry(draws: bool) -> Element {
                     {tr.sentence(&error)}
                 }
             }
-            p { id: "result-entry-preview", class: "preview",
-                if let Some(row) = preview {
-                    {
-                        t!(
-                            tr,
-                            "result-entry-preview",
-                            number = row.number,
-                            result = result_text(&tr, &row).unwrap_or_default(),
-                        )
-                    }
-                }
+            // said by the alert above instead once Enter was refused
+            if let Some((class, text)) = preview.filter(|_| error.read().is_none()) {
+                p { id: "result-entry-preview", class, {text} }
             }
             p { id: "result-entry-hint", class: "hint",
                 {t!(tr, "enter-result-hint", draws = if draws { "yes" } else { "no" })}
@@ -428,6 +456,8 @@ fn MatchLine(
     focus: Signal<Option<Focus>>,
     /// What gets the focus once a result of the match is reported by its buttons.
     after_report: Focus,
+    /// Whether Enter in the entry of results reports its result, which marks it.
+    to_report: bool,
 ) -> Element {
     let ctx = use_context::<Ctx>();
     let tr = ctx.translator.read();
@@ -445,7 +475,10 @@ fn MatchLine(
     // one card: the pairing around the number, then each side's button below its name; once it
     // has a result, one line, the button reopening it after the pairing
     rsx! {
-        li { class: "match", class: if row.result.is_some() { "finished" },
+        li {
+            class: "match",
+            class: if row.result.is_some() { "finished" },
+            class: if to_report { "to-report" },
             span { class: "visually-hidden", {tr.get("match")} }
             span { class: "number", "{row.number}" }
             span { class: "side a {winner(Side::A)}", {team_name(&tr, &row.a)} }

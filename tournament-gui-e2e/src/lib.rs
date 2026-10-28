@@ -1026,8 +1026,8 @@ impl Gui {
         Ok(())
     }
 
-    /// Waits until the entry of results says what it would report, `text`, e.g. "Reports match
-    /// 1: Alice won.", or says nothing for `None`.
+    /// Waits until the entry of results says what it would report, or why nothing, `text`, e.g.
+    /// "Reports match 1: Alice won.", or says nothing for `None`, as while nothing is typed.
     ///
     /// # Panics
     /// Panics if it does not in time, with what it says instead.

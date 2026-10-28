@@ -24,10 +24,13 @@ error-draw-not-allowed = a match of this format cannot end in a draw
 error-result-unreadable = enter the number of a match and its result, 1, X or 2, e.g. “3 1”, or part of the winner's name
 error-no-match-numbered = there is no match { $number }
 error-match-numbered-finished-already = match { $number } has a result already
+error-result-missing = enter the result of match { $number } as well: 1, X or 2
 # $entered: part of the winner's name, as entered
-error-no-name-found = no entrant playing now has a name containing “{ $entered }”
-# $sides: how many sides of matches playable now have an entrant whose name contains it
-error-several-names-found = “{ $entered }” is in the names of { $sides } entrants playing now; enter more of the name
+error-no-name-found = no open match has an entrant whose name contains “{ $entered }”
+error-name-not-in-match = no open match { $number } has an entrant whose name contains “{ $name }”
+# $matches: how many open matches have an entrant whose name contains $name; $number: one of them
+error-name-in-several-matches = “{ $name }” fits { $matches } open matches; add the number of one, e.g. “{ $name } { $number }”
+error-name-on-both-sides = “{ $name }” fits both sides of match { $number }; enter more of the name
 error-match-not-reported = the match has no result that could be undone
 error-result-depended-on = a later result depends on this one; undo that one first
 # $number: the number of the match whose result depends on the one to reopen

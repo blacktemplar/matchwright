@@ -47,8 +47,8 @@ use crate::{
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Progress, Storage, Stored},
     view::{
-        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Medal, NameSearch, Reopened,
-        Reported, Round, RoundSummary, StageName, StandingRow, Standings,
+        Action, Actions, ByeRow, Column, Entered, EntrantRow, Format, MatchRow, Medal, NameSearch,
+        Reopened, Reported, Round, RoundSummary, StageName, StandingRow, Standings,
     },
 };
 
@@ -755,13 +755,13 @@ impl Session {
             .collect()
     }
 
-    /// Reports the result `entry` says, see [`Self::entered_report`].
+    /// Reports the result `entry` says, see [`Self::read_entered`].
     ///
     /// # Errors
-    /// Returns an error if [`Self::entered_report`] does, or the result is not reported, see
+    /// Returns an error if [`Self::read_entered`] reports none, or the result is not reported, see
     /// [`Self::report`].
     pub fn report_entered(&mut self, entry: &str) -> Result<Reported, ReportEnteredError> {
-        let row = self.entered_report(entry)?;
+        let row = self.read_entered(entry).report?;
         let result = row.result.expect("an entry says a result");
         self.report(row.id, result).map_err(|error| match error {
             ReportError::AlreadyFinished => ReportEnteredError::AlreadyFinished(row.number),
@@ -769,74 +769,148 @@ impl Session {
         })
     }
 
-    /// The row of the match whose result `entry` says, with that result, which
-    /// [`Self::report_entered`] would report. `entry` is either
+    /// The matches `entry` fits, and the result it says, which [`Self::report_entered`] would
+    /// report. Spaces around it do not count. `entry` is either
     ///
     /// - the number of a match, as [`MatchRow::number`], and its result, separated by whitespace
     ///   or a `-`: `1` for a win of side A, `2` for one of side B, and `X` (or `x`) for a draw,
-    ///   which needs no separator, e.g. `"3 1"`, `"3-1"`, `"12 X"` or `"12x"`; or
-    /// - part of the name of the winner, found as [`NameSearch`] finds it among the entrants of
-    ///   the matches playable now (see [`Self::playable`]), where it has to find those of one side
-    ///   only, e.g. `"ali"` for Alice.
+    ///   which needs no separator, e.g. `"3 1"`, `"3-1"`, `"12 X"` or `"12x"`. It fits that match,
+    ///   also with a result already or without a result entered (`"3"`); or
+    /// - part of the name of the winner, found as [`NameSearch`] finds it, optionally followed by
+    ///   the number of the match and by `X` for a draw, in either order, each apart by whitespace,
+    ///   e.g. `"ali"`, `"ali X"`, `"ali 5"` or `"ali 5 X"`. It fits the open matches with an
+    ///   entrant of that name, and says a result if they are one side of one match (one match for
+    ///   a draw), or else if just one of them is playable now (see [`Self::playable`]). A number
+    ///   or an `X` at the end is read as a part of the name as long as a name contains it, e.g.
+    ///   `"Malcolm X"` is Malcolm X's win, and `"Malcolm X X"` a draw of his match.
     ///
-    /// # Errors
-    /// Returns an error if the competition has not started, `entry` is empty or a number alone,
-    /// there is no match of the number entered, it has a result already, its format has no
-    /// draws while a draw is entered, or the name entered is found on no side or on several.
-    pub fn entered_report(&self, entry: &str) -> Result<MatchRow, ReportEnteredError> {
-        let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
+    /// The result is an error if the competition has not started, `entry` is empty, it is the
+    /// number of a match alone, there is no match of the number entered, it has a result already,
+    /// its format has no draws while a draw is entered, or the name entered fits no open match,
+    /// both sides of one, or several matches none or several of which are playable now.
+    pub fn read_entered(&self, entry: &str) -> Entered {
+        let nothing = |error: ReportEnteredError| Entered {
+            found: Vec::new(),
+            report: Err(error),
+        };
+        let Some(phase) = self.started_phase() else {
+            return nothing(ReportError::NotStarted.into());
+        };
         let entry = entry.trim();
-        if entry.is_empty() || entry.chars().all(|char| char.is_ascii_digit()) {
-            return Err(ReportEnteredError::Unreadable);
+        if entry.is_empty() {
+            return nothing(ReportEnteredError::Unreadable);
         }
         let Some((number, result)) = read_entry(entry) else {
-            return self.report_named(entry);
+            return self.read_named(phase, entry);
         };
-        let r#match = phase
+        let Some(r#match) = phase
             .data()
             .matches()
             .values()
             .find(|r#match| self::number(r#match) == number)
-            .ok_or(ReportEnteredError::NoMatch(number))?;
-        if r#match.is_finished() {
-            return Err(ReportEnteredError::AlreadyFinished(number));
+        else {
+            return nothing(ReportEnteredError::NoMatch(number));
+        };
+        let row = self.match_row(phase, r#match);
+        let report = match result {
+            _ if r#match.is_finished() => Err(ReportEnteredError::AlreadyFinished(number)),
+            None => Err(ReportEnteredError::MissingResult(number)),
+            Some(MatchResult::Draw) if !phase.format().allows_draws() => {
+                Err(ReportError::DrawNotAllowed.into())
+            }
+            Some(result) => Ok(MatchRow {
+                result: Some(result),
+                ..row.clone()
+            }),
+        };
+        Entered {
+            found: vec![row],
+            report,
         }
-        if result == MatchResult::Draw && !phase.format().allows_draws() {
-            return Err(ReportError::DrawNotAllowed.into());
-        }
-        Ok(MatchRow {
-            result: Some(result),
-            ..self.match_row(phase, r#match)
-        })
     }
 
-    /// The row of the match playable now with a side whose entrant's name contains `name`, with
-    /// that side's win, see [`Self::entered_report`].
-    fn report_named(&self, name: &str) -> Result<MatchRow, ReportEnteredError> {
-        let search = NameSearch::new(name);
-        let found: Vec<_> = self
-            .playable()
-            .into_iter()
-            .flat_map(|row| {
-                let wins = [(&row.a, MatchResult::AWins), (&row.b, MatchResult::BWins)]
-                    .into_iter()
-                    .filter(|(side, _)| side.iter().any(|entrant| search.finds(entrant)))
-                    .map(|(_, result)| result)
-                    .collect::<Vec<_>>();
-                wins.into_iter().map(move |result| MatchRow {
-                    result: Some(result),
-                    ..row.clone()
-                })
-            })
+    /// What `entry`, part of a name and perhaps the number of a match and a draw, fits and says,
+    /// see [`Self::read_entered`].
+    fn read_named(&self, phase: &Phase, entry: &str) -> Entered {
+        let mut open: Vec<_> = phase
+            .data()
+            .matches()
+            .values()
+            .filter(|r#match| !r#match.is_finished())
+            .map(|r#match| self.match_row(phase, r#match))
             .collect();
-        match <[_; 1]>::try_from(found) {
-            Ok([row]) => Ok(row),
-            Err(found) if found.is_empty() => Err(ReportEnteredError::NoNameFound(name.to_owned())),
-            Err(found) => Err(ReportEnteredError::SeveralNamesFound {
-                entered: name.to_owned(),
-                sides: found.len(),
-            }),
+        open.sort_by_key(|row| row.number);
+        let readings = NamedEntry::readings(entry);
+        // the longest name that fits
+        let Some((reading, fitting)) = readings.iter().find_map(|reading| {
+            let fitting = reading.fitting(&open);
+            (!fitting.is_empty()).then_some((reading, fitting))
+        }) else {
+            // a name followed by a number, which fits only without it
+            let error = readings
+                .iter()
+                .find_map(|reading| {
+                    let number = reading.number?;
+                    let anywhere = NamedEntry {
+                        number: None,
+                        ..*reading
+                    };
+                    (!anywhere.fitting(&open).is_empty()).then(|| ReportEnteredError::NotInMatch {
+                        name: reading.name.to_owned(),
+                        number,
+                    })
+                })
+                .unwrap_or_else(|| ReportEnteredError::NoNameFound(entry.to_owned()));
+            return Entered {
+                found: Vec::new(),
+                report: Err(error),
+            };
+        };
+        let mut found: Vec<MatchRow> = Vec::new();
+        for (row, _) in &fitting {
+            if found.last().is_none_or(|last| last.id != row.id) {
+                found.push((*row).clone());
+            }
         }
+        let report = if reading.draw && !phase.format().allows_draws() {
+            Err(ReportError::DrawNotAllowed.into())
+        } else {
+            // where the name fits several matches, the one playable now, if just one is
+            let pool = if fitting.len() > 1 {
+                let playable: HashSet<MatchId> = self.playable().iter().map(|row| row.id).collect();
+                let now: Vec<_> = fitting
+                    .iter()
+                    .filter(|(row, _)| playable.contains(&row.id))
+                    .copied()
+                    .collect();
+                if now.is_empty() { fitting } else { now }
+            } else {
+                fitting
+            };
+            match pool.as_slice() {
+                [(row, result)] => Ok(MatchRow {
+                    result: Some(*result),
+                    ..(*row).clone()
+                }),
+                [(first, _), ..] if pool.iter().all(|(row, _)| row.id == first.id) => {
+                    Err(ReportEnteredError::BothSides {
+                        name: reading.name.to_owned(),
+                        number: first.number,
+                    })
+                }
+                [(first, _), ..] => Err(ReportEnteredError::SeveralMatches {
+                    name: reading.name.to_owned(),
+                    matches: pool
+                        .iter()
+                        .map(|(row, _)| row.id)
+                        .collect::<HashSet<_>>()
+                        .len(),
+                    number: first.number,
+                }),
+                [] => unreachable!("only a reading that fits is chosen"),
+            }
+        };
+        Entered { found, report }
     }
 
     /// Reports `result` for the match `id`.
@@ -1094,11 +1168,18 @@ fn number(r#match: &Match) -> usize {
     usize::try_from(r#match.number().get()).expect("a number of a match fits a usize")
 }
 
-/// The number of a match and its result that `entry` says, see [`Session::report_entered`].
-fn read_entry(entry: &str) -> Option<(usize, MatchResult)> {
+/// The number of a match and its result, if any, that `entry` says, see
+/// [`Session::read_entered`].
+fn read_entry(entry: &str) -> Option<(usize, Option<MatchResult>)> {
     let entry = entry.trim();
-    let digits = entry.find(|char: char| !char.is_ascii_digit())?;
+    let digits = entry
+        .find(|char: char| !char.is_ascii_digit())
+        .unwrap_or(entry.len());
     let (number, rest) = entry.split_at(digits);
+    let number = number.parse().ok()?;
+    if rest.is_empty() {
+        return Some((number, None));
+    }
     let result = rest.trim_start_matches(|char: char| char.is_whitespace() || char == '-');
     // a win needs a separator, or its side would be read as a digit of the number
     let separated = result.len() < rest.len();
@@ -1108,7 +1189,73 @@ fn read_entry(entry: &str) -> Option<(usize, MatchResult)> {
         "X" | "x" => MatchResult::Draw,
         _ => return None,
     };
-    Some((number.parse().ok()?, result))
+    Some((number, Some(result)))
+}
+
+/// A way to read an entry of part of a name, see [`Session::read_entered`].
+#[derive(Debug, Clone, Copy)]
+struct NamedEntry<'a> {
+    name: &'a str,
+    /// The number of the match it is restricted to.
+    number: Option<usize>,
+    draw: bool,
+}
+
+impl<'a> NamedEntry<'a> {
+    /// The ways to read `entry`, the longest name first: all of it, then without the last word if
+    /// that is a number or an `X`, then without the last two if they are one of each.
+    fn readings(entry: &'a str) -> Vec<Self> {
+        let mut reading = Self {
+            name: entry,
+            number: None,
+            draw: false,
+        };
+        let mut readings = vec![reading];
+        for _ in 0..2 {
+            let Some((before, last)) = reading.name.rsplit_once(char::is_whitespace) else {
+                break;
+            };
+            if reading.number.is_none()
+                && let Ok(number) = last.parse()
+                && last.chars().all(|char| char.is_ascii_digit())
+            {
+                reading.number = Some(number);
+            } else if !reading.draw && (last == "X" || last == "x") {
+                reading.draw = true;
+            } else {
+                break;
+            }
+            reading.name = before.trim_end();
+            readings.push(reading);
+        }
+        readings
+    }
+
+    /// The open matches of `open` this reading fits, with the result it says of each: a win of
+    /// each side with an entrant of its name, or a draw of a match with one.
+    fn fitting<'r>(&self, open: &'r [MatchRow]) -> Vec<(&'r MatchRow, MatchResult)> {
+        let search = NameSearch::new(self.name);
+        let finds = |side: &[EntrantRow]| side.iter().any(|entrant| search.finds(entrant));
+        open.iter()
+            .filter(|row| self.number.is_none_or(|number| row.number == number))
+            .flat_map(|row| {
+                let (a, b) = (finds(&row.a), finds(&row.b));
+                let results = if self.draw {
+                    vec![MatchResult::Draw]
+                        .into_iter()
+                        .filter(|_| a || b)
+                        .collect()
+                } else {
+                    [(a, MatchResult::AWins), (b, MatchResult::BWins)]
+                        .into_iter()
+                        .filter(|(found, _)| *found)
+                        .map(|(_, result)| result)
+                        .collect::<Vec<_>>()
+                };
+                results.into_iter().map(move |result| (row, result))
+            })
+            .collect()
+    }
 }
 
 /// The stage the format of `phase` names a match or a bye with `annotations` by.

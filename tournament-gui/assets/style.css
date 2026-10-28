@@ -1153,6 +1153,12 @@ ul.summary-items {
   grid-row: 1;
 }
 
+/* the match whose result Enter in the entry of results reports, as the entry says too */
+.match.to-report {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .match .side {
   font-weight: 600;
 }
