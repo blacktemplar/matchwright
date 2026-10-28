@@ -24,6 +24,8 @@
   --focus: light-dark(#2f73d0, #58a6ff);
   --error: light-dark(#b42318, #ff8a80);
   --error-subtle: light-dark(#fef3f2, #2d1a1a);
+  /* text on the colour of errors, e.g. on a button deleting */
+  --on-error: light-dark(#fff, #2a0d0b);
   --warning: light-dark(#b54708, #e3a13b);
   --warning-subtle: light-dark(#fffaeb, #2a2113);
   --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 6%), transparent);
@@ -199,6 +201,14 @@ button.primary:hover:not(:disabled, [aria-disabled="true"]) {
 button.quiet {
   border-color: transparent;
   background: transparent;
+}
+
+/* what cannot be undone, e.g. deleting a competition */
+button.primary.danger,
+button.primary.danger:hover:not(:disabled, [aria-disabled="true"]) {
+  border-color: var(--error);
+  background: var(--error);
+  color: var(--on-error);
 }
 
 button.small,
@@ -581,6 +591,23 @@ footer select {
   font-size: 0.9em;
 }
 
+.listing-buttons {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+}
+
+/* the field of a dialog asking for a text, e.g. a new name */
+.dialog-form > label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+.dialog-form > input {
+  width: 100%;
+}
+
 .file-button {
   margin-top: var(--space-3);
 }
@@ -617,6 +644,17 @@ footer select {
 }
 
 /* the start, apart from the phase above it */
+/* below the field and its button; no room, and no gap, while it says nothing, staying a live
+ * region all the same */
+#entrant-like {
+  width: 100%;
+  margin: 0;
+}
+
+#entrant-like:empty {
+  display: contents;
+}
+
 .start {
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);

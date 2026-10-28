@@ -128,6 +128,44 @@ impl Gui {
             .await
     }
 
+    /// Renames the competition `name` of the list of competitions `new_name`, in the dialog its
+    /// button opens.
+    pub async fn rename_competition(&self, name: &str, new_name: &str) -> WebDriverResult<()> {
+        self.click_labelled(&format!("Rename {name}")).await?;
+        let input = self.driver.query(By::Id("new-name")).first().await?;
+        input.clear().await?;
+        input.send_keys(new_name).await?;
+        Page::pause().await;
+        self.click("Rename").await
+    }
+
+    /// Asks to delete the competition `name` of the list of competitions, and confirms it in the
+    /// dialog asking.
+    pub async fn delete_competition(&self, name: &str) -> WebDriverResult<()> {
+        self.click_labelled(&format!("Delete {name}")).await?;
+        self.click("Delete").await
+    }
+
+    /// Types `name` into the field of a new entrant, without adding it.
+    pub async fn type_entrant_name(&self, name: &str) -> WebDriverResult<()> {
+        let input = self.driver.query(By::Id("entrant-name")).first().await?;
+        input.send_keys(name).await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Waits until the field of a new entrant says that what is typed looks like the name of an
+    /// entrant, `Some` of what it says, or says nothing for `None`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_entrant_like(&self, text: Option<&str>) -> WebDriverResult<()> {
+        let texts: Vec<&str> = text.into_iter().collect();
+        self.page
+            .expect_texts(By::Css("#entrant-like:not(:empty)"), &texts)
+            .await
+    }
+
     /// Waits until the competition `name` is open.
     ///
     /// # Panics

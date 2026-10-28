@@ -1964,7 +1964,7 @@ mod tests {
         output(&mut session, "save");
 
         let saved = String::from_utf8(storage.read("cup").unwrap()).unwrap();
-        let imported = tournament_app::session::Session::import(&saved, "cup").unwrap();
+        let imported = tournament_app::session::Session::import(&saved, "cup", &[]).unwrap();
         let entrants = imported.entrants();
         let names: Vec<_> = entrants
             .iter()

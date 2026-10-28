@@ -1555,13 +1555,31 @@ own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
   `"name"`, which the CLI ignores and which an import falls back to the file's
   name without, so a competition moves between the two. Importing makes a new
   competition under a new key: importing the same file twice makes two, rather
-  than one overwriting the other. Exporting from the list reads the stored
+  than one overwriting the other; a copy under a name stored already is
+  numbered (`Cup (2)`), so that the two are told apart in the list, a number
+  rather than a translated "(imported)", which would put a language into the
+  stored name. Exporting from the list reads the stored
   records and writes them out as they are, so a competition whose log no
   longer replays, e.g. after an update without one of its plugins, can still
   be exported; the requirement's "next to its last good snapshot" waits for
   snapshots.
 - **The competition open is in the URL**, after the `#`, so that a reload opens
-  it again and going back returns to the list; the list's entries are links.
+  it again and going back returns to the list; the list's entries are links,
+  the latest stored first, each with buttons renaming (a dialog), exporting
+  and deleting it (a dialog asking first). The name is no part of the log, so
+  renaming is `Storage::rename` of the listing, which a write keeps (it sets
+  the name only when it creates the listing), and a tab holding the
+  competition shows its old name until it loads it again. `Storage::delete`
+  removes its listing, log and names in one transaction, under the
+  competition's lock: a tab holding it open would write it again, so the
+  deletion is refused while one does. The order of the listings survives a
+  deletion: each is numbered one past the latest stored, not by how many are
+  stored.
+- **Entrant names that look alike are pointed out, not refused**: one equal
+  to an entrant's ignoring case and Unicode's composition (NFKC) is said to be
+  entered already while it is typed (`Session::entrant_like`), since two
+  entrants may well be named alike; only the very same name is refused, which
+  the log could not tell apart from the other in the standings.
 - Without the APIs, as on a page served over plain HTTP from elsewhere than
   `localhost`, every tab writes (no lock) and persistence is not asked for.
 

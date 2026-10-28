@@ -34,6 +34,7 @@ use tournament_engine::{
     },
     uuid::Uuid,
 };
+use unicode_normalization::UnicodeNormalization as _;
 
 use crate::{
     error::{
@@ -287,21 +288,33 @@ impl Session {
     }
 
     /// A new competition with what the file `file` holds, e.g. one [`Self::export`] or the CLI
-    /// wrote, named as in the file or else `name`. It is stored under a key of its own, so that
-    /// importing a file twice makes two competitions; nothing of it is saved yet.
+    /// wrote, named as in the file or else `name`, followed by the first number from 2 on in
+    /// parentheses that makes it a name none of `stored` has, if one has it, e.g. `"Cup (2)"`. It
+    /// is stored under a key of its own, so that importing a file twice makes two competitions;
+    /// nothing of it is saved yet.
     ///
     /// # Errors
     /// Returns an error if `file` is no competition's file, or its log does not replay.
-    pub fn import(file: &str, name: &str) -> Result<Self, ImportError> {
+    pub fn import(file: &str, name: &str, stored: &[Listing]) -> Result<Self, ImportError> {
         let File {
             name: named,
             log: machine,
             people,
         } = serde_json::from_str::<File<CompetitionStateMachine, People>>(file)
             .map_err(ImportError)?;
+        let name = named.unwrap_or_else(|| name.to_owned());
+        let taken = |name: &str| stored.iter().any(|listing| listing.name == name);
+        let name = if taken(&name) {
+            (2..)
+                .map(|number| format!("{name} ({number})"))
+                .find(|copy| !taken(copy))
+                .expect("a name of the numbers is not taken")
+        } else {
+            name
+        };
         Ok(Self {
             key: CompetitionKey::new(Uuid::new_v4()),
-            name: named.unwrap_or_else(|| name.to_owned()),
+            name,
             unsaved_people: people.iter().map(|person| person.id()).collect(),
             machine,
             people,
@@ -358,6 +371,24 @@ impl Session {
             .keys()
             .map(|id| self.entrant_row(id))
             .collect()
+    }
+
+    /// The name of an entrant that `name` would look like, e.g. `Alice` for `alice` or for an
+    /// `Alice` whose characters are composed otherwise: equal ignoring case and the way Unicode
+    /// composes them (NFKC), and leading and trailing whitespace. Adding it is not refused for
+    /// that, unless the names are equal, but an operator may want to know.
+    pub fn entrant_like(&self, name: &str) -> Option<String> {
+        let folded = |name: &str| name.trim().nfkc().collect::<String>().to_lowercase();
+        let name = folded(name);
+        if name.is_empty() {
+            return None;
+        }
+        self.competition()
+            .entrants()
+            .keys()
+            .filter_map(|id| self.people.name(id))
+            .find(|entered| folded(entered) == name)
+            .map(str::to_owned)
     }
 
     /// Adds an entrant shown by `name`, with leading and trailing whitespace removed.

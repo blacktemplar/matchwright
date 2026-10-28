@@ -15,6 +15,8 @@ pub fn Entrants() -> Element {
     let ctx = use_context::<Ctx>();
     let mut name = use_signal(String::new);
     let entrants = ctx.session.read().entrants();
+    // an entrant whose name the one typed looks like, e.g. differing in case only
+    let like = ctx.session.read().entrant_like(&name.read());
     let actions = ctx.actions();
     let tr = ctx.translator.read();
     let entrants: Vec<_> = entrants
@@ -67,6 +69,7 @@ pub fn Entrants() -> Element {
                     value: "{name}",
                     autocomplete: "off",
                     placeholder: tr.get("name"),
+                    aria_describedby: "entrant-like",
                     oninput: move |event| name.set(event.value()),
                 }
                 button {
@@ -74,6 +77,12 @@ pub fn Entrants() -> Element {
                     r#type: "submit",
                     disabled: !actions.add_entrant,
                     {tr.get("add-entrant")}
+                }
+                // said as it is typed, without refusing the name
+                p { id: "entrant-like", class: "warnings", role: "status",
+                    if let Some(like) = like {
+                        {t!(tr, "entrant-like", name = like.as_str())}
+                    }
                 }
             }
         }

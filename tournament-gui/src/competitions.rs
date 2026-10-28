@@ -8,11 +8,17 @@ use tournament_app::{
     session::Session,
     storage::{CompetitionKey, Progress, Storage as _},
 };
-use tournament_browser::channel::Broadcast;
+use tournament_browser::{channel::Broadcast, lock};
 
 use crate::{
-    Notices, Page, competition::SAVED, download, i18n::t, icons, notices::Detail, open,
-    winners_text,
+    Notices, Page,
+    competition::{SAVED, lock_name},
+    components::dialog::{Dialog, DialogDescription, DialogTitle},
+    download,
+    i18n::t,
+    icons,
+    notices::Detail,
+    open, winners_text,
 };
 
 #[component]
@@ -21,6 +27,11 @@ pub fn Competitions() -> Element {
     let mut name = use_signal(String::new);
     // counts what other tabs saved, which may be a competition the list does not have yet
     let mut saved_elsewhere = use_signal(|| 0_u32);
+    // counts the competitions renamed or deleted here
+    let changed = use_signal(|| 0_u32);
+    let mut asked = use_signal(|| None::<Ask>);
+    // a click asking `what` in the dialog
+    let ask = move |what: Ask| move |_| asked.set(Some(what.clone()));
     use_future(move || async move {
         let channel = Broadcast::new(SAVED);
         let mut saved = channel.messages();
@@ -30,6 +41,7 @@ pub fn Competitions() -> Element {
     });
     let listings = use_resource(move || async move {
         saved_elsewhere();
+        changed();
         let storage = page
             .storage
             .peek()
@@ -98,8 +110,9 @@ pub fn Competitions() -> Element {
                 } else if listings.is_empty() {
                     p { class: "empty", {tr.get("no-competitions")} }
                 }
+                // the latest first, which is the one most likely to be played
                 ul { id: "competition-list",
-                    for listing in listings {
+                    for listing in listings.into_iter().rev() {
                         li { key: "{listing.key}",
                             div { class: "listing",
                                 a { class: "name", href: "#{listing.key}", "{listing.name}" }
@@ -107,18 +120,185 @@ pub fn Competitions() -> Element {
                                     span { class: "progress", {progress_text(&tr, progress)} }
                                 }
                             }
-                            button {
-                                class: "small",
-                                aria_label: t!(tr, "export-competition", name = &*listing.name),
-                                onclick: move |_| export(page, listing.key, listing.name.clone()),
-                                icons::Export {}
-                                {tr.get("export")}
+                            div { class: "listing-buttons",
+                                button {
+                                    class: "small icon-only",
+                                    aria_label: t!(tr, "rename-competition", name = &*listing.name),
+                                    onclick: ask(Ask::Rename {
+                                        key: listing.key,
+                                        name: listing.name.clone(),
+                                    }),
+                                    icons::Pencil {}
+                                }
+                                button {
+                                    class: "small icon-only",
+                                    aria_label: t!(tr, "export-competition", name = &*listing.name),
+                                    onclick: {
+                                        let (key, name) = (listing.key, listing.name.clone());
+                                        move |_| export(page, key, name.clone())
+                                    },
+                                    icons::Export {}
+                                }
+                                button {
+                                    class: "small icon-only",
+                                    aria_label: t!(tr, "delete-competition", name = &*listing.name),
+                                    onclick: ask(Ask::Delete {
+                                        key: listing.key,
+                                        name: listing.name.clone(),
+                                    }),
+                                    icons::Trash {}
+                                }
                             }
                         }
                     }
                 }
             }
+            AskDialog { asked, changed }
         }
+    }
+}
+
+/// What a dialog asks the operator about a competition of the list.
+#[derive(Clone, PartialEq)]
+enum Ask {
+    /// Its new name, in place of `name`.
+    Rename { key: CompetitionKey, name: String },
+    /// Whether to delete it.
+    Delete { key: CompetitionKey, name: String },
+}
+
+/// The dialog asking what `asked` asks, if anything; once done, `changed` counts on, which reads
+/// the list anew.
+#[component]
+fn AskDialog(asked: Signal<Option<Ask>>, changed: Signal<u32>) -> Element {
+    let page = use_context::<Page>();
+    let mut error = use_signal(|| None::<Text>);
+    let mut name = use_signal(String::new);
+    // the name shown, from the competition asked about until the operator types
+    use_effect(move || {
+        if let Some(Ask::Rename { name: current, .. }) = asked() {
+            name.set(current);
+        }
+        error.set(None);
+    });
+    let tr = page.translator.read();
+    let open = asked.read().is_some();
+    let mut close = move || asked.set(None);
+    rsx! {
+        Dialog {
+            open: Some(open),
+            on_open_change: move |open: bool| {
+                if !open {
+                    asked.set(None);
+                }
+            },
+            match asked() {
+                Some(Ask::Rename { key, name: current }) => rsx! {
+                    DialogTitle { {t!(tr, "rename-title", name = current.as_str())} }
+                    form {
+                        class: "dialog-form",
+                        onsubmit: move |event| {
+                            event.prevent_default();
+                            let chosen = name.peek().trim().to_owned();
+                            if chosen.is_empty() {
+                                error.set(Some(Text::new("error-empty-competition-name")));
+                                return;
+                            }
+                            spawn(rename(page, key, chosen, asked, changed, error));
+                        },
+                        label { r#for: "new-name", {tr.get("name")} }
+                        input {
+                            id: "new-name",
+                            value: "{name}",
+                            autocomplete: "off",
+                            oninput: move |event| name.set(event.value()),
+                        }
+                        p { class: "error", role: "alert",
+                            if let Some(error) = error() {
+                                {tr.sentence(&error)}
+                            }
+                        }
+                        div { class: "dialog-buttons",
+                            button { class: "primary", r#type: "submit", {tr.get("rename")} }
+                            button { r#type: "button", onclick: move |_| close(),
+                                {tr.get("cancel")}
+                            }
+                        }
+                    }
+                },
+                Some(Ask::Delete { key, name: current }) => rsx! {
+                    DialogTitle { {t!(tr, "delete-title", name = current.as_str())} }
+                    DialogDescription { {tr.get("delete-description")} }
+                    p { class: "error", role: "alert",
+                        if let Some(error) = error() {
+                            {tr.sentence(&error)}
+                        }
+                    }
+                    div { class: "dialog-buttons",
+                        button {
+                            class: "primary danger",
+                            onclick: move |_| _ = spawn(delete(page, key, asked, changed, error)),
+                            {tr.get("delete")}
+                        }
+                        button { r#type: "button", onclick: move |_| close(), {tr.get("cancel")} }
+                    }
+                },
+                None => rsx! {},
+            }
+        }
+    }
+}
+
+/// Names the competition `key` `name`, and closes the dialog, or shows in it why not.
+async fn rename(
+    page: Page,
+    key: CompetitionKey,
+    name: String,
+    mut asked: Signal<Option<Ask>>,
+    mut changed: Signal<u32>,
+    mut error: Signal<Option<Text>>,
+) {
+    let Some(storage) = page.storage.peek().clone() else {
+        return;
+    };
+    match storage.rename(key, &name).await {
+        Ok(()) => {
+            asked.set(None);
+            changed += 1;
+        }
+        Err(why) => error.set(Some(
+            Text::new("error-not-saved").with_detail(why.to_string()),
+        )),
+    }
+}
+
+/// Deletes the competition `key`, unless another tab has it open, and closes the dialog, or shows
+/// in it why not.
+async fn delete(
+    page: Page,
+    key: CompetitionKey,
+    mut asked: Signal<Option<Ask>>,
+    mut changed: Signal<u32>,
+    mut error: Signal<Option<Text>>,
+) {
+    let Some(storage) = page.storage.peek().clone() else {
+        return;
+    };
+    // held while deleting, so that no tab opens it meanwhile
+    let Some(lock) = lock::try_lock(&lock_name(key)).await else {
+        error.set(Some(Text::new("error-competition-open-elsewhere")));
+        return;
+    };
+    let deleted = storage.delete(key).await;
+    drop(lock);
+    match deleted {
+        Ok(()) => {
+            asked.set(None);
+            changed += 1;
+        }
+        Err(why) => error.set(Some(
+            Text::new("error-not-deleted").with_detail(why.to_string()),
+        )),
     }
 }
 
@@ -151,7 +331,20 @@ async fn import(mut page: Page, file: FileData) {
     };
     let name = file.name();
     let name = name.strip_suffix(".json").unwrap_or(&name);
-    match Session::import(&text, name) {
+    let Some(storage) = page.storage.peek().clone() else {
+        return;
+    };
+    // so that a copy of one stored is told apart from it
+    let stored = match storage.list().await {
+        Ok(stored) => stored,
+        Err(error) => {
+            page.error.set(Some(
+                Text::new("error-competitions-unreadable").with_detail(error.to_string()),
+            ));
+            return;
+        }
+    };
+    match Session::import(&text, name, &stored) {
         Ok(session) => store(page, session),
         Err(error) => page.error.set(Some(error.text())),
     }
@@ -185,7 +378,7 @@ fn export(mut page: Page, key: CompetitionKey, name: String) {
                 .error
                 .set(Some(Text::new("error-competition-not-found"))),
             Err(error) => page.error.set(Some(
-                Text::new("error-competition-unreadable").with("reason", error.to_string()),
+                Text::new("error-competition-unreadable").with_detail(error.to_string()),
             )),
         }
     });

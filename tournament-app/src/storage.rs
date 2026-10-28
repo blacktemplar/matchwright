@@ -161,6 +161,23 @@ pub trait Storage {
     /// Returns an error if the changes cannot be stored, in which case what was stored before is
     /// still there.
     fn write(&self, changes: &Changes) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// Names the competition `key` `name`, which later writes keep; nothing if nothing is stored
+    /// of it. A session holding it keeps the name it had.
+    ///
+    /// # Errors
+    /// Returns an error if the name cannot be stored.
+    fn rename(
+        &self,
+        key: CompetitionKey,
+        name: &str,
+    ) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// Removes everything stored of the competition `key`; nothing if nothing is.
+    ///
+    /// # Errors
+    /// Returns an error if it cannot be removed, in which case all of it is still there.
+    fn delete(&self, key: CompetitionKey) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
 /// Stores in memory, for tests and until a page stores in the browser. Its clones share what is
@@ -235,6 +252,18 @@ impl Storage for MemoryStorage {
             }
         }
         competition.people.extend(changes.people.iter().cloned());
+        Ok(())
+    }
+
+    async fn rename(&self, key: CompetitionKey, name: &str) -> Result<(), Infallible> {
+        if let Some(competition) = self.0.borrow_mut().get_mut(&key) {
+            name.clone_into(&mut competition.name);
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, key: CompetitionKey) -> Result<(), Infallible> {
+        self.0.borrow_mut().shift_remove(&key);
         Ok(())
     }
 }

@@ -141,6 +141,23 @@ fn an_empty_or_taken_name_adds_no_entrant() {
     assert_eq!(names(&session.entrants()), ["Alice"]);
 }
 
+/// Names differing in case or in how Unicode composes their characters look alike, which the
+/// operator is told of, though they are taken.
+#[test]
+fn a_name_like_one_entered_is_found_but_taken() {
+    let mut session = Session::new("cup");
+    // "Zoë" with its "ë" as one character
+    session.add_entrant("Zo\u{eb}").unwrap();
+
+    assert_eq!(session.entrant_like(" ZOË "), Some("Zoë".to_owned()));
+    // with its "ë" as an "e" and a combining diaeresis
+    assert_eq!(session.entrant_like("zoe\u{308}"), Some("Zoë".to_owned()));
+    assert_eq!(session.entrant_like("Zoe"), None);
+    assert_eq!(session.entrant_like(""), None);
+    session.add_entrant("zoë").unwrap();
+    assert_eq!(names(&session.entrants()), ["Zoë", "zoë"]);
+}
+
 #[test]
 fn a_removed_entrant_comes_back_with_its_name_by_undo() {
     let mut session = Session::new("cup");
@@ -1447,6 +1464,41 @@ impl Storage for Flaky {
         now(self.storage.write(changes)).unwrap();
         Ok(())
     }
+
+    async fn rename(&self, key: CompetitionKey, name: &str) -> Result<(), WriteFailed> {
+        now(self.storage.rename(key, name)).unwrap();
+        Ok(())
+    }
+
+    async fn delete(&self, key: CompetitionKey) -> Result<(), WriteFailed> {
+        now(self.storage.delete(key)).unwrap();
+        Ok(())
+    }
+}
+
+/// A competition renamed keeps its name through the saves of a session holding the old one, and
+/// one deleted is gone.
+#[test]
+fn a_competition_stored_is_renamed_and_deleted() {
+    let storage = MemoryStorage::default();
+    let mut session = Session::new("cup");
+    let mut other = Session::new("league");
+    now(session.save(&storage)).unwrap();
+    now(other.save(&storage)).unwrap();
+
+    now(storage.rename(session.key(), "Cup 2026")).unwrap();
+    session.add_entrant("Alice").unwrap();
+    now(session.save(&storage)).unwrap();
+    now(storage.delete(other.key())).unwrap();
+
+    let listings = now(storage.list()).unwrap();
+    assert_eq!(listings.len(), 1);
+    assert_eq!(listings[0].name, "Cup 2026");
+    assert_eq!(
+        now(Session::load(&storage, session.key())).unwrap().name(),
+        "Cup 2026"
+    );
+    assert!(now(storage.read(other.key(), 0)).unwrap().is_none());
 }
 
 #[test]
@@ -1490,7 +1542,7 @@ fn an_exported_competition_is_imported_as_a_new_one_as_it_was() {
         .report(numbered(&session, 1), MatchResult::AWins)
         .unwrap();
 
-    let mut imported = Session::import(&session.export(), "other").unwrap();
+    let mut imported = Session::import(&session.export(), "other", &[]).unwrap();
 
     assert_eq!(imported.name(), "cup", "the file names the competition");
     assert_ne!(imported.key(), session.key());
@@ -1512,17 +1564,33 @@ fn a_file_without_a_name_is_imported_under_the_name_given() {
     let mut file: serde_json::Value = serde_json::from_str(&session.export()).unwrap();
     file.as_object_mut().unwrap().remove("name");
 
-    let imported = Session::import(&file.to_string(), "cup.json").unwrap();
+    let imported = Session::import(&file.to_string(), "cup.json", &[]).unwrap();
 
     assert_eq!(imported.name(), "cup.json");
     assert_eq!(imported.entrants(), session.entrants());
 }
 
+/// A copy of a competition stored already is told apart from it in the list.
+#[test]
+fn a_competition_imported_under_a_name_stored_already_is_numbered() {
+    let session = Given::new().added();
+    let stored = |name: &str| Listing {
+        key: CompetitionKey::new(Uuid::new_v4()),
+        name: name.to_owned(),
+        progress: None,
+    };
+
+    let imported =
+        Session::import(&session.export(), "", &[stored("cup"), stored("cup (2)")]).unwrap();
+
+    assert_eq!(imported.name(), "cup (3)");
+}
+
 #[test]
 fn a_file_that_is_no_competition_is_not_imported() {
-    assert!(Session::import("", "cup").is_err());
-    assert!(Session::import(r#"{"people": []}"#, "cup").is_err());
-    assert!(Session::import(r#"{"log": [{}], "people": []}"#, "cup").is_err());
+    assert!(Session::import("", "cup", &[]).is_err());
+    assert!(Session::import(r#"{"people": []}"#, "cup", &[]).is_err());
+    assert!(Session::import(r#"{"log": [{}], "people": []}"#, "cup", &[]).is_err());
 }
 
 /// A log written by a version with a plugin this one does not have, say, cannot be loaded, but the
@@ -1547,7 +1615,7 @@ fn what_is_stored_is_exported_whether_it_replays_or_not() {
     assert_eq!(exported["log"].as_array().unwrap().len(), 3);
     assert_eq!(exported["log"][2], serde_json::json!({ "unknown": true }));
     assert_eq!(exported["people"][0]["name"], "Alice");
-    assert!(Session::import(&file, "cup").is_err());
+    assert!(Session::import(&file, "cup", &[]).is_err());
 }
 
 #[test]

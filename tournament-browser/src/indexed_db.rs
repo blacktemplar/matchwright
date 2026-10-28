@@ -51,7 +51,8 @@ pub enum IndexedDbError {
 struct ListingRecord {
     key: CompetitionKey,
     name: String,
-    /// How many competitions were stored before this one.
+    /// Its place in the order the competitions were stored in: one more than the number of the
+    /// latest stored before it.
     number: u32,
     /// Absent in the records stored before it was.
     #[serde(default)]
@@ -159,6 +160,58 @@ impl Storage for IndexedDb {
         });
         receiver.await.unwrap_or(Err(IndexedDbError::Aborted))
     }
+
+    async fn rename(&self, key: CompetitionKey, name: &str) -> Result<(), IndexedDbError> {
+        // read and written in one transaction, as `write` is
+        let (sender, receiver) = oneshot::channel();
+        let database = Rc::clone(&self.0);
+        let name = name.to_owned();
+        wasm_bindgen_futures::spawn_local(async move {
+            _ = sender.send(rename(&database, key, name).await);
+        });
+        receiver.await.unwrap_or(Err(IndexedDbError::Aborted))
+    }
+
+    async fn delete(&self, key: CompetitionKey) -> Result<(), IndexedDbError> {
+        let transaction = self.0.transaction(&STORES, TransactionMode::ReadWrite)?;
+        transaction
+            .object_store(COMPETITIONS)?
+            .delete(competition(key))?;
+        transaction
+            .object_store(ENTRIES)?
+            .delete(records_of(key)?)?;
+        transaction.object_store(PEOPLE)?.delete(records_of(key)?)?;
+        match transaction.commit()?.await? {
+            TransactionResult::Committed => Ok(()),
+            TransactionResult::Aborted => Err(IndexedDbError::Aborted),
+        }
+    }
+}
+
+async fn rename(
+    database: &Database,
+    key: CompetitionKey,
+    name: String,
+) -> Result<(), IndexedDbError> {
+    let transaction = database.transaction(&[COMPETITIONS], TransactionMode::ReadWrite)?;
+    let competitions = transaction.object_store(COMPETITIONS)?;
+    let Some(listing) = competitions.get(competition(key))?.await? else {
+        transaction.abort()?;
+        return Ok(());
+    };
+    let listing = ListingRecord {
+        name,
+        ..parse(&listing)?
+    };
+    put(
+        &competitions,
+        &serde_json::to_string(&listing).expect("a listing serializes as JSON"),
+        &competition(key),
+    )?;
+    match transaction.commit()?.await? {
+        TransactionResult::Committed => Ok(()),
+        TransactionResult::Aborted => Err(IndexedDbError::Aborted),
+    }
 }
 
 async fn write(database: &Database, changes: &Changes) -> Result<(), IndexedDbError> {
@@ -167,12 +220,19 @@ async fn write(database: &Database, changes: &Changes) -> Result<(), IndexedDbEr
     let entries = transaction.object_store(ENTRIES)?;
     let people = transaction.object_store(PEOPLE)?;
     let key = changes.listing().key;
-    let (listing, number, stored) = try_join3(
+    let (listing, listings, stored) = try_join3(
         competitions.get(competition(key))?.into_future(),
-        competitions.count(None)?.into_future(),
+        competitions.get_all(None, None)?.into_future(),
         entries.count(Some(records_of(key)?))?.into_future(),
     )
     .await?;
+    // after the latest stored, whatever was deleted since
+    let number = listings
+        .iter()
+        .map(|listing| parse::<ListingRecord>(listing).map(|listing| listing.number + 1))
+        .try_fold(0, |highest, number| {
+            number.map(|number| highest.max(number))
+        })?;
     let stored = stored as usize;
     if changes.first_entry() > stored {
         transaction.abort()?;

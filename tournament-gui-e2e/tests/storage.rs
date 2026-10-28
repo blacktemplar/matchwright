@@ -28,11 +28,56 @@ async fn the_competitions_stored_are_listed_to_open() {
         gui.new_competition("League").await?;
         gui.follow("All competitions").await?;
 
-        gui.expect_competitions(&["Cup", "League"]).await?;
-        gui.expect_progress(&["Not started · one entrant", "Not started · 0 entrants"])
+        // the latest first
+        gui.expect_competitions(&["League", "Cup"]).await?;
+        gui.expect_progress(&["Not started · 0 entrants", "Not started · one entrant"])
             .await?;
         gui.open_competition("Cup").await?;
         gui.expect_entrants(&["Alice"]).await
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_competition_is_renamed_and_deleted_from_the_list() {
+    run(async |gui| {
+        gui.new_competition("Cup").await?;
+        gui.add_entrant("Alice").await?;
+        gui.follow("All competitions").await?;
+        gui.new_competition("League").await?;
+        gui.follow("All competitions").await?;
+
+        gui.rename_competition("Cup", "Cup 2026").await?;
+
+        gui.expect_no_dialog().await?;
+        gui.expect_competitions(&["League", "Cup 2026"]).await?;
+        gui.delete_competition("League").await?;
+        gui.expect_competitions(&["Cup 2026"]).await?;
+        gui.page.check_accessibility().await?;
+        gui.open_competition("Cup 2026").await?;
+        gui.expect_entrants(&["Alice"]).await
+    })
+    .await;
+}
+
+/// A tab showing a competition would go on saving it, so it is not deleted meanwhile.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_competition_open_in_another_tab_is_not_deleted() {
+    run_in_new_competition(async |gui| {
+        let showing = gui.page.tab().await?;
+        gui.page.open_tab().await?;
+        gui.follow("All competitions").await?;
+
+        gui.delete_competition(COMPETITION).await?;
+
+        gui.expect_dialog_error("The competition is open in another tab; close it there first.")
+            .await?;
+        gui.click("Cancel").await?;
+        gui.expect_competitions(&[COMPETITION]).await?;
+        gui.page.close_tab(&showing).await?;
+        gui.expect_open(COMPETITION).await
     })
     .await;
 }
@@ -78,10 +123,11 @@ async fn an_exported_competition_is_imported_as_another_one() {
 
         gui.import(&file).await?;
 
-        gui.expect_open(COMPETITION).await?;
+        gui.expect_open("Cup (2)").await?;
         gui.expect_entrants(&["Alice"]).await?;
         gui.follow("All competitions").await?;
-        gui.expect_competitions(&[COMPETITION, COMPETITION]).await
+        // the copy told apart from it, and listed first, as the latest
+        gui.expect_competitions(&["Cup (2)", COMPETITION]).await
     })
     .await;
 }

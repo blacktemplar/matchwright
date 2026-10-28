@@ -48,6 +48,15 @@ progress-finished = Every match played
 progress-won = Finished · { $winners }
 export = Export
 export-competition = Export { $name }
+rename = Rename
+rename-competition = Rename { $name }
+rename-title = Rename { $name }
+delete = Delete
+delete-competition = Delete { $name }
+delete-title = Delete { $name }?
+delete-description = Everything stored of it in this browser is removed. Export it first to keep a copy.
+error-competition-open-elsewhere = the competition is open in another tab; close it there first
+error-not-deleted = the competition could not be deleted
 new-competition = New competition
 create = Create
 import = Import from a file
@@ -69,6 +78,8 @@ entrants = Entrants
 no-entrants = No entrants yet. Each one is added by its name.
 name = Name
 add-entrant = Add entrant
+# the name typed looks like that of an entrant, e.g. differing in case only; it is taken all the same
+entrant-like = “{ $name }” is entered already.
 remove = Remove
 remove-entrant = Remove { $name }
 # not `phase`, which is the app's message of the fields of a phase

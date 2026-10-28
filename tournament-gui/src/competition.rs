@@ -43,7 +43,7 @@ pub const SAVED: &str = "tournament-gui.saved";
 const READ_ONLY: &str = "read-only";
 
 /// The name of the lock of the competition `key`, held by the tab that changes it.
-fn lock_name(key: CompetitionKey) -> String {
+pub fn lock_name(key: CompetitionKey) -> String {
     format!("tournament-gui.competition.{key}")
 }
 

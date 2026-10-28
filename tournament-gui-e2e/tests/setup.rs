@@ -12,6 +12,25 @@ async fn entrants_are_listed_in_the_order_they_were_added() {
     .await;
 }
 
+/// A name differing from another only in case is said to look like it while it is typed, and is
+/// taken all the same.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_name_like_one_entered_is_pointed_out_but_taken() {
+    run_in_new_competition(async |gui| {
+        gui.add_entrant("Alice").await?;
+
+        gui.type_entrant_name("ALICE").await?;
+
+        gui.expect_entrant_like(Some("“Alice” is entered already."))
+            .await?;
+        gui.press(Key::Enter).await?;
+        gui.expect_entrants(&["Alice", "ALICE"]).await?;
+        gui.expect_entrant_like(None).await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn an_entrant_is_removed() {

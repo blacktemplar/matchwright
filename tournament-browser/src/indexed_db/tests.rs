@@ -98,6 +98,38 @@ async fn competitions_are_listed_in_the_order_they_were_first_saved() {
     assert_eq!(listed, expected);
 }
 
+/// A competition renamed keeps its name through later saves, and one deleted is gone with its log
+/// and names; one saved after a deletion is still listed last.
+#[wasm_bindgen_test]
+async fn competitions_are_renamed_and_deleted() {
+    let storage = database().await;
+    let mut sessions: Vec<_> = ["league", "cup"].map(Session::new).into();
+    for session in &mut sessions {
+        session.add_entrant("Alice").unwrap();
+        session.save(&storage).await.unwrap();
+    }
+
+    storage.rename(sessions[1].key(), "Cup 2026").await.unwrap();
+    sessions[1].add_entrant("Bob").unwrap();
+    sessions[1].save(&storage).await.unwrap();
+    storage.delete(sessions[0].key()).await.unwrap();
+    let mut open = Session::new("open");
+    open.save(&storage).await.unwrap();
+
+    let names: Vec<_> = storage
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|listing| listing.name)
+        .collect();
+    assert_eq!(names, ["Cup 2026", "open"]);
+    assert!(storage.read(sessions[0].key(), 0).await.unwrap().is_none());
+    let loaded = Session::load(&storage, sessions[1].key()).await.unwrap();
+    assert_eq!(loaded.name(), "Cup 2026");
+    assert_eq!(loaded.entrants().len(), 2);
+}
+
 /// A GUI writes changes while the operator goes on, so a write may finish after a later one.
 #[wasm_bindgen_test]
 async fn changes_written_out_of_order_are_all_saved() {
