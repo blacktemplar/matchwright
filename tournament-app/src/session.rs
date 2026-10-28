@@ -47,8 +47,8 @@ use crate::{
     people::{People, Person},
     storage::{Changes, CompetitionKey, Listing, Progress, Storage, Stored},
     view::{
-        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Medal, Reopened, Reported,
-        Round, RoundSummary, StageName, StandingRow, Standings,
+        Action, Actions, ByeRow, Column, EntrantRow, Format, MatchRow, Medal, NameSearch, Reopened,
+        Reported, Round, RoundSummary, StageName, StandingRow, Standings,
     },
 };
 
@@ -755,28 +755,88 @@ impl Session {
             .collect()
     }
 
-    /// Reports the result `entry` says: the number of a match, as [`MatchRow::number`], and its
-    /// result, separated by whitespace or a `-`. The result is `1` for a win of side A, `2` for one
-    /// of side B, and `X` (or `x`) for a draw, which needs no separator, e.g. `"3 1"`, `"3-1"`,
-    /// `"12 X"` or `"12x"`.
+    /// Reports the result `entry` says, see [`Self::entered_report`].
     ///
     /// # Errors
-    /// Returns an error if `entry` does not read as a number and a result, there is no match of
-    /// that number, it has a result already, or the result is not reported, see [`Self::report`].
+    /// Returns an error if [`Self::entered_report`] does, or the result is not reported, see
+    /// [`Self::report`].
     pub fn report_entered(&mut self, entry: &str) -> Result<Reported, ReportEnteredError> {
-        let (number, result) = read_entry(entry).ok_or(ReportEnteredError::Unreadable)?;
+        let row = self.entered_report(entry)?;
+        let result = row.result.expect("an entry says a result");
+        self.report(row.id, result).map_err(|error| match error {
+            ReportError::AlreadyFinished => ReportEnteredError::AlreadyFinished(row.number),
+            error => error.into(),
+        })
+    }
+
+    /// The row of the match whose result `entry` says, with that result, which
+    /// [`Self::report_entered`] would report. `entry` is either
+    ///
+    /// - the number of a match, as [`MatchRow::number`], and its result, separated by whitespace
+    ///   or a `-`: `1` for a win of side A, `2` for one of side B, and `X` (or `x`) for a draw,
+    ///   which needs no separator, e.g. `"3 1"`, `"3-1"`, `"12 X"` or `"12x"`; or
+    /// - part of the name of the winner, found as [`NameSearch`] finds it among the entrants of
+    ///   the matches playable now (see [`Self::playable`]), where it has to find those of one side
+    ///   only, e.g. `"ali"` for Alice.
+    ///
+    /// # Errors
+    /// Returns an error if the competition has not started, `entry` is empty or a number alone,
+    /// there is no match of the number entered, it has a result already, its format has no
+    /// draws while a draw is entered, or the name entered is found on no side or on several.
+    pub fn entered_report(&self, entry: &str) -> Result<MatchRow, ReportEnteredError> {
         let phase = self.started_phase().ok_or(ReportError::NotStarted)?;
-        let id = phase
+        let entry = entry.trim();
+        if entry.is_empty() || entry.chars().all(|char| char.is_ascii_digit()) {
+            return Err(ReportEnteredError::Unreadable);
+        }
+        let Some((number, result)) = read_entry(entry) else {
+            return self.report_named(entry);
+        };
+        let r#match = phase
             .data()
             .matches()
             .values()
             .find(|r#match| self::number(r#match) == number)
-            .map(Match::id)
             .ok_or(ReportEnteredError::NoMatch(number))?;
-        self.report(id, result).map_err(|error| match error {
-            ReportError::AlreadyFinished => ReportEnteredError::AlreadyFinished(number),
-            error => error.into(),
+        if r#match.is_finished() {
+            return Err(ReportEnteredError::AlreadyFinished(number));
+        }
+        if result == MatchResult::Draw && !phase.format().allows_draws() {
+            return Err(ReportError::DrawNotAllowed.into());
+        }
+        Ok(MatchRow {
+            result: Some(result),
+            ..self.match_row(phase, r#match)
         })
+    }
+
+    /// The row of the match playable now with a side whose entrant's name contains `name`, with
+    /// that side's win, see [`Self::entered_report`].
+    fn report_named(&self, name: &str) -> Result<MatchRow, ReportEnteredError> {
+        let search = NameSearch::new(name);
+        let found: Vec<_> = self
+            .playable()
+            .into_iter()
+            .flat_map(|row| {
+                let wins = [(&row.a, MatchResult::AWins), (&row.b, MatchResult::BWins)]
+                    .into_iter()
+                    .filter(|(side, _)| side.iter().any(|entrant| search.finds(entrant)))
+                    .map(|(_, result)| result)
+                    .collect::<Vec<_>>();
+                wins.into_iter().map(move |result| MatchRow {
+                    result: Some(result),
+                    ..row.clone()
+                })
+            })
+            .collect();
+        match <[_; 1]>::try_from(found) {
+            Ok([row]) => Ok(row),
+            Err(found) if found.is_empty() => Err(ReportEnteredError::NoNameFound(name.to_owned())),
+            Err(found) => Err(ReportEnteredError::SeveralNamesFound {
+                entered: name.to_owned(),
+                sides: found.len(),
+            }),
+        }
     }
 
     /// Reports `result` for the match `id`.

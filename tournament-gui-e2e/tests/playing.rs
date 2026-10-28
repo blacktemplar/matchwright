@@ -150,6 +150,33 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
     .await;
 }
 
+/// Part of the winner's name reports the win of the one side of the matches playable now it
+/// finds, which the entry says before.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_win_is_typed_in_by_part_of_the_winners_name() {
+    run_in_new_competition(async |gui| {
+        start_round_robin(&gui, &["Alice", "Anna"]).await?;
+
+        gui.type_result("a").await?;
+        gui.expect_result_preview(None).await?;
+        gui.enter_result("a").await?;
+        gui.expect_result_entry_error(
+            "“a” is in the names of 2 entrants playing now; enter more of the name.",
+        )
+        .await?;
+        gui.type_result("ali").await?;
+        gui.expect_result_preview(Some("Reports match 1: Alice won."))
+            .await?;
+        gui.page.check_accessibility().await?;
+        gui.enter_result("ali").await?;
+
+        gui.expect_results(&["Alice won"]).await?;
+        gui.expect_result_preview(None).await
+    })
+    .await;
+}
+
 /// A column of the standings says what its metric is, by its whole name where its header
 /// abbreviates it, and how its calculator is set, in German as well.
 #[tokio::test]

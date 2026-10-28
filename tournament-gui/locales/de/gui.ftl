@@ -145,7 +145,8 @@ enter-result = Ergebnis eingeben
 enter-result-hint = die Nummer des Spiels, dann 1, wenn die linke Seite gewonnen hat{ $draws ->
         [yes] , X für ein Unentschieden
        *[no] {""}
-    } oder 2, wenn die rechte Seite gewonnen hat, z. B. „3 1“
+    } oder 2, wenn die rechte Seite gewonnen hat, z. B. „3 1“; oder einen Teil des Namens des Siegers
+result-entry-preview = Meldet Spiel { $number }: { $result }.
 report = Melden
 
 ## What was done, as the page announces it

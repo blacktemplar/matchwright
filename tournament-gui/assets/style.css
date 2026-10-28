@@ -1086,12 +1086,20 @@ ul.summary-items {
 }
 
 .result-entry .hint,
+.result-entry .preview,
 .result-entry .error[role="alert"] {
   width: 100%;
   margin: 0;
 }
 
+/* what the entry would report, in the accent, as it is what Enter does */
+.result-entry .preview {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* no room, and no gap, while it says nothing */
+.result-entry .preview:empty,
 .result-entry .error[role="alert"]:empty {
   display: contents;
 }

@@ -1732,9 +1732,17 @@ tested natively and in wasm, and knows no plugin.
   and no knowledge of which entrant is which side beyond the left and the
   right of the match shown. The two are separated by whitespace or a `-`
   (`3-1`); a draw needs no separator (`3x`), but a win does, since `31` could
-  be match 3 or match 31. Whatever does not read so is refused with one
-  message saying how to enter a result; a match that has a result already is
-  named. A refused entry stays in the field to be corrected. And the result
+  be match 3 or match 31. A match that has a result already is named. The
+  field also takes part of the winner's name (2026-10-28), since an entrant
+  coming to the desk says who won rather than the number of the match: it is
+  found as the search finds names, among the matches playable now, where an
+  entrant plays one match, rather than among all open ones, where an entrant
+  of a round robin has a match in every round; it has to find one side, else
+  the refusal says how many it found, to be typed further. While what is
+  typed says a result, the field says which ("Reports match 3: Alice won."),
+  so that a name found where it was not meant is seen before Enter. A number
+  alone, or nothing, is refused with the message saying how to enter a
+  result. A refused entry stays in the field to be corrected. And the result
   buttons of a match move the focus on once one is pressed, which removes
   them: to the first button of the next match of the list without a result
   (after it, or else before it), or to the heading of the list if there is

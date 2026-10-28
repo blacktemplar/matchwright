@@ -1219,13 +1219,21 @@ fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
     let mut session = Given::new().format(SingleElimination::ID).started();
 
     // "11" could be match 1 won by side A, or match 11
-    for entry in [
-        "", "1", "11", "1 3", "one 1", "1 1 1", "-1 1", "1x1", "1 x 1", "1:1",
-    ] {
+    for entry in ["", " ", "1", "11"] {
         assert!(
             matches!(
                 session.report_entered(entry),
                 Err(ReportEnteredError::Unreadable)
+            ),
+            "{entry:?}"
+        );
+    }
+    // read as part of a name, which nobody has
+    for entry in ["1 3", "one 1", "1 1 1", "-1 1", "1x1", "1 x 1", "1:1"] {
+        assert!(
+            matches!(
+                session.report_entered(entry),
+                Err(ReportEnteredError::NoNameFound(name)) if name == entry
             ),
             "{entry:?}"
         );
@@ -1244,6 +1252,56 @@ fn a_result_entered_is_refused_unless_it_reads_as_one_of_a_match() {
         Err(ReportEnteredError::Report(ReportError::DrawNotAllowed))
     ));
     assert!(matches(&session).iter().all(|row| row.result.is_none()));
+}
+
+/// Part of the winner's name reports the win of the side it finds among the matches playable now:
+/// Alice plays one match in every round, but only that of the first round is playable.
+#[test]
+fn a_win_is_entered_as_part_of_the_winners_name() {
+    let mut session = Given::new().started();
+    let first = session
+        .playable()
+        .into_iter()
+        .find(|row| names(&row.a) == ["Alice"] || names(&row.b) == ["Alice"])
+        .unwrap();
+
+    let preview = session.entered_report(" ALI ").unwrap();
+    let reported = session.report_entered(" ALI ").unwrap();
+
+    assert_eq!(preview, reported.row);
+    assert_eq!(reported.row.id, first.id);
+    let alice_won = if names(&first.a) == ["Alice"] {
+        MatchResult::AWins
+    } else {
+        MatchResult::BWins
+    };
+    assert_eq!(reported.row.result, Some(alice_won));
+    assert!(
+        matches!(
+            session.entered_report("Alice"),
+            Err(ReportEnteredError::NoNameFound(_))
+        ),
+        "her match of round 2 waits for the other match of round 1"
+    );
+}
+
+/// A name found on several sides of the matches playable now, or on none, reports nothing.
+#[test]
+fn a_name_entered_has_to_find_one_side_playing_now() {
+    let mut session = Given::new()
+        .entrants(&["Anna", "Hannah", "Bob", "Dave"])
+        .started();
+
+    assert!(matches!(
+        session.report_entered("ANN"),
+        Err(ReportEnteredError::SeveralNamesFound { entered, sides: 2 }) if entered == "ANN"
+    ));
+    assert!(matches!(
+        session.report_entered("Erin"),
+        Err(ReportEnteredError::NoNameFound(name)) if name == "Erin"
+    ));
+    assert!(matches(&session).iter().all(|row| row.result.is_none()));
+    session.report_entered("hannah").unwrap();
 }
 
 /// `undo_report` is an action like any other, so `undo` brings the result back rather than undoing

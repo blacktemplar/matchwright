@@ -119,12 +119,22 @@ pub enum ReportError {
 /// [`Session::report_entered`](crate::session::Session::report_entered).
 #[derive(Debug, Error)]
 pub enum ReportEnteredError {
-    #[error("enter the number of a match and its result, 1, X or 2, e.g. “3 1”")]
+    #[error(
+        "enter the number of a match and its result, 1, X or 2, e.g. “3 1”, or part of the \
+         winner's name"
+    )]
     Unreadable,
     #[error("there is no match {0}")]
     NoMatch(usize),
     #[error("match {0} has a result already")]
     AlreadyFinished(usize),
+    /// No entrant of a match playable now has a name containing what was entered, which it holds
+    /// as entered, without the spaces around it.
+    #[error("no entrant playing now has a name containing “{0}”")]
+    NoNameFound(String),
+    /// What was entered is in the names of entrants of `sides` sides of matches playable now.
+    #[error("“{entered}” is in the names of {sides} entrants playing now; enter more of the name")]
+    SeveralNamesFound { entered: String, sides: usize },
     #[error(transparent)]
     Report(#[from] ReportError),
 }
@@ -282,6 +292,12 @@ impl Message for ReportEnteredError {
             Self::AlreadyFinished(number) => {
                 Text::new("error-match-numbered-finished-already").with("number", *number)
             }
+            Self::NoNameFound(entered) => {
+                Text::new("error-no-name-found").with("entered", entered.as_str())
+            }
+            Self::SeveralNamesFound { entered, sides } => Text::new("error-several-names-found")
+                .with("entered", entered.as_str())
+                .with("sides", *sides),
             Self::Report(error) => error.text(),
         }
     }

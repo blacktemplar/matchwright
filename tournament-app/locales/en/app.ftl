@@ -21,9 +21,13 @@ error-not-started = the competition has not started yet
 error-unknown-match = there is no such match
 error-match-finished-already = the match has a result already
 error-draw-not-allowed = a match of this format cannot end in a draw
-error-result-unreadable = enter the number of a match and its result, 1, X or 2, e.g. “3 1”
+error-result-unreadable = enter the number of a match and its result, 1, X or 2, e.g. “3 1”, or part of the winner's name
 error-no-match-numbered = there is no match { $number }
 error-match-numbered-finished-already = match { $number } has a result already
+# $entered: part of the winner's name, as entered
+error-no-name-found = no entrant playing now has a name containing “{ $entered }”
+# $sides: how many sides of matches playable now have an entrant whose name contains it
+error-several-names-found = “{ $entered }” is in the names of { $sides } entrants playing now; enter more of the name
 error-match-not-reported = the match has no result that could be undone
 error-result-depended-on = a later result depends on this one; undo that one first
 # $number: the number of the match whose result depends on the one to reopen

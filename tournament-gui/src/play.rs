@@ -327,7 +327,8 @@ fn ResultEntryToggle(open: Signal<bool>) -> Element {
     }
 }
 
-/// Reports a result typed in as the number of its match and the result, e.g. "3 1".
+/// Reports a result typed in as the number of its match and the result, e.g. "3 1", or as part of
+/// the winner's name, saying beforehand what it would report.
 #[component]
 fn ResultEntry(draws: bool) -> Element {
     let ctx = use_context::<Ctx>();
@@ -336,6 +337,8 @@ fn ResultEntry(draws: bool) -> Element {
     let mut error = use_signal(|| None::<Text>);
     // only reported by the tab that changes the competition
     let disabled = !ctx.changes();
+    // the match and result reported if submitted now
+    let preview = ctx.session.read().entered_report(&entry.read()).ok();
     let tr = ctx.translator.read();
     rsx! {
         form {
@@ -358,7 +361,7 @@ fn ResultEntry(draws: bool) -> Element {
                 value: "{entry}",
                 autocomplete: "off",
                 aria_invalid: error.read().is_some(),
-                aria_describedby: "result-entry-error result-entry-hint",
+                aria_describedby: "result-entry-error result-entry-preview result-entry-hint",
                 disabled,
                 oninput: move |event| {
                     entry.set(event.value());
@@ -370,6 +373,18 @@ fn ResultEntry(draws: bool) -> Element {
             p { id: "result-entry-error", class: "error", role: "alert",
                 if let Some(error) = error() {
                     {tr.sentence(&error)}
+                }
+            }
+            p { id: "result-entry-preview", class: "preview",
+                if let Some(row) = preview {
+                    {
+                        t!(
+                            tr,
+                            "result-entry-preview",
+                            number = row.number,
+                            result = result_text(&tr, &row).unwrap_or_default(),
+                        )
+                    }
                 }
             }
             p { id: "result-entry-hint", class: "hint",

@@ -190,7 +190,9 @@ enter-result = Enter a result
 enter-result-hint = the number of the match, then 1 if the side on the left won{ $draws ->
         [yes] , X for a draw,
        *[no] {""}
-    } or 2 if the side on the right won, e.g. “3 1”
+    } or 2 if the side on the right won, e.g. “3 1”; or part of the winner's name
+# what the entry reports if submitted now; $result: what the message won or draw says
+result-entry-preview = Reports match { $number }: { $result }.
 report = Report
 
 ## What was done, as the page announces it

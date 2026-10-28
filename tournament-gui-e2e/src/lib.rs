@@ -982,9 +982,23 @@ impl Gui {
             .await
     }
 
-    /// Reports the result `entry` says by typing it, e.g. `"3 1"`, in place of what was typed
-    /// before, and pressing Enter; opens the entry of results first if it is closed.
+    /// Reports the result `entry` says by typing it, e.g. `"3 1"` or `"ali"`, in place of what was
+    /// typed before, and pressing Enter; opens the entry of results first if it is closed.
     pub async fn enter_result(&self, entry: &str) -> WebDriverResult<()> {
+        self.type_result(entry).await?;
+        self.driver
+            .query(By::Id("result-entry"))
+            .first()
+            .await?
+            .send_keys(Key::Enter)
+            .await?;
+        Page::pause().await;
+        Ok(())
+    }
+
+    /// Types `entry` into the entry of results, in place of what was typed before, without
+    /// reporting it; opens the entry first if it is closed.
+    pub async fn type_result(&self, entry: &str) -> WebDriverResult<()> {
         let open = By::Css("#result-entry-toggle[aria-expanded=true]");
         if self.driver.find(open).await.is_err() {
             self.toggle_result_entry().await?;
@@ -994,9 +1008,21 @@ impl Gui {
         input.send_keys(Key::Control + "a").await?;
         input.send_keys(entry).await?;
         Page::pause().await;
-        input.send_keys(Key::Enter).await?;
-        Page::pause().await;
         Ok(())
+    }
+
+    /// Waits until the entry of results says what it would report, `text`, e.g. "Reports match
+    /// 1: Alice won.", or says nothing for `None`.
+    ///
+    /// # Panics
+    /// Panics if it does not in time, with what it says instead.
+    pub async fn expect_result_preview(&self, text: Option<&str>) -> WebDriverResult<()> {
+        self.page
+            .expect_texts(
+                By::Css("#result-entry-preview:not(:empty)"),
+                &Vec::from_iter(text),
+            )
+            .await
     }
 
     /// Opens the entry of results typed in if it is closed, or else closes it.
