@@ -77,7 +77,7 @@ tournament-cli = { path = "tournament-cli", default-features = false }
 tournament-engine = { path = "tournament-engine" }
 tower-http = "0.7.1"
 typetag = "0.2.23"
-undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine", features = [
+undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state-machine", tag = "v0.1.0", features = [
     "serde",
 ] }
 # of the version fluent-bundle takes languages in

@@ -31,7 +31,7 @@ The hooks are `cargo-fmt` (needs **nightly** rustfmt: `rustfmt.toml` uses unstab
 - CLI: `cargo run -p tournament-cli -- [FILE]` (`tournament-cli/README.md`). Web: `cd tournament-web && trunk serve` (`tournament-web/README.md`). GUI: `dx serve -p tournament-gui` (`--hot-patch` patches Rust code into the running page); release build as above, `--base-path <path>` for a page served under a path (`tournament-gui/README.md`).
 - Profiles: `release-checked` (release with debug assertions and overflow checks), `wasm-test`, `wasm-release` (what `dx build --release` uses for the GUI; keep it under 1 MB gzipped).
 - Keep `Cargo.toml` dependency lists sorted (`cargo-sort`). Versions are declared only in the root `[workspace.dependencies]`; members use `dep.workspace = true`. Exception on purpose: `plugin-factory` and `plugin-factory-derive` declare everything themselves (including `version`/`edition`/`license`) so they can leave the workspace together; don't give them workspace references or let them depend on the other crates.
-- `undoable-state-machine` is a git dependency (same author) following its `main`, pinned in `Cargo.lock`; pick up a change with `cargo update -p undoable-state-machine`.
+- `undoable-state-machine` is a git dependency (same author) pinned to a tag of its repository: its log entries are part of every saved competition. Pick up a change by tagging a new version there and changing the `tag` in the root `Cargo.toml`, after checking that saved logs still load.
 
 ## Architecture
 
