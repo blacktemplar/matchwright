@@ -12,8 +12,10 @@ theme-light = Light
 theme-dark = Dark
 undo = Undo
 redo = Redo
-# the browser refused to keep what is stored, which a private window does as well
-not-persisted = This browser may not keep the competitions stored here, e.g. in a private window or when it runs short of space. Export them to keep a copy.
+# the browser refused to keep what is stored, which a private window does as well; the first line,
+# which stays shown when the warning is folded, then what it unfolds to
+not-persisted-summary = This browser may not keep the competitions stored here.
+not-persisted = For example in a private window, or when it runs short of space. Export them to keep a copy.
 # shown while the browser offers to install the page
 not-persisted-install = Installed as an app, the page is usually allowed to keep them.
 export-this-competition = Export this competition
@@ -139,6 +141,8 @@ bye = Bye: { $team }
 bye-in-stage = Bye: { $team } ({ $stage })
 standings = Standings
 rank = Rank
+# the header of how many matches an entrant has a result of
+played = Played
 # the bracket of a knockout, every match in it from the start
 bracket = Bracket
 bracket-winners = Winners bracket

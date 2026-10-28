@@ -1547,7 +1547,10 @@ own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
   and imported ones are opened too): some browsers ask the operator, so
   asking on load would ask before the page is used. A refusal shows a warning
   that offers exporting and installing, see
-  [Offline and installing](#offline-and-installing).
+  [Offline and installing](#offline-and-installing). Its first line folds it
+  (a `details` the page controls, the browser remembering it folded), so that
+  once read it takes one line on every screen rather than a quarter of a
+  phone's; "Don't show again" removes it.
 - **Export and import use the CLI's file**: `{"log": .., "people": ..}` plus
   `"name"`, which the CLI ignores and which an import falls back to the file's
   name without, so a competition moves between the two. Importing makes a new
@@ -1912,7 +1915,20 @@ format.
   number, then each side's button below its name, the draw in the middle.
   The columns are the same in every card (a CSS grid with a subgrid), so a
   format without draws leaves the middle empty. One card per line: a list is
-  read to find who plays whom, not only to report.
+  read to find who plays whom, not only to report. **Once it has a result, one
+  row**: the pairing, the winner marked, then a draw said and the button
+  reopening it, so that a round of 20 is mostly the matches still to play,
+  each in the place of its number (rather than finished ones moved to the end,
+  which would move a card the operator is looking for). On a phone the button
+  stays below the pairing, which needs the whole line.
+- **The standings abbreviate long headers** as chess does (`SB`, `Bh`), as
+  the English and German `.column` of the calculator, so that the columns of
+  numbers stay narrow and the names do not wrap; the CLI keeps the code's whole
+  name, having no toggletip to explain it. The toggletip of a header starts with
+  the metric's whole name where the header abbreviates it. A column of the
+  matches played tells an entrant that lost every match from one that has not
+  played yet. A toggletip in the standings, which scroll sideways and so cut off
+  what reaches out of them, is pinned to the window at its button.
 - **Names are never cut and never shrunk**: they wrap, even within a word. A
   name cut short may tell two entrants apart no longer
   ("Maximilian-Alexander Müller" and "…Meier"), and a result reported for the

@@ -838,12 +838,14 @@ impl Session {
         Some(Standings {
             columns: columns
                 .iter()
-                .map(|(calculator, column)| Column {
-                    calculator,
-                    header: column.header(),
-                    description: AnyAxis::of::<dyn MetricsCalculator>()
-                        .entry(calculator)
-                        .and_then(PluginEntry::description),
+                .map(|(calculator, column)| {
+                    let entry = AnyAxis::of::<dyn MetricsCalculator>().entry(calculator);
+                    Column {
+                        calculator,
+                        header: column.header(),
+                        label: entry.map_or(column.header(), PluginEntry::label),
+                        description: entry.and_then(PluginEntry::description),
+                    }
                 })
                 .collect(),
             rows: data
@@ -851,6 +853,7 @@ impl Session {
                 .map(|ranking| StandingRow {
                     rank: ranking.rank(),
                     entrants: self.team(data, &[ranking.id()]),
+                    played: ranking.played_matches().len(),
                     cells: columns
                         .iter()
                         .map(|(_, column)| column.cell(ranking))

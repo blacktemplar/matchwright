@@ -51,39 +51,75 @@ pub fn Detail(detail: String) -> Element {
 /// whose storage goes with it (which the page cannot tell apart). Nothing on the page changes the
 /// browser's answer, so the warning offers what helps: exporting, installing the page as an app
 /// (after which Chromium usually keeps it), and not showing it again.
+///
+/// Its first line folds it, so that it takes little room on every screen once read, and unfolds it
+/// again; the browser remembers which.
 #[component]
 fn StorageWarning(export: Option<EventHandler>) -> Element {
     let mut page = use_context::<Page>();
+    let mut folded = use_signal(warning_folded);
     let tr = page.translator.read();
     rsx! {
         div { class: "warning", role: "status",
-            p { {tr.get("not-persisted")} }
-            if *page.installable.read() {
-                p { {tr.get("not-persisted-install")} }
-            }
-            div { class: "warning-buttons",
-                if let Some(export) = export {
-                    button { onclick: move |_| export(()), {tr.get("export-this-competition")} }
+            details { open: !folded(),
+                summary {
+                    onclick: move |event| {
+                        // folded or unfolded by the page, which renders it so
+                        event.prevent_default();
+                        let fold = !folded();
+                        folded.set(fold);
+                        remember_folded(fold);
+                    },
+                    {tr.get("not-persisted-summary")}
                 }
+                p { {tr.get("not-persisted")} }
                 if *page.installable.read() {
+                    p { {tr.get("not-persisted-install")} }
+                }
+                div { class: "warning-buttons",
+                    if let Some(export) = export {
+                        button { onclick: move |_| export(()), {tr.get("export-this-competition")} }
+                    }
+                    if *page.installable.read() {
+                        button {
+                            onclick: move |_| {
+                                // the offer is shown once; another one is announced
+                                page.installable.set(false);
+                                install::install();
+                            },
+                            {tr.get("install")}
+                        }
+                    }
                     button {
                         onclick: move |_| {
-                            // the offer is shown once; another one is announced
-                            page.installable.set(false);
-                            install::install();
+                            remember_dismissed();
+                            page.warning_dismissed.set(true);
                         },
-                        {tr.get("install")}
+                        {tr.get("dont-show-again")}
                     }
-                }
-                button {
-                    onclick: move |_| {
-                        remember_dismissed();
-                        page.warning_dismissed.set(true);
-                    },
-                    {tr.get("dont-show-again")}
                 }
             }
         }
+    }
+}
+
+/// Where the browser remembers that the operator folded the warning.
+const WARNING_FOLDED: &str = "tournament-gui.storage-warning-folded";
+
+fn warning_folded() -> bool {
+    local_storage()
+        .and_then(|storage| storage.get_item(WARNING_FOLDED).ok().flatten())
+        .is_some()
+}
+
+fn remember_folded(folded: bool) {
+    // without local storage, the warning is unfolded on the next screen
+    if let Some(storage) = local_storage() {
+        _ = if folded {
+            storage.set_item(WARNING_FOLDED, "true")
+        } else {
+            storage.remove_item(WARNING_FOLDED)
+        };
     }
 }
 

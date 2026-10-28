@@ -1071,13 +1071,15 @@ impl Gui {
             .await
     }
 
-    /// Waits until the warning that the browser may not keep the competitions says `texts`, one
-    /// per paragraph, or until it is not shown for none.
+    /// Waits until the warning that the browser may not keep the competitions says `texts`: its
+    /// first line, and one per paragraph unfolded, or until it is not shown for none.
     ///
     /// # Panics
     /// Panics if it does not in time, with what it says instead.
     pub async fn expect_storage_warning(&self, texts: &[&str]) -> WebDriverResult<()> {
-        self.page.expect_texts(By::Css(".warning p"), texts).await
+        self.page
+            .expect_texts(By::Css(".warning summary, .warning details[open] p"), texts)
+            .await
     }
 
     /// Chooses the option with the text `text` of the select whose id is `id`.

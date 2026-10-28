@@ -261,6 +261,9 @@ pub struct Column {
     pub calculator: &'static str,
     /// The header in English.
     pub header: &'static str,
+    /// The calculator's label in English, the metric's whole name where the header abbreviates
+    /// it, translated as its [`PluginText::Label`](crate::i18n::PluginText::Label).
+    pub label: &'static str,
     /// What the calculator says about its metric in English, translated as its
     /// [`PluginText::Description`](crate::i18n::PluginText::Description).
     pub description: Option<&'static str>,
@@ -272,6 +275,9 @@ pub struct StandingRow {
     /// Shared by tied teams.
     pub rank: NonZeroU32,
     pub entrants: Vec<EntrantRow>,
+    /// How many matches it has a result of, which tells one that lost every match from one that
+    /// has not played yet.
+    pub played: usize,
     /// One cell per column of [`Standings::columns`], `None` where the metric is not calculated,
     /// said in the operator's language by [`Translator::cell`](crate::i18n::Translator::cell).
     pub cells: Vec<Option<Cell>>,

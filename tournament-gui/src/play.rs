@@ -427,9 +427,10 @@ fn MatchLine(
             ""
         }
     };
-    // one card: the pairing around the number, then each side's button below its name
+    // one card: the pairing around the number, then each side's button below its name; once it
+    // has a result, one line, the button reopening it after the pairing
     rsx! {
-        li { class: "match",
+        li { class: "match", class: if row.result.is_some() { "finished" },
             span { class: "visually-hidden", {tr.get("match")} }
             span { class: "number", "{row.number}" }
             span { class: "side a {winner(Side::A)}", {team_name(&tr, &row.a)} }
@@ -522,8 +523,13 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     // only reopened by the tab that changes the competition
     let disabled = !ctx.changes();
     let tr = ctx.translator.read();
+    // a win is shown by the mark at the winner's name, so said only to screen readers, which may
+    // not read the mark; a draw has no such mark
+    let shown = row.result == Some(MatchResult::Draw);
     rsx! {
-        span { class: "result", {result_text(&tr, &row)} }
+        span { class: if shown { "result" } else { "result visually-hidden" },
+            {result_text(&tr, &row)}
+        }
         button {
             class: "small",
             disabled,
@@ -554,9 +560,16 @@ pub fn Standings() -> Element {
         .map(|column| {
             let header =
                 capitalized(&tr.plugin(column.calculator, PluginText::Column, column.header));
-            let about = column
+            let label = capitalized(&tr.plugin(column.calculator, PluginText::Label, column.label));
+            let description = column
                 .description
                 .map(|english| tr.plugin(column.calculator, PluginText::Description, english));
+            // the metric's whole name where the header abbreviates it, e.g. "SB"
+            let about = match description {
+                Some(description) if label != header => Some(format!("{label}: {description}")),
+                Some(description) => Some(description),
+                None => (label != header).then_some(label),
+            };
             // ids of plugins are namespaced by `::`
             let id = format!("standings-about-{}", column.calculator.replace("::", "-"));
             (header, about, id)
@@ -576,6 +589,7 @@ pub fn Standings() -> Element {
                         tr {
                             th { scope: "col", {tr.get("rank")} }
                             th { class: "name", scope: "col", {tr.get("name")} }
+                            th { scope: "col", {tr.get("played")} }
                             // named by the header alone, which the cells are read with, rather
                             // than with the toggletip's button too
                             for (header, about, id) in headers {
@@ -596,6 +610,7 @@ pub fn Standings() -> Element {
                                 "data-rank": finished.then_some(row.rank.get()),
                                 td { "{row.rank}" }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }
+                                td { "{row.played}" }
                                 for (column, cell) in standings.columns.iter().zip(row.cells) {
                                     td { {cell.map(|cell| tr.cell(column.calculator, &cell))} }
                                 }

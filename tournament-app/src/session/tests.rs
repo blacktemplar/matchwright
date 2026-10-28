@@ -826,16 +826,19 @@ fn the_standings_show_the_columns_of_the_metrics() {
             Column {
                 calculator: "tournament_engine::wins_draws_losses",
                 header: "W-D-L",
+                label: "win-draw-loss record",
                 description: Some("how many matches were won, drawn and lost"),
             },
             Column {
                 calculator: "tournament_engine::points",
                 header: "points",
+                label: "points",
                 description: Some("scored for every win, every draw and every bye"),
             },
             Column {
                 calculator: "tournament_engine::sonneborn_berger",
                 header: "Sonneborn-Berger",
+                label: "Sonneborn-Berger",
                 description: Some(
                     "the points of the opponents that were beaten or played to a draw"
                 ),
@@ -856,6 +859,26 @@ fn the_standings_show_the_columns_of_the_metrics() {
         "{standings:?}"
     );
     assert!(points[0] > points[3], "{standings:?}");
+}
+
+/// A ranking that lost every match is told apart from one that has not played yet.
+#[test]
+fn the_standings_count_the_matches_played() {
+    let mut session = Given::new().started();
+
+    session
+        .report(numbered(&session, 1), MatchResult::AWins)
+        .unwrap();
+
+    let mut played: Vec<_> = session
+        .standings()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| row.played)
+        .collect();
+    played.sort_unstable();
+    assert_eq!(played, [0, 0, 1, 1]);
 }
 
 #[test]

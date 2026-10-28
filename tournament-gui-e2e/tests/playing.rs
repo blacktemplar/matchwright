@@ -150,18 +150,24 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
     .await;
 }
 
-/// A column of the standings says what its metric is.
+/// A column of the standings says what its metric is, by its whole name where its header
+/// abbreviates it.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_column_of_the_standings_says_what_it_shows() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui, &["Alice", "Bob"]).await?;
 
-        gui.click_labelled("About W-D-L").await?;
+        gui.click_labelled("About SB").await?;
 
-        gui.expect_toggletip(Some("how many matches were won, drawn and lost"))
-            .await?;
-        gui.page.check_accessibility().await
+        gui.expect_toggletip(Some(
+            "Sonneborn-Berger: the points of the opponents that were beaten or played to a draw",
+        ))
+        .await?;
+        gui.page.check_accessibility().await?;
+        gui.click_labelled("About Points").await?;
+        gui.expect_toggletip(Some("scored for every win, every draw and every bye"))
+            .await
     })
     .await;
 }

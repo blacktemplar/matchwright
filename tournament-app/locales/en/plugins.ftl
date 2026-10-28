@@ -8,3 +8,14 @@
 # the heading of a list, it read as half a sentence
 phase =
     .field-ranking = order of the standings
+
+## Metrics calculators
+
+# the headers of the standings, abbreviated as chess does, so that the columns of numbers stay
+# narrow; the toggletip of the header says the whole name
+plugin-tournament_engine-buchholz =
+    .column = Bh
+plugin-tournament_engine-buchholz_of_buchholz =
+    .column = BhBh
+plugin-tournament_engine-sonneborn_berger =
+    .column = SB

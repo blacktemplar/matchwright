@@ -102,6 +102,27 @@ async fn the_field_of_a_new_entrant_and_the_bar_stay_in_sight_on_a_phone() {
     .await;
 }
 
+/// A match with a result takes one line where there is room, and on a phone keeps the line for its
+/// pairing.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn a_match_with_a_result_breaks_no_name_within_a_word_on_a_phone() {
+    run_in_new_competition(async |gui| {
+        gui.page.resize(390, 844).await?;
+        for name in ["Player 1", "Player 2", "Player 3", "Player 4"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.click("Add phase").await?;
+        gui.click("Start").await?;
+
+        gui.click("Draw").await?;
+
+        gui.page.expect_room_for_words(".match .side").await?;
+        gui.page.expect_no_sideways_scroll().await
+    })
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_standings_scroll_inside_their_card_on_a_phone() {

@@ -102,7 +102,7 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
             }
         }
     };
-    let Placement { end, above } = placement();
+    let Placement { end, above, pinned } = placement();
     rsx! {
         span {
             class: "toggletip",
@@ -148,7 +148,13 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
                 },
                 icons::Info {}
             }
-            span { class: "toggletip-text", id: "{id}", role: "tooltip", "{text}" }
+            span {
+                class: "toggletip-text",
+                id: "{id}",
+                role: "tooltip",
+                style: pinned,
+                "{text}"
+            }
         }
     }
 }
@@ -158,16 +164,25 @@ pub fn Toggletip(id: String, subject: String, text: String) -> Element {
 /// dialog that scrolls), or else of the window, and below its button unless the room there is
 /// short and there is more above. Below covers what follows the button rather than what comes
 /// before it, e.g. the issues of the field before the one whose toggletip the focus reached.
-#[derive(Clone, Copy, Default, PartialEq)]
+///
+/// In what scrolls sideways only (`.scroll`, e.g. the standings), which may be too low for the
+/// text, it is pinned to the window at its button instead, out of what cuts it off.
+#[derive(Clone, Default, PartialEq)]
 struct Placement {
     /// Extending to the left of the button, which is in the right half.
     end: bool,
     /// Above the button.
     above: bool,
+    /// The style pinning it to the window, if it is.
+    pinned: Option<String>,
 }
 
 /// The room below a button that a text of a toggletip of a few lines takes, in CSS pixels.
 const ROOM_BELOW: f64 = 160.0;
+
+/// The width up to which the style shows every text across the bottom of the screen, `40rem`, in
+/// CSS pixels.
+const NARROW: f64 = 640.0;
 
 impl Placement {
     /// The placement of the text of the toggletip `element`.
@@ -176,11 +191,17 @@ impl Placement {
         let rect = element.get_bounding_client_rect();
         let x = rect.left() + rect.width() / 2.0;
         // within the bounds `left`, `width`, `top` and `bottom`
+        let size = |size: Result<wasm_bindgen::JsValue, _>| {
+            size.ok().and_then(|size| size.as_f64()).unwrap_or_default()
+        };
+        let (window_width, window_height) =
+            (size(window.inner_width()), size(window.inner_height()));
         let within = |left: f64, width: f64, top: f64, bottom: f64| {
             let (above, below) = (rect.top() - top, bottom - rect.bottom());
             Self {
                 end: x > left + width / 2.0,
                 above: below < ROOM_BELOW && above > below,
+                pinned: None,
             }
         };
         let mut ancestor = element.parent_element();
@@ -192,19 +213,31 @@ impl Placement {
                 .and_then(|style| style.get_property_value("overflow-x").ok())
                 .is_some_and(|overflow| overflow != "visible");
             if cuts_off {
+                // not on a narrow screen, where the style puts every text across its bottom
+                let scroll = current
+                    .class_name()
+                    .split_whitespace()
+                    .any(|class| class == "scroll");
+                if scroll && window_width > NARROW {
+                    let mut placement = within(0.0, window_width, 0.0, window_height);
+                    let top = if placement.above {
+                        format!("bottom: {}px", window_height - rect.top())
+                    } else {
+                        format!("top: {}px", rect.bottom())
+                    };
+                    let side = if placement.end {
+                        format!("right: {}px", window_width - rect.right())
+                    } else {
+                        format!("left: {}px", rect.left())
+                    };
+                    placement.pinned = Some(format!("position: fixed; {top}; {side}"));
+                    return placement;
+                }
                 let bounds = current.get_bounding_client_rect();
                 return within(bounds.left(), bounds.width(), bounds.top(), bounds.bottom());
             }
             ancestor = current.parent_element();
         }
-        let size = |size: Result<wasm_bindgen::JsValue, _>| {
-            size.ok().and_then(|size| size.as_f64()).unwrap_or_default()
-        };
-        within(
-            0.0,
-            size(window.inner_width()),
-            0.0,
-            size(window.inner_height()),
-        )
+        within(0.0, window_width, 0.0, window_height)
     }
 }
