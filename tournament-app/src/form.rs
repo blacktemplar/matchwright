@@ -51,6 +51,46 @@ pub struct FormView {
     pub complete: bool,
 }
 
+impl FormView {
+    /// The fields of the plugin `id`, as answered, if it is chosen for a field or in a list,
+    /// wherever in the form; an implied plugin has none. Where several fields chose it, those
+    /// of the first in schema order.
+    ///
+    /// ```
+    /// use plugin_factory::PluginType;
+    /// use tournament_app::session::Session;
+    /// use tournament_engine::plugins::metrics_calculator::PointsCalculator;
+    ///
+    /// let view = Session::new("cup").phase_form().unwrap().view();
+    /// let points = view.fields_of(PointsCalculator::ID).unwrap();
+    /// assert_eq!(points[0].name, "points_for_win");
+    /// ```
+    pub fn fields_of(&self, id: &str) -> Option<&[FormField]> {
+        fields_of(&self.fields, id)
+    }
+}
+
+fn fields_of<'a>(fields: &'a [FormField], id: &str) -> Option<&'a [FormField]> {
+    fields.iter().find_map(|field| match &field.input {
+        Input::Plugin(PluginInput {
+            chosen: Some(chosen),
+            ..
+        }) if chosen.plugin.id == id => Some(&*chosen.fields),
+        Input::Plugin(PluginInput {
+            chosen: Some(chosen),
+            ..
+        }) => fields_of(&chosen.fields, id),
+        Input::List(list) => list.items.iter().find_map(|item| {
+            if item.plugin.id == id {
+                Some(&*item.fields)
+            } else {
+                fields_of(&item.fields, id)
+            }
+        }),
+        _ => None,
+    })
+}
+
 /// A field of the phase or of a plugin chosen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormField {

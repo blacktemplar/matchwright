@@ -151,7 +151,7 @@ async fn a_result_is_typed_in_by_the_number_of_its_match() {
 }
 
 /// A column of the standings says what its metric is, by its whole name where its header
-/// abbreviates it.
+/// abbreviates it, and how its calculator is set, in German as well.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn a_column_of_the_standings_says_what_it_shows() {
@@ -161,13 +161,24 @@ async fn a_column_of_the_standings_says_what_it_shows() {
         gui.click_labelled("About SB").await?;
 
         gui.expect_toggletip(Some(
-            "Sonneborn-Berger: the points of the opponents that were beaten or played to a draw",
+            "Sonneborn-Berger: the points of the opponents that were beaten or played to a draw \
+             (weight of a beaten opponent: 1, weight of an opponent played to a draw: 0.5)",
         ))
         .await?;
         gui.page.check_accessibility().await?;
         gui.click_labelled("About Points").await?;
-        gui.expect_toggletip(Some("scored for every win, every draw and every bye"))
-            .await
+        gui.expect_toggletip(Some(
+            "scored for every win, every draw and every bye (points for a win: 1, points for a \
+             draw: 0.5, points for a bye: 1)",
+        ))
+        .await?;
+        gui.choose_language("Deutsch").await?;
+        gui.click_labelled("Über Punkte").await?;
+        gui.expect_toggletip(Some(
+            "für jeden Sieg, jedes Unentschieden und jedes Freilos (Punkte für einen Sieg: 1, \
+             Punkte für ein Unentschieden: 0,5, Punkte für ein Freilos: 1)",
+        ))
+        .await
     })
     .await;
 }

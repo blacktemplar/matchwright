@@ -913,7 +913,7 @@ fn has_fields(list: &ListInput) -> bool {
 }
 
 /// `input`'s answer as the summary reads it, without the fields of the plugins in it.
-fn answer(tr: &Translator, input: &Input) -> String {
+pub fn answer(tr: &Translator, input: &Input) -> String {
     match input {
         Input::Bool(Some(true)) => tr.get("yes"),
         Input::Bool(Some(false)) => tr.get("no"),

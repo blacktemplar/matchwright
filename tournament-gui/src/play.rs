@@ -16,8 +16,8 @@ use tournament_engine::{MatchId, MatchResult};
 use wasm_bindgen::JsCast as _;
 
 use crate::{
-    announcement::Announcement, capitalized, competition::Ctx, i18n::t, icons, result_text,
-    team_name, toggletip::Toggletip,
+    announcement::Announcement, capitalized, competition::Ctx, i18n::t, icons, phase::answer,
+    result_text, team_name, toggletip::Toggletip,
 };
 
 /// The list of matches shown.
@@ -567,6 +567,13 @@ pub fn Standings() -> Element {
     let Some(standings) = ctx.session.read().standings() else {
         return rsx! {};
     };
+    // the settings of the calculators, e.g. the points for a win
+    let form = ctx
+        .session
+        .read()
+        .phase_form_to_edit()
+        .ok()
+        .map(|form| form.view());
     let tr = ctx.translator.read();
     let headers: Vec<_> = standings
         .columns
@@ -583,6 +590,18 @@ pub fn Standings() -> Element {
                 Some(description) if label != header => Some(format!("{label}: {description}")),
                 Some(description) => Some(description),
                 None => (label != header).then_some(label),
+            };
+            let settings: Vec<_> = form
+                .as_ref()
+                .and_then(|form| form.fields_of(column.calculator))
+                .unwrap_or_default()
+                .iter()
+                .map(|field| format!("{}: {}", tr.field_label(field), answer(&tr, &field.input)))
+                .collect();
+            let about = match about {
+                _ if settings.is_empty() => about,
+                Some(about) => Some(format!("{about} ({})", settings.join(", "))),
+                None => Some(settings.join(", ")),
             };
             // ids of plugins are namespaced by `::`
             let id = format!("standings-about-{}", column.calculator.replace("::", "-"));
