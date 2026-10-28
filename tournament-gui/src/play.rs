@@ -605,7 +605,7 @@ fn MedalOf(medal: Medal, rank: u32) -> Element {
         Medal::Bronze => ("bronze", "medal-bronze"),
     };
     rsx! {
-        span { class: "medal {class}",
+        span { class: "place medal {class}",
             span { class: "visually-hidden", {tr.get(name)} }
             "{rank}"
         }
@@ -697,7 +697,7 @@ pub fn Standings() -> Element {
                                     if let Some(medal) = row.medal {
                                         MedalOf { medal, rank: row.rank.get() }
                                     } else {
-                                        "{row.rank}"
+                                        span { class: "place", "{row.rank}" }
                                     }
                                 }
                                 td { class: "name", {team_name(&tr, &row.entrants)} }

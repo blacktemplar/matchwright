@@ -1522,14 +1522,20 @@ th {
 
 /* the places with a medal once every match is played (play.rs): bold, the first tinted, the
  * rank on a disc in the medal's colour, so that the medals differ by their rank, not by the
- * colour alone; as high as a line, so that the row does not grow */
-.medal {
-  display: inline-grid;
-  place-items: center;
+ * colour alone; as high as a line, so that the row does not grow. Every rank is in such a box,
+ * coloured or not, its digits as far from the box's right edge, so that they line up */
+.place {
+  display: inline-block;
+  box-sizing: border-box;
   min-width: 1.6em;
   height: 1.6em;
   margin-block: -0.3em;
-  padding-inline: 0.3em;
+  padding-inline: 0.5em;
+  line-height: 1.6em;
+  text-align: right;
+}
+
+.medal {
   border-radius: 0.8em;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 25%);
   color: var(--on-medal);
