@@ -1,95 +1,65 @@
-# Tournament Engine — Design Plan
+# Tournament Engine — Design
 
 A generic core library for running 1-on-1 match tournaments (single elimination,
-round-robin, Swiss, ...), where key components are pluggable and selected at
-runtime.
-
-Sections marked *planned* describe decisions that are not implemented yet.
+round robin, Swiss, ...), whose key components are pluggable and selected at
+runtime, with a CLI and a browser GUI on top. Each section states the decision,
+why, and the alternatives rejected. Sections marked *planned* are not
+implemented.
 
 ## Global constraints
 
-These apply to every mechanism below and are not restated per section.
+These apply to every mechanism below.
 
 - **Runtime selection.** Which implementation of a pluggable axis is used is
-  chosen at runtime, not baked in by monomorphization.
-- **Third-party openness.** A crate outside this one must be able to add an
-  implementation of any axis, a new metric, or new consumer data, without
-  modifying this crate and without special-casing.
-- **Two persistence paths.** A `Competition` is persistable as a snapshot, and
-  (*planned*) the transition log is persistable too. Both must survive a
-  recompile, a dependency bump or a redeploy, as long as the concrete types
-  involved are still linked in. Nothing process-local (e.g. raw
-  `std::any::TypeId`) may appear in a serialized form.
+  chosen at runtime, not by monomorphization.
+- **Third-party openness.** Another crate can add an implementation of any axis,
+  a metric, or consumer data, without changing this crate and without
+  special-casing.
+- **Two persistence paths.** A `Competition` persists as a snapshot and as its
+  transition log. Both survive a recompile, a dependency bump or a redeploy as
+  long as the concrete types are still linked in, so nothing process-local (raw
+  `TypeId`) appears in a serialized form.
 - **Determinism under replay.** Progress is a log of transitions replayed from
-  the initial state (see "Progression as an undoable state machine"), so
-  `Transition::apply` must be a pure function of state and the transition's own
-  data. Anything derived from the clock, the environment or an external service
-  cannot be computed in `apply`; it has to arrive as transition data.
-- **No untyped data bags.** `HashMap<String, Value>` is rejected wherever it
-  comes up: it turns wrong keys and wrong shapes into runtime failures, and it
-  cannot carry behavior. Where open-ended data is genuinely needed, it is keyed
-  by Rust type instead (see `TypeMap`).
+  the initial state, so `Transition::apply` is a pure function of state and the
+  transition's data. Anything from the clock, the environment or a service
+  arrives as transition data.
+- **No untyped data bags.** `HashMap<String, Value>` turns wrong keys and shapes
+  into runtime failures and carries no behavior. Open-ended data is keyed by
+  Rust type instead (`TypeMap`).
 
 ## Pluggable axes
 
-The library is built around independent axes of behavior — the phase format
-(single elimination, round-robin, Swiss, ...), the ranker, the metrics
-calculators, and more as they turn up. Writing an implementation for one axis
-must never require touching another axis's trait.
-
-### Decision
-
-Every axis is its own public, unsealed trait, selected as `Box<dyn Trait>`.
-Implemented axes: `PhaseFormat`, `SliceRanker` and `MetricsCalculator`. The
-mechanics of an axis come from the `plugin-factory` crate: the trait is declared
-with `#[axis]` and has `plugin_factory::Plugin` as a supertrait, and a plugin
-derives `Plugin` and registers its impl of the axis trait with `#[register]`
-(see [The plugin catalog](#the-plugin-catalog)). On top of that, every axis
-trait of the engine has `DynClone` as a supertrait and implements `Clone` for
-`Box<dyn Trait>` with `dyn_clone::clone_trait_object!`, since `AddPhase::apply` clones the plugins on
-every replay.
+Every axis of behavior (`PhaseFormat`, `SliceRanker`, `MetricsCalculator`, more
+as they turn up) is its own public, unsealed trait, used as `Box<dyn Trait>`.
+Writing an implementation for one axis never touches another's trait. The
+mechanics come from `plugin-factory`: the trait is declared with `#[axis]` and
+has `plugin_factory::Plugin` as a supertrait; a plugin derives `Plugin` and
+registers with `#[register]` (see [The plugin catalog](#the-plugin-catalog)).
+Every engine axis also has `DynClone` as a supertrait, since `AddPhase::apply`
+clones the plugins on every replay.
 
 **The ranker is not an axis.** A phase is always ranked by a
-`HierarchicalRanker`, a plain struct the phase builds from its list of
-`SliceRanker`s, each breaking the ties the ones before it left. Every way of
-ranking that was foreseen is such a chain, so a second axis above `SliceRanker`
-only added a layer of trait objects and tags. A slice ranker sorting by a single
-metric — a *criterion* such as `MorePoints` — implements the helper trait
-`RankingCriterion` (its metric type and a comparison), declares
-`declare_static = requires_metric::<Self>` and calls `rank_by` from its
-`SliceRanker` impl; other slice rankers (e.g. head-to-head) implement
-`SliceRanker` directly.
+`HierarchicalRanker` built from its list of `SliceRanker`s, each breaking the
+ties the ones before left. Every ranking foreseen is such a chain. A criterion
+sorting by one metric (e.g. `MorePoints`) implements `RankingCriterion` (metric
+type plus comparison) and is a slice ranker through `rank_by`; others (e.g.
+head-to-head) implement `SliceRanker` directly.
 
-This applies uniformly to future axes: each one gets a trait and a slot, with no
-per-axis judgment call.
-
-### Alternatives
-
-- **Closed `Kind` enum per axis.** Allows static dispatch via `enum_dispatch`,
-  but third parties cannot add variants. Rejected.
-- **Generic type parameters per axis.** Zero-cost, but conflicts with runtime
-  selection, and every combination becomes a distinct type. Rejected.
-- **Name-driven registry from the start** (`inventory`/`linkme`). Not needed to
-  select an axis, since a consumer can construct the implementation it wants.
-  Added later for what does need it, see
-  [The plugin catalog](#the-plugin-catalog).
-- **The engine's own axis machinery** (the previous design): a hand-written
-  `Plugin` supertrait with a required `declare`, `plugin_kind!` generating the
-  registry of an axis, and an engine-side compatibility check and resolution.
-  Superseded by `plugin-factory`, which does the same for any composite and adds
-  schemas, configuration and drafts.
+Rejected:
+- A closed `Kind` enum per axis (`enum_dispatch`): third parties cannot add
+  variants.
+- Generic type parameters per axis: conflicts with runtime selection, and every
+  combination is a distinct type.
+- A `Ranker` axis above `SliceRanker`: a layer of trait objects and tags with no
+  second implementation.
 
 ## Plugin state
 
-A plugin may need memory beyond what the matches and rankings record, e.g. a
-precomputed bracket or a structure it would otherwise rebuild from every match on
-every call — and those calls run on every reported result.
+A plugin may need memory beyond what matches and rankings record (a precomputed
+bracket, a structure it would otherwise rebuild on every reported result).
 
-### Decision
-
-**Plugins own their state and update it through `&mut self`.** The methods that
-follow the phase's progress take `&mut self` and receive the phase's data rather
-than the phase:
+**Plugins own their state and update it through `&mut self`.** The methods
+following the phase's progress take `&mut self` and the phase's data:
 
 ```rust
 fn create_new_matches(&mut self, phase_data: &PhaseData) -> Schedule;      // PhaseFormat
@@ -99,102 +69,55 @@ fn update_after_match_result(&mut self, phase_data: &PhaseData, /* ... */)
     -> Vec<(RankingId, Metric)>;                                           // MetricsCalculator
 ```
 
-`HierarchicalRanker::update_ranks` takes `&mut self` too, since it calls its
-slice rankers. Methods that only describe a plugin's configuration
-(`default_metric_value`, `allows_draws`) stay `&self`.
+Methods describing configuration (`default_metric_value`, `allows_draws`) stay
+`&self`.
 
-**State is a field left out of the schema.** Everything `plugin-factory` sees of
-a plugin is its configuration, so a field holding state, such as the bracket of
-`SingleElimination`, is marked `#[plugin(skip)]` and needs a
-`#[serde(default)]`: a plugin built from a configuration starts with the
-default, and a saved one comes back with the state it had. The field is always
-serialized, `None` included, since `skip_serializing_if` breaks postcard, which
-reads fields by position; instead a configuration answering a skipped field is
-not rejected, but the answer is dropped.
+- **`PhaseData` is everything in a `Phase` but its plugins** (rankings, matches,
+  byes, seed). A call borrows a plugin field mutably and `data` immutably, two
+  disjoint fields, so no plugin is moved out. A plugin therefore does not see
+  the other plugins; what it needs of them reaches it through `PhaseData`
+  (metrics, annotations). `data` is a nested field, not `#[serde(flatten)]`,
+  which postcard cannot read.
+- **State is a field left out of the schema**: `#[plugin(skip)]` plus
+  `#[serde(default)]`. A plugin built from a configuration starts at the
+  default; a saved one comes back with its state. It is always serialized
+  (`skip_serializing_if` breaks postcard); an answer to a skipped field is
+  dropped.
+- **Undo needs nothing extra.** The plugin is part of the state, so a replay
+  rebuilds it from its configuration through the same calls. The contract is
+  determinism: its state depends only on the `PhaseData` and calls it has seen.
 
-**Undo needs nothing extra.** A plugin is a field of its `Phase`, so its state is
-part of the competition state: it is in a snapshot, and undo — a replay of the
-remaining log from the initial state — rebuilds the plugin from its initial
-configuration and runs it through the same calls again. The only contract is
-determinism under replay applied to plugins: a plugin's state may depend only on
-the `PhaseData` and the calls it has seen.
-
-**`PhaseData` is everything in a `Phase` but its plugins** — rankings, their
-order, matches and the seed. The split is what makes `&mut self` possible: a call
-borrows a plugin field mutably and `data` immutably, two disjoint fields of the
-same `Phase`, so no plugin has to be moved out for the call. The consequence is
-that a plugin no longer sees the other plugins of its phase; what it needs from
-them reaches it through `PhaseData` (metrics on rankings, annotations on matches).
-Consumers read the same `PhaseData` through `Phase::data`. `data` serializes as a nested field rather than with
-`#[serde(flatten)]`, because flattening goes through serde's self-describing map
-path, which postcard cannot deserialize.
-
-### Alternatives
-
-- **Stateless plugins (`&self`, `&Phase`)**, recomputing whatever they need from
-  the phase on every call (the previous design). Keeps plugins trivially pure, but
-  makes the cost of a call grow with the phase on the result-reporting hot path,
-  which is the argument already made for incremental metrics. Superseded.
-- **Plugin state stored in `PhaseData`**, e.g. a `TypeMap` keyed by a state type,
-  with plugins staying `&self`. Separates state from the code that owns it,
-  exposes it to every other plugin, and two plugins of the same type would collide
-  on the key. Rejected.
-- **Interior mutability** (`RefCell` inside the plugin) behind `&self`. Hides the
-  mutation from the signature while the replay contract still applies. Rejected.
-- **Passing `&Phase` with the plugin temporarily taken out** (`Option` or
-  `mem::replace`). The plugin would observe a phase missing one of its plugins, a
-  state that exists nowhere else. Rejected.
-- **Pure configuration plugins building a runtime object** (e.g.
-  `PhaseFormat::start` returning a separately tagged scheduler holding the
-  state). Separates configuration from state cleanly, but costs a second trait
-  and tag per stateful axis. Not chosen; a skipped field does the same within
-  one struct.
-- **Serializing state only when it is not the default**
-  (`skip_serializing_if`), so that a drafted plugin never carries it. Breaks
-  non-self-describing formats. Rejected.
-- **Rebuilding state lazily from `PhaseData`** after a load (`#[serde(skip)]`).
-  Every stateful plugin would need a replay of its own history. Rejected.
+Rejected:
+- Stateless plugins recomputing from `&Phase` on every call: cost grows with the
+  phase on the hot path.
+- State in a `TypeMap` of `PhaseData`: exposed to every plugin, and two plugins
+  of one type collide.
+- Interior mutability: hides the mutation the replay contract governs.
+- Passing `&Phase` with the plugin taken out: the plugin sees a phase that
+  exists nowhere else.
+- A configuration plugin building a separately tagged runtime object: a second
+  trait and tag per stateful axis.
+- Rebuilding state lazily after a load: every stateful plugin would need its own
+  replay.
 
 ## Compatibility between plugins
 
-*Implemented: the mechanism in `plugin-factory` (`compatibility`, `draft`), the
-engine's facts in `plugins::facts`, `PhasePlugins`, `AddPhase`, and every plugin
-of this workspace declaring what it provides and requires.*
-
-Not every combination of plugins is valid, and detecting that must not rely on a
-hardcoded list of concrete type pairs, which would be blind to third-party
-implementations. The dependencies that already exist or are foreseeable run
-between every pair of axes and in both directions:
-
-- a calculator reads another calculator's metric (Points on wins/draws/losses,
-  Buchholz on Points);
-- a calculator reads match annotations only some formats write (round of
-  elimination on `Eliminates`);
-- a criterion sorts by a metric some calculator must produce;
-- a calculator needs matches of a certain structure (goal difference needs
-  goals, provided by a future match plugin axis);
-- a format needs something of the ranker (Swiss pairs by rank) and a ranker of
-  the format (ranking by elimination round needs an elimination format);
-- a format needs something of the phase's input (monster DYP forms teams per
-  match from rankings of single players, so it cannot follow a DYP draw that
-  already made each ranking a pair).
-
-A phase is a loop — the format schedules, results arrive, calculators update,
-the ranker ranks, the format schedules again from those ranks — so there is no
-pipeline direction these could be sorted into. Two concerns are kept apart:
-whether a set of plugins fits together (*compatibility*), and in which order
-plugins called one after another within a single pass must run (*execution
-order*).
-
-### Decision
+Not every combination of plugins is valid, and the check must not be a list of
+concrete type pairs, which is blind to third-party plugins. Dependencies run
+between every pair of axes and both ways: a calculator reads another's metric
+(Buchholz on points) or annotations only some formats write (round of
+elimination on `Eliminates`); a criterion sorts by a metric some calculator must
+produce; a format needs something of the ranker (Swiss pairs by rank) or of the
+phase's input (Monster DYP needs rankings of single players). A phase is a loop
+(schedule, results, metrics, ranks, schedule), so there is no pipeline order to
+sort these into. *Compatibility* (does a set fit) and *execution order* (in
+which order plugins of one pass run) are kept apart.
 
 **Compatibility is checked on typed facts.** A fact is a value of a type
-implementing the marker trait `plugin_factory::compatibility::Fact` (`'static +
-Debug + Sync`), describing something true of a phase and identified by its
-`TypeId`. A plugin states what it provides and requires in a `plugin-factory`
-`Declaration`: `declare_static` for what every configuration of it declares,
-which the catalog reads before the plugin is configured, and `declare` for what
-depends on its configuration, both given to the derive:
+implementing the marker trait `plugin_factory::compatibility::Fact`, identified
+by `TypeId`. A plugin states what it provides and requires in a `Declaration`:
+`declare_static` for what every configuration declares (read by the catalog
+before configuring) and `declare` for what depends on configuration.
 
 ```rust
 impl Declaration {
@@ -205,314 +128,106 @@ impl Declaration {
 }
 ```
 
-What a plugin declares includes what the plugins in its fields declare, so a
-composite plugin forwards nothing by hand. The `HierarchicalRanker` is no
-plugin; each slice ranker of `PhasePlugins` is checked on its own, so an issue
-names the slice ranker that has it.
-
-A criterion requires its metric through `requires_metric::<Self>`, which reads
-the requirement `CalculatesMetric<C::Metric>` off `C::Metric`, the metric type
-the criterion compares and `rank_by` reads.
-
-**Facts are opted into.** `Fact` has no blanket impl; a type becomes a fact only
-by an explicit `impl Fact for T {}`. Rejected: any `'static + Debug + Sync` type
-being a fact. That let a plugin require a type that is never provided as a
-fact, e.g. a metric itself instead of its `CalculatesMetric`, which compiled and
-only failed the check as unmet. And by the orphan rule a crate can only make its
-own types facts, so two crates cannot collide on a shared foreign type such as
-`bool` or `u32`: every fact belongs to the crate owning its concept. A derive
-for `Fact` is not worth it while the trait is an empty marker; it becomes one
-if a fact grows something to state, e.g. the name a requirement now passes by
-hand.
-
-Facts are provided by the phase's plugins and by its context: the competition,
-declared by `Competition::declare_phase_context`, e.g. `EntrantsPerRanking(1)`.
-A plugin providing a fact the context provides already is an incompatibility.
-The check collects all provided facts into a type-keyed map built only for the
-check (never stored or serialized) and evaluates every requirement against it.
-It is flat: any plugin may require a fact of any other plugin or of the context,
-and mutual requirements are fine, because a requirement states what must be true
-of the phase, not what must have run first.
-
-The vocabulary is open. Core defines facts about concepts it owns
-(`MatchAnnotation<A>`, `EntrantsPerRanking`, ...); the crate
-that owns a concept defines facts about it (a match plugin crate defines
-`MatchDetail<Goals>`, which a goal-difference calculator in another crate
-requires). Incompatibilities are unmet conditions on facts — monster DYP
-`require_that::<EntrantsPerRanking>(.., "rankings of single players", ..)` —
-never pairs of concrete types. A fact carries a value, so a requirement can ask
-*how* as well as *whether*, and a fact holding a `fn` or a `Box<dyn Trait>`
-carries behavior where a plugin needs some from another.
-
-A fact provided twice within a phase is an error.
-
-**Calculating a metric is a fact**, `CalculatesMetric<M>`, and a calculator is
-an ordinary plugin declaring that it provides it
-(`provide(CalculatesMetric::<Points>::new())`). There is no separate handling: a
-metric calculated by two calculators is a fact provided twice (the disjointness
-of metrics), and a required metric no calculator calculates is an unmet fact.
-Rejected: the metric type itself as the fact, provided as its default value.
-That value meant nothing, yet a requirement could state a condition on it, and
-what a calculator promises is that every ranking will hold the metric, not a
-value of it. A metric type is no `Fact`, so requiring it by mistake does not
-compile. That the declared metric is the one `default_metric_value()` returns is
-checked by a test over every registered calculator; `plugin-factory` does not
-expose a plugin's declaration for a runtime assertion.
-
-**The mechanism knows no axes.** `plugin-factory` holds declarations, the check,
-a generic order of any list of plugins and the plugins missing facts imply. The
-one place that knows the axes of a phase is `PhasePlugins`, a `Configurable`
-composite of one format, a list of slice rankers and a list of calculators.
-
-**Self-reported.** Every declaration, a criterion's included, is stated by the
-plugin. That is the trade-off accepted here: facts like "rankings are pairs" are
-not something the compiler can derive, and none of the alternatives can express
-conditions on values. A criterion's requirement at least cannot drift from what
-it compares, since `requires_metric` reads it off `C::Metric`, but a criterion
-that leaves out `declare_static` requires nothing, and `rank_by` panics when the
-phase runs. Test helpers that build a phase from a plugin plus only the facts it
-declares catch reads it did not declare.
+- A plugin's declaration includes those of the plugins in its fields. Each slice
+  ranker is checked on its own, so an issue names the one that has it.
+- **Facts are opted into** by `impl Fact for T {}`, no blanket impl: requiring a
+  type never provided as a fact (a metric instead of its `CalculatesMetric`)
+  does not compile, and by the orphan rule each fact belongs to the crate owning
+  its concept, so crates cannot collide on `bool` or `u32`.
+- Facts come from the phase's plugins and its context, the competition
+  (`Competition::declare_phase_context`, e.g. `EntrantsPerRanking(1)`). The
+  check is flat: any plugin may require any fact, mutual requirements are fine,
+  since a requirement states what is true of the phase, not what ran first. A
+  fact provided twice (also by a plugin and the context) is an error.
+- The vocabulary is open: core defines facts about what it owns
+  (`MatchAnnotation<A>`, `EntrantsPerRanking`), other crates about theirs. A
+  fact carries a value, so a requirement can ask *how* as well as *whether*,
+  and a fact holding a `fn` or trait object carries behavior.
+- **Calculating a metric is a fact**, `CalculatesMetric<M>`. Two calculators of
+  one metric are a fact provided twice; a metric nobody calculates is unmet. A
+  criterion requires it through `requires_metric::<Self>`, read off its
+  `C::Metric`, so it cannot drift from what it compares. A test checks that each
+  calculator declares the metric its `default_metric_value()` returns.
+- **Self-reported, accepted.** Facts like "rankings are pairs" are not something
+  the compiler can derive. A criterion leaving out `declare_static` requires
+  nothing and panics in `rank_by`; test helpers building a phase from a plugin
+  plus only its declared facts catch undeclared reads.
+- **The mechanism knows no axes.** `plugin-factory` holds declarations, the
+  check, ordering and implied plugins; only the composite `PhasePlugins` (one
+  format, a list of slice rankers, a set of calculators) knows the phase's axes.
 
 **Execution order is fixed by the engine, except among calculators.** On a
-reported result the engine runs the calculators, then the ranker, and the format
-schedules next; scheduled matches and their annotations exist before any of
-their results. So the ranker always sees current metrics, the format current
-ranks, and calculators every annotation; none of these needs ordering. The only
-place plugins run one after another within a pass and read what an earlier one
-wrote in that same pass is the calculator list, so only it is sorted: a
-calculator requiring a fact runs after the calculator providing it, ties keep
-the configured order (deterministic, so replay is unaffected), and a cycle is an
-error. Should a future axis also become a list of plugins building on each
-other within a pass, the same rule applies to it.
+result the calculators run, then the ranker, then the format schedules; matches
+and their annotations exist before their results. The only plugins reading what
+another wrote in the same pass are calculators, so only they are ordered: one
+requiring a fact runs after its provider, ties keep the configured order, a
+cycle is an error. The calculators are a `DependencyOrderedSet`, which sorts
+itself on `new` and on deserialization (how `Draft::build` builds a composite
+and how a log loads), rejects duplicates and cycles, and keeps an order that is
+valid already. The slice rankers stay a `Vec`, since their order is the ranking.
 
-**Running order is an invariant of a set of plugins.** The calculators of a phase
-are a `plugin_factory::schema::DependencyOrderedSet`, since their order means
-nothing but the order they run in, and a set of plugins keeps itself in that
-order: `DependencyOrderedSet::new` and deserializing a set both sort it, and fail
-on a cycle. Both also reject a
-plugin given twice, whatever it is configured with, so a phase cannot calculate
-a metric with two configurations of one calculator. Deserializing is
-how `Draft::build` builds a composite, and how a saved `AddPhase` comes back,
-so neither building from a draft nor loading a log needs a step of its own. The sort keeps an order that is already valid as it is, so a
-saved set replays in the order it was saved in, and one in an order its
-calculators cannot run in, e.g. edited by hand, is put into running order rather
-than run wrong. The slice rankers stay a `Vec`, since their order is the
-ranking.
+**Implied plugins.** For a required fact nothing provides, `Draft::add_implied`
+adds the registered plugin providing it if exactly one exists and it has no
+fields (nothing to choose or configure; the win-draw-loss record is never asked
+about). Several candidates, or a provider with fields, add nothing: a default is
+never filled in unasked, and a UI offers such a provider instead. It only
+appends to list fields (never a second format), repeats until a pass adds
+nothing (so it is idempotent), and adds a fact's plugins **all or nothing**:
+only if the chain raises no issue (a fact twice, one still missing, a condition
+unmet, a cycle), so an addition never leaves a problem with a plugin nobody
+chose. `Draft::build` adds nothing; whether to add the implied plugins is the
+consumer's choice, and a consumer whose draft may still change adds them to a
+clone.
 
-**Missing providers come from the catalog: implied plugins.** For a required
-fact nothing provides, `Draft::add_implied` looks among the axes of the
-composite's lists of plugins for the registered plugins that provide it and have
-no fields, and adds the one it finds if there is exactly one — the plugin the
-fact implies, since there is neither a choice nor anything to configure. The
-win-draw-loss record has exactly one calculator, so nobody is ever asked about
-it. Several candidates are an ambiguity it must not decide, so it adds nothing
-and the fact stays unprovided, as it does for a fact only a plugin with fields
-provides: a default a plugin offers is never filled in unasked. A field taking
-one plugin, such as the format, is never added to. Adding repeats until nothing
-changes, see below. A plugin
-configured explicitly always wins, since the fact it provides is never missing.
-Consumers only configure calculators that need their configuration (points per
-win, ...) or that they want calculated without ranking by them. A UI does not
-add a provider with fields behind the operator's back either; it offers it, as
-the CLI's questionnaire does by starting out with it chosen.
+**Adding implied plugins happens before the transition; validation is in it.**
+In production, building from `Competition::phase_draft` (which carries the
+phase context) is the only way to make `PhasePlugins` besides deserializing.
+`AddPhase` holds the complete sorted list, so neither log nor snapshot depends
+on the catalog, which depends on what is linked in. `AddPhase::check_applicable`
+checks facts; facts known only at the start (the number of entrants) are checked
+at `StartCompetition`. All of it runs once per phase; the hot path pays nothing.
 
-**A fact implies its plugins all or nothing.** What an added plugin requires and
-nothing provides implies plugins the same way, in turn, and the plugins found for one missing
-fact are added only together and only if none of them raises an issue: a fact
-provided twice, a fact still missing, a condition not met — on what they
-require or on what they provide to a plugin already there — or a cycle.
-Otherwise nothing is added and the original fact stays unprovided, an issue at
-the place the operator configured. So an automatic addition never leaves behind
-a problem with a plugin nobody chose, e.g. a calculator that cannot read a
-third-party match format. Checking a chain needs the phase's context, since a requirement the context
-meets is no issue. Problems among the configured plugins themselves do not
-block an addition. The additions are not reported ahead of adding them: no
-consumer showed them, and computing them for every candidate and issue made
-`draft` the most complex part of `plugin-factory`. A candidate only reports
-whether it fits (`Candidate::conflicts`) and whether it is the only plugin
-supplying something the others require (`Candidate::is_sole_supplier`).
+**Tests build plugins directly**, behind the `test-util` feature: constructors
+of plugins with fields, `PhasePluginsBuilder` (defaults: round robin, empty
+ranking, no metrics: a phase that can be played) and `PhaseBuilder`. A consumer
+enables the feature only in dev-dependencies, so production code cannot skip
+configuration. Tests of configuration still use drafts.
 
-**Adding the implied plugins and building are separate steps.**
-`Draft::add_implied` appends the implied plugins to the answers, and
-`Draft::build` builds the composite from the answers as they are, adding
-nothing; since it changes nothing, it borrows the draft. Whether to add the
-implied plugins is the consumer's choice, and the answers it reads afterwards
-are exactly what the composite is built from, e.g. to describe the phase it
-adds. Building without them reports the facts they would have provided as
-unprovided. `add_implied` tries every missing fact
-again after each addition, since an addition may provide what the chain of a
-fact tried before it lacked, and stops once a whole pass adds nothing, so
-calling it twice adds nothing the first call did not. Since an addition stays an
-answer even if the plugin requiring it is taken back later, a consumer whose
-draft may still change adds them to a clone, as the CLI's `Session::add_phase`
-does. Rejected: building adding them to a copy, with nothing public (the
-answers a phase was built from were unobservable); building adding them as well
-as a public `add_implied` (hid the choice, and two ways to the same result);
-and trying each fact once per call (an earlier fact a later addition made
-implying stayed missing, so a second call could add more). The name: the
-plugins are implied by the other answers — exactly one way to provide a missing
-fact and nothing to configure — which neither "settle" nor "resolve
-dependencies" says.
+*Planned, once a metric has a second calculator:* a preference among candidates,
+so a fact can imply a plugin where it is ambiguous today.
 
-**Implied plugins are added before the transition, validation is in it.**
-Adding them is the consumer's step: it adds them to the `Draft<PhasePlugins>` of
-`Competition::phase_draft`, which carries the competition's phase context, and
-builds the plugins from it.
-In production, building from that draft is the only way to make `PhasePlugins`
-besides deserializing them. Code configuring a phase answers the draft with
-configs (`Draft::with`, `Draft::with_defaults`) just like a UI does.
-
-**Tests build plugins directly, behind the `test-util` feature.** The
-constructors of plugins with fields (`PointsCalculator::new`, ...), their
-`with_..` methods, `PhasePluginsBuilder` and `PhaseBuilder` (a standalone
-`Phase` for unit tests of plugins, built on `PhasePluginsBuilder`) exist only
-with the feature, which the engine's tests, benchmarks and examples enable
-through a dev-dependency on the crate itself. A test that is not about
-configuration names only the plugins it cares about, with no configs to spell
-out by field name; builders rather than helper functions, so that whatever a
-test leaves out comes from a default and what it names is what it is about.
-What a test leaves out of the builder is empty, apart from the format, which is
-a round robin: an empty ranking is a valid one that leaves every entrant tied,
-so `PhasePluginsBuilder::new().build()` is a phase that can be played, and a
-test that does not care about the ranking or the metrics does not name any.
-Rejected: defaulting to a ranking by points with the calculators it needs,
-which took rules of its own for what to add and when, for no test that needed
-it; and `PhasePlugins::new(format, ranking, metrics)` next to the builder, a
-second way to the same result in which every part has to be given. The builder
-adds no implied plugins, which only a draft adds. Tests of configuration, of implied plugins,
-and of a consumer's configuring (the CLI's `Session::add_phase` takes a draft)
-still use drafts. A consumer enables the feature only in its dev-dependencies,
-so production code has no way to make plugins that skips their configuration.
-`AddPhase` validates directly built plugins like any others. The
-transition holds the complete, sorted list, so neither the log nor a snapshot
-depends on how calculators were picked — which it must not, because the catalog
-depends on which crates are linked in — and changing a registration or the way
-of picking later never changes a replay. Deserializing an `AddPhase` adds
-nothing — a missing calculator fails the replay. Facts are checked in
-`AddPhase::check_applicable`, where the phase's context is known; facts only
-known at start, such as the number of entrants, are checked the same way at
-`StartCompetition`. All of this runs once
-per phase; the result-reporting path loops over an already sorted list and pays
-nothing.
-
-*Planned, once a metric has a second calculator:* a preference among the
-candidates for one metric, so that a fact can imply a plugin where it is an
-ambiguity today — e.g. a match format offering the points calculator that
-understands its matches (`Plugin::recommends` covers the offered default
-already). This is additive, and since adding implied plugins is not part of the
-log it can change freely.
-
-### Alternatives
-
-- **Marker traits registered with `intertrait`** (the previous plan). Providing
-  is structural, but it answers only "does some plugin implement `XYZ`": it
-  cannot state conditions on values ("rankings are single players"), needs a
-  link-time registry, and cannot register generic impls. A fact holding a trait
-  object covers the behavioral case without it. Superseded.
-- **Closed `Capability` enum owned by core.** Cheap checks, but the vocabulary is
-  closed to core. Rejected.
-- **Hardcoded match over concrete type pairs.** Invisible to third-party types.
-  Rejected.
-- **Fixed stages with requirements only on earlier stages** (match plugin →
-  calculators → ranker → format). Ties compatibility to execution order, which a
-  phase does not have between axes: the format needs the ranker and the ranker
-  the format. Rejected.
-- **Calculators in the order configured, unchecked** (the current state).
-  Pushes a hidden ordering contract onto every consumer, e.g. the CLI's
-  `derived_from` table. Superseded.
-- **Consumers adding every needed calculator themselves.** Each consumer would
-  need its own table of which metric derives from which, like the CLI's
-  `derived_from`. Superseded by the catalog.
-- **A default provider on the fact type** (`DefaultProvider`, with
-  `requires_with_default::<F>()` next to `requires::<F>()`), adding itself to a
-  `PhasePlugins`. Made a core fact type name a concrete plugin and know the
-  composite, could not express "nothing may be added to this slot", and left a
-  third-party plugin unfindable. Superseded by the catalog.
-- **The requiring plugin naming the default** (`requires_or(..)`). Two plugins
-  could suggest different defaults for the same fact with nothing to decide
-  which wins. Rejected; a requirement names a fact and nothing else.
-- **Adding a provider whatever it brings along**, checking it like every other
-  plugin afterwards (the engine's previous resolution). A provider that does not
-  fit, or requires what nothing provides, turns one missing fact into a problem
-  with a plugin the operator never chose and cannot see in what they
-  configured, and a UI could not tell an issue an addition fixes from one it
-  replaces. Superseded by adding the implied plugins all or nothing.
-- **Resolving inside `AddPhase::apply`.** Replay would then depend on which
-  plugins are registered, so linking a crate in would change every saved log.
-  Rejected.
-- **Sorting in `AddPhase::new` and rejecting an unsorted list on load** (the
-  previous design). Left a `PhasePlugins` that was not in running order to
-  exist, and every way of building one had to remember the sort. Superseded by
-  the invariant.
-- **Sorting in the engine**, in `PhasePlugins::new` and a `deserialize_with` on
-  its list of calculators. Kept the invariant, but in the one composite that
-  knew about it rather than in the type of the list. Superseded by
-  `DependencyOrderedSet`.
-- **A typed builder for `PhasePlugins`** (`PhasePlugins::new(..).rank_by(..)
-  .calculate(..)`), and turning built plugins back into a draft
-  (`Draft::from_built`) to add the implied plugins. A second way to make a phase
-  that skipped them, could not leave a field unanswered, and went from typed
-  plugins to configs only to build the same plugins again. Removed; plugins are
-  configured through drafts alone in production.
-- **Tests configuring every plugin through drafts** (the previous state, after
-  the builder was removed). Every test that only needed a phase spelled out
-  configs by field name and went through a draft, which is clumsy and hides what
-  the test is about. Superseded by constructors behind the `test-util` feature.
-- **Metrics as a kind of requirement of their own** (`required_metrics` next to
-  `required`). Duplicated every rule for facts. Superseded.
-- **The engine adding a calculator's metric to its declaration** from
-  `default_metric_value()`. Structural, but made calculators a special case of
-  collecting declarations. Superseded by calculators declaring their metric,
-  checked by a test.
-- **`declare` on each axis trait.** Repeated the same method per axis and left
-  the engine no uniform way to ask a plugin. Superseded by `Plugin::declare`.
-- **A blanket `impl<C: RankingCriterion> Plugin for C`** (the previous design),
-  which made a criterion's requirement impossible to leave out. `Plugin` is a
-  trait of `plugin-factory` now, and the orphan rule forbids a blanket impl of a
-  foreign trait. Superseded by `requires_metric`.
-- **A plugin replacing a fact of the context** (the previous design), e.g. a
-  draw pairing entrants up providing `EntrantsPerRanking(2)` over the
-  competition's `EntrantsPerRanking(1)`. `plugin-factory` treats it as a fact
-  provided twice. To be revisited when a phase's context comes from the phase
-  before it.
-- **Criteria that are no plugins**, held by one `LexicographicalCriteria` slice
-  ranker that declared their metrics by running each criterion against a
-  recording `RankingOrder` (the previous design). Kept criteria out of the
-  axes, but needed a second, closed mechanism to state an order and a second
-  trait object with tags of its own. Superseded by criteria being slice rankers.
-- **A `Ranker` axis above `SliceRanker`.** No ranking that was foreseen is not
-  a chain of slice rankers, so it was a layer of trait objects without a second
-  implementation. Removed; a phase is always ranked by a `HierarchicalRanker`.
-- **A boxed plugin as the default provider**, put into its slot by the
-  resolution. `Box<dyn Plugin>` cannot become a `Box<dyn MetricsCalculator>`
-  without the trait-to-trait casts `intertrait` existed for, and an enum over
-  the axes makes the resolution axis-aware. Superseded by a registry per axis,
-  which hands out a `Box<K::Object>`.
-- **Optional accessor on the base trait** (`fn as_xyz(&self) -> Option<&dyn
-  XYZ>`). Only core can add such accessors. Rejected as the general mechanism;
-  still fine as a local pattern.
+Rejected:
+- Marker traits via `intertrait`: answers only "does some plugin implement X",
+  no conditions on values, a link-time registry, no generic impls.
+- A closed `Capability` enum, or a match over concrete type pairs: closed to
+  third parties.
+- Fixed stages requiring only earlier stages: the format needs the ranker and
+  the ranker the format.
+- Consumers adding needed calculators themselves: a table of plugins in every
+  consumer.
+- A default provider on the fact type, or the requiring plugin naming one: core
+  facts would name concrete plugins, and two plugins could suggest different
+  defaults.
+- Adding a provider whatever it brings along: turns one missing fact into a
+  problem with a plugin the operator never chose.
+- Resolving inside `AddPhase::apply`: linking a crate in would change every
+  saved log's replay.
+- A typed builder for `PhasePlugins` in production: a second way to make a
+  phase, skipping implied plugins.
+- A plugin replacing a fact of the context (a draw providing
+  `EntrantsPerRanking(2)`): a fact provided twice for now; to revisit when a
+  phase's context comes from the phase before.
 
 ## The plugin catalog
 
-*Implemented by `plugin-factory`. The CLI configures phases through a generic
-questionnaire driven by the schemas and a `Draft`; `add-phase <FORMAT>` looks
-the format up in the catalog and answers every other question as offered, i.e.
-as the format recommends.*
+A consumer configuring a phase must not hold a table of plugins (which a
+third-party plugin would never appear in), and the engine needs the same
+knowledge to imply plugins.
 
-Every consumer that configures a phase has to know every plugin: the CLI holds a
-table of labels, descriptions and default parameters, and a plugin of another
-crate appears in none of them. The engine needs the same knowledge to fill a gap
-a requirement leaves.
-
-### Decision
-
-**A plugin registers itself, described.** A plugin derives `Plugin`, which
-states its id, label and description and reads its schema — the questions a UI
-asks to configure it, with the defaults it offers — from its fields and their
-`serde` attributes. `#[register]` on its impl of the axis trait submits its
-entry to the catalog of the axis, collected with `inventory`, so the catalog is
-whatever is linked in, plugins of other crates included, and nothing enumerates
-them:
+**A plugin registers itself, described.** Deriving `Plugin` states its id,
+label and description and reads its schema (the questions a UI asks, with the
+answers offered) from its fields. `#[register]` submits it to its axis's catalog
+via `inventory`, so the catalog is whatever is linked in:
 
 ```rust
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Plugin)]
@@ -528,551 +243,247 @@ pub struct PointsCalculator {
 impl MetricsCalculator for PointsCalculator { /* … */ }
 ```
 
-**One registry per axis, typed.** `#[axis]` generates the registry of an axis
-next to its trait, and a plugin is built as a plugin of its axis, so a consumer
-gets a `Box<dyn MetricsCalculator>`, never something to downcast.
+- **One typed registry per axis**, generated by `#[axis]`: a consumer gets a
+  `Box<dyn MetricsCalculator>`, never something to downcast.
+- **Ids are a contract**: the id is the plugin's `typetag` tag, naming it in
+  logs, snapshots and configurations; namespaced by crate and pinned in a test.
+- **Defaults are offered, never filled in.** `#[plugin(default ..)]` is what a
+  UI offers; building still needs every field answered. It is separate from
+  `#[serde(default)]`, which only says how a missing field loads: offering an
+  answer must not make a saved plugin lacking the field load silently.
+- **UI text lives on the plugin** in English; translation is keyed by the id.
 
-**What may be added is the composite's shape**: `Draft::add_implied` only appends to
-the fields of `PhasePlugins` taking a list of plugins, so it never adds a
-second phase format.
-
-**The ids are a contract.** A plugin's id is its `typetag` tag, so it names the
-plugin in a saved log and snapshot as much as in a saved configuration. Ids are
-namespaced with the crate the plugin lives in (`tournament_engine::points`) and
-pinned in a test.
-
-**Defaults are offered, never filled in.** A field's `#[plugin(default ..)]` is
-what a UI offers as its answer, so the engine's plugins carry the defaults its
-catalog used to create them with (the points of chess, the classical
-Sonneborn-Berger weights). Building a plugin still needs every field answered.
-The offered answer is separate from a `#[serde(default)]`, which only says what
-a missing field is read as when loading: offering an answer must not make a
-saved plugin that lacks the field load silently, and reading a field leniently
-must not suggest that value to an operator.
-
-**UI text lives on the plugin**, which means the engine ships English;
-localisation would wrap it, keyed by the plugin id.
-
-### Alternatives
-
-- **One global registry** with a `build` returning `Box<dyn Any>`. One
-  `collect!` for everything instead of a generated type per axis, but trades a
-  compile-time guarantee for a downcast. Rejected.
-- **Generating the CLI's enums** from the plugin list. A consumer-side table
-  either way, and no third-party plugin ever appears in it. Rejected.
-- **A default provider per fact type**, see
-  [Compatibility between plugins](#compatibility-between-plugins). Superseded.
-- **A hand-written registration per plugin** (`plugin_kind!` and
-  `inventory::submit!` of a `PluginEntry` with an optional constructor, the
-  previous design). Strings repeated next to the type, and no schema. Superseded
-  by the derive.
-- **`Accepts<K>` impls stating which axes a composite may be added to** (the
-  previous design). Superseded by the shape of the composite.
-- **A field's `serde` default as the answer it offers** (the previous design).
-  One attribute for two concerns: offering a default made the field optional
-  when loading, and a field read leniently was suggested to operators.
-  Superseded by `#[plugin(default ..)]`.
+Rejected: one global registry returning `Box<dyn Any>` (a downcast instead of a
+type); generating the CLI's enums from a plugin list (still a consumer table);
+hand-written registrations (strings repeated, no schema); a field's serde
+default as its offered answer (one attribute for two concerns).
 
 ## Metrics: plugin-produced ranking data
 
-A `Ranking` carries the data used to sort it — points, wins/draws/losses,
-Buchholz, Sonneborn-Berger, round of first loss, and so on. Which of these exist
-varies per phase, and third parties must be able to add new ones.
+A `Ranking` carries the data it is sorted by (points, wins/draws/losses,
+Buchholz, ...), which varies per phase and must be extensible.
 
-### Decision
+**Metrics are identified by Rust type**: a metric implements `TypeMapValue`,
+`Metric = Box<dyn TypeMapValue>`, `MetricId = TypeId`. `TypeId` is fine here
+because the checks run in-process on live values, never on serialized data,
+where the `typetag` tag is used. A `Ranking` stores its metrics in a `TypeMap`
+(`Ranking::metric::<T>()`), a hash lookup rather than a scan.
 
-**Metrics are identified by Rust type.** A metric is any type implementing
-`TypeMapValue`; `Metric = Box<dyn TypeMapValue>` and `MetricId = TypeId`.
-
-`MetricId` stays a `TypeId` deliberately, distinct from the `typetag` identity
-used to serialize a metric: disjointness and requirement checks run fresh
-in-process on live plugin values, never on serialized data, which is exactly
-where `TypeId` is stable and free.
-
-**`Ranking` stores its metrics in a `TypeMap`** — an `IdMap<Box<dyn
-TypeMapValue>>` whose id is the concrete type's `TypeId`, so it serializes as a
-plain sequence, since each value carries its own `typetag` tag. `Ranking::metric::<T>()` resolves to `Option<&T>` via
-`TypeMap::get`, which uses `downcast_unchecked_ref` because the key already
-proves the concrete type. Keyed by type rather than a `Vec` scan, so a ranker
-that reads several metrics per comparison pays a hash lookup, not a linear
-search.
-
-**`MetricsCalculator` computes incrementally**, rather than recomputing a whole
-ranking from scratch:
+**Calculators work incrementally:**
 
 ```rust
 #[axis]
 pub trait MetricsCalculator: Plugin + DynClone {
     fn default_metric_value(&self) -> Metric;
-    fn update_after_match_result(
-        &mut self, phase_data: &PhaseData, r#match: &Match,
-        old_metrics: &OldMetrics,
-    ) -> Vec<(RankingId, Metric)>;
-    fn update_after_bye(
-        &mut self, phase_data: &PhaseData, bye: &Bye,
-        old_metrics: &OldMetrics,
-    ) -> Vec<(RankingId, Metric)>;
+    fn update_after_match_result(&mut self, phase_data: &PhaseData, r#match: &Match,
+                                 old_metrics: &OldMetrics) -> Vec<(RankingId, Metric)>;
+    fn update_after_bye(&mut self, phase_data: &PhaseData, bye: &Bye,
+                        old_metrics: &OldMetrics) -> Vec<(RankingId, Metric)>;
 }
 ```
 
-(`update_after_bye` is explained in [Byes](#byes).)
+`default_metric_value()` seeds every ranking and names the metric the
+calculator owns. A calculator depending on another (Buchholz on points) reads
+the pre-update values through `OldMetrics::of::<M>()` and the new ones in
+`PhaseData`, which is why calculators run in dependency order.
 
-`default_metric_value()` both seeds every ranking at phase start and declares
-which metric type this calculator owns, so disjointness is checkable without
-running any computation. `old_metrics` lets a calculator that depends on another
-calculator's output (e.g. Buchholz on points) read the pre-update values of the
-calculators that ran before it, typed through `OldMetrics::of::<M>()`, while
-`PhaseData` holds their new ones. Both are
-only complete if those calculators did run before it, so calculator order does
-matter; it is derived from their declared dependencies, see
-[Compatibility between plugins](#compatibility-between-plugins).
+- **The matches a ranking played are core data** (`Ranking::played_matches`, in
+  report order), not a metric every opponent-based metric had to require and
+  that was cloned on every result.
+- **Comparison stays typed.** `rank_by` looks up its metric once per ranking of
+  the slice and sorts the typed values, so a comparison neither looks up nor
+  downcasts. Each criterion sees only the slices still tied. One sort over
+  pre-extracted columns of every metric was measured ~20% slower on
+  `large_tournament`.
 
-**The matches a ranking played are core data, not a metric.**
-`Ranking::played_matches` lists them in report order, appended in place before
-the calculators run. It used to be a `Matches` metric of its own calculator,
-which every opponent-based metric (Buchholz, Sonneborn-Berger) had to require,
-and which cloned the whole list on every reported result. A calculator does not
-need `MatchResult` either: a match is reported once, so a reported match was
-always unfinished before, and the update takes no previous result.
-
-**Ranking comparison stays typed.** The `HierarchicalRanker` applies a list of
-`SliceRanker`s, each resolving ties left by the previous. `rank_by`, which every
-criterion sorts with, looks up its metric once per ranking of the slice and
-sorts the rankings together with the typed values, so a comparison neither
-looks up nor downcasts anything. Each criterion only sees the slices still tied,
-which is usually a small part of the phase after the first one. Grouping all
-criteria into one sort over pre-extracted columns per metric (the previous
-`LexicographicalCriteria`) was measured to be about 20% slower on the
-`large_tournament` benchmark, since it extracted every metric for every ranking
-and compared through a trait object per column.
-
-The active calculators' metric types being pairwise disjoint, and metrics
-required by other plugins being present, are checked as facts once per phase,
-see [Compatibility between plugins](#compatibility-between-plugins).
-
-### Alternatives
-
-- **String-keyed metrics.** Untyped bag. Rejected.
-- **A dedicated `RankData` trait with `cmp_for_leaderboard`** (an earlier draft
-  of this design). Gave core one fixed comparison per ranking type; the
-  `SliceRanker` chain gives composable tiebreaking instead, and `TypeMap` already
-  supplies typed access. Superseded.
-- **Metrics as marker traits.** A marker trait answers "does this instance
-  implement behavior X", not "what data did calculating for this ranking
-  produce", and offers no way to express disjointness. Rejected as a different
-  concern.
-- **Runtime-discovered produced metrics** (inspect what `calculate` returned).
-  Would require running calculation just to validate configuration. Rejected in
-  favor of the static declaration.
-- **Recomputing all metrics per result** instead of incrementally. Simpler
-  calculators, but cost grows with tournament size on the hottest path.
-  Rejected.
+Rejected: string-keyed metrics; a fixed `RankData` comparison per ranking type;
+discovering produced metrics by running calculation; recomputing all metrics
+per result (cost grows with the tournament on the hottest path).
 
 ## Scores
 
-Points, and the tiebreaks summing or weighting them (Buchholz,
-Sonneborn-Berger), are compared, sorted and hashed, and have to be the same
-after a replay on every platform.
+Points and the tiebreaks built from them are compared, sorted and hashed, and
+must be identical after a replay on every platform.
 
-### Decision
+**They are `Score`, a finite `f64` with a total order**: never NaN or infinite,
+`-0.0` made `0.0`, so `Eq`, `Ord` (`total_cmp`) and `Hash` (the bits) agree; a
+non-finite result panics.
 
-**They are `Score`, a finite `f64` with a total order.** It is never NaN or
-infinite, and `-0.0` is made `0.0`, so `==`, `Ord` (`total_cmp`) and `Hash`
-(the bits) agree, and `Eq`, `Ord` and `Hash` hold. An operation whose result is
-not finite panics. It is shown, parsed and serialized as its `f64`, and a plugin
-field of it takes any decimal answer.
+- **Deterministic**: `+`, `-`, `*` are exactly rounded by IEEE 754 natively and
+  in wasm; scores use no transcendental functions.
+- **Exact for what is played**: scoring systems count in halves or quarters,
+  which `f64` holds exactly. A field that must rule out values like `0.1`
+  narrows itself with `#[plugin(multiple_of = 0.25)]`.
+- A wrapper was needed anyway, since `FieldType` and float types are both
+  foreign to the engine.
 
-- **Deterministic everywhere.** `+`, `-` and `*` on `f64` are exactly rounded
-  by IEEE 754, so the same calculation gives the same bits on every platform,
-  natively and in wasm; Rust neither enables fast-math nor fuses operations.
-  Only functions like `exp` or `ln` differ between platforms, which a score
-  does not use.
-- **Exact for what is played.** Every scoring system in use counts in halves or
-  quarters, which an `f64` holds exactly, and so are their sums and the classic
-  Sonneborn-Berger products (weights 1 and 0.5). Only a value with no exact
-  binary form, such as `0.1`, can leave two mathematically equal scores
-  unequal, depending on the order of additions. A field that must rule that out
-  narrows itself with `#[plugin(multiple_of = 0.25)]`, see [Ranges of
-  numbers](#ranges-of-numbers).
-- **The wrapper is needed anyway.** `FieldType` is foreign to the engine and so
-  is any float type, so no crate's ordered float could be a field without one.
-
-### Alternatives
-
-- **Plain `f32`/`f64`** (the first design). No `Eq`, `Ord` or `Hash`, NaN
-  possible, and `f32` loses precision on large sums. Rejected.
-- **`ordered_float::OrderedFloat`.** Orders NaN rather than ruling it out, and
-  still needs a wrapper for `FieldType`. Rejected.
-- **An `i32` counting quarters** (the design before this one). Exact by its
-  type for every sum, but it needs its own parsing, display and serialization,
-  rounds products, and refuses anything finer than a quarter, for exactness no
-  scoring system in use needs. Rejected as too much for the gain.
-- **`rust_decimal`.** Exact for every decimal anyone types, but 16 bytes per
-  value and a heavier comparison. Rejected.
-- **`fixed::FixedI32<U2>`.** Its `Display` shows the shortest text that tells
-  quarters apart (`66.8` for 66.75), its parsing rounds `0.1` to `0` silently,
-  and its serde form is `{"bits": 2}`. Rejected.
-- **Rationals** (`num-rational`). Exact even for thirds, but every comparison
-  cross-multiplies and every sum normalizes by a gcd, on the hot path. Rejected.
+Rejected: plain `f32`/`f64` (no `Eq`/`Ord`/`Hash`, NaN); `OrderedFloat` (orders
+NaN instead of ruling it out); an `i32` of quarters (own parsing, display,
+serialization, rounding of products); `rust_decimal` (16 bytes, slower);
+`fixed` (lossy display and parsing, odd serde form); rationals (gcd and
+cross-multiplication on the hot path).
 
 ## Ranges of numbers
 
-A field taking a number states which numbers in the schema, so that a UI can
-show and check them and an operator learns that a number is no answer before
-anything is built.
+A numeric field states its numbers in the schema, so a UI can show and check
+them before anything is built.
 
-### Decision
+- `FieldKind::Integer(IntegerRange)` always has `min` and `max` (the type's
+  bounds unless narrowed) and `multiple_of` (1 unless narrowed). A bound is
+  *stated* if chosen for its meaning, else only a *limit* (`u32::MAX`); a UI's
+  description names only stated ones. `FieldKind::Decimal(DecimalRange)` has
+  each optionally.
+- **`multiple_of` is anchored at 0**, as JSON Schema's `multipleOf`; `min` and
+  `max` are multiples. For decimals it is a whole number or a power of two, so
+  `%` checks it exactly.
+- **The type declares, a field narrows** (`FieldType::kind`, then
+  `#[plugin(min, max, multiple_of)]`), never widens. An impossible narrowing or
+  a default out of range panics when the schema is built.
+- **Checked by the schema and by the type**: `FieldKind::walk` rejects with
+  `ConfigError::OutOfRange`, and the type's `Deserialize` still checks, since
+  logs and snapshots load without a schema.
 
-- **`FieldKind::Integer(IntegerRange)`** has a `min` and a `max` always (an
-  integer type's own bounds) and a `multiple_of`, 1 unless narrowed. A bound
-  is *stated* if chosen for what the number means (by a field attribute or
-  `IntegerRange::new`) and only a *limit* otherwise (`IntegerRange::limits`,
-  e.g. `u32::MAX`). Both bound the range, and a UI may encode both, e.g. as the
-  bounds of an input; the description an operator reads names only stated
-  ones.
-  **`FieldKind::Decimal(DecimalRange)`** has each of them optionally; `f64`
-  has none.
-- **`multiple_of` is anchored at 0**, as JSON Schema's `multipleOf`: the numbers
-  are the multiples of it from `min` to `max`, and `min` and `max` have to be
-  multiples themselves, so that "from `min` in steps of `multiple_of`" means the
-  same. For a decimal it is a whole number or a power of two, whose multiples
-  `%` on floats checks exactly.
-- **The type declares, a field narrows.** `FieldType::kind` gives the type's
-  range (`u8`: 0 to 255); `#[plugin(min, max, multiple_of)]` on a
-  field narrows it, never widens it. A narrowing the type does not allow (a
-  bound that is no multiple, a `multiple_of` that is no multiple of the type's)
-  or a default out of the range panics when the schema is built, since the
-  type's range is only known then.
-- **Checked twice, by the schema and by the type.** `FieldKind::walk` rejects a
-  number out of range with `ConfigError::OutOfRange` naming the field, and a
-  prompter asks for numbers of the range only. The type's own `Deserialize`
-  still checks, since a snapshot or log is deserialized without a schema.
-
-### Alternatives
-
-- **A step anchored at `min`** (HTML's `step`). Makes the numbers depend on two
-  declarations that may come from the type and the field (`min = 0.1` on
-  multiples of 0.25 leaves no number) and cannot be checked exactly for
-  decimals; a setting that needs odd numbers is rephrased instead (best of N as
-  first to K wins). Rejected.
-- **Checking only in `Deserialize`.** Reports a wrong number late, as the plugin
-  rejecting its answer, and tells a UI nothing. Rejected.
+Rejected: a step anchored at `min` (HTML's `step`: depends on two declarations,
+inexact for decimals); checking only in `Deserialize` (late, and tells a UI
+nothing).
 
 ## Consumer data on entities
 
-Consumers want to attach data core never reads — a table assignment, a database
-id, a club.
+Consumers attach data core never reads (a table, a database id, a club).
 
-### Decision
+**It lives in a `TypeMap` field on the entity, and enters through the log at the
+transition where it becomes known.** Determinism forces the second half: a
+factory at creation could only compute derivable data, which needs no storage.
+A field on the entity (not a side map) makes it reachable from a bare `&Match`
+(`r#match.annotation::<TableNumber>()`).
 
-Consumer data lives in a `TypeMap`, and **enters through the log, at the
-transition where it becomes known.** That second half is forced by determinism
-under replay: a creation-time factory supplied by the consumer could only compute
-data derivable from state already present, which is the one kind of data that
-needs no storage at all. Everything genuinely interesting — an operator's input,
-a timestamp, an external id — is not derivable, so it must arrive as transition
-data.
+- **Entrants** are written by `AddEntrant`
+  (`Entrant::new(id).with_annotation(..)`).
+- **Matches** are annotated by the format when scheduling
+  (`NewMatch::new(..).with_annotation(..)`). Consumer annotations of a match
+  need a second step, *planned* as an `AnnotateMatch` transition; the `Option`
+  on lookup is honest, as the annotation does not exist at birth.
+- **Rankings** get nothing: data fixed at the start derives from the entrants,
+  data evolving with results is a metric.
+- The cost is accepted: an empty `TypeMap` (56 bytes) does not allocate.
+  `TypeMapValue: DynClone`, since `apply` clones its payload on every replay.
 
-**The `TypeMap` is a field on the entity itself**, not a side map keyed by entity
-id. Consumer data is then reachable from a bare `&Entrant` or `&Match`, with no
-need to carry the owning `Phase` around just to resolve it, and access reads
-`r#match.annotation::<TableNumber>()`.
+**Personal data stays out of the log.** Names and contacts must be deletable,
+and a log replays as written. So they live in `People`, keyed by `EntrantId` and
+saved next to the log, keeping everyone ever entered, since undo can bring them
+back.
 
-What differs per entity is only *which transition* writes it, which follows from
-who creates the entity:
-
-- **Entrants** are consumer-created, so the `TypeMap` on `Entrant` is populated by
-  the `AddEntrant` that creates it — an `Entrant` is built with
-  `Entrant::new(id).with_annotation(value)` and read with
-  `entrant.annotation::<ClubId>()`.
-- **Matches** are created by the phase format, so the `TypeMap` on `Match` is
-  populated by the format when it schedules the match
-  (`NewMatch::new(..).with_annotation(value)`), with whatever it knows about the match
-  beyond its round (see "Rounds and stages"). A consumer is not in the loop there,
-  so consumer annotations (*planned*) are necessarily a second step: an `AnnotateMatch`
-  transition carrying `Box<dyn TypeMapValue>` (already `typetag`-serializable, so
-  the consumer's type tags itself) writes into the `TypeMap` of an existing
-  `Match`. An `Option` on lookup is honest here — the annotation genuinely does
-  not exist when the match is born.
-- **Rankings** get nothing new. Consumer data fixed at phase start is a pure
-  function of the entrants' data, so it is derived on demand; data that evolves
-  with results is a metric, which already exists. If per-ranking consumer data is
-  ever needed it gets its own field rather than sharing `Ranking::metrics`, since
-  a metric type is owned by the calculator that produces it.
-
-The memory cost is accepted deliberately: `Match` is 72 bytes and `TypeMap` is 56,
-so every match grows by roughly 78% whether or not anything annotates it. An empty
-`TypeMap` does not allocate, so the cost is flat bytes rather than an allocation
-per match, and it buys an entity that is self-contained.
-
-Undo needs no inverse: it is a replay without that log entry, and re-annotating
-the same type overwrites via `TypeMap::insert_boxed`.
-
-**Personal data is the exception: it stays out of the log.** A name, a contact,
-a birth date has to be deletable, and a log replays as it was written and cannot
-have parts removed. So a consumer keeps personal data in a store of its own keyed
-by `EntrantId` (the CLI's `People`), saved next to the log in the same file, and
-the log holds only the ids. That store keeps everyone ever entered, removed
-entrants included, since an undo or redo can bring them back. This is the
-side-table rejected below for consumer data in general; for personal data,
-being deletable outweighs sharing the persistence paths, and nothing in the
-engine reads it.
-
-This requires `TypeMapValue: DynClone`, because `Transition::apply` takes
-`&self` and so must clone its payload on every replay. That ripples into
-`Metric`, but every metric type is a trivially-`Clone` plain struct, and it
-mirrors the `DynClone` supertrait of every plugin axis. It also costs `Entrant` its `PartialEq`
-derive; comparison becomes field-wise, as already done for `Ranking` in the
-serialization tests.
-
-### Alternatives
-
-- **A sparse `Map<MatchId, TypeMap>` on `Phase`** instead of a field on `Match`.
-  Costs nothing for consumers that never annotate, and only allocates for matches
-  that are annotated. Rejected: it makes consumer data unreachable from a bare
-  `&Match`, forcing every display path to carry the owning `Phase`, and the flat
-  per-match bytes are not a real constraint at this crate's scale.
-- **Consumer-owned side-tables keyed by entity id** (the previous decision here).
-  Zero core change, but a side-table shares neither of the persistence paths: it
-  is not in the snapshot and not in the log, so its data must be persisted
-  separately, kept from drifting, and is untouched by undo. Superseded once both
-  persistence paths became requirements, except for personal data (see above).
-- **A core `name: String` field on `Entrant`.** Concedes that a display label is
-  universal, but gives core no principle for refusing the next field — country,
-  club, seed rating, external id. Rejected.
-- **A consumer-supplied factory called at entity creation.** Restricted by
-  replay purity to derivable data, as argued above. Rejected.
-- **Generic entities.** See below.
+Rejected: a sparse `Map<MatchId, TypeMap>` on `Phase` (unreachable from a bare
+`&Match`); consumer side-tables in general (in neither persistence path, not
+undone); a core `name` field (no principle to refuse the next field); generic
+entities (below).
 
 ## Why entities are not generic
 
-An obvious alternative to the above is to make the entities themselves generic —
-`Competition<E, M, R>` with the library working through traits such as
-`AsRef<Entrant>`/`AsMut<Entrant>`, plus a trait method to construct a match from
-current competition state. Recorded here because it is the natural idea and it
-fails for reasons that are easy to rediscover.
+`Competition<E, M, R>` with the library working through traits is the natural
+idea, and fails on three blockers verified against `typetag` 0.2.23's source:
 
-Three independent blockers, all verified against `typetag` 0.2.23's source:
+1. Generic entities make `PhaseData<M, R>` and so every plugin trait generic,
+   and `typetag` rejects generic traits for deserialization
+   (`tagged_trait.rs:7`), so `Box<dyn PhaseFormat>` would lose `Deserialize`.
+2. Reusable third-party plugins need generic impls
+   (`impl<M: MatchLike> PhaseFormat<M> for RoundRobin`), which `typetag` rejects
+   too (`tagged_impl.rs:7`).
+3. A generic `AddEntrant<X>` cannot be registered for the log, so core could
+   ship no loggable transitions.
 
-1. **Generic entities force generic plugin traits.** Every plugin method takes
-   `&PhaseData`, so `PhaseData<M, R>` makes `PhaseFormat<M, R>` generic.
-   `typetag-impl/src/tagged_trait.rs:7` rejects generic traits in `de` mode
-   ("deserialization of generic traits is not supported yet"), so
-   `Box<dyn PhaseFormat>` would lose `Deserialize` and the snapshot path would
-   have to be hand-rolled.
-2. **Reusable third-party plugins need generic impls.**
-   `impl<M: MatchLike> PhaseFormat<M> for RoundRobin` hits
-   `typetag-impl/src/tagged_impl.rs:7`, which rejects generic impls in `de` mode
-   for the same reason.
-3. **The log needs concrete transitions.** Serializing the log means tagging
-   transitions, so a generic `AddEntrant<X>` carrying `X::EntrantData` cannot be
-   registered either. Core could then ship no loggable transitions at all; each
-   consumer would have to define its own registry and newtype-wrap every core
-   transition.
-
-A narrower variant — one `Extension` parameter with associated data types per
-entity, keeping core entities concrete so plugin traits stay non-generic —
-avoids blockers 1 and 2 but not 3. It also turns out to buy little: its one real
-advantage over `TypeMap` is non-optional typed access, and for match and ranking
-data the `Option` is semantically correct anyway (see above), so two of the three
-associated types would want to be `()`. A single consumer struct per entity also
-cannot compose: a CLI, a web layer and a third-party scheduler could not annotate
-independently without agreeing on one type, which `TypeMap` gives for free.
-
-Rejected. Generics would only ever decide the *type* of consumer data, never how
-it arrives — and how it arrives is the actual constraint.
+One `Extension` parameter with associated types per entity avoids 1 and 2 but
+not 3, buys only non-optional access where `Option` is honest anyway, and cannot
+compose: a CLI, a web layer and a third-party scheduler could not annotate
+independently. Generics would only decide the *type* of consumer data, never how
+it arrives, which is the actual constraint.
 
 ## Core-owned identity
 
-Entity ids are deterministic so that replay reproduces them: `MatchId` and
-`RankingId` are UUIDv5 values derived from content (the participating ranking
-ids, plus the round for a match) under a per-entity namespace constant. A match
-is therefore identified by who plays it, not by when it was created.
+Ids are deterministic so replay reproduces them: `MatchId`, `RankingId` and
+`ByeId` are UUIDv5s of their content (the rankings, plus the round for a match
+or bye), so a match is identified by who plays it in which round.
 
-UUIDs are not usable for human input, so a match also has a small number
-(*implemented* 2026-10-27), which the CLI, the app's rows and typed results use.
+UUIDs are no good for human input, so a match also has a number:
 
-- **A format builds a `NewMatch`, the phase stores a `Match`.** A `NewMatch` is
-  what a format schedules (teams, round, annotations, its id derived as
-  before); only `Phase::create_new_matches` turns it into a `Match`, which
-  always has its `number: NonZeroU32`. So no reader needs a fallback, and the
-  number cannot be missing.
-- **Numbered as scheduled, unless the format asks.** A `NewMatch` without a
-  number gets the one after the highest the phase's matches have, i.e. the
-  order of scheduling, which is what every format but the knockouts wants and
-  needs no code. One may ask for a number with `NewMatch::with_number`, unique
-  within the phase (checked in debug builds, like the uniqueness of ids). The
-  highest number is only looked for when a match asks for none, since a
-  bracket schedules after every result.
-- **A bracket numbers its pairings from the start.** Which pairings can only be
-  byes follows from the seats (`BracketSide::bye`), so the others are numbered
-  by round, within a round in the order they were added, before any is
-  scheduled (`BracketPairing::number`), and each match asks for its pairing's
-  number. A semifinal keeps its number whichever quarterfinal is reported
-  first, and a side waiting for a pairing not scheduled yet says "Winner of
-  9". The numbers are worked out from the tree on every call, not kept in the
-  bracket's state, so nothing new is serialized but the field of a match in a
-  snapshot.
-- **Not part of the identity.** `MatchId` stays derived from who plays in
-  which round, without the number, so that logs saved before still replay;
-  they get the numbers on replay. A number is for display and input only.
-- **Per-phase scope**, since `Phase::create_new_matches` has no access to the
-  `Competition` and multi-phase competitions are not supported yet.
+- **A format schedules a `NewMatch`; the phase stores a `Match`** with a
+  `number: NonZeroU32`, so no reader needs a fallback.
+- **Numbered in scheduling order unless the format asks**
+  (`NewMatch::with_number`, unique within the phase, checked in debug builds).
+- **A bracket numbers its pairings from the start** (`BracketPairing::number`,
+  by round, skipping pairings that can only be byes, worked out from the tree on
+  every call rather than stored), so a semifinal keeps its number whichever
+  quarterfinal ends first, and a side not scheduled yet reads "Winner of 9".
+- **Not part of the identity**: `MatchId` excludes it, so old logs replay and
+  get their numbers on replay. Numbers are per phase.
 
-### Alternatives
-
-- **The insertion index plus one**, derived rather than stored, as first
-  planned. Uniqueness is structural then, but a knockout's matches are
-  scheduled in the order results arrive, so a match not scheduled yet has no
-  number to be named by, and the bracket fell back to its stage and place
-  ("Winner of Quarterfinals (1)"). Replaced.
-- **A number annotation** set by the formats that number, read with a
-  fallback to the index. Every reader would need the fallback. Rejected for a
-  field the engine always sets.
-- **A trait method `PhaseFormat::match_number`.** Format-specific code at
-  every reader, and the number not part of the match. Rejected.
-- **Including the number in `MatchId`.** Would break every saved log.
-  Rejected.
+Rejected: the insertion index (a knockout's match not scheduled yet has none to
+be named by); a number annotation (every reader needs a fallback); a
+`PhaseFormat::match_number` method (format code at every reader); the number in
+`MatchId` (breaks saved logs).
 
 ## Rounds and stages
 
-Knockout rounds have names — round of 16, quarterfinal, final, match for third
-place — and a double elimination adds a winner and a loser bracket, whose rounds
-are named per bracket. The question is whether the core's `Match::round` should
-carry that structure.
-
-### Decision
-
 **A round is a scheduling slot, nothing more.** `Match::round` is a
-`NonZeroU32` with a contract: a ranking plays at most once per round, and a
-ranking's matches in later rounds are played after those in earlier ones. The
-core relies on exactly that and on nothing else:
+`NonZeroU32` with a contract: a ranking plays at most once per round, and its
+later rounds are played after earlier ones. Core relies on that alone (the
+check, `MatchId` telling rematches apart, metrics like `RoundOfFirstLoss`).
 
-- the check that no ranking plays twice in a round;
-- `MatchId`, which tells a rematch of the same pair apart by its round (in a
-  double elimination two entrants can meet in both brackets, and again in a
-  bracket reset);
-- metrics that read a later round as a later match, like `RoundOfFirstLoss`,
-  where knocked-out entrants are ranked by when they were knocked out.
+**Stages are a typed annotation written by the format** (e.g.
+`KnockoutRound::RoundOf(8)`, `KnockoutRound::ThirdPlace`), since the round alone
+cannot tell the final from the match for third place, or a winner-bracket from a
+loser-bracket round. Consumers name a stage through `PhaseFormat::stage`, a
+`Stage` (a `Phrase`: key, numbers, English `Display`) they translate. Formats
+without stages attach nothing.
 
-**The structure is a typed annotation written by the format.** The format is the
-only party that knows which stage a match belongs to, and the round number alone
-does not tell: the final and the match for third place share a round, and in a
-double elimination a winner-bracket round runs alongside a loser-bracket round.
-So the format attaches a value of its own type when scheduling the match, e.g.
-`KnockoutRound::RoundOf(8)` or `KnockoutRound::ThirdPlace` for
-`SingleElimination`, and a consumer maps that to a name in its own language.
-Formats without stages (round robin, Swiss) attach nothing, and the round number
-is all there is to show.
-
-### Alternatives
-
-- **Names as strings in the core.** Display data, language-dependent, and an
-  untyped bag in disguise. Rejected.
-- **A core enum of round kinds** (`Winners(n)`, `Losers(n)`, `Final`, ...). A
-  closed vocabulary third-party formats cannot extend, and meaningless for round
-  robin or Swiss. Rejected.
-- **A format-defined round type (`Box<dyn ...>`) instead of the integer.** Every
-  use above would need to order values of unrelated types, and comparisons on the
-  result-reporting hot path would become virtual calls. Rejected.
-- **The consumer translating the round number alone.** Cannot distinguish stages
-  that share a round, as shown above. Rejected.
+Rejected: names as strings in core (language-dependent, an untyped bag); a core
+enum of round kinds (closed); a format-defined round type (unrelated types to
+order, virtual calls on the hot path); consumers interpreting the round number
+(cannot tell stages sharing a round).
 
 ## Byes
 
-A ranking that has no match in a round, because the field is odd, a bracket is
-not full or it sits a Monster DYP round out, often scores for it anyway, e.g. a
-full point in a Swiss. A calculator cannot tell that from the matches: a ranking
-missing from a round may have a bye, but it may also have been knocked out or not
-be scheduled yet, and only the format knows which.
+A ranking without a match in a round (odd field, a bracket not full, sitting a
+Monster DYP round out) often scores anyway, and only the format knows whether a
+missing ranking has a bye, was knocked out or is not scheduled yet.
 
-### Decision
+- **A bye is an entity of its own, scheduled by the format**: `Bye` holds its
+  ranking, round and annotations; the format returns `Schedule { matches, byes }`
+  and the phase stores byes apart from matches. A ranking is in at most one
+  match or bye per round; the bracket formats copy a pairing's annotations onto
+  its bye, so its stage can be named.
+- **A bye counts once its ranking reaches it** (`Bye::is_reached`: no open match
+  of the ranking in an earlier round), as if it were a match reported as soon as
+  playable. For a format scheduling round by round that is when it is
+  scheduled; for a round robin, which schedules everything at once, later, so
+  the standings never count a bye of a round the ranking has not reached. Then
+  `MetricsCalculator::update_after_bye` runs and the phase re-ranks. After a
+  result only the byes of that match's rankings are checked.
+- **`update_after_bye` has no default**: whether a bye counts differs per
+  metric (points: configurable; rounds of loss: no; Buchholz: the bye's points
+  count for opponents), and the compiler makes every calculator answer.
+- **Scheduling a bye does not schedule again**: the format knew of it when it
+  returned it.
+- `WinsDrawsLosses` counts byes (not as matches played); `PointsCalculator`
+  scores them with `points_for_bye`.
 
-**A bye is an entity of its own, scheduled by the format.** `Bye` holds its
-ranking, its round and annotations, like a `Match` without an opponent and
-without a result. Its `ByeId` is a UUIDv5 of ranking and round. The format
-returns byes next to matches in a `Schedule { matches, byes }`, and the phase
-stores them in `PhaseData::byes`, apart from the matches, so match numbers stay
-the positions of matches alone. The round contract covers both: a ranking is in
-at most one match or bye per round, and the bracket formats move the annotations
-of a pairing decided without a match onto its bye, so a consumer can name its
-stage.
+*Not covered yet:* kinds of byes worth different points (requested half-point
+byes). Forfeits are not byes but match results.
 
-**A bye counts once its ranking reaches it.** A match is created open, gets a
-result later and may get another one; a bye has nothing to report. It is treated
-like a match reported automatically as soon as it can be played: it is
-*reached* (`Bye::is_reached`) once its ranking has no open match in an earlier
-round of the phase, the same rule by which a consumer offers matches as
-playable now. That is when the format schedules it, for a format scheduling
-round by round, or later, after the result that leaves its ranking nothing
-earlier to play, for one scheduling every round at once (a round robin), so
-that the standings never count a bye of a round the ranking has not got to. A
-reached bye stays reached; undoing the result that reached it is a replay, which
-reaches it later or not at all. It reaches calculators through a hook of its
-own, `MetricsCalculator::update_after_bye`, run when the bye is reached, followed
-by a re-rank. Only the byes of the reported match's rankings are checked after a
-result, which keeps the hot path's extra cost to a pass over the byes. The hook
-has no default implementation: whether a bye
-counts is a different question per metric (points: configurable; matches played,
-round of first loss, round of elimination: no; Buchholz and Sonneborn-Berger: no
-opponent to count, but the points of the bye count for the ranking's
-opponents), and the compiler makes every calculator answer it.
-
-**Scheduling a bye does not schedule again.** Only a reported result calls the
-format, even though a bye can change the ranks the format pairs by. The format
-knows about every bye it returns when it returns it, so a second call would only
-see what it already decided.
-
-**Points stay calculated from counts.** `WinsDrawsLosses` counts byes next to
-wins, draws and losses (but not as matches played), and `PointsCalculator`
-scores them with `points_for_bye`, 0 unless set.
-
-*Not covered yet:* kinds of byes worth different points (a requested half-point
-bye, a sit-out scored with average points). A requested bye is transition data
-the format has to accept, so it is a feature of its own, and the kind would then
-need a vocabulary calculators can read. Forfeits are not byes: they have an
-opponent and are a match result.
-
-### Alternatives
-
-- **One enum `Match | Bye` in and out**, i.e. formats emit it and calculators
-  receive it in place of the match. Calculators would need a `Bye` arm in
-  `update_after_match_result` that can never run, since nobody reports a
-  result for a bye, and one collection of both would mix byes into the match
-  numbers. Rejected; the format's side of it survives as `Schedule`.
-- **A bye as a degenerate match** (no opponent, or a preset result). Every
-  calculator would see byes through the existing path and silently get them
-  wrong: Buchholz looking up an opponent, the played matches counting it. Every
-  consumer of `Match` would have to handle a match without opponent. Rejected.
-- **A phantom "bye" ranking** paired like any other and auto-reported as beaten.
-  Breaks the contract that a format only pairs rankings of its phase, and the
-  phantom would get metrics, a rank and feed into Buchholz. Rejected.
-- **Calculators inferring byes from gaps in the rounds.** Cannot tell a bye from
-  an elimination or a match not scheduled yet. Rejected.
-- **The format stating what a bye is worth.** Points and their scale are the
-  points calculator's configuration; the format would reach into another
-  plugin's concern. Rejected.
-- **A default no-op `update_after_bye`.** Less to write per calculator, but a
-  calculator that forgets byes would be silently wrong instead of failing to
-  compile. Rejected.
-- **A bye final when scheduled**, counted right away. Was the first design;
-  with a round robin, which schedules every round at once, every bye counted
-  at the start, so an odd field's standings led with the byes of later rounds
-  until the end. Replaced by reaching.
-- **Formats scheduling round by round** to defer their byes. Loses the whole
-  schedule a round robin shows up front. Rejected.
-- **Hiding unreached byes in the standings only.** The metrics themselves
-  would stay wrong, e.g. for what a later phase seeds by. Rejected.
+Rejected: one `Match | Bye` enum for calculators (an arm that never runs); a bye
+as a match without opponent (every calculator silently wrong); a phantom bye
+ranking (gets metrics and a rank); inferring byes from gaps; the format stating
+a bye's worth (the points calculator's concern); a default no-op hook; counting
+a bye when scheduled (a round robin's odd field led with future byes); hiding
+unreached byes only in the standings (metrics stay wrong).
 
 ## Persistence
 
 ### Snapshots
 
-`Competition` and everything in it — `Phase`, `Ranking`, every embedded plugin
-and metric — is serializable with [`typetag`](https://docs.rs/typetag). The trait
-opts in once and each impl should carry a short, explicitly chosen, namespaced
-tag. For a plugin axis `#[axis]` and `#[register]` do both, the tag being the
-plugin's id; other traits name it themselves:
+`Competition` and everything in it serializes through `typetag`: each trait
+opts in once, each impl names an explicit namespaced tag (`#[axis]` and
+`#[register]` do it for plugins, with the plugin id):
 
 ```rust
 #[typetag::serde(tag = "type", content = "value")]
@@ -1082,1228 +493,510 @@ pub trait TypeMapValue: Any + Debug + DynClone {}
 impl TypeMapValue for Eliminates {}
 ```
 
-Metrics, annotations, plugins and every `CompetitionTransition` impl name their
-tags. A metric's tag may equal the id of the plugin calculating it (both
-`tournament_engine::points`), since every trait object has a registry of its
-own.
+A metric's tag may equal its calculator's id, since every trait has its own
+registry. Two findings from `typetag`'s source:
 
-This gives `Box<dyn Trait>` a working `Serialize`/`Deserialize` backed by an
-`inventory`-populated tag → type registry inside `typetag`, with no registry
-code here. Two findings verified against `typetag`'s source rather than its docs:
+- **Adjacent tagging is required for non-self-describing formats** (postcard).
+  Internal tagging serializes the content through an adapter claiming
+  `is_human_readable() == true` while deserialization sees the real format, so a
+  `Uuid` is written as a string and read as bytes. (Upstream bug, reported
+  against 0.2.23.)
+- **A tag collision fails loudly** on deserialization ("non-unique tag").
 
-- **Adjacent tagging is required for non-self-describing formats** such as
-  postcard, which is why every annotation above carries a `content`. Internal
-  tagging serializes the content through an adapter that reports
-  `is_human_readable() == true` whatever the real format says, while
-  deserialization sees the real format — so a `Uuid` is written as a string and
-  read back as bytes, and fails. Adjacent tagging keeps the content out of that
-  adapter. Cost in JSON is one nesting level; it also halves the postcard payload
-  versus giving ids a format-independent string form. Upstream bug, reported
-  against `typetag` 0.2.23.
-- **A tag collision fails loudly.** The registry is
-  `BTreeMap<&'static str, Option<DeserializeFn<T>>>`; a second registration of
-  the same tag overwrites the entry with `None`, and deserializing it errors
-  ("non-unique tag of ...") instead of picking either impl.
-
-`IdMap` and `TypeMap` both serialize as a plain sequence of values with their
-keys omitted, since every value carries its own key — an id for `IdMap`, a
-`typetag` tag for `TypeMap`. This is sound only because both wrap an `IndexMap`,
-so serializing walks insertion order and deserializing reinserts in that order.
-
-The one thing `typetag` does not give is a fixed-size binary discriminant; tags
-are strings, so wire cost scales with tag length. Mitigated by keeping tags
-short, and acceptable for occasional persistence.
+`IdMap` and `TypeMap` serialize as plain sequences with keys omitted (each value
+carries its key); sound because both wrap an `IndexMap`, so insertion order
+round-trips. Tags are strings, so keep them short.
 
 ### The transition log
 
-`Transition<S>` is generic over the state, so it cannot be `typetag`-annotated
-upstream. Serializing the log therefore needs a non-generic sub-trait here:
+`Transition<S>` is generic, so the log needs a non-generic sub-trait:
 
 ```rust
 #[typetag::serde(tag = "type", content = "value")]
 pub trait CompetitionTransition: Transition<Competition> + Debug {}
 ```
 
-with the machine becoming
-`CompetitionStateMachine = StateMachine<Competition, Box<dyn CompetitionTransition>>`
-— which `undoable-state-machine` anticipates via its blanket impl for
-`Box<dyn Transition<S>>`, so the box needs nothing further to be applied. The
-trait adds no methods: implementing it is purely the statement that a transition
-is part of the persisted log, which is also what makes it the one place a
-consumer's own transition opts in. Every implementor needs
-`Serialize`/`Deserialize` and an explicit tag, and all six core transitions have
-both.
+`CompetitionStateMachine = StateMachine<Competition, Box<dyn CompetitionTransition>>`.
+Implementing the trait is the statement that a transition belongs to the
+persisted log. With `undoable-state-machine`'s `serde` feature the machine
+serializes as its log, undo entries included. Deserializing replays it
+(`StateMachine::build`) rather than trusting a stored state, so the state cannot
+drift from its log, and a log that no longer replays fails to load.
 
-That composes into the whole machine: with `undoable-state-machine`'s `serde`
-feature its log types are serializable whenever the transition type is, so
-`CompetitionStateMachine` serializes as its log — undo entries included — and
-nothing in this crate has to describe a log entry itself.
-
-Deserializing rebuilds the machine through `StateMachine::build`, which replays
-the log rather than trusting a stored `current`. Two consequences worth naming:
-the current state is never written, so it cannot drift from the log that produced
-it; and a log that no longer replays cleanly fails to deserialize instead of
-loading into a state no sequence of transitions could reach. Replay is already a
-hard requirement for undo, so this costs no determinism that was not owed
-anyway — it just also makes it a load-time check.
-
-This is what separates the two persistence paths in practice. A snapshot is
-smaller and loads without replaying, but holds only the current state; a log also
-holds how that state came about, so a change made before a restore, such as a
-reported result, can still be undone after it. What a session can undo by
-`undo`, though, is only what it did itself, see
-[Undo and redo of a session](#undo-and-redo-of-a-session).
+A snapshot loads without replay but holds only the current state; a log keeps
+how it came about, so a result reported before a restore can still be undone.
 
 ### Tag stability
 
-A tag is a persistence contract, not a name. Renaming or moving a type must not
-change it, which is why tags are written out explicitly rather than derived. This
-spans plugins, metrics, consumer annotations and transitions — so it is a single
-cross-cutting commitment, not a per-mechanism detail. Each mechanism pins its
-tags in a test, so a rename fails there instead of silently invalidating old
-data.
+A tag is a persistence contract, not a name: renaming or moving a type must not
+change it, so tags are written out and pinned in tests, for plugins, metrics,
+annotations and transitions alike.
 
-Rejected alternatives for tagging: **`std::any::TypeId`**, free and
-collision-proof but only stable within one build, so it cannot survive a
-snapshot; **a hand-rolled `TypeTag([u8; 8])` + `erased_serde` + `inventory`
-registry**, a smaller discriminant but a reimplementation of what `typetag`
-already does, with less testing; **an auto-derived tag** (a hash of the type
-path), which implementors cannot forget but which silently changes when a type is
-renamed or moved — the same drifting-fact failure rejected elsewhere in this
-document.
+Rejected: `TypeId` (stable only within a build); a hand-rolled binary tag
+registry (reimplements `typetag`); auto-derived tags from the type path
+(silently change on a rename).
 
 ## Progression as an undoable state machine
 
-Tournament progress — registrations, reported results, round advances — is a
-sequence of transitions applied to an initial state, so transitions can be
-undone. The mechanics are generic and live in the separate
-`undoable-state-machine` crate; this crate instantiates it with `Competition` as
-the state, through the `CompetitionStateMachine` alias, and enables that crate's
-`serde` feature so the log it keeps is persistable.
-
-Undo is implemented there as a replay of the still-active log entries from the
-initial state, which is what makes determinism under replay a global constraint
-rather than a local concern: it is why ids are content-derived, why consumer data
-arrives as transition data, why a match number is positional rather than
-durable, and why plugin state needs no undo of its own.
-
-`Transition` keeps `check_applicable` and `apply` separate, and `Competition`'s
-mutators stay crate-internal, so state can only change through a logged
-transition.
+Progress is a sequence of transitions on an initial state, through the generic
+`undoable-state-machine` crate. Undo replays the still-active entries from the
+initial state, which is why determinism is global: it is why ids derive from
+content, consumer data arrives as transition data, and plugin state needs no
+undo of its own. `Transition` keeps `check_applicable` and `apply` separate, and
+`Competition`'s mutators are crate-internal, so state changes only through
+logged transitions.
 
 ### Undoing a change by what it did
 
-The state machine undoes a `TransitionId`, which a consumer only has if it kept
-the ids it applied. Undoing a reported result that way means walking the log back
-through every change made since, which is not what an operator correcting a
-result reported a while ago wants. `CompetitionStateMachineExt::undo_match_result`
-takes the phase and the match instead, finds the latest log entry still in effect
-that reported that match, and undoes that one. It lives in the engine, not in the
-consumer, because finding the entry means knowing the shape of the log.
+`CompetitionStateMachineExt::undo_match_result` takes a phase and match, finds
+the latest entry in effect that reported it and undoes that, so an operator
+correcting an old result does not walk back through everything since. It lives
+in the engine because it knows the shape of the log.
 
-- **Found by downcasting**, which is what `Any` as a supertrait of
-  `CompetitionTransition` is for. A transition in a log is a
-  `Box<dyn CompetitionTransition>`, so recognizing a `ReportMatchResult` among
-  the entries needs either this or a trait method every transition answers for
-  itself — i.e. a self-reported fact a third-party transition could get wrong.
-  The cost is that only transitions this crate ships can be found, so a
-  third-party transition that sets a result is reported as not undoable rather
-  than silently mishandled.
-- **Rejected, not cascaded, when a later change depends on it.** Undoing the
-  semifinal of a knockout whose final has a result would leave that report
-  without a match, which the state machine surfaces as the failing entry and the
-  undo is refused with the log unchanged. Undoing the dependent reports as well
-  would be a second, implicit decision about what the operator meant.
-- **No new transition.** An undo entry is what the log already has for reverting
-  a change, and reusing it keeps the undo itself undoable.
+- **Found by downcasting** (`Any` is a supertrait of `CompetitionTransition`),
+  not by a method every transition self-reports; a third-party transition
+  setting results is reported as not undoable rather than mishandled.
+- **Refused, not cascaded,** when a later entry depends on it (a final reported
+  after the semifinal): the state machine names the failing entry and the log
+  stays unchanged.
+- **No new transition**: an undo entry, itself undoable.
 
 ### Changing a phase after it was added
 
-A consumer changing a phase reads its config from the current state
-(`Phase::config`), puts it into a draft (`Draft::with_answers`), lets the
-operator change it as when adding the phase, and hands the plugins built from it
-to `CompetitionStateMachineExt::reconfigure_phase`. That appends a
-`LogEntryKind::Replace` of the `AddPhase` in effect by one adding the same phase
-with the new plugins, unless their config is the phase's already. The phase is
-then played as if it had been added that way, at any point of the competition.
+A consumer reads `Phase::config`, puts it into a draft (`Draft::with_answers`),
+lets the operator change it, and hands the built plugins to
+`CompetitionStateMachineExt::reconfigure_phase`, which appends a
+`LogEntryKind::Replace` of the phase's `AddPhase` with one of the same phase id
+(found by downcasting), unless nothing changed.
 
-- **A replacement, not a transition of its own.** The replacement runs in the
-  slot of the `AddPhase`, so everything after it replays on the changed phase:
-  the reported results stay as long as the changed phase schedules their
-  matches, and the metrics and ranks are recalculated rather than patched. A
-  change a later entry does not fit is rejected by the state machine, with the
-  log unchanged, just like an undo a later entry depends on. A transition
-  changing the phase in place would have to migrate the phase's state, i.e.
-  every plugin would need to know how to take over from another configuration.
-- **The config is serialized from the state, not stored.** A plugin serializes
-  as the answers it is configured with, plus its runtime state in fields its
-  schema leaves out, which `Config::of` drops by checking the serialized form
-  against the schema. So the config needs no copy of its own, neither in the
-  log nor in the phase, and a snapshot can be reconfigured as well as a log. It
-  relies on every plugin serializing as it deserializes, which loading a log
-  relies on already. Rejected: `AddPhase` holding the config and building the
-  plugins whenever it is applied (built on every replay, twice, and the config
-  had to be persisted in non-self-describing formats, which cannot read a
-  `serde_json` value back). This turns built plugins back into answers, unlike
-  the `Draft::from_built` rejected above for adding the implied plugins: the
-  implied plugins are answers by now, so an operator removing what required one
-  removes it too.
-- **A format draws so that a change keeps what it can.** The results stay only
-  while the changed phase schedules their matches, so a format drawing at
-  random draws what does not depend on a field first: random rounds shuffles
-  every rotation of the round robin and takes as many as it has rounds, so that
-  more rounds keep those drawn for fewer and rounds can be added once the first
-  are played. Sampling the rounds asked for, as it did at first, drew other
-  rounds for another number of them (changing this changed the draw of every
-  random-rounds phase, so saved logs of one with results no longer replay).
-- **Found through the phase id.** The replacement keeps the phase id, so the
-  `AddPhase` in effect that added a phase is found by downcasting, as a report
-  is for `undo_match_result`.
-- **Undone like any action.** The replacement is an action of the session that
-  made it, see below, so undoing right after a change of the phase reverts that
-  change.
+- **A replacement, not a transition of its own**: everything after it replays on
+  the changed phase, results staying while it still schedules their matches,
+  metrics recalculated rather than patched. A change a later entry does not fit
+  is refused. Changing in place would make every plugin migrate state from
+  another configuration.
+- **The config is serialized from the state, not stored**: a plugin serializes
+  as its answers plus skipped state fields, which `Config::of` drops by the
+  schema. So snapshots can be reconfigured too. Rejected: `AddPhase` holding the
+  config and building on every replay (built twice, and non-self-describing
+  formats cannot read a JSON value back).
+- **A format drawing at random draws what does not depend on a field first**, so
+  a change keeps what it can: random rounds shuffles every rotation and takes as
+  many as it has rounds, so rounds can be added after results.
 
 ### Undo and redo of a session
 
-`undo` and `redo` work as in an editor: they undo and redo what the operator
-did, in reverse order, not what the log happens to end with.
-`undoable_state_machine::SessionHistory` keeps the ids of the entries a session
-appended as its actions — every change it made, including an undo of an entry
-of its choice such as `undo-report`, and a reconfiguration. `undo_last` undoes
-the latest of them that is in effect, `redo_last` redoes what it undid last as
-long as the session took no action since, each by appending an ordinary undo
-entry naming its target. The engine's operations that append an action
-(`apply_in`, `undo_match_result`, `reconfigure_phase`) take the history.
+`undo`/`redo` work as in an editor: they undo what the operator did, not what
+the log ends with. `undoable_state_machine::SessionHistory` keeps the ids of the
+entries the session appended as actions (any change, including a targeted undo
+and a reconfiguration); `undo_last` undoes the latest in effect, `redo_last`
+redoes what it undid last while no action was taken since, each by an ordinary
+undo entry naming its target. Operations appending an action take the history
+(`apply_in`, `undo_match_result`, `reconfigure_phase`).
 
-- **Per session, kept outside the log.** Whose an entry is matters only for
-  undo: when a log is shared, e.g. synced between a client and a server, an
-  operator expects their `undo` to revert what they did, not what was pulled in
-  from elsewhere, and not what they did in another session. Only the session
-  knows which entries it appended and whether as an action or by `undo`, so it
-  keeps that itself, and the log stays as it was. A session ends with its
-  history: a loaded competition has nothing to undo, as in other editors. A
-  single result can still be undone, since `undo_match_result` finds it in the
-  log.
-- **A targeted undo is an action.** After `undo-report`, `undo` brings the
-  result back rather than undoing the change before it, which an operator
-  correcting a result and changing their mind expects.
-- **Explicit targets.** The entry `undo` appends names the action it undoes, so
-  it means the same however the log is merged or reordered later.
-- **Fails only because of other sessions.** Undoing a session's actions in
-  reverse order returns to states the log was in before, so it cannot fail while
-  only that session writes. A change another session made since may depend on
-  the action, e.g. a result reported for a match only a reconfiguration
-  schedules; then the undo is rejected like any other, with the log unchanged.
-  Another session may also have undone the action itself (or, for a redo, the
-  undo of it). Then the history no longer matches the log, and `undo` fails
-  instead of passing over the action: passing over it would undo older actions
-  while the newer one could come back, should the other session take its undo
-  back. Either way the action stays the next one to undo. An action the session
-  undid itself, by a targeted undo, never blocks: it lies below that undo, which
-  is undone first and brings it back.
-- **The seed is no action.** It is applied outside any history, so it is never
-  undone, and nothing before it either.
+- **Per session, outside the log**: with a shared log, an operator's undo must
+  revert what they did, not what was pulled in or done in another session. A
+  loaded competition has nothing to undo; a single result can still be undone
+  by `undo_match_result`.
+- **A targeted undo is an action**: after `undo-report`, `undo` brings the
+  result back.
+- **Explicit targets**, so an undo means the same however logs are merged.
+- **Fails only because of other sessions** (a dependent change, or the action
+  undone elsewhere); then it fails rather than skipping the action.
+- **The seed is no action**, applied outside any history, never undone.
 
-Rejected:
-- **Deriving the history from the log**, with `undo` undoing the latest change in
-  effect. After `undo-report`, `undo` skipped it and undid an unrelated change;
-  undoing a reconfiguration could fail even within a single session once an
-  undo reached behind it; and an `undo-report` of the latest change could not be
-  told apart from `undo`.
-- **Dedicated log entries for `undo` and `redo`**, telling them apart from
-  targeted undos in the log. They record whether an undo was navigation, but not
-  whose it is, which a shared log needs, and they change the log format for
-  something only the session uses.
-- **An origin per user in the log.** A user with two sessions would undo in one
-  what they did in the other.
-- **Persisting the history**, e.g. next to the log in the CLI's file. It is not
-  part of the competition, and editors do not keep it either.
+Rejected: deriving the history from the log (`undo` after `undo-report` undid an
+unrelated change); dedicated undo/redo log entries (record navigation, not
+whose); an origin per user (a user with two sessions); persisting the history
+(not part of the competition).
 
 ## Dependencies this implies
 
-- `typetag` (plus its internal `inventory` and `erased_serde`) and `serde` for
-  serializing trait objects; `postcard` and `serde_json` exercise both a
-  non-self-describing and a self-describing format in tests.
-- `plugin-factory` (with `inventory`) for the plugin axes, their catalog,
-  schemas, drafts and the compatibility of plugins.
-- `dyn-clone` for cloning boxed plugins and boxed `TypeMapValue`s.
-- `indexmap` for deterministic iteration order, with `rustc-hash` as a faster
-  hasher for small `Copy` id keys.
-- `uuid` (v5) for content-derived ids; `rand` and `rand_seeder` for seeded,
-  reproducible shuffling; `vec1` for non-empty collections.
-- No `enum_dispatch`, `linkme`, `ambassador` or `intertrait`: each was only
-  needed for an alternative ruled out above.
+- `typetag` (with `inventory`, `erased_serde`) and `serde` for trait objects;
+  `postcard` and `serde_json` in tests for a non-self-describing and a
+  self-describing format.
+- `plugin-factory` (with `inventory`) for axes, catalog, schemas, drafts and
+  compatibility; `dyn-clone` for boxed plugins and values.
+- `indexmap` for deterministic order, `rustc-hash` for small id keys; `uuid`
+  (v5); `rand` and `rand_seeder` for seeded shuffling; `vec1`.
+- No `enum_dispatch`, `linkme`, `ambassador` or `intertrait`: each served only
+  an alternative ruled out above.
 
 ## Frontend
 
-*Partly implemented* (decided 2026-10-23; `tournament-gui` has its first
-screen, stores competitions in the browser, configures a phase through a
-form, runs a competition by keyboard, and works offline as an installable
-app, not hosted yet): the GUI an organizer runs a
-competition with,
-in the browser, offline. `requirements.md` says what it must do;
-`FRONTEND_PLAN.md` holds the steps. `tournament-web`, the CLI's command line in
-the browser, stays a text layer; the GUI is a rewrite and does not build on it.
+The GUI an organizer runs a competition with, in the browser and offline
+(`requirements.md` says what it must do). It is not hosted yet. `tournament-web`,
+the CLI's command line in the browser, stays a thin text layer; the GUI is a
+separate app, not built on it.
 
 ### Framework
 
-#### Decision
+**Dioxus** (0.7), rendering real DOM, built with `dx`.
 
-**Dioxus** (0.7), rendering real DOM in the browser, built with its CLI `dx`.
+- **Real HTML**: WCAG 2.1 AA, print, embeds and phones need the browser's
+  accessibility tree, print styles and text.
+- **Readable code**: components are plain functions of the rows they get,
+  re-run and diffed.
+- **Fast where it matters**: updating long lists was 1.5–2× faster than Leptos
+  (see [Performance](#performance)).
+- Desktop and mobile stay possible with the same components (a PWA for now).
+- **Plain CSS** (`assets/style.css`), no Tailwind: no extra tool, a small page.
 
-- **Real HTML.** WCAG 2.1 AA, print layouts, embeds and lists on phones all
-  need the browser's own elements: its accessibility tree, its print styles,
-  its text.
-- **The code reads well.** Components re-run and their output is diffed, so a
-  component is a plain function of the rows it is handed, close to how the
-  app crate (below) hands them out.
-- **Fast where it matters.** Updating long lists built from plain rows was
-  1.5–2x faster than with Leptos (see [the measurements](#measurements)).
-- **Desktop and mobile stay possible.** Native apps are a non-goal (a PWA
-  instead), but Dioxus keeps the option open with the same components.
-
-#### Alternatives
-
-Both Dioxus and Leptos were spiked in `spikes/`: the same app on a shared core
-(`spike-core`), with the measurements in `spikes/README.md`, copied below. The
-spikes were deleted once the GUI existed; they are in the history (commit
-`0902482`).
-
-- **Leptos** (0.8). The close alternative: fine-grained signals, real DOM,
-  loaded slightly faster (1750 vs. 1850 ms at 1x). Slower at updating the
-  lists: reporting a result took 160–200 ms against Dioxus's 75–90 ms, going
-  back from 2500 to 5000 rows 630–720 against 370–390 ms. Keying its lists by
-  position, with a memo per line updating single cells, was slower still
-  (report 260–290 ms, filter 470–500 ms). Its `view!` with `Memo`s and `For`
-  read worse next to `rsx!`. Rejected.
-- **Canvas GUIs** (egui, iced, Slint). Draw their own pixels, so no
-  accessibility tree a screen reader can rely on, no print layout, no embeds,
-  and text that does not behave like the browser's on phones. Rejected without
-  a spike.
-
-#### Implementation
-
-`tournament-gui` (2026-10-24), built with `dx`, whose version has to be that
-of `dioxus` in `Cargo.lock`. Its components only lay out what the app crate's
-`Session` hands out; the state they share is the session, the storage and the
-message of the last refused action, as signals. A change is saved after each
-action, take/write/mark as below, to IndexedDB (see [Storage](#storage)).
-
-- **Plain CSS** (`assets/style.css`, included through `asset!()`), not
-  Tailwind: no extra tool in the build, and the page is small. Revisit if the
-  styles grow into a design system.
-- **The e2e tests run on the release build.** A debug build of Dioxus connects
-  to the server of `dx serve` for hot reloading, which a test's static server
-  is not, and would log the failure as an error.
+Rejected: **Leptos** 0.8 (spiked alongside Dioxus on a shared core, commit
+`0902482`): loaded slightly faster, but reporting a result took 160–200 ms
+against 75–90 ms, and `view!` with memos read worse than `rsx!`. **Canvas GUIs**
+(egui, iced, Slint): no accessibility tree, print or browser text.
 
 ### The app crate
 
-#### Decision
+**A UI-free crate between engine and GUI** (`tournament-app`) holds what is
+about an operator at a screen: the session and its undo history, actions turned
+into transitions, checks only a UI cares about, names (`People`), storage, data
+for screens and messages. It is the CLI's session with typed data instead of
+text, and builds natively and for wasm, so what a screen shows is tested
+without a browser.
 
-**A UI-free crate between engine and GUI** holds what is about an operator at
-a screen: the session (state machine and its undo history), turning an action
-into transitions (a new entrant: an id, `AddEntrant`, a name), checks only a UI
-cares about, the names (`People`), saving and loading through a storage trait,
-data for screens (rows of matches, standings, the actions possible now), and
-messages for the operator. It is the CLI's `Session` with typed data instead of
-text; later the CLI can sit on top of it.
+- **An error type per action**, so a GUI handles exactly what its action can
+  return; engine errors are recognized by downcasting, anything unknown is
+  `Rejected` with the engine's message.
+- **Names are `Option`s** in rows: a log from elsewhere may lack them.
+- **The session keeps the actions it did** (`view::Action`, with rows and names
+  as they were), so `undo`/`redo` can say what they walked through without
+  rebuilding rows from a changed state.
 
-- **The engine stays as it is**: what is true about a competition whoever
-  looks at it, and replays identically. Names, storage and an operator's
-  undo history are none of that.
-- **Testable without a browser.** The crate builds natively and for wasm and
-  depends on no UI, so what a screen shows is tested like the engine, and the
-  GUI's components only lay it out.
-
-#### Alternatives
-
-- **In the engine.** Mixes what the log records with what one screen needs, and
-  would pull names and storage into the crate that must replay identically.
-  Rejected.
-- **In the GUI crate.** Only testable in a browser, and the CLI could never
-  share it. Rejected.
-- **The CLI's `Session` as it is.** Answers with text for a terminal; a GUI
-  needs rows and typed errors. It is the starting point instead.
-
-#### Implementation
-
-Implemented as `tournament-app` (2026-10-23). The CLI does not sit on it yet,
-but takes its `People` from it.
-
-- **An error type per action** (`AddEntrantError`, `ReportError`, ...) rather
-  than one for all of them, so that a GUI handles exactly what the action it
-  ran can return. The engine's errors arrive as a boxed `TransitionError` and
-  are recognized by downcasting; anything else, e.g. a check added to the
-  engine later, is `Rejected` with the engine's message instead of a panic.
-- **Names are `Option`s** in the rows: an entrant of a log written elsewhere
-  may have none, and what to show for it is the GUI's (translated) text.
-- **What can be undone and redone** is kept by the session as two stacks of
-  the actions it did (`view::Action`, with the rows and names as they were
-  then), next to the `SessionHistory`, which does not tell; `undo` and `redo`
-  return the action they walked through, so that a GUI can say what it was.
-  Reading it back from the log instead (the entry an undo entry targets,
-  downcast to its transition) would need the rows and names rebuilt from a
-  state that has changed since.
+Rejected: in the engine (mixes the log with one screen's needs); in the GUI
+crate (testable only in a browser); the CLI's `Session` as it is (answers with
+text).
 
 ### Storage
 
-#### Decision
+**IndexedDB, one record per log entry**, appended as each change is accepted,
+so no accepted result is lost; names stored apart. **One writer tab per
+competition**, holding a Web Lock; other tabs are read-only and follow it
+through a `BroadcastChannel`.
 
-**IndexedDB, one record per log entry**, appended in a transaction as each
-change is accepted, so that no accepted result is lost. Names are stored apart
-from the log. **One writer tab per competition**, held by a lock of the Web
-Locks API; other tabs open it read-only and follow the writer through a
-`BroadcastChannel`.
+- **The `Storage` trait is async** (IndexedDB is), returning `impl Future`
+  without `Send`; so not dyn-compatible, and the session takes the storage where
+  it loads or saves rather than being generic over it. It knows records (the
+  JSON of each entry and person) and listings (key, name, progress).
+- **The session changes in memory first; storage catches up.** A transition is
+  known accepted only once applied, and the log cannot take an entry back. A
+  save is take (`unsaved_changes`), write (no borrow of the session across the
+  `await`), mark (`mark_saved`); a failed write leaves the changes for the next.
+  Entries are written at their position, so rewriting or out-of-order writes
+  store the same.
+- **The listing carries the progress** (not started, the round being played,
+  won by whom), set by each save whose entries reach the end of the stored log,
+  so the list need not replay every competition.
+- **A write is one transaction** over the stores (`competitions`, `entries`
+  under `[key, position]`, `people` under `[key, entrant]`), refusing gaps. A
+  transaction stays active only in the microtasks after a request's result, so
+  it runs on wasm-bindgen-futures' executor, not the awaiting one. The crate
+  `idb` binds IndexedDB (thin, few dependencies).
+- **The lock** is held by the tab with the competition open and by each save
+  under way, so a change made just before leaving is written before another tab
+  takes over; the save outlives the screen. Web Locks are bound by hand, since
+  web-sys has them only behind `web_sys_unstable_apis`.
+- **Catching up appends rather than reloads**: a session with N entries reads
+  the stored ones from N and applies each, replaying only for undo or replace
+  entries, as the writer did. It refuses a session with unsaved changes (the
+  log would fork). The same will serve syncing with a server.
+- **Persistent storage is asked for when a competition is opened** (some
+  browsers ask the operator, so not on load); a refusal shows a warning, see
+  [Offline and installing](#offline-and-installing).
+- **Files are the CLI's**: `{"log", "people"}` plus `"name"`, so competitions
+  move between CLI and GUI. Importing makes a new competition under a new key,
+  numbered (`Cup (2)`) if the name exists (a number, not a translated word in
+  stored data). Exporting from the list writes the stored records as they are,
+  so a log that no longer replays can still be exported.
+- **The competition open is in the URL** after `#`. Renaming changes only the
+  listing (the name is not in the log); deleting removes everything in one
+  transaction, under the lock, so it is refused while a tab holds it open.
+- **Look-alike entrant names are pointed out, not refused** (case and NFKC,
+  `Session::entrant_like`); only the very same name is refused.
+- Without the APIs (plain HTTP away from `localhost`) every tab writes and
+  persistence is not asked for.
 
-**The storage trait is asynchronous** (`tournament-app`'s `Storage`), since
-IndexedDB is. Its methods return `impl Future` without `Send`, as the
-browser's futures are not; the trait is therefore not dyn-compatible, and the
-session is not generic over it but takes the storage where it loads or saves.
-It knows records, not competitions: the JSON of each log entry and each
-person, and a listing (key, name, and progress) for the list of competitions
-to open.
-
-- **The listing carries the progress** (2026-10-26): not started with how many
-  entrants, the first round with a match to play and how many it has, or every
-  match played (`storage::Progress`, `Session::progress`). The session sets it
-  in the changes of each save, and the storage keeps that of the latest
-  changes: those whose entries reach the end of the stored log
-  (`Changes::reach_end`), so that a write finishing after a later one leaves
-  the newer progress. Listing it otherwise would mean loading and replaying
-  every competition. A listing stored before it has none, until its next save.
-
-- **The session changes in memory first, and storage catches up.** A
-  transition is only known to be accepted once applied, and the append-only
-  log cannot take an entry back, so persisting first would need a trial run on
-  a copy of the state. Instead a save hands the storage the entries appended
-  since the last save (`Changes`) and marks them saved only once written; a
-  failed write leaves them for the next one, and the GUI shows what is unsaved.
-- **Saving is take, write, mark.** `unsaved_changes()` copies the changes
-  out, the write runs without any borrow of the session, and `mark_saved`
-  takes them back, so a GUI holds no lock of its state across an `await`.
-  Entries are written at their position in the log, which never changes, so
-  writing changes twice, or an older write finishing after a newer one, stores
-  the same.
-- **The CLI's synchronous file storage fits** by returning futures that are
-  ready at once, which a synchronous caller polls once (as `questionnaire::fill`
-  polls `fill_async`), so no executor is needed. It keeps its own `Storage` until
-  it sits on the app crate.
-
-#### Alternatives
-
-- **A synchronous trait**, with the GUI writing to IndexedDB on its own. Would
-  leave the format of the records and when to write them to the GUI, untested
-  outside a browser. Rejected.
-- **The session owning its storage**, every action `async`. A GUI would hold
-  the session borrowed across the write of each action, and an action could
-  not be shown before its write finished. Rejected.
-- **The whole log as one value** (as the CLI and `tournament-web` save it).
-  Rewrites everything on every result (1.4 MB of JSON at 5000 results), and is
-  not saved at all until the operator saves. Rejected.
-- **Several writer tabs.** Two tabs appending to the same log from different
-  states fork it; merging them is the sync problem (`requirements.md`), not
-  something a second tab should start. Rejected.
-
-#### Implementation
-
-Implemented 2026-10-24 in `tournament-browser`, which holds what the GUI needs
-of the browser besides its page, so that it is tested in headless Chrome on its
-own (`wasm_bindgen_test`s through `Session`, as the app tests `MemoryStorage`).
-
-- **The crate `idb`** for IndexedDB: a thin async layer over web-sys with few
-  dependencies (js-sys, web-sys, thiserror, tokio's `sync`). `rexie` is a
-  wrapper around it with nothing this needs; `indexed_db_futures` pulls in
-  half a dozen macro and helper crates for typed builders; raw web-sys would
-  mean writing the request futures by hand.
-- **Three object stores**: `competitions` (the listing: key, name, progress,
-  and how many were stored before, which orders the list), `entries` under
-  `[competition, position]` and `people` under `[competition, entrant]`, each
-  record the JSON text the session hands over. A competition's records are a
-  key range (`[key]` to `[key, []]`), and entries come back in the order of
-  their positions.
-- **A write is one transaction** over the three stores, so that it stores all
-  of its changes or none. It refuses changes that start after the end of the
-  stored log, which would leave a gap. A transaction stays active only while
-  the browser hands it a request's result and runs the microtasks queued then,
-  so the writes following its reads must come right after them; the write runs
-  on wasm-bindgen-futures' executor, which continues in such a microtask, not
-  on whatever executor awaits it (e.g. Dioxus's).
-- **The writer lock** is a Web Lock per competition, held by the tab that has
-  it open for as long as it does. Each save under way holds it too, so that a
-  tab leaving a competition right after a change releases it only once the
-  change is written; the save also outlives the screen. A tab that does not
-  get it shows the competition read-only, catches up whenever the writer says
-  on a `BroadcastChannel` that it saved, and waits for the lock, taking over
-  (after catching up once more) when the writer leaves or is closed. web-sys
-  has Web Locks only behind
-  `web_sys_unstable_apis`, which every crate building the page would have to be
-  given, so the crate binds the one call it needs itself.
-- **Catching up appends rather than reloads.** The log is append-only and its
-  positions never change, so a session that has the first N entries reads the
-  stored ones from N on (`Storage::read` takes the position) and appends each
-  with the state machine's `apply`, as replaying would have: an entry that
-  applies a transition costs what it cost the writer, and only one that undoes
-  or replaces an earlier entry replays the log after that one, as it did for
-  the writer. The people are read whole, since they are few and may change.
-  Reading and appending are apart (`next_entry`, the read, `catch_up_with`),
-  like a save, so that a GUI holds no borrow of the session across the read.
-  It refuses a session with unsaved changes, whose log would fork. The same
-  catching up from a position is what syncing with a server will need.
-  Reloading the whole log on every save was rejected: it replays everything
-  each time (seconds for a large event, see [Performance](#performance)).
-- **Persistent storage is asked for when a competition is opened** (created
-  and imported ones are opened too): some browsers ask the operator, so
-  asking on load would ask before the page is used. A refusal shows a warning
-  that offers exporting and installing, see
-  [Offline and installing](#offline-and-installing). Its first line folds it
-  (a `details` the page controls, the browser remembering it folded), so that
-  once read it takes one line on every screen rather than a quarter of a
-  phone's; "Don't show again" removes it.
-- **Export and import use the CLI's file**: `{"log": .., "people": ..}` plus
-  `"name"`, which the CLI ignores and which an import falls back to the file's
-  name without, so a competition moves between the two. Importing makes a new
-  competition under a new key: importing the same file twice makes two, rather
-  than one overwriting the other; a copy under a name stored already is
-  numbered (`Cup (2)`), so that the two are told apart in the list, a number
-  rather than a translated "(imported)", which would put a language into the
-  stored name. Exporting from the list reads the stored
-  records and writes them out as they are, so a competition whose log no
-  longer replays, e.g. after an update without one of its plugins, can still
-  be exported; the requirement's "next to its last good snapshot" waits for
-  snapshots.
-- **The competition open is in the URL**, after the `#`, so that a reload opens
-  it again and going back returns to the list; the list's entries are links,
-  the latest stored first, each with buttons renaming (a dialog), exporting
-  and deleting it (a dialog asking first). The name is no part of the log, so
-  renaming is `Storage::rename` of the listing, which a write keeps (it sets
-  the name only when it creates the listing), and a tab holding the
-  competition shows its old name until it loads it again. `Storage::delete`
-  removes its listing, log and names in one transaction, under the
-  competition's lock: a tab holding it open would write it again, so the
-  deletion is refused while one does. The order of the listings survives a
-  deletion: each is numbered one past the latest stored, not by how many are
-  stored.
-- **Entrant names that look alike are pointed out, not refused**: one equal
-  to an entrant's ignoring case and Unicode's composition (NFKC) is said to be
-  entered already while it is typed (`Session::entrant_like`), since two
-  entrants may well be named alike; only the very same name is refused, which
-  the log could not tell apart from the other in the standings.
-- Without the APIs, as on a page served over plain HTTP from elsewhere than
-  `localhost`, every tab writes (no lock) and persistence is not asked for.
+Rejected: a synchronous trait with the GUI writing IndexedDB itself (record
+format untested outside a browser); the session owning its storage (borrowed
+across every write); the whole log as one value (1.4 MB rewritten per result at
+5000 results); several writer tabs (forks the log: that is the sync problem).
 
 ### Configuring a phase
 
-*Implemented* 2026-10-25: a form generated from the schema of the phase's
-draft, the GUI counterpart of the CLI's questionnaire, for adding the phase
-and for editing it at any point (`reconfigure_phase`, see
-[Changing a phase after it was added](#changing-a-phase-after-it-was-added)).
+**The form is data of the app crate**: `PhaseForm` holds the `Draft` and hands
+out a `FormView` (fields by `Path`, inputs by kind, options, implied plugins,
+issues), taking changes by path. The GUI only lays it out and knows no plugin.
+It serves adding a phase and editing it at any point (`reconfigure_phase`).
 
-#### Decision
+- **All fields at once**, so recommendations are kept current instead of asked
+  in order: **a field still answered as offered follows a change of a field
+  before it** in schema order, so another format brings its ranking and
+  metrics. "As offered" is decided by answering a copy as it offers, not by
+  remembering what was touched, so a form loaded from a config behaves the same.
+  **A field never follows a change of one after it**: removing a metric must not
+  silently drop the criterion needing it; an issue says so instead.
+- **A list that follows fits what the operator kept**: it leaves out what only a
+  recommendation not chosen elsewhere needs, and keeps what a plugin chosen
+  elsewhere needs, read from static declarations (`PluginEntry::providers_in`).
+- **Implied plugins are shown, not chosen**: added to a copy for the view, never
+  to the draft, so they go when nothing needs them.
+- **Issues where they are fixed**, at the deepest field or item their path is in;
+  **warnings** (a ranking of nothing) do not block.
+- **A set keeps one order** (recommended first, then by label), so a checkbox
+  stays under the pointer.
+- **Options that fit, recommended first**, plus the chosen one even if it no
+  longer fits.
+- **The form of a new phase starts at the phase undone last**, so adding it again
+  adds the same phase.
+- **Numbers are typed as text** (`type=text` with `inputmode`), taken on change
+  or Enter, comma or point; what is not a number of the range stays shown with
+  why, the answer unchanged. A `type=number` hands over nothing for what the
+  browser cannot read (`0,5`).
+- **The focus stays with the operator's work** after a change moves or removes
+  what had it (`phase::focus_later`); buttons that become unavailable while
+  focused are `aria-disabled`.
+- **Once added, the phase is a summary** edited in a dialog starting at its
+  config; a refusal shows in the dialog.
+- **Widgets from the Dioxus team's components** (`select`, `dialog`), copied
+  into `src/components/` and changed there: a plugin's option shows its
+  description, which a native `option` cannot.
 
-**The form is data of the app crate** (`tournament-app`'s `form`): a
-`PhaseForm` holds the `Draft` and hands out a `FormView` (each field by its
-`Path`, an `Input` by kind with its answer, the plugins a field can take, the
-plugins implied, the issues), and takes the operator's changes by path. The
-GUI only lays it out, so that what the form offers and how it changes is
-tested natively and in wasm, and knows no plugin.
-
-- **All of it at once, not question by question.** The questionnaire walks the
-  schema and asks each field once, so that a later question starts at what the
-  answers before it recommend. A form shows every field and lets the operator
-  change any of them in any order, so it keeps recommendations current
-  instead: **a field still answered as offered follows a change of a field
-  before it** in schema order (each followed by the fields of its plugins)
-  that makes it offer something else, with the plugins answering it as they
-  offer; a field the operator changed stays. Choosing another format brings its
-  ranking and metrics, and so does a field of a plugin whose recommendations
-  depend on it (a single elimination with a match for third place ranks by
-  losses too). Whether a field is "as offered" is decided by answering a copy
-  of the draft as it offers, not by remembering what the operator touched, so
-  that a form of a phase loaded from its config follows in the same way.
-  **A field never follows a change of one after it**, the order the
-  questionnaire asks in: what a field offers also depends on what fits next to
-  the others, so the ranking would silently drop a criterion when the operator
-  removes the metric it needs, and the phase be ranked other than the operator
-  believes. The criterion stays and an issue at the metrics says what it
-  needs. Rejected: following every change (that silent drop), and following no
-  change at all (another format would keep the previous format's ranking).
-- **A list that follows fits what the operator kept.** The metrics a format
-  offers serve its ranking; when the operator changed the ranking, it stays,
-  while the metrics follow. So a list answered anew leaves out a plugin it
-  offers only because a plugin offered elsewhere and not chosen there needs it
-  (random rounds' Buchholz, when the ranking dropped the Buchholz criterion),
-  unless a plugin kept needs it, and keeps a plugin of its answer before that
-  a plugin chosen elsewhere needs (the points of *more points* kept, which a
-  single elimination does not offer). Read from the static declarations
-  (`PluginEntry::providers_in`), so the form still knows no plugin. Without it
-  a format change produced an issue the operator had not caused, or metrics
-  nothing ranks by. Rejected: following the ranking along with the metrics
-  (the operator's ranking would be lost).
-- **The plugins implied are shown, not chosen.** The view adds the implied
-  plugins (`Draft::add_implied`) to a copy and shows them after the chosen ones
-  of their list, as needed by another; they are not options to choose, and go
-  when nothing needs them. The draft itself never holds them, so removing the
-  criterion that needed one removes it too, as `Session::add_phase` builds.
-- **Issues where they are fixed.** The issues of the copy with the implied
-  plugins, built with nothing open (`Draft::build`), are put at the deepest
-  field or list item their path is within, and only those within none stay
-  with the form. An unanswered field is an issue, since the form is what the
-  phase is built from. A **warning** is said at its field as well, but does not
-  block: a phase ranked by nothing can be played, with everyone tied, which is
-  rarely what an operator wants.
-- **A set keeps its order.** The plugins of a list whose order does not matter
-  (the metrics) are shown in one order, chosen or not, the recommended first,
-  then by label (`ListInput::set`), so that a checkbox stays where it was
-  clicked; listing the chosen first moved the next one under the pointer.
-- **The form of a new phase starts out at the phase undone.** Undoing "add
-  phase" brings back the form as that phase was played (the session keeps its
-  config when it undoes it), so that adding it again adds the same phase
-  rather than the defaults.
-- **Options that fit, the recommended first.** A field offers the candidates
-  without conflicts (and the plugin chosen, even if it no longer fits), those
-  recommended first in their order, then the others by label, as the
-  questionnaire orders them.
-- **A number is entered as text** and taken once the operator leaves the field
-  (`onchange`) or presses Enter, with a comma as well as a point before the
-  decimals, and possibly an exponent. What is not a number of the field's range
-  leaves the answer as it was; the field shows what was entered with why until
-  the next change, rather than putting an invalid answer into the draft, which
-  takes only numbers of the range: what the field does not take (`2.5` for
-  rounds, nothing at all, a number too large) by the numbers it takes, what is
-  no number at all by what was typed. The input is `type=text` with an
-  `inputmode` for the keyboard: a `type=number` hands over an empty value for
-  what the browser does not read as a number (`0,5` where it expects a point,
-  read as `5` by some), so the form could neither say what was typed nor read
-  it as the operator meant.
-- **The focus stays with the operator's work.** After a change that replaces
-  or moves what had the focus, the focus goes where the operator continues: a
-  plugin moved keeps it (its element is moved, which loses it, so it is set
-  again), after a removal the next item gets it, else the one before, else the
-  list adding one; after a choice the select's button; after adding the phase
-  Start. Buttons that become unavailable while focused (undo, redo, the
-  previous and next round, moving the first plugin up) are `aria-disabled`
-  rather than `disabled`, which would drop the focus to the page.
-- **The phase once added is shown as a summary** read from the same view, and
-  edited in a dialog that starts out at its config (`Phase::config`). A
-  refusal, e.g. an edit a reported result does not fit, is shown in the
-  dialog, which stays open.
-- **The components of the Dioxus team** for the widgets: `select`, since a
-  plugin's option shows its description, which a native `option` cannot, and
-  `dialog`. They are copied into `tournament-gui/src/components/` and changed
-  there: the select's trigger is named by a label of the page together with
-  its value (a `label` around it would take the clicks on its options), and
-  colours too faint for WCAG AA on white are darker. `css_module` hashes their
-  class names, so their styles change in their own files. The language list in
-  the header stays a native `select`.
-
-#### Alternatives
-
-- **The GUI walking the schema itself**, as the questionnaire does. Only
-  testable in a browser, and every frontend would repeat it. Rejected.
-- **The questionnaire in the GUI**, one question at a time. Long for a phase of
-  a dozen fields, and an operator correcting one answer would go through all of
-  them again. Rejected.
-- **Replacing the whole draft by the format's defaults when the format
-  changes.** Throws away the operator's other changes, and does not cover a
-  field of a plugin changing what it recommends. Rejected for following the
-  fields answered as offered.
-- **Native `<select>`s** for the plugins. Accessible and fine on phones, but an
-  option is plain text, so the descriptions of the plugins would be missing
-  where the choice is made.
+Rejected: the GUI walking the schema (browser-only tests, repeated per
+frontend); the questionnaire one question at a time (long, and a correction
+walks through everything); replacing the draft by the format's defaults (loses
+other changes); native selects (no descriptions where the choice is made).
 
 ### Running a competition
 
-*Implemented* 2026-10-25: the organizer's screen after the start, in
-`tournament-gui`'s `play.rs` on data of `tournament-app`.
+- **One list of matches at a time**: a round, or those **playable now**
+  (`Session::playable`: open matches none of whose entrants has an open match of
+  an earlier round; entrants rather than rankings, for Monster DYP's teams).
+- **Results by keyboard, two ways.** A typed result (`Session::report_entered`):
+  the match number and `1`/`X`/`2` (football pools' notation, no language
+  needed; `3 1`, `3-1`, `3x`), or part of the winner's name, with the number
+  and `X` where needed (`ali`, `ali 5 X`), as an entrant at the desk says who
+  won. Names are found ignoring case and accents (`view::NameSearch`). It
+  reports only what fits one side of one open match and **never guesses** among
+  several, not even the one playable now: a wrong match reported is worse than a
+  number typed. A trailing number or `X` is part of the name while a name
+  contains it (`Malcolm X`, `Team 7`). While typing, the list shows the matches
+  it fits and the field says what Enter does (`Session::read_entered`). Result
+  buttons move the focus to the next match without a result, so it never falls
+  back to the page's start.
+- **What an action did is announced** in a live region, kept as data and said
+  when shown, so it follows a language change.
+- **Undoing the start asks first** (`Session::next_undo`): it leaves play for the
+  setup, unexpected when stepping back through results.
+- **Finding an entrant is the browser's find in page**: with 10–20 matches a
+  list, it answers "whom does Carol play" as well as a filter, which would have
+  overlapped the typed entry. So every name shown is text on the page, and what
+  is not shown is `hidden`. *Planned:* with running matches, entry belongs to
+  their list, where a name fits one match.
+- **A finished competition says who won** (`Session::winners`, all tied for first
+  by name); the list says it too through `Progress::Won` (older listings keep
+  `Progress::Finished` until their next save).
 
-#### Decision
-
-- **One list of matches at a time**: a round, or the matches that can be
-  played now, chosen above it (see [Layout](#layout) for how). A round is shown until
-  the operator chooses one, the first with a match without a result. **What
-  can be played now** (`Session::playable`) are the matches without a result
-  none of whose entrants still has a match of an earlier round to play: a
-  format may schedule several rounds at once (a round robin schedules all),
-  and an entrant plays one match at a time. Entrants rather than rankings, so
-  that a member of a team drawn anew each round (Monster DYP) counts too.
-- **Results by keyboard, two ways.** A field takes a result typed as the
-  number of its match and `1`, `X` or `2` (`Session::report_entered`, e.g.
-  `3 1`), the notation of football pools, which needs no word of a language
-  and no knowledge of which entrant is which side beyond the left and the
-  right of the match shown. The two are separated by whitespace or a `-`
-  (`3-1`); a draw needs no separator (`3x`), but a win does, since `31` could
-  be match 3 or match 31. A match that has a result already is named. The
-  field also takes part of the winner's name (2026-10-28), since an entrant
-  coming to the desk says who won rather than the number of the match,
-  followed by the number of the match where needed and by `X` for a draw, in
-  either order (`ali`, `ali 5`, `ali X`, `ali 5 X`; `Session::read_entered`).
-  The name is found by part of it, whatever the case and the accents
-  (`view::NameSearch`), among all open matches; it
-  says a result only if it fits one side of one match (one match for a draw);
-  otherwise the refusal asks for more of the name, or for the number of the
-  match. It never guesses which of several matches is meant, not even the one
-  playable now, which a round robin, where an entrant has an open match in
-  every round, would suggest: a match reported other than the one the
-  operator looks at is worse than a number typed. A number or an `X` at
-  the end is part of the name while a name contains it, so that `Malcolm X`
-  is his win and `Team 7` that team's: the longest name that fits wins. While
-  the field has text, the list shows the matches it fits, in place of the
-  round chosen, whose choice steps aside, the one Enter reports marked, and
-  the field says what Enter does ("Reports match 3: Alice won.") or why it
-  does nothing, so that a name found where it was not meant is seen before
-  Enter. A refused entry stays in the field to be corrected. And the result
-  buttons of a match move the focus on once one is pressed, which removes
-  them: to the first button of the next match of the list without a result
-  (after it, or else before it), or to the heading of the list if there is
-  none, which then names the round shown next; reopening a match focuses its
-  first result button. Without that, the focus would fall back to the start
-  of the page after each result. The buttons are focused through the handle
-  `onmounted` hands over, in components that exist only as long as their
-  buttons do, so that no handle of a button that is gone is kept.
-- **What an action did is announced** in a live region (`role="status"`,
-  always on the page so that a screen reader notices the change), and shown
-  to everyone: a result reported with what it led to (matches scheduled, every
-  match finished), a match reopened with the matches gone with it, and what an
-  undo or redo walked through (`Session::undo`/`redo` return the `Action`,
-  see [The app crate](#the-app-crate)). The announcement is kept as data
-  and said when shown, so that it follows a change of the language, like an
-  error. It goes with the next action.
-- **Undoing the start is asked about first**, in a dialog
-  (`Session::next_undo` tells the action an undo would undo): it leaves play
-  for the setup, a screen of another kind, which an operator stepping back
-  through results would not expect after the last one. Nothing is lost, redo
-  starts it again, so it is a question rather than a refusal. Every other undo
-  goes at once.
-- **The rows carry what the announcements say**: `Reported` and `Reopened`
-  hold the row of the match, with the result reported or the one it had.
-- **Finding an entrant is the browser's find in page** (2026-10-28). A
-  field above the list once showed only the matches of entrants whose name
-  contained what was typed (2026-10-26). It was removed: with 10–20 matches
-  in a list, jumping to a name the browser highlights answers "whom does
-  Carol play, and can she now?" as well as a filtered list, and the
-  browsers' find ignores case and accents too. A second field above the
-  list also overlapped the typed entry of results, which finds names the
-  same way (`view::NameSearch`: both folded by Unicode's canonical
-  decomposition, the accents dropped, so `muller` finds `Müller`; `ß` stays
-  itself) and, while it has text, takes over the list, so the search had to
-  step aside. Merging the two into one field was rejected: an Enter pressed
-  out of habit after a search would report a result, and a read-only tab
-  needs to search but cannot report. What finding by the browser needs is
-  that every name shown is text on the page, not drawn and not loaded only
-  when scrolled to, and that what is not shown is `hidden`, which find in
-  page skips. Planned: once a match can be running, the entry of results
-  belongs to the list of running matches, where an entrant has at most one,
-  so that a name fits one match there and one field can find and report.
-- **A finished competition says who won** (2026-10-27): once every match
-  scheduled has a result, `Session::winners` names the teams ranked first
-  (more than one when tied, then by name, since the standings order ties by
-  nothing an operator knows). A banner above the views says "Winner: …" or
-  "Tied for first: …", the first three places of the standings stand out
-  (bold, the first tinted). The list of competitions says it too: `Progress::Won` carries the
-  winners' names, since the list reads only the listings. Older listings say
-  `Progress::Finished`, kept so that they still read; the next save replaces
-  it. Undoing the last result takes all of it back, being read from the state.
-
-#### Alternatives
-
-- **A `Finished` that carries the winners**, in place of a new variant. The
-  listings stored before name it without them, and serde reads a unit variant
-  into a struct variant of the same name only by hand-written code. Rejected for
-  a variant of its own.
-- **Single-key shortcuts on the page** (e.g. `A`, `B`, `D` for the match
-  selected). Keys a screen reader uses itself, letters that differ by
-  language, and a hidden mode the operator has to know. The field says what
-  it takes next to it.
-- **Auto-advancing to the next round only while nothing was chosen** stays as
-  it was; pinning the round after each result was rejected, since the round
-  that follows is where the next results are entered.
+Rejected: single-key shortcuts (clash with screen readers, differ by language,
+a hidden mode); merging search and result entry (an Enter out of habit would
+report, and a read-only tab can search but not report); `Finished` gaining the
+winners (old listings would not read).
 
 ### The bracket
 
-*Implemented* 2026-10-26: a single and a double elimination show their
-bracket, every pairing in it from the start.
+- **What the GUI cannot know is in the engine.** Matches exist only once both
+  sides are known, so the pairings to come are in the knockout formats' state,
+  their `Bracket`, handed out read-only (`SingleElimination::bracket`,
+  `DoubleElimination::bracket`): pairings with round, annotations (so stage),
+  match once scheduled, and each side's source (`BracketSide`).
+- **The app knows the two formats, not the trait**: `Session::bracket` downcasts
+  the format (`PhaseFormat: Any`), splits pairings into sections (`BracketPart`)
+  and columns by stage (third place `below` the final), and works out the lines
+  and how an undecided side is named (by match number, else stage and place).
+- **What can only be a bye is worked out from the tree**: a pairing of two byes
+  keeps its slot, empty (`Unplayed::Byes`), so the geometry holds; a side
+  waiting on a pairing against a bye names who plays the bye; a reset says "if
+  needed", then "not needed" (`Unplayed::NotNeeded`).
+- **Drawn as columns of equal slots**: each column a grid of `1fr` rows, so a
+  pairing is level with the middle of the two it follows from at any size,
+  without measuring; lines are pseudo-element borders; long names wrap within
+  the narrowest column (`7rem`); all sections scroll sideways together. Read in
+  order it is the list of matches by stage, so no text alternative is needed.
+- **Shown in place of the columns** by the view switch, the rest kept `hidden`
+  so state survives; local storage remembers the choice.
+- **A result is a click on the winner's name** (a button "Alice wins", styled as
+  a link, since touch has no hover); the focus moves on as in the list.
+  Reopening and typed results stay in the list. A reopen a later result depends
+  on is refused naming that match; knowing beforehand would need a trial replay
+  per result on every render.
 
-#### Decision
-
-- **What the GUI cannot know is in the engine; the rest is not.** Matches
-  only exist once both sides are known, so from them alone a consumer sees
-  neither the pairings to come nor who of which earlier pairing they wait
-  for. That is in the state of the knockout formats, their `Bracket`, which
-  they hand out read-only (`SingleElimination::bracket`,
-  `DoubleElimination::bracket`, `None` before the start): its pairings in the
-  order they were added, each with its round, its annotations (so its stage,
-  through `PhaseFormat::stage`), its match once scheduled, and for each side
-  who took it and which pairing's winner or loser it comes from
-  (`BracketSide`). A pairing keeps its annotations once scheduled (they are
-  copied onto the match or the bye, no longer moved), so that pairings not
-  scheduled and scheduled ones are named alike.
-- **The app knows the two formats, not the trait.** `PhaseFormat` has `Any`
-  as a supertrait, and `Session::bracket` downcasts the phase's format to the
-  two knockout formats, splits the pairings into sections by their annotations
-  (`BracketPart`: the knockout, or the winner bracket, the loser bracket and
-  the grand final) and each section into columns by stage, with the match for
-  third place as the stage `below` the final's column, and works out the lines: a pairing's winner playing next
-  in the next column of its section is joined to it, straight on, or down or
-  up to meet the winner of its neighbour. A side not decided yet names its
-  source by the number of its match, or else by its stage and, where the
-  stage has several pairings, its place from the top.
-- **What can only be a bye is worked out from the tree** (2026-10-27). Byes
-  come only from the seats the bracket was built with, so a side is a bye for
-  certain if it is seated one, takes the loser of a pairing with such a side,
-  or the winner of a pairing of two. A pairing of two byes is never played
-  (`Unplayed::Byes`): it keeps its slot, empty, without lines, so that the
-  others stay where the lines meet them. A side taking the winner of a pairing
-  against a bye names whoever plays the bye ("Loser of 1" rather than "Winner
-  of Losers round 1 (1)"). A pairing only played if needed (the grand final
-  reset) says "if needed" until it is scheduled, and "not needed" once the
-  pairing it depends on ended without it (`Unplayed::NotNeeded`). Rejected:
-  dropping such pairings from the columns, which breaks the geometry of the
-  lines; the formats not adding them, since which ones are byes depends on the
-  number of entrants and the engine's tree is simpler whole.
-- **The GUI draws it as columns of equal slots.** Each column is a list of
-  slots of equal height (a grid of `1fr` rows, so a name of two lines makes
-  every slot of its column as high, and the columns stretch alike), so a
-  column of half as many pairings has slots twice as high and each pairing is
-  level with the middle of the two it follows from, at every size and without
-  measuring. The lines are borders of the slots' pseudo-elements, halfway
-  across the gap between columns, and each pairing is as wide as its column,
-  so that they reach it; a long name wraps within its pairing rather than
-  widening the column. All sections scroll sideways together, in one
-  scroller with a shadow at the edge where more is out of sight. Read
-  in order, it is the list of the matches of each stage, which is what a
-  screen reader gets, with the result said in words; no separate text
-  alternative is needed. The match for third place is in the final's column,
-  apart from the lines, a little below the level of the second semifinal (in
-  the bottom quarter of the column, positioned absolutely, so that it moves no
-  slot; a bracket whose first column has fewer than 8 pairings keeps room for
-  it below them). The bracket is shown in place of the columns, on the
-  full width, scrolling sideways where it does not fit: the view switch
-  chooses between "Matches & standings", "Bracket" and "Phase" where there is
-  room for two columns, and between the matches, the standings, the bracket
-  and the phase where there is not. What is not shown stays on
-  the page, `hidden`, so that the round chosen and the entry typed are kept. The
-  browser remembers whether the bracket was chosen (local storage), as it does
-  the typed entry of results. Where a side comes from wraps within the
-  narrowest column (`7rem`) rather than widening its column, so that a
-  knockout of 16 fits a tablet held upright.
-- **A result is reported in the bracket by a click on the side that won.**
-  While a match has no result, the names of its sides are buttons ("Alice
-  wins", said under the pointer too) shaped like the names, so that the
-  bracket keeps its size, but in the accent and underlined like links, since
-  a touch screen has no pointer to tint them under, with a line above the
-  bracket saying what a click does; a knockout has no draws. The focus then moves on to the next match without a result in
-  the order of the bracket, as in the list of matches. Reopening a match and
-  typing a result stay in the list of matches. Reopening a result a later one
-  depends on is refused naming that match (the log entry the engine's refusal
-  names, read back as the result it reports); Reopen stays offered, since
-  knowing beforehand would take a trial replay per result on every render.
-
-#### Alternatives
-
-- **A trait method for the bracket, or one for views of any kind**
-  (`fn views(&self) -> TypeMap`). The GUI needs code of its own for each kind
-  of view either way, so a generic method only moves the table of kinds; and a
-  method the formats report through is a self-reported fact. Kept for when a
-  third-party format needs a bracket drawn.
-- **The format drawing its view.** The engine knows nothing about display.
-- **The GUI rebuilding the tree from the matches**, linked by the entrants who
-  played. Shows nothing of the pairings to come, and the double elimination's
-  order of dropping into the loser bracket would be copied from the format.
-- **SVG.** Lines drawn by CSS keep the pairings HTML, the same text a list
-  has, and need no coordinates computed.
-- **The bracket below both columns**, always shown. With many entrants it is
-  far down the page, below the standings, and nothing on top tells that it is
-  there.
-- **Result buttons in the bracket as in the list of matches**, "Wins" below
-  each name. Every open pairing would grow, and with it the slots of every
-  column. Reporting only in the list was the first version.
-- **The bracket as a tab of a column** (beside the playable matches and the
-  rounds, or beside the standings). Half the width, so a large bracket
-  scrolls sideways more.
+Rejected: a trait method for views (moves the table of kinds, self-reported);
+the format drawing itself (the engine knows no display); rebuilding the tree
+from matches (no future pairings); SVG (CSS lines keep pairings as HTML text);
+the bracket below the columns (far down, unnoticed); result buttons in every
+pairing (every slot grows); the bracket in half the width.
 
 ### The cross table
 
-(2026-10-28)
+- **A phase whose teams stay the same shows a cross table** in the bracket's
+  place: a row and column per team, each cell the matches between them from the
+  row's side (`1`, `½`, `0`, said as won/drawn/lost). `Session::cross_table`
+  offers it where every match is between two single rankings and the format
+  plays no bracket (round robin, random rounds; not Monster DYP or knockouts),
+  so no table of formats beyond the bracket's.
+- **Rows by rank**, as published cross tables are; columns headed by row
+  numbers (names would make 20 columns too wide), names said to screen readers
+  and kept in sight while scrolling.
+- **Read-only**, an open match's cell empty: with rows by rank, reporting in the
+  table would move the cell under the operator's hand, and narrow cells fit
+  many teams.
 
-#### Decision
-
-- **A phase whose teams stay the same shows a cross table** in the place of
-  the bracket (the view switch's chart): a row and a column per team, each
-  cell the matches of the row's team against the column's, seen from the row
-  (`1`, `½`, `0`, said as "won", "drawn", "lost"), several in a cell where two
-  teams meet more than once. `Session::cross_table` offers it where each match
-  is played by two teams of one ranking each and the format plays no bracket:
-  a round robin, random rounds; not a Monster DYP, whose teams are drawn anew
-  each round, and not a knockout, which has its bracket. No table of formats
-  is kept beyond the bracket's.
-- **Rows by rank**, in the order of the standings, as every cross table
-  published is. Columns are headed by the rows' numbers, the names said to
-  screen readers, as names across the top would make a table of 20 too wide.
-  No column of ranks: the row's number is the rank but for ties, and the
-  standings show the ranks. The names stay in sight while it scrolls
-  sideways, as in the standings.
-- **Read-only.** An open match leaves its cell empty; results are reported in
-  the list of matches. With the rows by rank, a result reported in the table
-  would move the rows, and the cell with them, under the operator's hand.
-  With nothing but `1`, `½` or `0` in a cell, the columns are narrow, which a
-  table of many teams needs.
-
-#### Alternatives
-
-- **Rows in the order the entrants were entered**, which results do not
-  change, so that a cell stays where it was while results are reported in the
-  table (the first version, with an open match's number a button opening a
-  dialog with the result buttons). No cross table one sees elsewhere is in
-  that order, and the buttons widened every column.
-- **An open match shown by its number.** Tells which match is still to be
-  played, which the list of matches tells as well, at the cost of wider
-  columns.
-- **Rows in the order of the draw** (the rankings' initial order). Stable as
-  well, but an order the operator sees nowhere else.
+Rejected: rows in entry or draw order (stable, but an order seen nowhere else);
+open matches shown by number (wider columns, the list tells it anyway).
 
 ### Layout
 
-*Implemented* 2026-10-25: where the screens of `tournament-gui` put what they
-show, and in which colours, in `assets/style.css` (plain CSS). The page is
-used on laptops and tablets, and for small events on a
-phone alone; events have 20–40 entrants typically, but any number, in any
-format.
+For laptops and tablets, and small events on a phone alone; typically 20–40
+entrants, but any number and format.
 
-#### Decision
+- **One sticky bar on top**: back to the list, the competition's name, its
+  actions (undo, redo, export; icons only on narrow screens), and the view
+  switch below it, so undo is always at hand; `scroll-padding-top` keeps
+  keyboard targets clear. The language and theme are in the footer.
+- **Cards in columns where there is room**: the setup's entrants beside the
+  phase from 64rem, stacked below; after the start matches beside standings,
+  and below 60rem buttons choose which is shown (the other hidden by CSS only).
+  How the phase is played, the bracket and the cross table are views of the
+  switch at every width, since below the standings they were out of sight.
+- **The entrants grow with the page** (no inner scroll box), the field below
+  them keeping the focus.
+- **What can be clicked looks like a button**: bordered, 44px where the pointer
+  is coarse; one primary action per card.
+- **A match is a card**: the two sides around its number, each side's button
+  below its name, draw in the middle, columns aligned by subgrid; one per line,
+  since a list is read to find who plays whom. With a result it shrinks to one
+  row in place, so a round is mostly what is left to play without cards moving.
+- **Names are never cut or shrunk**, they wrap: a cut name may no longer tell
+  two entrants apart, and reporting for the wrong one is the worst mistake
+  possible. So result buttons say only "Wins", named "Alice wins" by
+  `aria-label`.
+- **Rounds are stepped through** (a select between previous/next), since a round
+  robin of 40 has 39 rounds.
+- **Standings** scroll sideways with the names sticky, abbreviate long headers
+  as chess does (`SB`, `Bh`, the `.column` translation) with the whole name and
+  the calculator's settings in the header's toggletip, and count matches
+  played.
+- **Matches are a list, not a table**: tables laid out as cards lose their
+  semantics in some browsers.
+- **Colours are tokens** named by role at the top of `style.css`, each
+  `light-dark(light, dark)`, following `color-scheme`: the system's or the one
+  chosen (`theme.rs`, `<html data-theme>`, applied by an inline script before
+  the first paint). No rule names a colour. Neutral greys and one navy accent.
+  Every pair meets WCAG AA (text 4.5:1, control borders and focus ring 3:1);
+  what is chosen is tinted and bold, not colour alone. Animations end at once
+  under `prefers-reduced-motion`.
 
-- **One bar on top** of every screen: the way back to all competitions and the
-  competition's name (the `Header`), followed by the competition's actions
-  (undo, redo, export), which the screen of the competition renders as a
-  sibling that the page's grid puts into the same row. On a narrow screen the
-  actions show icons only, their texts kept for screen readers. The language
-  is chosen in the footer, being chosen rarely. The bar stays on top while the
-  page scrolls (`position: sticky`, a fixed height), and so does the view
-  switch below it, so that undo and the other view are always at hand; the
-  page's `scroll-padding-top` keeps what the keyboard scrolls to clear of them.
-- **Cards in columns where there is room**: before the start the entrants
-  beside the phase (from 64rem, where their third leaves room for a name next
-  to its button), stacked below that, the entrants first, as the setup is done;
-  after the start the matches beside the standings, half and half. Where there
-  is room for one column only (below 60rem), two buttons choose which is shown
-  after the start; both stay on the page, the other hidden by CSS only. How
-  the phase is played is a view of its own after the start, chosen by a
-  button at every width (2026-10-28): below the standings, it was out of
-  sight once they were long, where the operator had to know to scroll for it.
-  A knockout adds its bracket to the buttons (see
-  [The bracket](#the-bracket)). The setup has no such buttons: its cards are
-  filled one after the other, and scrolling from the entrants to the phase
-  is what the operator does anyway.
-- **The entrants grow with the page**, rather than scrolling in a box of
-  their own inside the page's scroll, with the field adding one below them, so
-  that the one just added shows right above the field, which keeps the focus
-  and is scrolled into view.
-- **What can be clicked looks like a button**: bordered, also the small ones
-  (remove, reopen, the arrows moving a plugin, as icons), at least 44 pixels
-  where the pointer is a finger (`pointer: coarse`). One primary action per
-  card: adding the phase until it is added, then the start, which a line sets
-  apart from the phase above it.
-- **The form of a phase**: what the chosen plugin does under its choice, as
-  text, rather than a second ⓘ next to the field's; the numbers on a grid of a
-  column of labels and one of inputs, so that a plugin's inputs line up, the
-  numbers a field takes below its input; one column on a phone, where the
-  summary also puts each label above its answer.
-- **The dialog** is left-aligned like the page, its buttons kept at its bottom
-  while its form scrolls (with a scroll padding, so that what scrolls into
-  view is not under them), its backdrop darker in dark mode.
-- **A match is a card of two rows at every width**: the two sides around its
-  number, then each side's button below its name, the draw in the middle.
-  The columns are the same in every card (a CSS grid with a subgrid), so a
-  format without draws leaves the middle empty. One card per line: a list is
-  read to find who plays whom, not only to report. **Once it has a result, one
-  row**: the pairing, the winner marked, then a draw said and the button
-  reopening it, so that a round of 20 is mostly the matches still to play,
-  each in the place of its number (rather than finished ones moved to the end,
-  which would move a card the operator is looking for). On a phone the button
-  stays below the pairing, which needs the whole line.
-- **The standings abbreviate long headers** as chess does (`SB`, `Bh`), as
-  the English and German `.column` of the calculator, so that the columns of
-  numbers stay narrow and the names do not wrap; the CLI keeps the code's whole
-  name, having no toggletip to explain it. The toggletip of a header starts with
-  the metric's whole name where the header abbreviates it. A column of the
-  matches played tells an entrant that lost every match from one that has not
-  played yet. A toggletip in the standings, which scroll sideways and so cut off
-  what reaches out of them, is pinned to the window at its button.
-- **Names are never cut and never shrunk**: they wrap, even within a word. A
-  name cut short may tell two entrants apart no longer
-  ("Maximilian-Alexander Müller" and "…Meier"), and a result reported for the
-  wrong one is the worst mistake the screen allows; a smaller font fails users
-  who enlarge text. So the result buttons show only "Wins", which their place
-  below the name makes unambiguous, and are named "Alice wins" by their
-  `aria-label` (which holds the text shown, WCAG 2.5.3). Only the competition's
-  name in the bar is cut with "…", since it is shown in full in the list.
-- **Rounds are stepped through, not listed**: "Playable now" or "By round",
-  and for the round a select (with how many matches are open) between buttons
-  to the previous and the next one. A round robin of 40 has 39 rounds, too
-  many for a button each.
-- **The standings scroll sideways** where their columns do not fit, the names
-  staying in sight (a sticky column).
-- **Matches are a list, not a table.** CSS laying out the cells of a table as
-  cards takes the table's semantics from screen readers in some browsers; each
-  card says its number and its sides itself, the words a table's headers said
-  being visually hidden ("Match", "against").
-- **The e2e tests run at a laptop's size** (`--window-size=1280,900` in
-  `e2e-harness`), where every column is shown.
-- **Colours are tokens, light and dark as the system prefers, or as chosen**:
-  custom properties named by their role (`--text`, `--surface`, `--accent`,
-  `--accent-subtle`, `--error`, …) at the top of `style.css`, each one
-  `light-dark(light, dark)`, which follows `color-scheme`: the system's, unless
-  the operator chose light or dark in the footer (`theme.rs`, kept in local
-  storage like the language, applied as `<html data-theme>`, which sets
-  `color-scheme`; an inline script in `index.html` applies it before the page
-  is drawn, so that it does not flash in the system's colours). One value per
-  token, so no block of colours repeated for a media query and a choice. No
-  rule names a colour itself. Neutral greys
-  and one accent, the navy of the icon (lighter in dark, where navy would not
-  contrast). The theme variables of the copied components are mapped onto the
-  tokens, so they follow too, and `color-scheme` lets native controls follow.
-  Every pair meets WCAG AA (text 4.5:1, borders of controls and the focus ring
-  3:1). What is chosen (`aria-pressed`) is tinted and bold, not coloured only;
-  a match with a result recedes (dashed, on the background). Animations end at
-  once under `prefers-reduced-motion`.
-
-#### Alternatives
-
-- **A match on one line** (`Alice [Wins] [Draw] [Wins] Bob`) on wide screens:
-  cramped, and harder to read for who plays whom.
-- **Several cards per line**: leaves less room for long names, and the order
-  of the numbers runs across and down.
-- **A split between the columns the operator drags**: rare on web pages, so
-  rarely found, and accessible only with a keyboard-operated separator. A
-  button showing one column on the full width is the option kept for later
-  (also for a projector).
-- **Buttons adding the phase kept in sight at the bottom** (`position:
-  sticky`): they covered the field with the focus, which browsers do not
-  scroll out from under them, since it is within the window.
+Rejected: a match on one line (cramped); several cards per line (less room for
+names, numbers run across and down); a draggable split (rarely found, hard to
+make accessible); sticky add-phase buttons (covered the focused field).
 
 ### Offline and installing
 
-*Implemented* 2026-10-25, not hosted yet: the page is a PWA, which works
-offline once opened and can be installed as an app. Its files are in
-`tournament-gui/public/`, which `dx` copies next to `index.html`.
+The page is a PWA (files in `tournament-gui/public/`, copied next to
+`index.html`).
 
-#### Decision
+- **A service worker of its own** (`sw.js`): `dx` names assets by content, so
+  once kept they come from the cache; everything else comes from the network and
+  from the cache only when that fails. A changed page drops the old assets.
+- **The first visit is handed over**: `pwa.js` watches what the page loads
+  (`PerformanceObserver`) and hands it to the worker once active, so a page
+  opened once works at a venue without network.
+- **Relative URLs**, so it works under any path (`dx build --base-path`).
+- **The storage warning** words both causes the page cannot tell apart (a
+  browser deciding by use or space, a private window) and offers what helps:
+  exporting, installing while the browser offers it (`beforeinstallprompt`,
+  kept by `pwa.js` since it may come before the wasm runs; persistence is asked
+  again once installed), and not showing it again. It folds to one line once
+  read.
+- **The release build** is `dx build --release --debug-symbols false` (dx keeps
+  debug symbols otherwise) with the `wasm-release` profile (`opt-level = "s"`,
+  LTO, one codegen unit), keeping the wasm under 1 MB with gzip at about the
+  speed of `release`; `"z"` is smaller but more than twice as slow. The e2e
+  tests run on the same build.
 
-- **A service worker of its own** (`sw.js`, plain JavaScript) keeps
-  everything the page loads in one cache, as it loads it. The files under
-  `assets/` are named by `dx` after their content, so once kept they come from
-  the cache; everything else (the page, its manifest and icons) comes from the
-  network and is kept as it comes, and comes from the cache only when the
-  network fails or answers with an error. A page that differs from the one
-  kept is another version: the assets kept are dropped before it is answered,
-  so that the new version's are kept and the old ones do not pile up.
-- **The first visit is handed over.** The page loads before the worker takes
-  it over, so `pwa.js` watches what the page loads (a `PerformanceObserver`,
-  which also reports what was still loading) and hands the URLs to the worker
-  once it is active, which keeps what it lacks. So a page opened once, even
-  only briefly, opens at a venue without a network.
-- **Relative URLs** for everything of the page's own (manifest, worker,
-  icons), so that it works under any path; `dx build --base-path <path>`
-  makes the assets' URLs follow.
-- **The warning that the browser may not keep the competitions**, shown once
-  persistent storage is refused, words both causes, which the page cannot tell
-  apart: a browser short of space or deciding by how much a site is used
-  (Chrome refuses a site that is neither installed nor used much), and a
-  private window, whose storage goes with it (Firefox refuses there). No
-  button on the page changes the browser's answer, so it offers what helps:
-  exporting the competition open, installing the page while the browser
-  offers to (Chromium's `beforeinstallprompt`, kept by `pwa.js` since it may
-  come before the WebAssembly runs), after which persistence is asked for
-  again and usually granted, and not showing it again in this browser (in
-  local storage, which a private window drops with the rest).
-- **The release build is `dx build --release --debug-symbols false`**. `dx`
-  runs `wasm-opt -Oz` itself (binaryen 129, downloaded by `dx`), but keeps the
-  debug symbols by default even in release, and a setting in `Dioxus.toml`
-  does not change that: 4.4 MB of wasm with them, 2.4 MB (640 kB with brotli)
-  without. The e2e tests run on the same build.
+Rejected: precaching a build-time list (dx makes none); network first for
+assets (waits on a bad venue connection, and content-named assets never go
+stale); dismissing the warning per session only (nags in every tab).
 
-#### Alternatives
-
-- **Precaching a list of files made at build time** (what Workbox does). `dx`
-  makes no such list, and the names of the styles are only in the wasm, so it
-  would need a build step of its own after `dx`. Rejected for keeping what the
-  page loads.
-- **Network first for the assets too.** Waits for the network on every load,
-  which at a venue with a bad connection is worse than having none; their
-  names change with their content, so the cache is never stale.
-- **LTO or `opt-level = "s"`** for the build: with LTO the wasm grew to
-  3.1 MB and took twice as long to build; `opt-level = "s"` built the same
-  bytes as `dx`'s own profile.
-- **Dismissing the warning for the session only.** It would come back in every
-  new tab of a browser that refuses for good, the nag the rework was for.
-
-#### Hosting
-
-Not hosted yet. The page is static files that need HTTPS (for the service
-worker and the storage APIs) and nothing else of a server, so any static host
-does; GitHub Pages, built and deployed by a workflow of CI, is the likely one
-(under `/<repository>/`, hence `--base-path`). Build what is hosted in CI: the
-wasm holds the absolute paths of the source files of its assets, which a local
-build would publish.
+*Hosting (planned):* static files over HTTPS, likely GitHub Pages from a CI
+workflow (hence `--base-path`). Build what is hosted in CI: the wasm holds the
+absolute paths of its asset sources.
 
 ### Translation
 
-**Fluent** (`fluent-bundle`) for all UI text from the first screen. Plugin
-labels, descriptions and fields get keys derived from the plugin id and field
-name, with the English label from the code as the fallback, so plugins
-(including third-party ones) need no change and show in English until
-translated.
+**Fluent** (`fluent-bundle`) for all UI text, English and German. The machinery
+is in `tournament-app` (`i18n`), tested natively and in wasm.
 
-#### Implementation
-
-Implemented 2026-10-24, in English and German.
-
-- **The machinery is in `tournament-app`** (`i18n`), so that it is tested
-  natively and in wasm: `Language`, a `Translator` of one language, and
-  `check`, which a test of a consumer runs on its resources (they parse, give
-  no key twice, and every language has the messages and attributes English
-  has). The app's own messages (`locales/<lang>/app.ftl`) are what its errors
-  say; the GUI's (`tournament-gui/locales/<lang>/gui.ftl`) are handed to the
-  translator as a `Resources` function with an exhaustive `match` over the
-  languages, so that a new language does not compile until every consumer has
-  its messages.
-- **Errors say a `Text`** (a key and its variables) through the trait
-  `Message`, rather than a translated string. The GUI keeps the `Text` of the
-  error shown, so that choosing another language translates it too. English
-  says what `Display` says.
-- **Plugin keys are attributes of one message per plugin**:
-  `plugin-<id>` (each `::` as `-`) with `.label`, `.description`, `.column`
-  (the header of a calculator's column), `.field-<name>` and
-  `.field-<name>-description`. One message per plugin keeps its texts together
-  in the file, and attribute names cannot collide with another plugin's. English
-  has no plugin messages: the code is the English. A test checks that the
-  German file translates every plugin of the engine and nothing that does not
-  exist. To find a column's key, the standings name each column's calculator,
-  which `plugin_factory::id_of` tells behind a `dyn`.
-- **A message missing in the language is taken from English**, and one
-  missing there too shows its key, rather than failing: the e2e tests run in
-  English and would show the key.
-- **Isolation marks are kept.** Fluent wraps each variable in the invisible
-  marks U+2068 and U+2069, which isolate its writing direction. Names are typed
-  by the operator and may be written right to left whatever the language of
-  the GUI; without the marks, such a name next to a number or punctuation
-  (`Bye: …`, a team joined by `&`) would be reordered on the screen. The cost
-  is that the marks are part of the text: tests compare without them (the
-  harness's `expect_texts`, the GUI e2e crate's buttons by text and
-  `aria-label`), and text copied from the page carries them. Turning them off
-  was rejected: it trades correct names for simpler tests.
-- **The language** is the one chosen last in the browser (local storage), or
-  else the first of the browser's preferred languages the GUI speaks, or else
-  English. The GUI sets `<html lang>` and marks each language's name in the
-  list with its own `lang`.
-- **The fields of a phase itself** are no plugin's, so they are translated as
-  the attributes `.field-<name>` and `.field-<name>-description` of the message
-  `phase`, next to the plugins in `plugins.ftl`, and checked by the same test.
-- **A plugin's label can be a variable of a `Text`** (`Arg::Plugin`,
-  `Arg::Plugins`), translated when the text is said, so that an issue of a
-  draft names the plugins in the operator's language. The issues are
-  translated by their kind; what a plugin or an incompatibility says inside
-  one (a rejection's reason, the name of a fact) stays English.
-- **The stages a format names** (`PhaseFormat::stage`) are a `Stage`, the
-  engine's `Phrase` (see the cells below): a key
-  naming the stage among the format's, the numbers its name has (e.g. the
-  round of the loser bracket) and its English name, which is its `Display`.
-  They are translated as the attribute `.stage-<key>` of the format's message,
-  with the numbers as variables, so that a language can word them as it needs
-  (German has a word of its own for each fraction of the final, `Achtelfinale`,
-  where English says `Round of 16`, by the entrants rather than the
-  fraction). A format that names stages its message
-  does not translate shows them in English, as every plugin. The test of the
-  plugin messages lists the stages of the engine's formats itself, since a
-  format does not tell which stages it can name. Rejected: the GUI translating
-  the engine's annotations (`KnockoutRound`, ...), which would make it a table
-  of plugins.
-- **What a calculator's column shows** is a `Cell`, which its metric makes by
-  `ToCell` (`MetricColumn::new` requires it): a number (`Cell::Number` of a
-  `Score`), or a `Phrase` of the calculator's, e.g. `round 3` for the round of
-  a first loss, translated as the attribute `.cell-<key>` of the calculator's
-  message with the phrase's numbers as variables, as a stage is. A `Phrase` is
-  what a plugin says for a frontend, a stage's name being one, so stages and
-  cells share the type and the way they are translated. Rejected: the metric's
-  `Display`, which is English (`round 3`, `0.5`), and a cell of a plain
-  `String`, which would leave room for text no translation can find. The test
-  of the plugin messages lists the phrases of the engine's metrics, as it lists
-  the stages.
-- **Numbers are written as the language writes them**: `Translator::number`
-  (`0,5` in German), and Fluent's numbers inside messages too, through a
-  formatter of the bundle (a function pointer, which cannot capture the
-  language, so it is set for German alone). A comma is taken when entered.
-- **The detail of an error stays apart**: what a library or the browser says
-  about why (serde's `expected value at line 1 column 1`, a storage's error) is
-  the `Text`'s detail (`Text::with_detail`), not one of its variables, and the
-  GUI folds it away in a `<details>` below the alert, marked `lang="en"`,
-  outside the alert so that a screen reader does not read it out with the
-  error. The error's `Display` leaves it to its `source`, as Rust's errors do.
-  The reasons the engine gives in a refusal it does not know (`Rejected`) are
-  still variables, since they are all the refusal says.
-- **Errors are said as sentences on the screen.** The messages, like the
-  `Display`s they match, are fragments in lower case without a full stop, as
-  Rust's errors are; `Translator::sentence` capitalizes the first letter (past
-  the isolation mark of a leading variable) and ends it with a full stop, and
-  the GUI says errors, issues and warnings that way. Rejected: writing the
-  messages as sentences, which would part them from the `Display`s.
-- **A plugin's label standing alone is capitalized** by the GUI, as a field's
-  label is: an option, an item of a list, an answer of the summary, a column's
-  header. Inside a sentence (`Remove more points`, an issue naming a plugin) it
-  stays as the plugin labels it, lowercase but for names.
-- **The title of the page** has no isolation marks: tabs and windows show them
-  as boxes.
+- A `Translator` of a `Language` holds the app's messages (`app.ftl`, what its
+  errors say) and a consumer's, handed over as `Resources`, an exhaustive
+  `match` over languages, so a new language does not compile until every
+  consumer has its messages. `i18n::check` tests a consumer's resources.
+- **Errors say a `Text`** (key and variables) through `Message`, not a string,
+  so a shown error follows a language change. English says what `Display` says.
+- **One message per plugin** (`plugin-<id>`, `::` as `-`), its texts as
+  attributes (`.label`, `.description`, `.column`, `.field-<name>`,
+  `.field-<name>-description`): kept together, no collisions. English is the
+  code; a test checks German translates every engine plugin and nothing else.
+  Third-party plugins show in English until translated. The phase's own fields
+  are attributes of `phase`.
+- **A missing message falls back to English**, then to its key, rather than
+  failing.
+- **Stages and cells are `Phrase`s** (a key, its numbers, an English `Display`),
+  translated as `.stage-<key>` / `.cell-<key>` with the numbers as variables,
+  so a language words them its way (German `Achtelfinale` for `Round of 16`).
+  Rejected: the GUI translating the engine's annotations (a table of plugins);
+  cells as `String`s (untranslatable).
+- **A plugin's label can be a variable** (`Arg::Plugin`), translated when said,
+  so issues name plugins in the operator's language; what a plugin says inside
+  an issue stays English.
+- **Numbers are written as the language does** (`Translator::number`, `0,5`),
+  and a comma is taken when entered.
+- **An error's detail stays apart** (`Text::with_detail`: serde's position, a
+  storage error), folded away below the alert, outside it so screen readers do
+  not read it out, marked `lang="en"`; `Display` leaves it to `source`.
+- **Messages are lowercase fragments** like Rust's errors; `Translator::sentence`
+  makes a sentence for the screen. A plugin label standing alone is capitalized
+  by the GUI.
+- **Isolation marks are kept**: Fluent wraps variables in U+2068/U+2069, so a
+  right-to-left name next to numbers or punctuation is not reordered. Tests
+  compare without them; the page title has none (tabs show them as boxes).
+- **The language** is the one chosen last (local storage), else the browser's
+  first preferred one the GUI speaks, else English; `<html lang>` follows.
 
 ### Accessibility
 
-**WCAG 2.1 AA.** Widgets that need more than HTML (select, dialog, ...) come
-from the Dioxus team's components: `dx components add` copies their source into
-the project, and they build on `dioxus-primitives` from
-`DioxusLabs/dioxus-components`, which is unreleased, so a git dependency pinned
-in `Cargo.lock`. Everything else is semantic HTML. The e2e tests run an
-axe-core check on every page.
+**WCAG 2.1 AA.** Semantic HTML everywhere; widgets needing more (select,
+dialog) are the Dioxus team's components (`dx components add`, on the
+unreleased `dioxus-primitives`, a git dependency pinned in `Cargo.lock`), whose
+source in the project lets each be replaced on its own later. Rejected: own
+components from the start (ARIA patterns are much work to get right).
 
-The first components (`select`, `dialog`) came with the form of a phase, see
-[Configuring a phase](#configuring-a-phase).
-
-Implemented in `e2e-harness`, which both pages' e2e tests use: every test
-ends with a check of the page by axe-core against the rules of WCAG 2.1 A and
-AA, and a test can check states in between. axe-core is downloaded at a
-pinned version, checked against its SHA-256 and cached in the user's cache
-directory, like the chromedriver; it is too large (650 kB) to commit.
-
-#### End-to-end tests
-
-**A harness crate shared by one e2e crate per page** (`e2e-harness`,
-`tournament-web-e2e`, `tournament-gui-e2e`). The harness serves a built
-directory and runs Chrome, checks errors and accessibility and keeps what a
-failed test leaves; each page's crate wraps a `Page` in what an operator does
-there (`Terminal`, `Gui`). One crate for both pages would build both pages for
-either's tests, in one hook and one CI job; separate hooks let each be built
-by its own tool (trunk, dx) and fail on its own.
-
-#### Alternatives
-
-- **Own components from the start.** The ARIA patterns of a select or a dialog
-  (focus, keyboard, announcements) are much work to get right. Kept as a later
-  option instead: since the components' source is in the project, each can be
-  replaced on its own when the library falls behind.
+**End-to-end tests**: `e2e-harness` serves a built page, runs Chrome, fails on
+logged errors and on axe-core WCAG 2.1 A/AA violations (axe-core downloaded at a
+pinned version, checked by SHA-256, cached; too large to commit), and keeps what
+a failed test leaves. One crate per page (`tournament-web-e2e`,
+`tournament-gui-e2e`) wraps a `Page` in what an operator does there, so each
+page is built by its own tool (trunk, dx) in its own hook and fails on its own.
 
 ### Performance
 
-Fine for the first use cases (20–50 entrants). With 1000 entrants, undo, redo
-and loading replay the whole log, ~1.8 s in wasm at 5000 results and several
-seconds on a phone, which misses the requirement (< 1 s with 500 entrants on a
-mid-range phone). Snapshot checkpoints fix that, and come later. Independently
-of that, the UI shows one round (or a page) of matches at a time rather than
-thousands of rows.
+Fine for the first use cases (20–50 entrants). Undo, redo and loading replay
+the whole log, which at 1000 entrants and 5000 results takes ~1.8 s in wasm and
+several seconds on a phone, missing the requirement (< 1 s with 500 entrants on
+a mid-range phone). *Planned:* snapshot checkpoints. The UI shows one round of
+matches at a time rather than thousands of rows.
 
-#### Measurements
-
-Measured 2026-10-23 with the competition of the engine's `large_tournament`
-benchmark: 1000 entrants, random rounds over 10 rounds (5000 matches), every
-metric, ranked by 4 criteria.
-
-The engine alone, in wasm (`spike-core/tests/large.rs`, in the history), in
+Measured with the `large_tournament` benchmark's competition (1000 entrants,
+random rounds over 10 rounds, every metric, 4 criteria), the engine in wasm, in
 ms:
 
 | results reported | report one | undo / redo / load (replay) | native undo |
@@ -2312,17 +1005,13 @@ ms:
 | 2500 | 0.4 | 760–810 | 505 |
 | 4999 | 0.5 | 1680–1810 | 1120 |
 
-Building the match rows (5000) and standings (1000) takes 2–4 ms; saving the
-log as JSON 3–8 ms.
+Building 5000 match rows and 1000 standings rows takes 2–4 ms; saving the log as
+JSON 3–8 ms. In headless Chrome with all rows on the page and 2500 results, in
+ms until the page shows the change (4× CPU is a mid-range phone):
 
-In headless Chrome, with all 5000 matches and 1000 standings rows on the page
-and 2500 results reported, in ms until the page shows the change (4x CPU is
-Lighthouse's mid-range phone):
-
-| | Leptos 1x | Dioxus 1x | Leptos 4x CPU | Dioxus 4x CPU |
+| | Leptos 1× | Dioxus 1× | Leptos 4× CPU | Dioxus 4× CPU |
 |---|---|---|---|---|
 | load and render | 1750 | 1850 | 6660 | 7470 |
 | report one result | 160–200 | 75–90 | 480–510 | 320–350 |
 | undo it | 850–890 | 770–820 | 3410–3760 | 3080–3140 |
-| filter to 2500 rows | 135–150 | 130–145 | 550 | 510–530 |
 | back to 5000 rows | 630–720 | 370–390 | 2710–2780 | 1550–1560 |
