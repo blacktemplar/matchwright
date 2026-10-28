@@ -124,4 +124,3 @@ inherits = "dev"
 opt-level = 1
 debug = false
 debug-assertions = false
-strip = true
