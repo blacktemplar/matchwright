@@ -1,10 +1,12 @@
-# Tournament Engine — Design
+# Matchwright — Design
 
-A generic core library for running 1-on-1 match tournaments (single elimination,
-round robin, Swiss, ...), whose key components are pluggable and selected at
-runtime, with a CLI and a browser GUI on top. Each section states the decision,
-why, and the alternatives rejected. Sections marked *planned* are not
-implemented.
+Matchwright is a generic core library for running tournaments of matches
+between two sides (single elimination, round robin, Swiss, ...), whose key
+components are pluggable and selected at runtime, with a CLI and a browser GUI
+on top. [`README.md`](README.md) says what it does today and
+[`requirements.md`](requirements.md) what it is meant to do. Each section here
+states the decision, why, and the alternatives rejected. Sections marked
+*planned* are not implemented.
 
 ## Global constraints
 
@@ -624,7 +626,7 @@ whose); an origin per user (a user with two sessions); persisting the history
 ## Frontend
 
 The GUI an organizer runs a competition with, in the browser and offline
-(`requirements.md` says what it must do). It is not hosted yet. `tournament-web`,
+(`requirements.md` says what it must do). `tournament-web`,
 the CLI's command line in the browser, stays a thin text layer; the GUI is a
 separate app, not built on it.
 
@@ -927,9 +929,10 @@ Rejected: precaching a build-time list (dx makes none); network first for
 assets (waits on a bad venue connection, and content-named assets never go
 stale); dismissing the warning per session only (nags in every tab).
 
-*Hosting (planned):* static files over HTTPS, likely GitHub Pages from a CI
-workflow (hence `--base-path`). Build what is hosted in CI: the wasm holds the
-absolute paths of its asset sources.
+*Hosting (planned):* static files over HTTPS on GitHub Pages, under
+`/matchwright/` (hence `--base-path`), built and deployed by a CI workflow:
+the wasm holds the absolute paths of its asset sources, so what is hosted must
+not be built on a developer's machine.
 
 ### Translation
 
