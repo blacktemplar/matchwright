@@ -13,7 +13,9 @@ use tournament_engine::{
     Score,
     plugins::{
         metrics_calculator::{Cell as MetricCell, MoreWins},
-        phase_format::{DoubleElimination, MonsterDyp, RoundRobin, SingleElimination},
+        phase_format::{
+            DoubleElimination, MonsterDyp, RandomRounds, RoundRobin, SingleElimination,
+        },
     },
 };
 #[cfg(target_arch = "wasm32")]
@@ -1252,6 +1254,31 @@ fn a_phase_edited_without_a_change_is_left_as_it_is() {
     assert!(
         !session.competition().is_started(),
         "the edit that changed nothing is no action, so undo undoes the start"
+    );
+}
+
+/// More rounds keep those drawn already, so rounds are added after a result.
+#[test]
+fn rounds_are_added_to_random_rounds_after_a_result() {
+    let mut session = Given::new()
+        .entrants(&["A", "B", "C", "D", "E", "F", "G", "H"])
+        .format(RandomRounds::ID)
+        .started();
+    let first = numbered(&session, 1);
+    session.report(first, MatchResult::AWins).unwrap();
+    let mut draft = session.phase_draft_to_edit().unwrap();
+    draft
+        .set(&ConfigPath::ROOT.field("format").field("rounds"), 7_u32)
+        .unwrap();
+
+    assert!(session.edit_phase(&draft).unwrap());
+
+    assert_eq!(session.rounds().len(), 7);
+    assert_eq!(numbered(&session, 1), first);
+    assert_eq!(
+        matches(&session)[0].result,
+        Some(MatchResult::AWins),
+        "the result stays"
     );
 }
 

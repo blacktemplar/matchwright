@@ -1248,6 +1248,14 @@ then played as if it had been added that way, at any point of the competition.
   the `Draft::from_built` rejected above for adding the implied plugins: the
   implied plugins are answers by now, so an operator removing what required one
   removes it too.
+- **A format draws so that a change keeps what it can.** The results stay only
+  while the changed phase schedules their matches, so a format drawing at
+  random draws what does not depend on a field first: random rounds shuffles
+  every rotation of the round robin and takes as many as it has rounds, so that
+  more rounds keep those drawn for fewer and rounds can be added once the first
+  are played. Sampling the rounds asked for, as it did at first, drew other
+  rounds for another number of them (changing this changed the draw of every
+  random-rounds phase, so saved logs of one with results no longer replay).
 - **Found through the phase id.** The replacement keeps the phase id, so the
   `AddPhase` in effect that added a phase is found by downcasting, as a report
   is for `undo_match_result`.

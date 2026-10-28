@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use plugin_factory::{Plugin, config::PluginConfig, register};
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -74,9 +74,12 @@ impl PhaseFormat for RandomRounds {
             return Schedule::default();
         }
         let circle = Circle::new(phase_data);
-        let mut rng = phase_data.rng();
-        let mut rotations = (0..circle.rotations()).sample(&mut rng, self.rounds as usize);
-        rotations.shuffle(&mut rng);
+        // every rotation in an order drawn whatever the number of rounds, the first ones taken, so
+        // that more rounds keep those drawn for fewer, e.g. when the phase is changed after the
+        // start
+        let mut rotations: Vec<_> = (0..circle.rotations()).collect();
+        rotations.shuffle(&mut phase_data.rng());
+        rotations.truncate(self.rounds as usize);
         let mut schedule = Schedule::default();
         for (rotation, round) in rotations.into_iter().zip(NonZeroU32::MIN..) {
             circle.schedule_round(rotation, round, &mut schedule);
@@ -182,5 +185,29 @@ mod tests {
             phase.matches().values().map(Match::round).max(),
             Some(NonZero::new(7).unwrap())
         );
+    }
+
+    /// More rounds keep the rounds drawn for fewer, so that rounds can be added to a phase whose
+    /// first ones are played.
+    #[test]
+    fn more_rounds_keep_the_rounds_drawn_for_fewer() {
+        let drawn = |rounds| {
+            let mut phase = PhaseBuilder::new()
+                .format(RandomRounds::new(rounds))
+                .add_players(8)
+                .build();
+            phase.create_new_matches();
+            phase
+                .data()
+                .matches()
+                .values()
+                .map(Match::id)
+                .collect::<Vec<_>>()
+        };
+
+        let (fewer, more) = (drawn(3), drawn(5));
+
+        assert_eq!(more.len(), 5 * 4);
+        assert_eq!(fewer, more[..3 * 4]);
     }
 }

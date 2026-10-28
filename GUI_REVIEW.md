@@ -342,7 +342,11 @@ The original plan of this step:
   `tournament_engine::plugins`, checked by its test), errors as sentences, "entrant" not "team",
   hide "Points for a draw" where the format has no draws (a fact the format declares).
 
-### 9. Layout polish (look and feel, L4, L7, L9, L10, P4, E2) — done but E2
+### 9. Layout polish (look and feel, L4, L7, L9, L10, P4, E2) — done
+
+E2, decided 2026-10-28: random rounds shuffles every rotation and takes the first `rounds`, so
+more rounds keep the earlier ones and rounds can be added after a result; saved logs of a
+random-rounds phase with results no longer replay.
 
 Done in four commits:
 
