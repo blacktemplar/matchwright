@@ -369,11 +369,9 @@ Done in four commits:
   entrant's ignoring case and NFKC is pointed out while typed, and taken.
 - P4: undoing the start asks first.
 - Not done: open matches first (finished ones on one line instead, which keeps each in the place
-  of its number). E2, confirmed: random rounds samples `rounds` of the rotations and shuffles them,
-  so the rounds drawn depend on how many are asked for; adding rounds after a result is refused,
-  since the reported matches are no longer scheduled. Shuffling every rotation and taking the first
-  `rounds` keeps the earlier rounds, but changes the draw of every random-rounds phase, so saved
-  logs of one with results would no longer replay; left for a decision.
+  of its number). E2 was confirmed here (random rounds sampled `rounds` of the rotations, so the
+  rounds drawn depended on how many were asked for, and adding rounds after a result was refused)
+  and then done in a commit of its own, as said above.
 
 The original plan of this step:
 
