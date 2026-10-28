@@ -39,8 +39,8 @@ e2e-harness = { path = "e2e-harness" }
 fluent-bundle = "0.16.0"
 # of the version fluent-bundle parses with, for reading the messages of its resources
 fluent-syntax = "0.12.0"
-futures-channel = "0.3.31"
-futures-util = "0.3.31"
+futures-channel = "0.3.34"
+futures-util = "0.3.34"
 getrandom = "0.4.3"
 # IndexedDB, the browser's database
 idb = "0.6.5"
@@ -59,7 +59,7 @@ rustc-hash = "2.1.3"
 rustyline = "19.0.0"
 serde = "1.0.229"
 serde_json = "1.0.154"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 shlex = "2.0.1"
 tempfile = "3.27.0"
 # a client of WebDriver that starts the driver itself (`manager`), downloading it if needed, and
@@ -85,7 +85,7 @@ undoable-state-machine = { git = "https://github.com/blacktemplar/undoable-state
 unic-langid = "0.9.6"
 # splits a letter from its accents, so that a search ignores them
 unicode-normalization = "0.1.26"
-uuid = { version = "1.28.0", features = ["v5", "serde"] }
+uuid = { version = "1.29.0", features = ["v5", "serde"] }
 vec1 = { version = "1.12.1", features = ["serde"] }
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
