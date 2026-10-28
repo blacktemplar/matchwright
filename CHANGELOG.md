@@ -10,12 +10,6 @@ a file whose `"format"` changes is migrated, not refused.
 
 ## [Unreleased]
 
-### Changed
-
-- The help says that nothing entered leaves the device and that there is no
-  tracking, and that GitHub Pages, which serves the page, sees the IP address.
-- The help names the media owner (§ 25 MedienG).
-
 ## [0.1.0] - 2026-10-28
 
 The first release, hosted at <https://blacktemplar.github.io/matchwright/>.
@@ -36,6 +30,9 @@ The first release, hosted at <https://blacktemplar.github.io/matchwright/>.
   a competition at a time; export and import as a file (format 1), which the
   command line (`tournament-cli`, also in the browser as `tournament-web`)
   opens and saves as well.
+- A help page, which says that nothing entered leaves the device and that there
+  is no tracking, that GitHub Pages, which serves the page, sees the IP address,
+  and who the media owner is (§ 25 MedienG).
 
 [Unreleased]: https://github.com/blacktemplar/matchwright/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/blacktemplar/matchwright/releases/tag/v0.1.0
