@@ -131,14 +131,17 @@ impl Session {
             }
         }
 
+        let number = |pairing: &Pairing| {
+            pairing.number.map(|number| {
+                usize::try_from(number.get()).expect("a number of a match fits a usize")
+            })
+        };
         let source = |id: PairingId| {
             let pairing = by_id[&id];
             let place = places[&id];
             let column = &layout[place.section].1[place.column].1;
             BracketSource {
-                number: pairing.number.map(|number| {
-                    usize::try_from(number.get()).expect("a number of a match fits a usize")
-                }),
+                number: number(pairing),
                 stage: stage(phase, pairing.annotations),
                 position: (column.len() > 1).then_some(place.index + 1),
             }
@@ -189,6 +192,7 @@ impl Session {
             let from = || pairing.sides.iter().filter_map(|side| side.from);
             let unplayed = unplayed.get(&pairing.id).copied();
             BracketPairing {
+                number: number(pairing),
                 r#match: pairing.r#match.map(|id| {
                     let r#match = data
                         .matches()

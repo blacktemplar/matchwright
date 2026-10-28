@@ -934,6 +934,23 @@ impl Gui {
             .await
     }
 
+    /// Waits until the numbers of the bracket's pairings are `numbers`, in the order of the
+    /// bracket, scheduled or not, e.g. `"3"`.
+    ///
+    /// # Panics
+    /// Panics if they are not in time, with the numbers shown instead.
+    pub async fn expect_bracket_numbers(&self, numbers: &[&str]) -> WebDriverResult<()> {
+        // each after the hidden word "Match", which is a block of its own
+        let texts: Vec<_> = numbers
+            .iter()
+            .map(|number| format!("Match\n{number}"))
+            .collect();
+        let texts: Vec<_> = texts.iter().map(String::as_str).collect();
+        self.page
+            .expect_texts(By::Css(".bracket .pairing > .number:not(:empty)"), &texts)
+            .await
+    }
+
     /// Reports that the side drawn on top of the match numbered `number` in the bracket won, by a
     /// click on its name.
     pub async fn win_in_bracket(&self, number: &str) -> WebDriverResult<()> {

@@ -589,7 +589,7 @@ fn a_knockout_numbers_its_matches_by_the_bracket() {
 }
 
 /// Of six entrants, the best two have byes in the quarterfinals, so neither semifinal is scheduled
-/// at the start; the final names them by the numbers their matches will have.
+/// at the start; the final names them by the numbers their matches will have, which they show.
 #[test]
 fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_the_number_of_its_match() {
     let session = Given::new()
@@ -598,6 +598,15 @@ fn a_side_waiting_for_a_pairing_not_scheduled_yet_names_the_number_of_its_match(
         .started();
 
     let bracket = session.bracket().unwrap();
+
+    let semifinals = &bracket.sections[0].columns[1].pairings;
+    assert_eq!(
+        semifinals
+            .iter()
+            .map(|pairing| (pairing.number, pairing.r#match.is_some()))
+            .collect::<Vec<_>>(),
+        [(Some(3), false), (Some(4), false)]
+    );
 
     let knockout = columns(&bracket.sections[0]);
     assert_eq!(

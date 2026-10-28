@@ -231,7 +231,7 @@ async fn a_reopened_match_has_the_focus_and_is_announced() {
 }
 
 /// The final and the match for third place wait for the semifinals in the bracket, and take
-/// their entrants as those are decided.
+/// their entrants as those are decided; they show the numbers they are named by before that.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_bracket_shows_who_meets_whom() {
@@ -248,6 +248,7 @@ async fn the_bracket_shows_who_meets_whom() {
             .await?;
         gui.expect_bracket_waiting(&["Winner of 1", "Winner of 2", "Loser of 2", "Loser of 1"])
             .await?;
+        gui.expect_bracket_numbers(&["1", "2", "3", "4"]).await?;
         gui.page.check_accessibility().await?;
 
         gui.click("Matches & standings").await?;

@@ -231,10 +231,11 @@ fn Pairing(pairing: BracketPairing, focus: Signal<Option<Focus>>) -> Element {
     rsx! {
         li { class: "slot {line_in} {line_out}",
             div { class: "pairing {finished}",
-                if let Some(row) = &pairing.r#match {
+                // also before it is scheduled, since the sides waiting for it name it by its number
+                if let Some(number) = pairing.number {
                     span { class: "number",
                         span { class: "visually-hidden", {tr.get("match")} }
-                        " {row.number}"
+                        " {number}"
                     }
                 } else {
                     // empty, so that the names line up with those of the numbered pairings

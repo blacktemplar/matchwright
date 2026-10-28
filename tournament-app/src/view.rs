@@ -186,6 +186,10 @@ pub struct BracketColumn {
 /// A pairing of a [`Bracket`]: a match, once both of its sides are known.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BracketPairing {
+    /// The number its match has once scheduled (see [`MatchRow::number`]), from the start, which
+    /// the sides waiting for it name it by, see [`BracketSource::number`]; `None` if it is never a
+    /// match.
+    pub number: Option<usize>,
     /// Its match, once scheduled.
     pub r#match: Option<MatchRow>,
     /// Sides A and B.
@@ -225,7 +229,7 @@ pub enum BracketEntry {
 /// The pairing a side of a [`BracketPairing`] is waiting for.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BracketSource {
-    /// The number of its match, once scheduled, see [`MatchRow::number`].
+    /// Its number, see [`BracketPairing::number`].
     pub number: Option<usize>,
     pub stage: Option<StageName>,
     /// Its place in the column of its stage, from 1 at the top, if the column has several
