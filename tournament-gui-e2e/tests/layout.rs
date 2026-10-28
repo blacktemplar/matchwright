@@ -33,6 +33,31 @@ async fn the_lines_of_the_bracket_meet_whatever_the_names() {
     .await;
 }
 
+/// A knockout's view switch has four buttons on a phone, which fit with the German words.
+#[tokio::test]
+#[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
+async fn the_views_of_a_knockout_fit_a_phone_in_german() {
+    run_in_new_competition(async |gui| {
+        gui.page.resize(360, 740).await?;
+        gui.choose_language("Deutsch").await?;
+        for name in ["Alice", "Bob"] {
+            gui.add_entrant(name).await?;
+        }
+        gui.choose_format("K.-o.-System").await?;
+        gui.click("Phase hinzufügen").await?;
+        gui.click("Starten").await?;
+
+        gui.click("Phase").await?;
+
+        // those shown on a phone
+        gui.page
+            .expect_room_for_words(".view-switch button:not(.wide-only)")
+            .await?;
+        gui.page.expect_no_sideways_scroll().await
+    })
+    .await;
+}
+
 /// A double elimination of 6 has byes, and a loser bracket whose rounds alternate between
 /// dropping losers in and halving.
 #[tokio::test]

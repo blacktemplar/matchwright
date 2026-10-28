@@ -1089,18 +1089,6 @@ impl Gui {
             .await
     }
 
-    /// Shows how the phase is played where it is folded away, once every match is played.
-    pub async fn unfold_phase(&self) -> WebDriverResult<()> {
-        self.driver
-            .query(By::Css("details:not([open]):has(#phase) > summary"))
-            .first()
-            .await?
-            .click()
-            .await?;
-        Page::pause().await;
-        Ok(())
-    }
-
     /// Waits until the places of the standings that stand out once every match is played, the
     /// first three, name `names`, best first; none while a match has no result.
     ///

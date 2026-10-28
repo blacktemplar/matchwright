@@ -536,10 +536,14 @@ footer select {
   .wide-only {
     display: none;
   }
+
+  /* up to four views on a phone: the matches, the standings, the bracket and the phase */
+  .view-switch button {
+    padding: 0 var(--space-2);
+  }
 }
 
 @media (width >= 60rem) {
-  .view-switch:not(.with-bracket),
   .narrow-only {
     display: none;
   }
@@ -1559,15 +1563,6 @@ tr.podium[data-rank="1"] td {
   font-size: 1.1rem;
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-
-/* the phase once every match is played, folded away under its heading */
-details.card > summary {
-  cursor: pointer;
-}
-
-details.card > summary > h2 {
-  display: inline;
 }
 
 /* the toggletip of a header: small, so that the header row stays low, and its text aligned with

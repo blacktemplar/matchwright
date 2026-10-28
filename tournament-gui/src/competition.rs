@@ -347,19 +347,20 @@ fn undo(ctx: Ctx) {
 }
 
 /// What the screen after the start shows: the matches or the standings, both side by side where
-/// there is room for two columns, or the bracket of a knockout.
+/// there is room for two columns, the bracket of a knockout, or how the phase is played.
 #[derive(Clone, Copy, PartialEq)]
 enum Column {
     Matches,
     Standings,
     Bracket,
+    Phase,
 }
 
-/// The screen after the start: the matches, and next to them the standings and how the phase is
-/// played, or in their place the bracket of a knockout, on the full width. Buttons on top choose
-/// what is shown: the matches, the standings or the bracket where there is room for one column
-/// only, else the two columns or the bracket, shown only for a knockout. Everything stays on the
-/// page, hidden while not shown.
+/// The screen after the start: the matches and next to them the standings, or in their place the
+/// bracket of a knockout or how the phase is played, on the full width. Buttons on top choose what
+/// is shown: the matches, the standings, the bracket or the phase where there is room for one
+/// column only, else the two columns, the bracket or the phase; the bracket only for a knockout.
+/// Everything stays on the page, hidden while not shown.
 #[component]
 fn Play() -> Element {
     let ctx = use_context::<Ctx>();
@@ -378,7 +379,10 @@ fn Play() -> Element {
     };
     let mut show = move |column| {
         shown.set(column);
-        remember_bracket(column == Column::Bracket);
+        // the phase is looked at now and then, so the next visit shows what was played on
+        if column != Column::Phase {
+            remember_bracket(column == Column::Bracket);
+        }
     };
     let tr = ctx.translator.read();
     let column = |column| {
@@ -388,7 +392,7 @@ fn Play() -> Element {
             "column hidden-narrow"
         }
     };
-    let bracket_shown = current == Column::Bracket;
+    let columns_shown = matches!(current, Column::Matches | Column::Standings);
     let winners = ctx.session.read().winners();
     rsx! {
         if let Some(winners) = &winners {
@@ -396,7 +400,6 @@ fn Play() -> Element {
         }
         div {
             class: "segmented view-switch",
-            class: if has_bracket { "with-bracket" },
             role: "group",
             aria_label: tr.get("view"),
             button {
@@ -411,41 +414,36 @@ fn Play() -> Element {
                 onclick: move |_| show(Column::Standings),
                 {tr.get("standings")}
             }
+            button {
+                class: "wide-only",
+                aria_pressed: columns_shown,
+                onclick: move |_| show(Column::Matches),
+                {tr.get("matches-and-standings")}
+            }
             if has_bracket {
                 button {
-                    class: "wide-only",
-                    aria_pressed: !bracket_shown,
-                    onclick: move |_| show(Column::Matches),
-                    {tr.get("matches-and-standings")}
-                }
-                button {
-                    aria_pressed: bracket_shown,
+                    aria_pressed: current == Column::Bracket,
                     onclick: move |_| show(Column::Bracket),
                     {tr.get("bracket")}
                 }
             }
+            button {
+                aria_pressed: current == Column::Phase,
+                onclick: move |_| show(Column::Phase),
+                {tr.get("phase-heading")}
+            }
         }
         div { class: "columns play",
-            div { class: column(Column::Matches), hidden: bracket_shown, Rounds {} }
-            div { class: column(Column::Standings), hidden: bracket_shown,
-                Standings {}
-                // out of the way once every match is played, where it is rarely changed
-                if winners.is_some() {
-                    details { class: "card", aria_labelledby: "phase",
-                        summary {
-                            h2 { id: "phase", {tr.get("phase-heading")} }
-                        }
-                        PhaseSummary {}
-                    }
-                } else {
-                    section { class: "card", aria_labelledby: "phase",
-                        h2 { id: "phase", {tr.get("phase-heading")} }
-                        PhaseSummary {}
-                    }
-                }
-            }
+            div { class: column(Column::Matches), hidden: !columns_shown, Rounds {} }
+            div { class: column(Column::Standings), hidden: !columns_shown, Standings {} }
             if has_bracket {
-                div { class: "column wide", hidden: !bracket_shown, Bracket {} }
+                div { class: "column wide", hidden: current != Column::Bracket, Bracket {} }
+            }
+            div { class: "column wide", hidden: current != Column::Phase,
+                section { class: "card", aria_labelledby: "phase",
+                    h2 { id: "phase", {tr.get("phase-heading")} }
+                    PhaseSummary {}
+                }
             }
         }
     }

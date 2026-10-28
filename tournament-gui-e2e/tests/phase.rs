@@ -375,6 +375,7 @@ async fn a_tap_on_the_info_of_an_option_shows_its_description_without_choosing_i
 async fn what_is_said_about_a_field_at_the_right_of_the_dialog_shows_whole() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui).await?;
+        gui.click("Phase").await?;
         gui.click("Edit phase").await?;
 
         gui.hover_labelled("About weight of an opponent played to a draw")
@@ -386,14 +387,15 @@ async fn what_is_said_about_a_field_at_the_right_of_the_dialog_shows_whole() {
     .await;
 }
 
+/// After the start, the phase is a view of its own, where it is edited in a dialog.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_phase_is_edited_after_the_start_in_a_dialog() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui).await?;
         gui.click_labelled("Alice wins").await?;
-        // every match played, the phase is folded away
-        gui.unfold_phase().await?;
+        gui.click("Phase").await?;
+        gui.expect_view("Phase").await?;
 
         gui.click("Edit phase").await?;
         gui.click_labelled("Move more Sonneborn-Berger up").await?;
@@ -409,7 +411,6 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
             "Sonneborn-Berger",
         ])
         .await?;
-        gui.expect_results(&["Alice won"]).await?;
         gui.click("Undo").await?;
         gui.expect_phase(&[
             "Round robin",
@@ -418,7 +419,9 @@ async fn the_phase_is_edited_after_the_start_in_a_dialog() {
             "Points",
             "Sonneborn-Berger",
         ])
-        .await
+        .await?;
+        gui.click("Matches & standings").await?;
+        gui.expect_results(&["Alice won"]).await
     })
     .await;
 }
@@ -431,7 +434,7 @@ async fn an_edit_a_result_does_not_fit_is_refused_in_the_dialog() {
     run_in_new_competition(async |gui| {
         start_round_robin(&gui).await?;
         gui.click_labelled("Alice wins").await?;
-        gui.unfold_phase().await?;
+        gui.click("Phase").await?;
         gui.click("Edit phase").await?;
 
         gui.choose_format("Monster DYP").await?;

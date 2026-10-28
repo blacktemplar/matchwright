@@ -1773,8 +1773,7 @@ tested natively and in wasm, and knows no plugin.
   (more than one when tied, then by name, since the standings order ties by
   nothing an operator knows). A banner above the views says "Winner: …" or
   "Tied for first: …", the first three places of the standings stand out
-  (bold, the first tinted), and the phase folds away under its heading, still
-  editable. The list of competitions says it too: `Progress::Won` carries the
+  (bold, the first tinted). The list of competitions says it too: `Progress::Won` carries the
   winners' names, since the list reads only the listings. Older listings say
   `Progress::Finished`, kept so that they still read; the next save replaces
   it. Undoing the last result takes all of it back, being read from the state.
@@ -1852,10 +1851,10 @@ bracket, every pairing in it from the start.
   the bottom quarter of the column, positioned absolutely, so that it moves no
   slot; a bracket whose first column has fewer than 8 pairings keeps room for
   it below them). The bracket is shown in place of the columns, on the
-  full width, scrolling sideways where it does not fit: for a knockout, the
-  view switch is shown at every width, choosing between "Matches & standings"
-  and "Bracket" where there is room for two columns, and between the matches,
-  the standings and the bracket where there is not. What is not shown stays on
+  full width, scrolling sideways where it does not fit: the view switch
+  chooses between "Matches & standings", "Bracket" and "Phase" where there is
+  room for two columns, and between the matches, the standings, the bracket
+  and the phase where there is not. What is not shown stays on
   the page, `hidden`, so that the round chosen and the search are kept. The
   browser remembers whether the bracket was chosen (local storage), as it does
   the typed entry of results. Where a side comes from wraps within the
@@ -1918,11 +1917,13 @@ format.
 - **Cards in columns where there is room**: before the start the entrants
   beside the phase (from 64rem, where their third leaves room for a name next
   to its button), stacked below that, the entrants first, as the setup is done;
-  after the start the matches beside the standings (and how the phase is
-  played), half and half. Where there is room for one column only (below
-  60rem), two buttons choose which is shown after the start; both stay on the
-  page, the other hidden by CSS only. A knockout adds its bracket to the
-  buttons, which it then shows at every width (see
+  after the start the matches beside the standings, half and half. Where there
+  is room for one column only (below 60rem), two buttons choose which is shown
+  after the start; both stay on the page, the other hidden by CSS only. How
+  the phase is played is a view of its own after the start, chosen by a
+  button at every width (2026-10-28): below the standings, it was out of
+  sight once they were long, where the operator had to know to scroll for it.
+  A knockout adds its bracket to the buttons (see
   [The bracket](#the-bracket)). The setup has no such buttons: its cards are
   filled one after the other, and scrolling from the entrants to the phase
   is what the operator does anyway.
