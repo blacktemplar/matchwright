@@ -4,6 +4,8 @@ This file provides guidance to AI agents when working with code in this reposito
 
 > **Edit files only with the Edit/Write tools.** Never change files through shell scripts (`python`, `sed`, `awk`, heredocs, ...), not even for large or repetitive changes: split them into several Edit calls instead. See *Working style*.
 
+> **Commit your work, one logical unit per commit.** You may commit without being asked, and should: keep independent changes in separate commits, one feature (or fix) per commit; a big feature may be split into several commits. Every commit must be valid on its own: the pre-commit hooks and the tests pass on it (see *Commands*).
+
 ## Commands
 
 Verify changes by running the hooks from `.pre-commit-config.yaml` (CI runs the same ones) rather than the individual cargo commands:
