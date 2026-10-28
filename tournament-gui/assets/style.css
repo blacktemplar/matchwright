@@ -1260,6 +1260,18 @@ ul.summary-items {
   color: var(--text-muted);
 }
 
+/* the room of a draw said, kept by a win, so that the pairings of finished matches line up */
+.match .result-room {
+  visibility: hidden;
+}
+
+/* on a phone the result is below the pairing, which needs no room kept */
+@media (width < 30rem) {
+  .match .result-room {
+    display: none;
+  }
+}
+
 .bye {
   margin: var(--space-3) 0 0;
   color: var(--text-muted);

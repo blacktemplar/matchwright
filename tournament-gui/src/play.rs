@@ -496,7 +496,7 @@ fn MatchLine(
             }
             div { class: "report",
                 if row.result.is_some() {
-                    ReportedResult { row: row.clone(), focus }
+                    ReportedResult { row: row.clone(), draws, focus }
                 } else {
                     ReportButtons {
                         row: row.clone(),
@@ -563,9 +563,10 @@ fn ReportButtons(
     }
 }
 
-/// The result of the match `row`, and the button reopening it.
+/// The result of the match `row`, of a round where a match may end in a draw if `draws`, and the
+/// button reopening it.
 #[component]
-fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
+fn ReportedResult(row: MatchRow, draws: bool, focus: Signal<Option<Focus>>) -> Element {
     let ctx = use_context::<Ctx>();
     let id = row.id;
     // only reopened by the tab that changes the competition
@@ -577,6 +578,11 @@ fn ReportedResult(row: MatchRow, focus: Signal<Option<Focus>>) -> Element {
     rsx! {
         span { class: if shown { "result" } else { "result visually-hidden" },
             {result_text(&tr, &row)}
+        }
+        // where a match may end in a draw, a win keeps the draw's room, so that the pairings of
+        // every finished match line up
+        if draws && !shown {
+            span { class: "result-room", aria_hidden: "true", {tr.get("draw")} }
         }
         button {
             class: "small",
