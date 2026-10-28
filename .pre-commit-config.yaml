@@ -57,11 +57,12 @@ repos:
       # the end-to-end tests of the GUI, like web-e2e, on the page built by dx (which has to be of
       # the version of dioxus in Cargo.lock), with the profile wasm-e2e, which builds in seconds and
       # does not try to reach the server of `dx serve`, in a target directory of its own, so that it
-      # leaves that of `dx serve` alone (absolute, since dx runs cargo in the crate's directory):
+      # leaves that of `dx serve` alone (absolute, since dx runs cargo in the crate's directory),
+      # and with a made-up media owner for the help to name:
       # `prek run --all-files --stage manual gui-e2e`
       - id: gui-e2e
         name: gui end-to-end test
-        entry: sh -c 'CARGO_TARGET_DIR="$PWD/target/e2e" dx build -p tournament-gui --profile wasm-e2e --debug-symbols false && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
+        entry: sh -c 'CARGO_TARGET_DIR="$PWD/target/e2e" MATCHWRIGHT_MEDIA_OWNER="Jane Doe, Vienna" dx build -p tournament-gui --profile wasm-e2e --debug-symbols false && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
         language: system
         types_or: [rust, html, css, javascript, json]
         pass_filenames: false

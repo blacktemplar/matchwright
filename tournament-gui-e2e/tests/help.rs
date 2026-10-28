@@ -8,8 +8,8 @@ use tournament_gui_e2e::{
 const REPOSITORY: &str = "https://github.com/blacktemplar/matchwright";
 
 /// The help says that the competitions stay in the browser, leads to the source code and names the
-/// media owner; it is a
-/// page of its own, kept by a reload, with the way back to the competitions.
+/// media owner (the one the gui-e2e hook builds the page with); it is a page of its own, kept by a
+/// reload, with the way back to the competitions.
 #[tokio::test]
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_help_says_where_the_competitions_are_kept() {
@@ -30,9 +30,9 @@ async fn the_help_says_where_the_competitions_are_kept() {
         let source = gui.driver.query(By::Css("main a")).first().await?;
         assert_eq!(source.attr("href").await?.as_deref(), Some(REPOSITORY));
         gui.page
-            .expect_text(
+            .expect_texts(
                 By::Css("main section:last-child p:last-child"),
-                "Media owner (disclosure under § 25 MedienG): Benedikt Posch, Dornbirn, Austria.",
+                &["Media owner (disclosure under § 25 MedienG): Jane Doe, Vienna, Austria."],
             )
             .await?;
         gui.page.check_accessibility().await?;

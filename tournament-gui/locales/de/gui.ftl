@@ -37,8 +37,8 @@ help-offline = Offline-Nutzung und Installation
 help-offline-text = Nach dem ersten Laden funktioniert Matchwright auch ohne Internetverbindung. Über das Menü deines Browsers kannst du es als App installieren; installierte Apps dürfen ihre Daten in der Regel dauerhaft speichern.
 help-tabs = Ist ein Turnier in mehreren Tabs geöffnet, kann es jeweils nur in einem davon bearbeitet werden. Die anderen Tabs zeigen es schreibgeschützt an und werden automatisch aktualisiert.
 help-open-source = Open Source
-help-media-owner = Medieninhaber (Offenlegung gemäß § 25 MedienG): Benedikt Posch, Dornbirn, Österreich.
-help-open-source-text =Matchwright ist freie Open-Source-Software unter der MIT- oder Apache-2.0-Lizenz. Der Quellcode ist auf GitHub verfügbar, wo du auch Fehler melden und Verbesserungen vorschlagen kannst.
+help-media-owner = Medieninhaber (Offenlegung gemäß § 25 MedienG): { $owner }, Österreich.
+help-open-source-text = Matchwright ist freie Open-Source-Software unter der MIT- oder Apache-2.0-Lizenz. Der Quellcode ist auf GitHub verfügbar, wo du auch Fehler melden und Verbesserungen vorschlagen kannst.
 
 ## The competitions stored
 

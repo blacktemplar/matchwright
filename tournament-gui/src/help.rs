@@ -3,7 +3,12 @@
 
 use dioxus::prelude::*;
 
-use crate::{Page, REPOSITORY, icons};
+use crate::{Page, REPOSITORY, i18n::t, icons};
+
+/// The media owner the help names, name and town (e.g. `Jane Doe, Vienna`), from the environment
+/// variable `MATCHWRIGHT_MEDIA_OWNER` at build time; without it (or with it empty) the help names
+/// none.
+const MEDIA_OWNER: Option<&str> = option_env!("MATCHWRIGHT_MEDIA_OWNER");
 
 #[component]
 pub fn Help() -> Element {
@@ -32,7 +37,9 @@ pub fn Help() -> Element {
                         {tr.get("source-code")}
                     }
                 }
-                p { {tr.get("help-media-owner")} }
+                if let Some(owner) = MEDIA_OWNER.filter(|owner| !owner.is_empty()) {
+                    p { {t!(tr, "help-media-owner", owner = owner)} }
+                }
             }
         }
     }
