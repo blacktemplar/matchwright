@@ -49,10 +49,10 @@ const COMPONENTS_THEME: Asset = asset!("/assets/dx-components-theme.css");
 const STYLE: Asset = asset!("/assets/style.css");
 
 /// The database of IndexedDB the competitions are stored in.
-const DATABASE: &str = "matchwright";
+const DATABASE: &str = "tournamo";
 
 /// Where the source code is.
-const REPOSITORY: &str = "https://github.com/blacktemplar/matchwright";
+const REPOSITORY: &str = "https://github.com/blacktemplar/tournamo";
 
 /// The fragment of the URL naming the help.
 const HELP: &str = "help";

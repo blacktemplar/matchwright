@@ -5,7 +5,7 @@ use tournament_gui_e2e::{
     thirtyfour::{By, extensions::query::ElementQueryable as _},
 };
 
-const REPOSITORY: &str = "https://github.com/blacktemplar/matchwright";
+const REPOSITORY: &str = "https://github.com/blacktemplar/tournamo";
 
 /// The help says that the competitions stay in the browser, leads to the source code and names the
 /// media owner (the one the gui-e2e hook builds the page with); it is a page of its own, kept by a
@@ -16,7 +16,7 @@ async fn the_help_says_where_the_competitions_are_kept() {
     run_in_new_competition(async |gui| {
         gui.follow("Help").await?;
 
-        gui.page.expect_title("Help – Matchwright").await?;
+        gui.page.expect_title("Help – Tournamo").await?;
         gui.page
             .expect_texts(
                 By::Css("main h2"),
@@ -38,7 +38,7 @@ async fn the_help_says_where_the_competitions_are_kept() {
         gui.page.check_accessibility().await?;
 
         gui.page.reload().await?;
-        gui.page.expect_title("Help – Matchwright").await?;
+        gui.page.expect_title("Help – Tournamo").await?;
 
         gui.follow("All competitions").await?;
         gui.expect_competitions(&["Cup"]).await

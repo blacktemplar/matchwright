@@ -1,6 +1,6 @@
 # Changelog
 
-What changed for those running competitions with Matchwright, and for the data
+What changed for those running competitions with Tournamo, and for the data
 they saved. The format follows [Keep a Changelog](https://keepachangelog.com),
 and versions follow [Semantic Versioning](https://semver.org).
 
@@ -9,6 +9,13 @@ later one: the tags in a saved log (`tournament_engine::...`) never change, and
 a file whose `"format"` changes is migrated, not refused.
 
 ## [Unreleased]
+
+### Changed
+
+- Renamed from Matchwright to Tournamo, now hosted at
+  <https://blacktemplar.github.io/tournamo/>. Competitions stored in the browser
+  under the old name are not carried over; export them there and import them
+  here.
 
 ## [0.1.0] - 2026-10-28
 
@@ -34,5 +41,5 @@ The first release, hosted at <https://blacktemplar.github.io/matchwright/>.
   is no tracking, that GitHub Pages, which serves the page, sees the IP address,
   and who the media owner is (§ 25 MedienG).
 
-[Unreleased]: https://github.com/blacktemplar/matchwright/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/blacktemplar/matchwright/releases/tag/v0.1.0
+[Unreleased]: https://github.com/blacktemplar/tournamo/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/blacktemplar/tournamo/releases/tag/v0.1.0

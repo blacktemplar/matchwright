@@ -1,9 +1,9 @@
 # What the GUI says in English. Why an action was refused, and the plugins, are translated by
 # tournament-app.
 
-app-title = Matchwright
+app-title = Tournamo
 # the title of the page while a competition is open
-competition-title = { $name } – Matchwright
+competition-title = { $name } – Tournamo
 language = Language
 # whether the page is light or dark
 theme = Colours
@@ -39,18 +39,18 @@ source-code = Source code
 
 help = Help
 # the title of the page while the help is shown
-help-title = Help – Matchwright
+help-title = Help – Tournamo
 help-stored = Your data stays on your device
-help-stored-here = Matchwright stores all competitions locally in your browser (in its IndexedDB). Nothing you enter leaves your device: no data is sent to a server, there is no tracking, and no account is required.
+help-stored-here = Tournamo stores all competitions locally in your browser (in its IndexedDB). Nothing you enter leaves your device: no data is sent to a server, there is no tracking, and no account is required.
 help-stored-hosting = The page itself is delivered by GitHub Pages, which, like any web server, receives your IP address when you load it.
 help-stored-lost = Your competitions are therefore only available in this browser on this device. They are deleted when you clear your browser’s site data or close a private window.
 help-stored-export = To create a backup or continue on another device, export the competition as a file and import it there.
 help-offline = Offline use and installation
-help-offline-text = Once loaded, Matchwright also works without an internet connection. You can install it as an app from your browser’s menu; installed apps are usually allowed to keep their data permanently.
+help-offline-text = Once loaded, Tournamo also works without an internet connection. You can install it as an app from your browser’s menu; installed apps are usually allowed to keep their data permanently.
 help-tabs = If a competition is open in several tabs, it can only be edited in one of them at a time. The other tabs show it read-only and update automatically.
 help-open-source = Open source
 help-media-owner = Media owner (disclosure under § 25 MedienG): { $owner }, Austria.
-help-open-source-text = Matchwright is free, open-source software, licensed under MIT or Apache 2.0. The source code is available on GitHub, where you can also report bugs and suggest improvements.
+help-open-source-text = Tournamo is free, open-source software, licensed under MIT or Apache 2.0. The source code is available on GitHub, where you can also report bugs and suggest improvements.
 
 ## The competitions stored
 

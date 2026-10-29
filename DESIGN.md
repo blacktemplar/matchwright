@@ -1,6 +1,6 @@
-# Matchwright — Design
+# Tournamo — Design
 
-Matchwright is a generic core library for running tournaments of matches
+Tournamo is a generic core library for running tournaments of matches
 between two sides (single elimination, round robin, Swiss, ...), whose key
 components are pluggable and selected at runtime, with a CLI and a browser GUI
 on top. [`README.md`](README.md) says what it does today and
@@ -536,10 +536,10 @@ annotations and transitions alike. Since v0.1.0 saved competitions of real users
 depend on them: a tag may be added, never changed or given another meaning.
 
 The namespace is the crate defining the type (`tournament_engine::points`), not
-the product: published as Matchwright, the tags stayed, since a crate's tags
+the product: published as Tournamo, the tags stayed, since a crate's tags
 should not change with what an application built on it is called. Rejected:
-renaming them to `matchwright::` before the release (churn in every tag, plugin
-id and Fluent key, for a name the crates do not carry).
+renaming them to the product's namespace before the release (churn in every
+tag, plugin id and Fluent key, for a name the crates do not carry).
 
 Rejected: `TypeId` (stable only within a build); a hand-rolled binary tag
 registry (reimplements `typetag`); auto-derived tags from the type path
@@ -940,7 +940,7 @@ Rejected: precaching a build-time list (dx makes none); network first for
 assets (waits on a bad venue connection, and content-named assets never go
 stale); dismissing the warning per session only (nags in every tab).
 
-**Hosting**: static files over HTTPS on GitHub Pages, under `/matchwright/`
+**Hosting**: static files over HTTPS on GitHub Pages, under `/tournamo/`
 (hence `--base-path`), built and deployed by CI after every push to `main` that
 passes it: the wasm holds the absolute paths of its asset sources, so what is
 hosted must not be built on a developer's machine. Navigation is after `#`, so

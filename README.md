@@ -1,10 +1,10 @@
-# Matchwright
+# Tournamo
 
 Run a tournament in your browser: enter the players, pick a format, report the
-results and follow the standings or the bracket. Matchwright works offline and
+results and follow the standings or the bracket. Tournamo works offline and
 keeps everything on your device: there is no account, no server and no tracking.
 
-**Open it: <https://blacktemplar.github.io/matchwright/>**
+**Open it: <https://blacktemplar.github.io/tournamo/>**
 
 ## What it does
 
@@ -37,7 +37,7 @@ server, receives your IP address when it delivers the page (see
 
 ## For developers
 
-Matchwright is written in Rust and runs as WebAssembly. The repository is a
+Tournamo is written in Rust and runs as WebAssembly. The repository is a
 Cargo workspace:
 
 | Crate | What it is |

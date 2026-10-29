@@ -6,9 +6,9 @@ use dioxus::prelude::*;
 use crate::{Page, REPOSITORY, i18n::t, icons};
 
 /// The media owner the help names, name and town (e.g. `Jane Doe, Vienna`), from the environment
-/// variable `MATCHWRIGHT_MEDIA_OWNER` at build time; without it (or with it empty) the help names
+/// variable `TOURNAMO_MEDIA_OWNER` at build time; without it (or with it empty) the help names
 /// none.
-const MEDIA_OWNER: Option<&str> = option_env!("MATCHWRIGHT_MEDIA_OWNER");
+const MEDIA_OWNER: Option<&str> = option_env!("TOURNAMO_MEDIA_OWNER");
 
 #[component]
 pub fn Help() -> Element {

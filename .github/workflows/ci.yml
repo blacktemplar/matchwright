@@ -110,7 +110,7 @@ jobs:
         with:
           extra-args: --all-files cargo-fmt
 
-  # the GUI on GitHub Pages, at blacktemplar.github.io/matchwright/ (hence the base path), built
+  # the GUI on GitHub Pages, at blacktemplar.github.io/tournamo/ (hence the base path), built
   # here, since the wasm holds the absolute paths of the sources of its assets; after every push to
   # main that passes the jobs above
   pages-build:
@@ -128,9 +128,9 @@ jobs:
           tool: dioxus-cli@0.7.10
       # the media owner the help names, from the repository variable (Settings → Secrets and
       # variables → Actions → Variables), so that it is not in the code
-      - run: dx build -p tournament-gui --release --debug-symbols false --base-path matchwright
+      - run: dx build -p tournament-gui --release --debug-symbols false --base-path tournamo
         env:
-          MATCHWRIGHT_MEDIA_OWNER: ${{ vars.MEDIA_OWNER }}
+          TOURNAMO_MEDIA_OWNER: ${{ vars.MEDIA_OWNER }}
       - uses: actions/upload-pages-artifact@v4
         with:
           path: target/dx/tournament-gui/release/web/public

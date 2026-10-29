@@ -24,7 +24,7 @@ macro_rules! t {
 pub(crate) use t;
 
 /// Where the browser's local storage keeps the language chosen.
-const CHOSEN: &str = "matchwright.language";
+const CHOSEN: &str = "tournamo.language";
 
 /// The language chosen last in this browser, or else the first the browser prefers that the GUI
 /// speaks, or else English.

@@ -37,11 +37,11 @@ async fn a_page_opened_before_opens_offline() {
 #[ignore = "needs Chrome and the page built by dx; run by the gui-e2e hook"]
 async fn the_tab_is_titled_by_the_competition() {
     run_in_new_competition(async |gui| {
-        gui.page.expect_title("Cup – Matchwright").await?;
+        gui.page.expect_title("Cup – Tournamo").await?;
 
         gui.follow("All competitions").await?;
 
-        gui.page.expect_title("Matchwright").await
+        gui.page.expect_title("Tournamo").await
     })
     .await;
 }

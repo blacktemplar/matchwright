@@ -62,7 +62,7 @@ repos:
       # `prek run --all-files --stage manual gui-e2e`
       - id: gui-e2e
         name: gui end-to-end test
-        entry: sh -c 'CARGO_TARGET_DIR="$PWD/target/e2e" MATCHWRIGHT_MEDIA_OWNER="Jane Doe, Vienna" dx build -p tournament-gui --profile wasm-e2e --debug-symbols false && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
+        entry: sh -c 'CARGO_TARGET_DIR="$PWD/target/e2e" TOURNAMO_MEDIA_OWNER="Jane Doe, Vienna" dx build -p tournament-gui --profile wasm-e2e --debug-symbols false && cargo test -p tournament-gui-e2e --no-fail-fast -- --ignored'
         language: system
         types_or: [rust, html, css, javascript, json]
         pass_filenames: false

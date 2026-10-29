@@ -1,12 +1,12 @@
-# Matchwright – Requirements
+# Tournamo – Requirements
 
-Status: draft. This document describes what Matchwright is meant to become; much
+Status: draft. This document describes what Tournamo is meant to become; much
 of it is not implemented yet. [`README.md`](README.md) says what it does today,
 and [`DESIGN.md`](DESIGN.md) records how and why it is built the way it is.
 
 ## 1. Vision and scope
 
-An offline-first, open-source (MIT/Apache-2.0) organizer for head-to-head sports (two sides per match). The engine runs in the browser; a server for sync, publishing and a wider ecosystem comes later. Existing tools tend to be online-only, Windows-only or server-only, or made for a single sport; Matchwright aims for one engine for many sports, simple by default with depth on demand.
+An offline-first, open-source (MIT/Apache-2.0) organizer for head-to-head sports (two sides per match). The engine runs in the browser; a server for sync, publishing and a wider ecosystem comes later. Existing tools tend to be online-only, Windows-only or server-only, or made for a single sport; Tournamo aims for one engine for many sports, simple by default with depth on demand.
 
 - **Users:** organizer (runs and corrects the event), referee (enters results, often offline), participants and spectators (read-only, including venue screens).
 - **Non-goals:** payments, native apps (a PWA instead), matches with more than two sides.

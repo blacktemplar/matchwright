@@ -393,7 +393,7 @@ fn ResultEntry(draws: bool, entry: Signal<String>) -> Element {
 }
 
 /// Where the browser remembers that the operator opened the entry of results.
-const RESULT_ENTRY_OPEN: &str = "matchwright.result-entry-open";
+const RESULT_ENTRY_OPEN: &str = "tournamo.result-entry-open";
 
 /// Whether the operator left the entry of results open in this browser.
 fn result_entry_open() -> bool {

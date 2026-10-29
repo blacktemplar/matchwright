@@ -5,7 +5,7 @@
 // one kept is another version, and the assets kept are dropped before it loads its own.
 "use strict";
 
-const CACHE = "matchwright";
+const CACHE = "tournamo";
 const ASSETS = new URL("assets/", self.registration.scope).href;
 
 self.addEventListener("install", () => self.skipWaiting());

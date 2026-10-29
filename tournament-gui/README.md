@@ -29,7 +29,7 @@ competition and to install the app, after which browsers usually keep it.
 ```text
 dx serve -p tournament-gui              # add --hot-patch to patch Rust code into the running page
 # into target/dx/tournament-gui/release/web/public, optimized by wasm-opt, which dx runs itself;
-# add --base-path <path> for a page served under a path, e.g. matchwright on GitHub Pages
+# add --base-path <path> for a page served under a path, e.g. tournamo on GitHub Pages
 dx build -p tournament-gui --release --debug-symbols false
 ```
 
@@ -38,7 +38,7 @@ a build made by CI: the wasm holds the absolute paths of the source files of
 its assets. The icons `icon-192.png` and `icon-512.png` are rendered from
 `icon.svg`, e.g. with `rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png`.
 The help names the media owner (§ 25 MedienG) given at build time as
-`MATCHWRIGHT_MEDIA_OWNER="<name>, <town>"` (CI takes it from the repository
+`TOURNAMO_MEDIA_OWNER="<name>, <town>"` (CI takes it from the repository
 variable `MEDIA_OWNER`); without it, it names none.
 
 The select and the dialog are the Dioxus team's components, copied into

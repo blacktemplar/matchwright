@@ -42,7 +42,7 @@ impl Theme {
 }
 
 /// Where the browser's local storage keeps the theme chosen; `index.html` reads it too.
-const CHOSEN: &str = "matchwright.theme";
+const CHOSEN: &str = "tournamo.theme";
 
 /// The theme chosen last in this browser, or else the system's.
 pub fn initial() -> Theme {
