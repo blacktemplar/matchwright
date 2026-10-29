@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- icon.svg for the tab: filling the square, on the grid of 16 pixels, so that it stays sharp
+       there -->
+  <rect width="16" height="16" rx="3" fill="#1f4e79"/>
+  <path d="M1 1H5V6H1V5H4V2H1ZM1 9H5V14H1V13H4V10H1ZM5 3H8V4H5ZM5 11H8V12H5ZM7 3H8V12H7ZM8 7H10V8H8Z"
+        fill="#fff"/>
+  <path d="M12.5 1L8.5 9H11.5L10 15L15 6.5H12L14 1Z" fill="#f2b705"/>
+</svg>

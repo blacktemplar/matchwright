@@ -36,7 +36,8 @@ dx build -p tournament-gui --release --debug-symbols false
 The page needs HTTPS (or `localhost`) for its service worker and storage. Host
 a build made by CI: the wasm holds the absolute paths of the source files of
 its assets. The icons `icon-192.png` and `icon-512.png` are rendered from
-`icon.svg`, e.g. with `rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png`.
+`icon.svg`, e.g. with `rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png`;
+the tab shows `favicon.svg`, the same drawn for 16 pixels, so change both.
 The help names the media owner (§ 25 MedienG) given at build time as
 `TOURNAMO_MEDIA_OWNER="<name>, <town>"` (CI takes it from the repository
 variable `MEDIA_OWNER`); without it, it names none.
